@@ -248,7 +248,9 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 	// self-report block for compatibility.
 	if let Some(report) = session.last_self_report.filter(|_| pact.is_none()) {
 		user_content.push_str("<agent_state_hint>\n");
-		user_content.push_str("Untrusted attention hint from the main agent; ground it against the transcript before preserving it.\n");
+		user_content.push_str(
+			"Untrusted attention hint from the main agent; ground it against the transcript before preserving it.\n",
+		);
 		user_content.push_str("state: ");
 		user_content.push_str(report.as_str());
 		user_content.push('\n');
@@ -305,18 +307,13 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 					// the structured `file_context` field. Re-embedding the old
 					// content would bloat the prompt and recursively grow each
 					// summary.
-					let assistant_text = if msg
-						.content
-						.trim_start()
-						.starts_with(SUMMARY_TAG_OPEN_PREFIX)
-					{
+					let assistant_text = if msg.content.trim_start().starts_with(SUMMARY_TAG_OPEN_PREFIX) {
 						strip_regrown_sections(&msg.content)
 					} else {
 						msg.content.trim().to_string()
 					};
 					if !assistant_text.is_empty() {
-						user_content
-							.push_str(&format!("{}[ASSISTANT]: {}\n", recent, assistant_text));
+						user_content.push_str(&format!("{}[ASSISTANT]: {}\n", recent, assistant_text));
 					}
 					if let Some(thinking) = crate::session::message_thinking_content(msg) {
 						let rendered = if is_recent {
@@ -324,8 +321,7 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 						} else {
 							adaptive_preview(thinking, target_ratio)
 						};
-						user_content
-							.push_str(&format!("{}[ASSISTANT THINKING]: {}\n", recent, rendered));
+						user_content.push_str(&format!("{}[ASSISTANT THINKING]: {}\n", recent, rendered));
 					}
 					if let Some(calls) = msg.tool_calls.as_ref().and_then(|v| v.as_array()) {
 						for call in calls {
@@ -333,8 +329,7 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 							// remain exact; older calls are reduced only by the configured ratio.
 							// No tool names or argument-field vocabulary is guessed here.
 							let rendered = render_tool_call(call, is_recent, target_ratio);
-							user_content
-								.push_str(&format!("{}[TOOL CALL]: {}\n", recent, rendered));
+							user_content.push_str(&format!("{}[TOOL CALL]: {}\n", recent, rendered));
 
 							let name = call
 								.get("function")
@@ -348,11 +343,7 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 								.or_else(|| call.get("arguments"))
 								.or_else(|| call.get("args"))
 							{
-								file_context::extract_file_refs_from_args(
-									name,
-									args,
-									&mut file_refs,
-								);
+								file_context::extract_file_refs_from_args(name, args, &mut file_refs);
 							}
 						}
 					}
@@ -365,18 +356,11 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 					} else {
 						adaptive_preview(content, target_ratio)
 					};
-					user_content.push_str(&format!(
-						"{}[TOOL RESULT: {}]: {}\n",
-						recent, name, truncated
-					));
+					user_content.push_str(&format!("{}[TOOL RESULT: {}]: {}\n", recent, name, truncated));
 				}
 				_ => {
 					if !msg.content.trim().is_empty() {
-						user_content.push_str(&format!(
-							"{}[USER]: {}\n",
-							recent,
-							msg.content.trim()
-						));
+						user_content.push_str(&format!("{}[USER]: {}\n", recent, msg.content.trim()));
 					}
 				}
 			}
@@ -391,9 +375,7 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 		let merged_refs = file_context::merge_file_refs(&file_refs);
 		if !merged_refs.is_empty() {
 			user_content.push_str("\n<file_references>\n");
-			user_content.push_str(
-				"Files touched by tool calls in this transcript (candidates for file_context):\n",
-			);
+			user_content.push_str("Files touched by tool calls in this transcript (candidates for file_context):\n");
 			for ref_str in merged_refs.iter().take(10) {
 				user_content.push_str(&format!("- {}\n", ref_str));
 			}
@@ -440,11 +422,7 @@ Compress that transcript to roughly {pct}% of its original size ({ratio:.1}x com
 }
 
 fn collect_file_refs(message: &crate::session::Message, refs: &mut Vec<String>) {
-	let Some(calls) = message
-		.tool_calls
-		.as_ref()
-		.and_then(|value| value.as_array())
-	else {
+	let Some(calls) = message.tool_calls.as_ref().and_then(|value| value.as_array()) else {
 		return;
 	};
 	for call in calls {
@@ -465,11 +443,7 @@ fn collect_file_refs(message: &crate::session::Message, refs: &mut Vec<String>) 
 	}
 }
 
-fn recent_suffix_start(
-	messages: &[crate::session::Message],
-	target_ratio: f64,
-	model: &str,
-) -> usize {
+fn recent_suffix_start(messages: &[crate::session::Message], target_ratio: f64, model: &str) -> usize {
 	let transcript_tokens: usize = messages
 		.iter()
 		.map(|message| crate::session::estimate_sent_message_tokens(message, model))
@@ -479,9 +453,7 @@ fn recent_suffix_start(
 	let mut recent_tokens = 0usize;
 	for (index, message) in messages.iter().enumerate().rev() {
 		let message_tokens = crate::session::estimate_sent_message_tokens(message, model);
-		if recent_start < messages.len()
-			&& recent_tokens.saturating_add(message_tokens) > recent_budget
-		{
+		if recent_start < messages.len() && recent_tokens.saturating_add(message_tokens) > recent_budget {
 			break;
 		}
 		recent_start = index;

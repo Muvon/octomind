@@ -53,8 +53,7 @@ pub struct AcpArgs {
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
 pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
-	let (resolved_config, role) =
-		super::common::startup(args.tag.as_deref(), config, false).await?;
+	let (resolved_config, role) = super::common::startup(args.tag.as_deref(), config, false).await?;
 	let options = AcpRunOptions {
 		name: args.name.clone(),
 		resume: args.resume.clone(),

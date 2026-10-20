@@ -44,11 +44,7 @@ fn test_run_dir_is_private_and_outside_data_dir() {
 	{
 		use std::os::unix::fs::PermissionsExt;
 		let mode = fs::metadata(&run).unwrap().permissions().mode();
-		assert_eq!(
-			mode & 0o077,
-			0,
-			"run dir must not be group/world accessible"
-		);
+		assert_eq!(mode & 0o077, 0, "run dir must not be group/world accessible");
 	}
 }
 

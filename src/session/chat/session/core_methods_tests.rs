@@ -18,9 +18,8 @@
 use super::*;
 
 fn test_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -54,10 +53,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().unwrap();
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			_dir: dir,
-			previous,
-		}
+		Self { _dir: dir, previous }
 	}
 }
 
@@ -73,9 +69,7 @@ impl Drop for DataDirGuard {
 async fn initialized_named_session(name: &str) -> ChatSession {
 	let config = test_config();
 	let params = SessionInitParams::new(&config, "assistant").with_name(name.to_string());
-	let mut session = ChatSession::initialize(params)
-		.await
-		.expect("create named session");
+	let mut session = ChatSession::initialize(params).await.expect("create named session");
 	session.add_user_message("first question").unwrap();
 	session
 		.add_assistant_message("first answer", None, &config, "assistant")
@@ -145,9 +139,7 @@ fn test_remove_messages_in_range() {
 		message("assistant", "m3"),
 	]);
 	// Removes start+1..=end: the range anchor at index 0 survives
-	let (removed, had_cached) = session
-		.remove_messages_in_range(0, 2)
-		.expect("range removal");
+	let (removed, had_cached) = session.remove_messages_in_range(0, 2).expect("range removal");
 	assert_eq!(removed, 2);
 	assert!(!had_cached);
 	assert_eq!(session.get_message_count(), 2);
@@ -194,8 +186,7 @@ async fn initialize_creates_new_session_and_persists_messages() {
 async fn initialize_resume_missing_session_errors() {
 	let _data = DataDirGuard::new();
 	let config = test_config();
-	let params =
-		SessionInitParams::new(&config, "assistant").with_resume("definitely-not-here".to_string());
+	let params = SessionInitParams::new(&config, "assistant").with_resume("definitely-not-here".to_string());
 
 	let error = ChatSession::initialize(params)
 		.await
@@ -212,8 +203,7 @@ async fn initialize_named_existing_session_resumes_transcript() {
 	let original_name = first.session.info.name.clone();
 
 	let config = test_config();
-	let params =
-		SessionInitParams::new(&config, "assistant").with_name("core-init-resume".to_string());
+	let params = SessionInitParams::new(&config, "assistant").with_name("core-init-resume".to_string());
 	let session = ChatSession::initialize(params)
 		.await
 		.expect("named existing session resumes");
@@ -243,17 +233,13 @@ async fn initialize_explicit_resume_of_corrupted_file_errors() {
 	std::fs::write(&corrupted, b"this is not a zstd stream").unwrap();
 
 	let config = test_config();
-	let params =
-		SessionInitParams::new(&config, "assistant").with_resume("core-init-corrupt".to_string());
+	let params = SessionInitParams::new(&config, "assistant").with_resume("core-init-corrupt".to_string());
 
 	let error = ChatSession::initialize(params)
 		.await
 		.err()
 		.expect("explicit resume of a corrupted file must fail");
-	assert!(
-		error.to_string().contains("Failed to load session"),
-		"{error}"
-	);
+	assert!(error.to_string().contains("Failed to load session"), "{error}");
 }
 
 #[serial_test::serial]
@@ -265,8 +251,7 @@ async fn initialize_named_corrupted_file_falls_back_to_new_session() {
 	std::fs::write(&corrupted, b"this is not a zstd stream").unwrap();
 
 	let config = test_config();
-	let params =
-		SessionInitParams::new(&config, "assistant").with_name("core-init-fallback".to_string());
+	let params = SessionInitParams::new(&config, "assistant").with_name("core-init-fallback".to_string());
 	let session = ChatSession::initialize(params)
 		.await
 		.expect("unnamed load failure falls back to a fresh session");
@@ -325,34 +310,20 @@ async fn initialize_resume_recent_finds_project_session() {
 
 #[test]
 fn test_remove_messages_in_range_end_out_of_bounds_errors() {
-	let mut session =
-		ChatSession::for_tests(vec![message("user", "m0"), message("assistant", "m1")]);
+	let mut session = ChatSession::for_tests(vec![message("user", "m0"), message("assistant", "m1")]);
 	// start is in bounds but end is past the transcript: must fail, not clamp
 	assert!(session.remove_messages_in_range(0, 9).is_err());
-	assert_eq!(
-		session.get_message_count(),
-		2,
-		"failed removal must not mutate"
-	);
+	assert_eq!(session.get_message_count(), 2, "failed removal must not mutate");
 }
 
 #[test]
 fn test_remove_messages_in_range_reports_cached_content() {
 	let mut cached_msg = message("assistant", "cached turn");
 	cached_msg.cached = true;
-	let mut session = ChatSession::for_tests(vec![
-		message("user", "anchor"),
-		cached_msg,
-		message("user", "tail"),
-	]);
-	let (removed, had_cached) = session
-		.remove_messages_in_range(0, 1)
-		.expect("range removal");
+	let mut session = ChatSession::for_tests(vec![message("user", "anchor"), cached_msg, message("user", "tail")]);
+	let (removed, had_cached) = session.remove_messages_in_range(0, 1).expect("range removal");
 	assert_eq!(removed, 1);
-	assert!(
-		had_cached,
-		"a cached message inside the range must be reported"
-	);
+	assert!(had_cached, "a cached message inside the range must be reported");
 }
 
 // ---------------------------------------------------------------------------
@@ -393,16 +364,10 @@ fn test_insert_compressed_knowledge_evicts_oldest_and_marks_preserved_tail() {
 	assert_eq!(compressed.role, "assistant");
 	assert_eq!(compressed.content, "compressed summary");
 	assert_eq!(compressed.name.as_deref(), Some("plan_compression"));
-	assert!(
-		compressed.cached,
-		"compressed block is the new history boundary"
-	);
+	assert!(compressed.cached, "compressed block is the new history boundary");
 
 	// At 2 existing markers the OLDEST was evicted to make room
-	assert!(
-		!session.session.messages[2].cached,
-		"oldest marker must be evicted"
-	);
+	assert!(!session.session.messages[2].cached, "oldest marker must be evicted");
 
 	// The last eligible user/tool message after the block got the 2nd marker
 	let tail = session.session.messages.last().expect("tail message");
@@ -412,8 +377,7 @@ fn test_insert_compressed_knowledge_evicts_oldest_and_marks_preserved_tail() {
 
 #[test]
 fn test_insert_compressed_knowledge_skips_markers_for_non_caching_model() {
-	let mut session =
-		ChatSession::for_tests(vec![message("system", "anchor"), message("user", "q")]);
+	let mut session = ChatSession::for_tests(vec![message("system", "anchor"), message("user", "q")]);
 	session.session.info.model = "ollama:fake-model".to_string();
 
 	session
@@ -421,10 +385,7 @@ fn test_insert_compressed_knowledge_skips_markers_for_non_caching_model() {
 		.expect("insert knowledge");
 
 	let compressed = &session.session.messages[1];
-	assert!(
-		!compressed.cached,
-		"no cache marker for a non-caching model"
-	);
+	assert!(!compressed.cached, "no cache marker for a non-caching model");
 	assert!(
 		!session.session.messages.last().expect("tail").cached,
 		"tail must stay uncached for a non-caching model"
@@ -570,8 +531,7 @@ async fn test_attach_video_from_file_and_url() {
 #[tokio::test]
 async fn test_get_full_context_tokens_counts_active_memory_pack_once() {
 	let config = test_config();
-	let mut session =
-		ChatSession::for_tests(vec![message("system", "anchor"), message("user", "hello")]);
+	let mut session = ChatSession::for_tests(vec![message("system", "anchor"), message("user", "hello")]);
 	let without_pack = session.get_full_context_tokens(&config).await;
 
 	// A pack that is NOT materialized in messages adds its bounded cost
@@ -605,10 +565,7 @@ async fn reinitialize_for_role_replaces_system_prompt_and_saves() {
 	let config = test_config();
 
 	let dir = tempfile::tempdir().unwrap();
-	let mut session = ChatSession::for_tests(vec![
-		message("system", "old system prompt"),
-		message("user", "hi"),
-	]);
+	let mut session = ChatSession::for_tests(vec![message("system", "old system prompt"), message("user", "hi")]);
 	session.session.session_file = Some(dir.path().join("session.jsonl.zst"));
 
 	session
@@ -622,10 +579,7 @@ async fn reinitialize_for_role_replaces_system_prompt_and_saves() {
 		first.content, "old system prompt",
 		"system prompt must be rebuilt for the new role"
 	);
-	assert_eq!(
-		session.session.messages[1].content, "hi",
-		"history preserved"
-	);
+	assert_eq!(session.session.messages[1].content, "hi", "history preserved");
 	assert!(
 		session.session.session_file.as_ref().unwrap().exists(),
 		"reinitialization must persist the session"
@@ -646,11 +600,7 @@ async fn reinitialize_for_role_without_system_first_message_errors() {
 		.reinitialize_for_role("core", &config)
 		.await
 		.expect_err("non-system first message must fail");
-	assert!(
-		err.to_string()
-			.contains("Expected first message to be system"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("Expected first message to be system"), "{err}");
 }
 
 #[serial_test::serial]
@@ -701,8 +651,7 @@ fn seed_session_log(name: &str, lines: Vec<serde_json::Value>) {
 		.collect::<Vec<_>>()
 		.join("\n");
 	let compressed = zstd::encode_all(payload.as_bytes(), 3).expect("compress log");
-	std::fs::write(sessions_dir.join(format!("{name}.jsonl.zst")), compressed)
-		.expect("write session log");
+	std::fs::write(sessions_dir.join(format!("{name}.jsonl.zst")), compressed).expect("write session log");
 }
 
 #[serial_test::serial]
@@ -724,29 +673,19 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 	);
 
 	let config = test_config();
-	let params =
-		SessionInitParams::new(&config, "assistant").with_resume("cov-resume-runtime".to_string());
-	let session = ChatSession::initialize(params)
-		.await
-		.expect("resume seeded session");
+	let params = SessionInitParams::new(&config, "assistant").with_resume("cov-resume-runtime".to_string());
+	let session = ChatSession::initialize(params).await.expect("resume seeded session");
 
 	assert!(session.was_resumed);
 	// /role task_refiner was logged and the caller did not name a role explicitly
-	assert_eq!(
-		session.role, "task_refiner",
-		"logged /role must win over the default"
-	);
+	assert_eq!(session.role, "task_refiner", "logged /role must win over the default");
 	assert_eq!(
 		session.critical_knowledge,
 		vec!["keep the widget minimal".to_string()],
 		"knowledge entries must be restored"
 	);
 	assert!(
-		session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content == "resumed question"),
+		session.session.messages.iter().any(|m| m.content == "resumed question"),
 		"transcript messages must be restored"
 	);
 }
@@ -769,14 +708,9 @@ async fn prompt_calibration_scales_context_decisions_into_provider_units() {
 
 	// The provider billed 20% more than the estimate for the same prompt.
 	session.observe_prompt_tokens(raw, (raw as f64 * 1.2) as u64);
-	let factor = session
-		.prompt_calibration
-		.expect("first sample sets the factor");
+	let factor = session.prompt_calibration.expect("first sample sets the factor");
 	assert!((factor - 1.2).abs() < 0.01, "{factor}");
-	assert_eq!(
-		session.get_full_context_tokens(&config).await,
-		session.calibrated(raw)
-	);
+	assert_eq!(session.get_full_context_tokens(&config).await, session.calibrated(raw));
 	assert!(session.calibrated(10_000) > 11_900 && session.calibrated(10_000) < 12_100);
 
 	// Later samples move the factor halfway (EMA), never by the whole jump.
@@ -794,8 +728,7 @@ async fn prompt_calibration_scales_context_decisions_into_provider_units() {
 
 #[test]
 fn raw_context_estimate_needs_cached_tools() {
-	let session =
-		ChatSession::for_tests(vec![crate::session::Session::build_message("user", "hi")]);
+	let session = ChatSession::for_tests(vec![crate::session::Session::build_message("user", "hi")]);
 	assert!(
 		session.raw_context_estimate().is_none(),
 		"no sample without the tool definitions the provider also receives"
@@ -812,27 +745,15 @@ async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
 	with_session_id("turn-split-accounting".into(), async {
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.info.total_api_time_ms = 1_000;
-		session
-			.session
-			.info
-			.supervisor_accounting
-			.blocking_wall_time_ms = 500;
+		session.session.info.supervisor_accounting.blocking_wall_time_ms = 500;
 		session.begin_turn_timing();
 		session.session.info.total_api_time_ms += 100;
-		session
-			.session
-			.info
-			.supervisor_accounting
-			.blocking_wall_time_ms += 200;
+		session.session.info.supervisor_accounting.blocking_wall_time_ms += 200;
 		session.abandon_turn_timing();
 		session.begin_turn_timing();
 		session.turn_started_at.as_mut().unwrap().at -= std::time::Duration::from_secs(1);
 		session.session.info.total_api_time_ms += 300;
-		session
-			.session
-			.info
-			.supervisor_accounting
-			.blocking_wall_time_ms += 400;
+		session.session.info.supervisor_accounting.blocking_wall_time_ms += 400;
 		session.finish_turn_timing();
 		let split = &session.session.info.supervisor_accounting.turn_time;
 		assert_eq!(split.completed, 1);
@@ -840,15 +761,7 @@ async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
 		assert_eq!(split.blocking_supervisor_time_ms, 400);
 		assert!(split.total_time_ms >= 1_000);
 		session.finish_turn_timing();
-		assert_eq!(
-			session
-				.session
-				.info
-				.supervisor_accounting
-				.turn_time
-				.completed,
-			1
-		);
+		assert_eq!(session.session.info.supervisor_accounting.turn_time.completed, 1);
 	})
 	.await;
 }

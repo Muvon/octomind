@@ -22,14 +22,8 @@ fn verification_policy_as_str_covers_every_variant() {
 		crate::supervisor::VerificationPolicy::Unspecified.as_str(),
 		"unspecified"
 	);
-	assert_eq!(
-		crate::supervisor::VerificationPolicy::Forbidden.as_str(),
-		"forbidden"
-	);
-	assert_eq!(
-		crate::supervisor::VerificationPolicy::Allowed.as_str(),
-		"allowed"
-	);
+	assert_eq!(crate::supervisor::VerificationPolicy::Forbidden.as_str(), "forbidden");
+	assert_eq!(crate::supervisor::VerificationPolicy::Allowed.as_str(), "allowed");
 }
 
 #[test]

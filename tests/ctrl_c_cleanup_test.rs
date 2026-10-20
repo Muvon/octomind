@@ -41,9 +41,7 @@ struct MockSession {
 
 impl MockSession {
 	fn new() -> Self {
-		Self {
-			messages: Vec::new(),
-		}
+		Self { messages: Vec::new() }
 	}
 
 	fn add_user_message(&mut self, content: &str) {
@@ -75,19 +73,12 @@ impl MockSession {
 	}
 
 	fn has_tool_messages_after(&self, index: usize) -> bool {
-		self.messages
-			.iter()
-			.skip(index)
-			.any(|msg| msg.role == "tool")
+		self.messages.iter().skip(index).any(|msg| msg.role == "tool")
 	}
 }
 
 /// Simulates the Ctrl+C cleanup logic from main_loop.rs
-fn simulate_ctrl_c_cleanup(
-	session: &mut MockSession,
-	state: ProcessingState,
-	operation: Option<OperationContext>,
-) {
+fn simulate_ctrl_c_cleanup(session: &mut MockSession, state: ProcessingState, operation: Option<OperationContext>) {
 	match state {
 		ProcessingState::Idle | ProcessingState::ReadingInput => {
 			// Nothing to clean up - just reset and continue

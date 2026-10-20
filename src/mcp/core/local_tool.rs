@@ -128,10 +128,7 @@ pub fn discover(workdir: &Path) -> Vec<LocalToolMeta> {
 			continue;
 		}
 		if !is_executable(&path) {
-			crate::log_debug!(
-				"local_tool: '{}' not executable (chmod +x to enable)",
-				path.display()
-			);
+			crate::log_debug!("local_tool: '{}' not executable (chmod +x to enable)", path.display());
 			continue;
 		}
 
@@ -146,10 +143,7 @@ pub fn discover(workdir: &Path) -> Vec<LocalToolMeta> {
 /// MCP function definitions for all local tools in the current session's workdir.
 pub fn get_all_functions() -> Vec<McpFunction> {
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
-	discover(&workdir)
-		.into_iter()
-		.map(|t| t.to_function())
-		.collect()
+	discover(&workdir).into_iter().map(|t| t.to_function()).collect()
 }
 
 /// True if a tool with `name` exists in the current session's workdir.
@@ -163,17 +157,14 @@ pub fn is_local_tool(name: &str) -> bool {
 pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	let tools = discover(&workdir);
-	let tool = tools
-		.iter()
-		.find(|t| t.name == call.tool_name)
-		.ok_or_else(|| {
-			anyhow::anyhow!(
-				"local tool '{}' not found in {}/{}",
-				call.tool_name,
-				workdir.display(),
-				TOOLS_DIR
-			)
-		})?;
+	let tool = tools.iter().find(|t| t.name == call.tool_name).ok_or_else(|| {
+		anyhow::anyhow!(
+			"local tool '{}' not found in {}/{}",
+			call.tool_name,
+			workdir.display(),
+			TOOLS_DIR
+		)
+	})?;
 
 	let params_json = serde_json::to_string(&call.parameters).unwrap_or_else(|_| "{}".to_string());
 
@@ -207,22 +198,12 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 		loop {
 			match cmd.spawn() {
 				Ok(child) => break child,
-				Err(e)
-					if e.kind() == std::io::ErrorKind::ExecutableFileBusy
-						&& attempt < SPAWN_BUSY_RETRIES =>
-				{
+				Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < SPAWN_BUSY_RETRIES => {
 					attempt += 1;
 					crate::log_debug!("local_tool: '{}' busy, spawn retry {}", tool.name, attempt);
-					tokio::time::sleep(std::time::Duration::from_millis(SPAWN_BUSY_BACKOFF_MS))
-						.await;
+					tokio::time::sleep(std::time::Duration::from_millis(SPAWN_BUSY_BACKOFF_MS)).await;
 				}
-				Err(e) => {
-					return Err(anyhow::anyhow!(
-						"spawn '{}' failed: {}",
-						tool.path.display(),
-						e
-					))
-				}
+				Err(e) => return Err(anyhow::anyhow!("spawn '{}' failed: {}", tool.path.display(), e)),
 			}
 		}
 	};
@@ -238,23 +219,14 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 		child.wait_with_output(),
 	)
 	.await
-	.map_err(|_| {
-		anyhow::anyhow!(
-			"local tool '{}' timed out after {}s",
-			tool.name,
-			DEFAULT_TIMEOUT_SECS
-		)
-	})?
+	.map_err(|_| anyhow::anyhow!("local tool '{}' timed out after {}s", tool.name, DEFAULT_TIMEOUT_SECS))?
 	.map_err(|e| anyhow::anyhow!("wait for '{}' failed: {}", tool.name, e))?;
 
 	let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 	let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
 	if !output.status.success() {
-		let mut msg = format!(
-			"local tool '{}' exited with status {}",
-			tool.name, output.status
-		);
+		let mut msg = format!("local tool '{}' exited with status {}", tool.name, output.status);
 		if !stderr.is_empty() {
 			msg.push_str("\n[stderr]\n");
 			msg.push_str(stderr.trim_end());
@@ -263,11 +235,7 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 			msg.push_str("\n[stdout]\n");
 			msg.push_str(stdout.trim_end());
 		}
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			msg,
-		));
+		return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), msg));
 	}
 
 	let mut content = stdout;
@@ -328,8 +296,7 @@ fn is_valid_tool_name(s: &str) -> bool {
 	!s.is_empty()
 		&& !s.starts_with('-')
 		&& !s.starts_with('.')
-		&& s.chars()
-			.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+		&& s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn is_executable(p: &Path) -> bool {
@@ -439,11 +406,7 @@ fn parse_header(header: &str, path: &Path, name: &str) -> Result<LocalToolMeta> 
 					if let Some(p) = parse_param_line(val) {
 						params.push(p);
 					} else {
-						crate::log_debug!(
-							"local_tool: malformed @param in {}: '{}'",
-							path.display(),
-							val
-						);
+						crate::log_debug!("local_tool: malformed @param in {}: '{}'", path.display(), val);
 					}
 					current_tag = None;
 				}
@@ -462,10 +425,7 @@ fn parse_header(header: &str, path: &Path, name: &str) -> Result<LocalToolMeta> 
 
 	let description = description.trim().to_string();
 	if description.is_empty() {
-		return Err(anyhow::anyhow!(
-			"missing @description in {}",
-			path.display()
-		));
+		return Err(anyhow::anyhow!("missing @description in {}", path.display()));
 	}
 
 	Ok(LocalToolMeta {

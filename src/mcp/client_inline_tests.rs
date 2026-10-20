@@ -24,10 +24,7 @@ fn advertised_mcp3_capabilities_have_handlers() {
 		.as_ref()
 		.is_some_and(|extensions| extensions.contains_key(WATCH_RESOURCE_LINKS_EXTENSION)));
 	assert!(info.capabilities.sampling.is_none());
-	let elicitation = info
-		.capabilities
-		.elicitation
-		.expect("elicitation must be advertised");
+	let elicitation = info.capabilities.elicitation.expect("elicitation must be advertised");
 	assert!(elicitation.form.is_some());
 	assert!(elicitation.url.is_some());
 	assert!(info.capabilities.roots.is_none());
@@ -75,10 +72,7 @@ fn http_header_placeholders_resolve_from_environment() {
 	std::env::set_var(KEY, "secret-token");
 	let mut server = McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]);
 	if let McpServerConfig::Http { headers, .. } = &mut server {
-		headers.insert(
-			"Authorization".to_string(),
-			format!("Bearer {{{{ENV:{KEY}}}}}"),
-		);
+		headers.insert("Authorization".to_string(), format!("Bearer {{{{ENV:{KEY}}}}}"));
 	}
 
 	assert!(missing_env_keys(&server).is_empty());
@@ -101,10 +95,7 @@ fn authorization_header_selects_static_auth_without_discovery() {
 	assert_eq!(http_auth_source(&server), HttpAuthSource::StaticHeader);
 
 	let oauth_server = McpServerConfig::http("oauth", "https://example.com/mcp", 30, vec![]);
-	assert_eq!(
-		http_auth_source(&oauth_server),
-		HttpAuthSource::OAuthDiscovery
-	);
+	assert_eq!(http_auth_source(&oauth_server), HttpAuthSource::OAuthDiscovery);
 }
 
 #[tokio::test]
@@ -164,10 +155,7 @@ fn client_handler_legacy_retry_advertises_legacy_protocol() {
 		legacy: true,
 		..OctoClientHandler::new("legacy-server")
 	};
-	assert_eq!(
-		handler.get_info().protocol_version,
-		ProtocolVersion::V_2025_03_26
-	);
+	assert_eq!(handler.get_info().protocol_version, ProtocolVersion::V_2025_03_26);
 }
 
 /// Only per-request capabilities can carry a live context epoch: a legacy
@@ -232,11 +220,7 @@ fn missing_env_keys_collects_sorted_deduped_keys_from_all_fields() {
 		],
 		timeout_seconds: 30,
 		tools: vec![],
-		env: [(
-			"CHILD_VAR".to_string(),
-			"{{ENV:OCTOMIND_TEST_MISSING_ENV}}".to_string(),
-		)]
-		.into(),
+		env: [("CHILD_VAR".to_string(), "{{ENV:OCTOMIND_TEST_MISSING_ENV}}".to_string())].into(),
 		cwd: None,
 		auto_bind: None,
 	};
@@ -256,10 +240,7 @@ fn missing_env_keys_collects_sorted_deduped_keys_from_all_fields() {
 			"Bearer {{ENV:OCTOMIND_TEST_MISSING_HEADER}}".to_string(),
 		);
 	}
-	assert_eq!(
-		missing_env_keys(&http),
-		vec!["OCTOMIND_TEST_MISSING_HEADER"]
-	);
+	assert_eq!(missing_env_keys(&http), vec!["OCTOMIND_TEST_MISSING_HEADER"]);
 }
 
 #[serial_test::serial]
@@ -269,10 +250,7 @@ fn missing_env_keys_treats_empty_values_as_missing() {
 	std::env::set_var(KEY, "");
 	let mut server = McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]);
 	if let McpServerConfig::Http { headers, .. } = &mut server {
-		headers.insert(
-			"Authorization".to_string(),
-			format!("Bearer {{{{ENV:{KEY}}}}}"),
-		);
+		headers.insert("Authorization".to_string(), format!("Bearer {{{{ENV:{KEY}}}}}"));
 	}
 	assert_eq!(missing_env_keys(&server), vec![KEY]);
 
@@ -307,10 +285,7 @@ fn resolve_http_headers_passes_static_values_through() {
 		headers.insert("X-Custom".to_string(), "static-value".to_string());
 	}
 	let resolved = resolve_http_headers(&server).expect("static headers must resolve");
-	assert_eq!(
-		resolved.get("x-custom").expect("header must exist"),
-		"static-value"
-	);
+	assert_eq!(resolved.get("x-custom").expect("header must exist"), "static-value");
 }
 
 #[test]
@@ -325,9 +300,7 @@ fn resolve_http_headers_empty_for_servers_without_headers() {
 		cwd: None,
 		auto_bind: None,
 	};
-	assert!(resolve_http_headers(&stdin)
-		.expect("must succeed")
-		.is_empty());
+	assert!(resolve_http_headers(&stdin).expect("must succeed").is_empty());
 }
 
 #[test]
@@ -353,10 +326,7 @@ fn resolve_http_headers_rejects_invalid_header_value() {
 #[test]
 fn http_auth_source_defaults_to_oauth_discovery() {
 	let no_headers = McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]);
-	assert_eq!(
-		http_auth_source(&no_headers),
-		HttpAuthSource::OAuthDiscovery
-	);
+	assert_eq!(http_auth_source(&no_headers), HttpAuthSource::OAuthDiscovery);
 
 	let stdin = McpServerConfig::Stdin {
 		name: "local".to_string(),
@@ -373,14 +343,8 @@ fn http_auth_source_defaults_to_oauth_discovery() {
 
 #[test]
 fn http_auth_source_supports_debug_and_equality() {
-	assert_eq!(
-		format!("{:?}", HttpAuthSource::StaticHeader),
-		"StaticHeader"
-	);
-	assert_eq!(
-		format!("{:?}", HttpAuthSource::OAuthDiscovery),
-		"OAuthDiscovery"
-	);
+	assert_eq!(format!("{:?}", HttpAuthSource::StaticHeader), "StaticHeader");
+	assert_eq!(format!("{:?}", HttpAuthSource::OAuthDiscovery), "OAuthDiscovery");
 	assert_ne!(HttpAuthSource::StaticHeader, HttpAuthSource::OAuthDiscovery);
 }
 

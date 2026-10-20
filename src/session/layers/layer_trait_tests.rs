@@ -45,10 +45,7 @@ fn input_mode_from_str_parses_all_variants() {
 #[test]
 fn input_mode_from_str_rejects_unknown() {
 	let err = "everything".parse::<InputMode>().expect_err("must reject");
-	assert!(
-		err.contains("Unknown input mode"),
-		"unexpected error: {err}"
-	);
+	assert!(err.contains("Unknown input mode"), "unexpected error: {err}");
 }
 
 #[test]
@@ -64,24 +61,15 @@ fn output_mode_as_str_returns_variant_names() {
 fn output_mode_from_str_parses_all_variants() {
 	assert_eq!("none".parse::<OutputMode>().unwrap(), OutputMode::None);
 	assert_eq!("append".parse::<OutputMode>().unwrap(), OutputMode::Append);
-	assert_eq!(
-		"replace".parse::<OutputMode>().unwrap(),
-		OutputMode::Replace
-	);
+	assert_eq!("replace".parse::<OutputMode>().unwrap(), OutputMode::Replace);
 	assert_eq!("last".parse::<OutputMode>().unwrap(), OutputMode::Last);
-	assert_eq!(
-		"restart".parse::<OutputMode>().unwrap(),
-		OutputMode::Restart
-	);
+	assert_eq!("restart".parse::<OutputMode>().unwrap(), OutputMode::Restart);
 }
 
 #[test]
 fn output_mode_from_str_rejects_unknown() {
 	let err = "overwrite".parse::<OutputMode>().expect_err("must reject");
-	assert!(
-		err.contains("Unknown output mode"),
-		"unexpected error: {err}"
-	);
+	assert!(err.contains("Unknown output mode"), "unexpected error: {err}");
 }
 
 #[test]
@@ -92,20 +80,14 @@ fn output_role_as_str_returns_variant_names() {
 
 #[test]
 fn output_role_from_str_parses_both_variants() {
-	assert_eq!(
-		"assistant".parse::<OutputRole>().unwrap(),
-		OutputRole::Assistant
-	);
+	assert_eq!("assistant".parse::<OutputRole>().unwrap(), OutputRole::Assistant);
 	assert_eq!("user".parse::<OutputRole>().unwrap(), OutputRole::User);
 }
 
 #[test]
 fn output_role_from_str_rejects_unknown() {
 	let err = "system".parse::<OutputRole>().expect_err("must reject");
-	assert!(
-		err.contains("Unknown output role"),
-		"unexpected error: {err}"
-	);
+	assert!(err.contains("Unknown output role"), "unexpected error: {err}");
 }
 
 #[test]

@@ -57,7 +57,6 @@ async fn role_placeholder_falls_back_when_no_role_is_given() {
 
 #[tokio::test]
 async fn unknown_placeholders_are_left_alone() {
-	let out =
-		process_placeholders_async("keep {{NOT_A_PLACEHOLDER}} and {{CWD}}", Path::new("/x")).await;
+	let out = process_placeholders_async("keep {{NOT_A_PLACEHOLDER}} and {{CWD}}", Path::new("/x")).await;
 	assert_eq!(out, "keep {{NOT_A_PLACEHOLDER}} and /x");
 }

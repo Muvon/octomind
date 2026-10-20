@@ -63,14 +63,8 @@ pub struct PkcePair {
 	pub code_challenge: String,
 }
 
-pub fn build_authorization_url(
-	config: &OAuthConfig,
-	code_challenge: &str,
-	state: &str,
-	redirect_uri: &str,
-) -> String {
-	let mut url =
-		Url::parse(&config.authorization_url).expect("authorization_url should be validated");
+pub fn build_authorization_url(config: &OAuthConfig, code_challenge: &str, state: &str, redirect_uri: &str) -> String {
+	let mut url = Url::parse(&config.authorization_url).expect("authorization_url should be validated");
 	url.query_pairs_mut()
 		.append_pair("client_id", &config.client_id)
 		.append_pair("redirect_uri", redirect_uri)
@@ -163,16 +157,9 @@ pub async fn exchange_code_for_token(
 		.map_err(|e| format!("Network error: {}", e))?;
 
 	let status = response.status();
-	let text = response
-		.text()
-		.await
-		.map_err(|e| format!("Read error: {}", e))?;
+	let text = response.text().await.map_err(|e| format!("Read error: {}", e))?;
 
-	crate::log_debug!(
-		"Token exchange response - status: {}, body: {}",
-		status,
-		text
-	);
+	crate::log_debug!("Token exchange response - status: {}, body: {}", status, text);
 
 	if !status.is_success() {
 		// Try to parse OAuth error
@@ -195,8 +182,12 @@ pub async fn exchange_code_for_token(
 			crate::log_debug!("Failed to parse as JSON: {}, trying URL-encoded format", e);
 
 			let params: std::collections::HashMap<String, String> =
-				serde_urlencoded::from_str(&text)
-					.map_err(|parse_err| format!("Invalid response format (not JSON or URL-encoded): JSON error: {}, URL-encoded error: {}", e, parse_err))?;
+				serde_urlencoded::from_str(&text).map_err(|parse_err| {
+					format!(
+						"Invalid response format (not JSON or URL-encoded): JSON error: {}, URL-encoded error: {}",
+						e, parse_err
+					)
+				})?;
 
 			// Convert URL-encoded params to OAuthTokenResponse
 			let access_token = params
@@ -204,10 +195,7 @@ pub async fn exchange_code_for_token(
 				.ok_or_else(|| format!("Missing access_token in response: {}", text))?
 				.clone();
 
-			let token_type = params
-				.get("token_type")
-				.unwrap_or(&"Bearer".to_string())
-				.clone();
+			let token_type = params.get("token_type").unwrap_or(&"Bearer".to_string()).clone();
 
 			let expires_in = params
 				.get("expires_in")
@@ -231,10 +219,7 @@ pub async fn exchange_code_for_token(
 	}
 }
 
-pub async fn refresh_access_token(
-	config: &OAuthConfig,
-	refresh_token: &str,
-) -> Result<OAuthTokenResponse, String> {
+pub async fn refresh_access_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthTokenResponse, String> {
 	let client = reqwest::Client::new();
 
 	// GitHub requires JSON body
@@ -254,10 +239,7 @@ pub async fn refresh_access_token(
 		.map_err(|e| format!("Network error: {}", e))?;
 
 	let status = response.status();
-	let text = response
-		.text()
-		.await
-		.map_err(|e| format!("Read error: {}", e))?;
+	let text = response.text().await.map_err(|e| format!("Read error: {}", e))?;
 
 	if !status.is_success() {
 		return Err(format!("Token refresh failed: {} - {}", status, text));

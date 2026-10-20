@@ -259,10 +259,7 @@ fn opted_out(config: &crate::config::Config) -> bool {
 		return true;
 	}
 	match std::env::var(TELEMETRY_ENV) {
-		Ok(v) => matches!(
-			v.trim().to_ascii_lowercase().as_str(),
-			"0" | "false" | "off" | "no"
-		),
+		Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
 		Err(_) => !config.telemetry,
 	}
 }
@@ -363,17 +360,12 @@ pub(crate) fn api_error_kind(e: &anyhow::Error) -> &'static str {
 	let text = e.to_string().to_ascii_lowercase();
 	// A spent ChatGPT plan allowance arrives mid-stream without a 429 and its
 	// text says "use an API key instead" — it must not land in `auth`.
-	if text.contains("rate limit")
-		|| text.contains("429")
-		|| text.contains("subscription_sharing_usage_limit_exceeded")
+	if text.contains("rate limit") || text.contains("429") || text.contains("subscription_sharing_usage_limit_exceeded")
 	{
 		"rate_limit"
 	} else if text.contains("overloaded") || text.contains("529") {
 		"overloaded"
-	} else if text.contains("context length")
-		|| text.contains("context_length")
-		|| text.contains("too many tokens")
-	{
+	} else if text.contains("context length") || text.contains("context_length") || text.contains("too many tokens") {
 		"context_length"
 	} else if text.contains("401")
 		|| text.contains("403")
@@ -383,11 +375,7 @@ pub(crate) fn api_error_kind(e: &anyhow::Error) -> &'static str {
 		|| text.contains("sign in")
 	{
 		"auth"
-	} else if text.contains("500")
-		|| text.contains("502")
-		|| text.contains("503")
-		|| text.contains("520")
-	{
+	} else if text.contains("500") || text.contains("502") || text.contains("503") || text.contains("520") {
 		"server"
 	} else {
 		// Not a recognised provider condition — fall back to the transport-level
@@ -441,12 +429,7 @@ pub fn record_workflow(end: WorkflowEnd) {
 	push(Event {
 		name: "session",
 		ts: now(),
-		kind: if end.graph {
-			"workflow_graph"
-		} else {
-			"workflow"
-		}
-		.to_string(),
+		kind: if end.graph { "workflow_graph" } else { "workflow" }.to_string(),
 		agent: end.name.to_string(),
 		outcome: "ok",
 		duration_ms: end.duration_ms,
@@ -528,11 +511,7 @@ pub fn record_error(command: &str, kind: &'static str) {
 pub fn error_kind(e: &anyhow::Error) -> &'static str {
 	for cause in e.chain() {
 		if let Some(req) = cause.downcast_ref::<reqwest::Error>() {
-			return if req.is_timeout() {
-				"timeout"
-			} else {
-				"network"
-			};
+			return if req.is_timeout() { "timeout" } else { "network" };
 		}
 		if cause.downcast_ref::<std::io::Error>().is_some() {
 			return "io";

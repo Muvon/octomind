@@ -51,11 +51,7 @@ fn providers_config_toml_round_trip() {
 		..ProvidersConfig::default()
 	};
 	let serialized = toml::to_string(&config).expect("failed to serialize ProvidersConfig");
-	let deserialized: ProvidersConfig =
-		toml::from_str(&serialized).expect("failed to deserialize ProvidersConfig");
-	assert_eq!(
-		deserialized.openrouter.api_key,
-		Some("sk-or-key".to_string())
-	);
+	let deserialized: ProvidersConfig = toml::from_str(&serialized).expect("failed to deserialize ProvidersConfig");
+	assert_eq!(deserialized.openrouter.api_key, Some("sk-or-key".to_string()));
 	assert_eq!(deserialized.openai.api_key, None);
 }

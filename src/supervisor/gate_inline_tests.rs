@@ -14,8 +14,7 @@
 
 use super::*;
 
-static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> =
-	std::sync::LazyLock::new(RenderedEvidence::default);
+static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(RenderedEvidence::default);
 
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
@@ -25,10 +24,7 @@ const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expe
 #[test]
 fn pass_parsed() {
 	let response = format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>");
-	assert_eq!(
-		text_report(&response).verdict(0, &HashSet::new()),
-		GateVerdict::Pass
-	);
+	assert_eq!(text_report(&response).verdict(0, &HashSet::new()), GateVerdict::Pass);
 }
 
 #[test]
@@ -91,20 +87,14 @@ fn unmatched_condition_outranks_holistic_pass() {
 {CLEAN_SHAPES}
 <verdict>PASS</verdict>"#
 	);
-	assert_eq!(
-		text_report(&all_matched).verdict(1, &HashSet::new()),
-		GateVerdict::Pass
-	);
+	assert_eq!(text_report(&all_matched).verdict(1, &HashSet::new()), GateVerdict::Pass);
 }
 
 #[test]
 fn git_diff_skips_undiffable_paths() {
 	// A path outside the repository must not blind the whole diff — the
 	// remaining (diffable) paths keep their hunks.
-	let d = git_diff(&[
-		"/definitely/outside/the/repo.xyz".to_string(),
-		"Cargo.toml".to_string(),
-	]);
+	let d = git_diff(&["/definitely/outside/the/repo.xyz".to_string(), "Cargo.toml".to_string()]);
 	// Cargo.toml may be clean (empty diff) — the invariant under test is
 	// only that the call did not bail out entirely on the stray path.
 	assert!(d.is_empty() || d.contains("Cargo.toml") || !d.contains("outside"));
@@ -137,23 +127,18 @@ fn gate_input_keeps_original_resolution_and_plan_separate() {
 		evidence_conditions: &[],
 	});
 
-	let request_end = rendered
-		.find("</current_user_turn>")
-		.expect("request boundary");
+	let request_end = rendered.find("</current_user_turn>").expect("request boundary");
 	let resolution_start = rendered
 		.find("<task_resolution scope=\"follow_up\"")
 		.expect("resolution section");
 	let plan_start = rendered.find("<active_plan>").expect("plan section");
-	let result_start = rendered
-		.find("<agent_final_result")
-		.expect("result section");
+	let result_start = rendered.find("<agent_final_result").expect("result section");
 
 	assert!(request_end < resolution_start);
 	assert!(resolution_start < plan_start);
 	assert!(plan_start < result_start);
 	assert!(!rendered[..request_end].contains("Schedule the status check"));
-	assert!(rendered[resolution_start..plan_start]
-		.contains("Schedule the status check every two hours"));
+	assert!(rendered[resolution_start..plan_start].contains("Schedule the status check every two hours"));
 }
 
 #[test]
@@ -250,11 +235,9 @@ fn gate_input_names_the_status_the_turn_stopped_on() {
 			evidence_conditions: &[],
 		})
 	};
-	assert!(render(Some(crate::supervisor::detect::SelfReport::Blocked))
-		.contains("<agent_stop status=\"blocked\" />"));
+	assert!(render(Some(crate::supervisor::detect::SelfReport::Blocked)).contains("<agent_stop status=\"blocked\" />"));
 	assert!(
-		render(Some(crate::supervisor::detect::SelfReport::NeedInput))
-			.contains("<agent_stop status=\"need_input\" />")
+		render(Some(crate::supervisor::detect::SelfReport::NeedInput)).contains("<agent_stop status=\"need_input\" />")
 	);
 	assert!(render(None).contains("<agent_stop status=\"none\" />"));
 }
@@ -262,20 +245,8 @@ fn gate_input_names_the_status_the_turn_stopped_on() {
 #[test]
 fn ledger_renders_mutations_reads_and_errors() {
 	let mut l = EvidenceLedger::default();
-	l.record(
-		"edit",
-		&serde_json::json!({"path":"src/a.rs"}),
-		true,
-		false,
-		100,
-	);
-	l.record(
-		"shell",
-		&serde_json::json!({"command":"cargo test"}),
-		false,
-		true,
-		2048,
-	);
+	l.record("edit", &serde_json::json!({"path":"src/a.rs"}), true, false, 100);
+	l.record("shell", &serde_json::json!({"command":"cargo test"}), false, true, 2048);
 	let r = l.render();
 	assert!(r.contains(r#"#0 [mut] edit {"path":"src/a.rs"} → ok (100b)"#));
 	assert!(r.contains(r#"#1 [read] shell {"command":"cargo test"} → ERROR (2.0k)"#));
@@ -337,13 +308,7 @@ fn ledger_caps_and_counts_dropped() {
 fn ledger_truncates_long_args() {
 	let mut l = EvidenceLedger::default();
 	let big = "x".repeat(500);
-	l.record(
-		"write",
-		&serde_json::json!({ "content": big }),
-		true,
-		false,
-		1,
-	);
+	l.record("write", &serde_json::json!({ "content": big }), true, false, 1);
 	assert!(l.render().contains('…'));
 }
 
@@ -411,36 +376,12 @@ fn empty_ledger_renders_empty() {
 #[test]
 fn ledger_tracks_mutated_paths_and_last_command() {
 	let mut l = EvidenceLedger::default();
-	l.record(
-		"text_editor",
-		&serde_json::json!({"path":"src/a.rs"}),
-		true,
-		false,
-		1,
-	);
+	l.record("text_editor", &serde_json::json!({"path":"src/a.rs"}), true, false, 1);
 	// Duplicate path and failed mutation don't add entries.
-	l.record(
-		"text_editor",
-		&serde_json::json!({"path":"src/a.rs"}),
-		true,
-		false,
-		1,
-	);
-	l.record(
-		"write",
-		&serde_json::json!({"file_path":"src/b.rs"}),
-		true,
-		true,
-		1,
-	);
+	l.record("text_editor", &serde_json::json!({"path":"src/a.rs"}), true, false, 1);
+	l.record("write", &serde_json::json!({"file_path":"src/b.rs"}), true, true, 1);
 	// Reads never add paths.
-	l.record(
-		"view",
-		&serde_json::json!({"path":"src/c.rs"}),
-		false,
-		false,
-		1,
-	);
+	l.record("view", &serde_json::json!({"path":"src/c.rs"}), false, false, 1);
 	assert_eq!(l.mutated_paths(), &["src/a.rs".to_string()][..]);
 
 	l.record_command_output("cargo test", "ok. 12 passed");
@@ -474,13 +415,7 @@ fn ledger_collects_all_pathish_mutation_params() {
 		false,
 		1,
 	);
-	l.record(
-		"apply",
-		&serde_json::json!({"files":["c.py","d.py"]}),
-		true,
-		false,
-		1,
-	);
+	l.record("apply", &serde_json::json!({"files":["c.py","d.py"]}), true, false, 1);
 	assert_eq!(
 		l.mutated_paths(),
 		&[
@@ -579,11 +514,7 @@ fn temp_repo_with_dirty_file() -> tempfile::TempDir {
 		"-m",
 		"seed",
 	]);
-	std::fs::write(
-		repo.join("tracked.txt"),
-		"original line\nchanged this task\n",
-	)
-	.expect("dirty the file");
+	std::fs::write(repo.join("tracked.txt"), "original line\nchanged this task\n").expect("dirty the file");
 	tmp
 }
 
@@ -661,20 +592,13 @@ fn git_diff_fair_shares_the_budget_across_files() {
 
 	clear_repo_env(old_dir, old_tree);
 	for name in ["big_a.txt", "big_b.txt", "big_c.txt"] {
-		assert!(
-			diff.contains(name),
-			"every changed file stays visible: {name}"
-		);
+		assert!(diff.contains(name), "every changed file stays visible: {name}");
 	}
 	assert!(
 		diff.contains("(diff of big_a.txt truncated to fit)"),
 		"an over-budget file is truncated with an explicit marker"
 	);
-	assert!(
-		diff.len() <= GT_DIFF_MAX + 512,
-		"the cap holds: {}",
-		diff.len()
-	);
+	assert!(diff.len() <= GT_DIFF_MAX + 512, "the cap holds: {}", diff.len());
 }
 
 #[test]
@@ -696,11 +620,7 @@ fn git_status_caps_entries_and_names_the_overflow() {
 
 	clear_repo_env(old_dir, old_tree);
 	let lines = status.lines().count();
-	assert_eq!(
-		lines,
-		GT_STATUS_MAX_LINES + 1,
-		"40 entries plus the overflow note"
-	);
+	assert_eq!(lines, GT_STATUS_MAX_LINES + 1, "40 entries plus the overflow note");
 	assert!(
 		status.contains("(+5 more entries)"),
 		"the overflow must be counted, not silently dropped: {status}"
@@ -752,9 +672,5 @@ fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 		truth.contains("(ground truth truncated)"),
 		"a head that alone exceeds the total budget is cut with a marker"
 	);
-	assert!(
-		truth.len() <= GT_TOTAL_MAX + 64,
-		"the total cap holds: {}",
-		truth.len()
-	);
+	assert!(truth.len() <= GT_TOTAL_MAX + 64, "the total cap holds: {}", truth.len());
 }

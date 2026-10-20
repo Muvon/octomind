@@ -154,8 +154,8 @@ pub async fn gather_system_info() -> SystemInfo {
 
 	// Get shell binaries versions in parallel
 	let commands = vec![
-		"awk", "sed", "rg", "rustc", "php", "node", "npm", "python3", "python", "go", "java",
-		"gcc", "clang", "git", "docker", "make", "curl", "wget", "tar", "zip", "unzip",
+		"awk", "sed", "rg", "rustc", "php", "node", "npm", "python3", "python", "go", "java", "gcc", "clang", "git",
+		"docker", "make", "curl", "wget", "tar", "zip", "unzip",
 	];
 
 	let version_futures: Vec<_> = commands
@@ -235,10 +235,7 @@ async fn get_os_info() -> String {
 				let os_release = String::from_utf8_lossy(&output.stdout);
 				for line in os_release.lines() {
 					if line.starts_with("PRETTY_NAME=") {
-						let name = line
-							.replace("PRETTY_NAME=", "")
-							.trim_matches('"')
-							.to_string();
+						let name = line.replace("PRETTY_NAME=", "").trim_matches('"').to_string();
 						os_parts.push(format!("distribution: {}", name));
 						break;
 					}
@@ -282,11 +279,7 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 }
 
 // Extended version with optional role support for welcome messages and other role-specific content
-pub async fn process_placeholders_async_with_role(
-	prompt: &str,
-	project_dir: &Path,
-	role: Option<&str>,
-) -> String {
+pub async fn process_placeholders_async_with_role(prompt: &str, project_dir: &Path, role: Option<&str>) -> String {
 	let mut processed_prompt = protect_escaped_braces(prompt);
 
 	// Check which placeholders are actually in the prompt to avoid unnecessary work
@@ -357,10 +350,7 @@ pub async fn process_placeholders_async_with_role(
 			system_context.push_str("# System Information\n\n");
 			system_context.push_str(&format!("**Shell**: {}\n", info.shell_info));
 			system_context.push_str(&format!("**Operating System**: {}\n", info.os_info));
-			system_context.push_str(&format!(
-				"**Current Directory**: {}\n",
-				project_dir.to_string_lossy()
-			));
+			system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
 			system_context.push_str("\n## Available Development Tools\n\n");
 			system_context.push_str(&info.binaries);
 
@@ -417,10 +407,7 @@ pub async fn process_placeholders_async_with_role(
 
 		if needs_git_tree {
 			let git_tree = if let Some(ref file_tree) = context.file_tree {
-				format!(
-					"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
-					file_tree
-				)
+				format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
 			} else {
 				String::new()
 			};
@@ -429,10 +416,7 @@ pub async fn process_placeholders_async_with_role(
 
 		if needs_readme {
 			let readme = if let Some(ref readme) = context.readme_content {
-				format!(
-					"\n\n==== README ====\n\n{}\n\n==== END README ====\n",
-					readme
-				)
+				format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
 			} else {
 				String::new()
 			};
@@ -464,10 +448,7 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	system_context.push_str(&format!("**Date**: {}\n", system_info.date_with_timezone));
 	system_context.push_str(&format!("**Shell**: {}\n", system_info.shell_info));
 	system_context.push_str(&format!("**Operating System**: {}\n", system_info.os_info));
-	system_context.push_str(&format!(
-		"**Current Directory**: {}\n",
-		project_dir.to_string_lossy()
-	));
+	system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
 	system_context.push_str("\n## Available Development Tools\n\n");
 	system_context.push_str(&system_info.binaries);
 
@@ -490,20 +471,14 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	// Add all placeholders
 	placeholders.insert("{{SYSTEM}}".to_string(), system_section); // System info: date, shell, OS, binaries, CWD
 	placeholders.insert("{{CONTEXT}}".to_string(), context_section); // Project info: README, git status, git tree
-	placeholders.insert(
-		"{{CWD}}".to_string(),
-		project_dir.to_string_lossy().to_string(),
-	);
+	placeholders.insert("{{CWD}}".to_string(), project_dir.to_string_lossy().to_string());
 	placeholders.insert("{{DATE}}".to_string(), system_info.date_with_timezone);
 	placeholders.insert("{{SHELL}}".to_string(), system_info.shell_info);
 	placeholders.insert("{{OS}}".to_string(), system_info.os_info);
 	placeholders.insert("{{BINARIES}}".to_string(), system_info.binaries);
 	placeholders.insert(
 		"{{HOME}}".to_string(),
-		dirs::home_dir()
-			.unwrap_or_default()
-			.to_string_lossy()
-			.to_string(),
+		dirs::home_dir().unwrap_or_default().to_string_lossy().to_string(),
 	);
 
 	// Add specific parts of the context as individual placeholders
@@ -522,10 +497,7 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	placeholders.insert(
 		"{{GIT_TREE}}".to_string(),
 		if let Some(file_tree) = &project_context.file_tree {
-			format!(
-				"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
-				file_tree
-			)
+			format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
 		} else {
 			String::new()
 		},
@@ -534,10 +506,7 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	placeholders.insert(
 		"{{README}}".to_string(),
 		if let Some(readme) = &project_context.readme_content {
-			format!(
-				"\n\n==== README ====\n\n{}\n\n==== END README ====\n",
-				readme
-			)
+			format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
 		} else {
 			String::new()
 		},

@@ -22,10 +22,7 @@ fn test_session_no_id_valid() {
 	let msg: ClientMessage = serde_json::from_str(json).unwrap();
 	assert!(matches!(
 		msg,
-		ClientMessage::Session(SessionMessage {
-			session_id: None,
-			..
-		})
+		ClientMessage::Session(SessionMessage { session_id: None, .. })
 	));
 	assert!(msg.validate().is_ok());
 }
@@ -55,10 +52,7 @@ fn test_session_roundtrip() {
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"session\""));
 	assert!(json.contains("my-session"));
-	assert!(
-		!json.contains("cwd"),
-		"an absent cwd must not appear on the wire"
-	);
+	assert!(!json.contains("cwd"), "an absent cwd must not appear on the wire");
 }
 
 #[test]
@@ -149,10 +143,7 @@ fn test_message_roundtrip() {
 		attachments: Vec::new(),
 	});
 	let json = serde_json::to_string(&msg).unwrap();
-	assert_eq!(
-		json,
-		r#"{"type":"message","session_id":"sess_123","content":"Hello"}"#
-	);
+	assert_eq!(json, r#"{"type":"message","session_id":"sess_123","content":"Hello"}"#);
 }
 
 #[test]
@@ -295,10 +286,9 @@ fn test_server_message_error_serialization() {
 
 #[test]
 fn test_request_id_validation_and_ack_serialization() {
-	let msg: ClientMessage = serde_json::from_str(
-		r#"{"type":"message","request_id":"req-1","session_id":"sess_123","content":"Hello"}"#,
-	)
-	.unwrap();
+	let msg: ClientMessage =
+		serde_json::from_str(r#"{"type":"message","request_id":"req-1","session_id":"sess_123","content":"Hello"}"#)
+			.unwrap();
 	assert!(msg.validate().is_ok());
 	assert_eq!(msg.request_id(), Some("req-1"));
 	assert_eq!(msg.message_type(), "message");
@@ -317,8 +307,7 @@ fn test_request_id_validation_and_ack_serialization() {
 #[test]
 fn test_session_ack_advertises_message_attachments() {
 	let msg: ClientMessage =
-		serde_json::from_str(r#"{"type":"session","request_id":"bind-1","session_id":"sess_123"}"#)
-			.unwrap();
+		serde_json::from_str(r#"{"type":"session","request_id":"bind-1","session_id":"sess_123"}"#).unwrap();
 	let ack = ServerMessage::ack(&msg);
 	let json = serde_json::to_value(&ack).unwrap();
 	assert_eq!(
@@ -340,10 +329,7 @@ fn test_empty_request_id_fails_validate() {
 
 #[test]
 fn test_error_for_request_serialization() {
-	let msg = ServerMessage::error_for_request(
-		"content cannot be empty".to_string(),
-		Some("req-2".to_string()),
-	);
+	let msg = ServerMessage::error_for_request("content cannot be empty".to_string(), Some("req-2".to_string()));
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"error\""));
 	assert!(json.contains("\"request_id\":\"req-2\""));
@@ -458,14 +444,8 @@ fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
 #[test]
 fn cancel_and_close_frames_parse_validate_and_ack_with_their_own_type() {
 	for (frame, kind) in [
-		(
-			r#"{"type":"cancel","session_id":"s1","request_id":"r1"}"#,
-			"cancel",
-		),
-		(
-			r#"{"type":"close","session_id":"s1","request_id":"r1"}"#,
-			"close",
-		),
+		(r#"{"type":"cancel","session_id":"s1","request_id":"r1"}"#, "cancel"),
+		(r#"{"type":"close","session_id":"s1","request_id":"r1"}"#, "close"),
 	] {
 		let msg: ClientMessage = serde_json::from_str(frame).expect("frame parses");
 		msg.validate().expect("frame is valid");
@@ -474,10 +454,7 @@ fn cancel_and_close_frames_parse_validate_and_ack_with_their_own_type() {
 		assert_eq!(msg.request_id(), Some("r1"));
 		let ack = serde_json::to_value(ServerMessage::ack(&msg)).unwrap();
 		assert_eq!(ack["message_type"], kind);
-		assert!(
-			ack.get("capabilities").is_none(),
-			"only binds carry capabilities"
-		);
+		assert!(ack.get("capabilities").is_none(), "only binds carry capabilities");
 	}
 
 	for frame in [
@@ -485,19 +462,14 @@ fn cancel_and_close_frames_parse_validate_and_ack_with_their_own_type() {
 		r#"{"type":"close","session_id":""}"#,
 	] {
 		let msg: ClientMessage = serde_json::from_str(frame).expect("frame parses");
-		assert_eq!(
-			msg.validate().unwrap_err(),
-			"session_id cannot be empty",
-			"{frame}"
-		);
+		assert_eq!(msg.validate().unwrap_err(), "session_id cannot be empty", "{frame}");
 	}
 }
 
 #[test]
 fn session_bind_carries_an_optional_role_that_must_not_be_blank() {
 	let msg: ClientMessage =
-		serde_json::from_str(r#"{"type":"session","session_id":"s","role":"octoweb:assistant"}"#)
-			.unwrap();
+		serde_json::from_str(r#"{"type":"session","session_id":"s","role":"octoweb:assistant"}"#).unwrap();
 	match &msg {
 		ClientMessage::Session(bind) => {
 			assert_eq!(bind.role.as_deref(), Some("octoweb:assistant"))
@@ -507,10 +479,7 @@ fn session_bind_carries_an_optional_role_that_must_not_be_blank() {
 	msg.validate().expect("a named role is valid");
 
 	let blank: ClientMessage = serde_json::from_str(r#"{"type":"session","role":"  "}"#).unwrap();
-	assert_eq!(
-		blank.validate().unwrap_err(),
-		"role cannot be empty when provided"
-	);
+	assert_eq!(blank.validate().unwrap_err(), "role cannot be empty when provided");
 
 	// Clients that predate the field send none; it serializes away when unset.
 	let bare: ClientMessage = serde_json::from_str(r#"{"type":"session"}"#).unwrap();
@@ -582,23 +551,15 @@ fn test_unknown_type_fails_deserialize() {
 #[test]
 fn request_id_longer_than_256_bytes_is_rejected() {
 	let long_id = "x".repeat(257);
-	let json = format!(
-		r#"{{"type":"command","session_id":"s","command":"info","request_id":"{long_id}"}}"#
-	);
+	let json = format!(r#"{{"type":"command","session_id":"s","command":"info","request_id":"{long_id}"}}"#);
 	let msg: ClientMessage = serde_json::from_str(&json).expect("parse");
-	let error = msg
-		.validate()
-		.expect_err("257 bytes exceeds the documented maximum");
+	let error = msg.validate().expect_err("257 bytes exceeds the documented maximum");
 	assert!(error.contains("256"), "got: {error}");
 
 	let exact = "x".repeat(256);
-	let json =
-		format!(r#"{{"type":"command","session_id":"s","command":"info","request_id":"{exact}"}}"#);
+	let json = format!(r#"{{"type":"command","session_id":"s","command":"info","request_id":"{exact}"}}"#);
 	let msg: ClientMessage = serde_json::from_str(&json).expect("parse");
-	assert!(
-		msg.validate().is_ok(),
-		"exactly 256 bytes is the documented maximum"
-	);
+	assert!(msg.validate().is_ok(), "exactly 256 bytes is the documented maximum");
 }
 
 // ---- command_status ----
@@ -667,14 +628,8 @@ async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
 				"ws-info-accounting".into(),
 			)))
 			.unwrap();
-			assert_eq!(
-				status["data"]["supervisor_accounting"],
-				cost["supervisor_accounting"]
-			);
-			assert_eq!(
-				cost["supervisor_accounting"]["mechanics"]["condense"]["api_ms"],
-				700
-			);
+			assert_eq!(status["data"]["supervisor_accounting"], cost["supervisor_accounting"]);
+			assert_eq!(cost["supervisor_accounting"]["mechanics"]["condense"]["api_ms"], 700);
 			assert_eq!(cost["aux_output_tokens"], 51);
 			assert_eq!(cost["aux_cost"], 0.125);
 		})

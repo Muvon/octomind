@@ -56,9 +56,7 @@ fn gzip_emits_magic_bytes_and_round_trips() {
 		);
 		let mut decoder = flate2::read::GzDecoder::new(compressed.as_slice());
 		let mut out = Vec::new();
-		decoder
-			.read_to_end(&mut out)
-			.expect("gzip stream must decode");
+		decoder.read_to_end(&mut out).expect("gzip stream must decode");
 		assert_eq!(out.as_slice(), input);
 	}
 }
@@ -71,10 +69,7 @@ fn extract_title_returns_first_user_message() {
 		assistant_line("I can help with that."),
 		user_line("Fix the login bug"),
 	);
-	assert_eq!(
-		extract_title(jsonl.as_bytes()),
-		Some("Fix the login bug".to_string())
-	);
+	assert_eq!(extract_title(jsonl.as_bytes()), Some("Fix the login bug".to_string()));
 }
 
 #[test]
@@ -109,8 +104,5 @@ fn extract_title_truncates_to_200_chars() {
 #[test]
 fn extract_title_takes_only_the_first_line() {
 	let jsonl = format!("{}\n", user_line("first line\nsecond line"));
-	assert_eq!(
-		extract_title(jsonl.as_bytes()),
-		Some("first line".to_string())
-	);
+	assert_eq!(extract_title(jsonl.as_bytes()), Some("first line".to_string()));
 }

@@ -63,10 +63,7 @@ pub fn write_spill(tool_name: &str, content: &str) -> Option<PathBuf> {
 	match std::fs::write(&path, content) {
 		Ok(()) => Some(path),
 		Err(e) => {
-			crate::log_debug!(
-				"spill write failed ({}), falling back to lossy truncation",
-				e
-			);
+			crate::log_debug!("spill write failed ({}), falling back to lossy truncation", e);
 			None
 		}
 	}

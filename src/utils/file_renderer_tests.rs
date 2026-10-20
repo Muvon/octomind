@@ -94,21 +94,9 @@ fn test_expand_context_blocks() {
 	let has_line2 = result.contains("2: line 2") || result.contains("2: line 2\r");
 	let has_line3 = result.contains("3: line 3") || result.contains("3: line 3\r");
 
-	assert!(
-		has_line1,
-		"Result should contain '1: line 1'. Result: {}",
-		result
-	);
-	assert!(
-		has_line2,
-		"Result should contain '2: line 2'. Result: {}",
-		result
-	);
-	assert!(
-		!has_line3,
-		"Result should not contain '3: line 3'. Result: {}",
-		result
-	);
+	assert!(has_line1, "Result should contain '1: line 1'. Result: {}", result);
+	assert!(has_line2, "Result should contain '2: line 2'. Result: {}", result);
+	assert!(!has_line3, "Result should not contain '3: line 3'. Result: {}", result);
 
 	// Original context tags should be replaced
 	assert!(
@@ -134,14 +122,10 @@ fn test_expand_context_blocks() {
 	assert!(result_multi.contains("Text3"));
 
 	// Check for line content with flexible matching
-	let multi_has_line1 =
-		result_multi.contains("1: line 1") || result_multi.contains("1: line 1\r");
-	let multi_has_line2 =
-		result_multi.contains("2: line 2") || result_multi.contains("2: line 2\r");
-	let multi_has_line3 =
-		result_multi.contains("3: line 3") || result_multi.contains("3: line 3\r");
-	let multi_has_line4 =
-		result_multi.contains("4: line 4") || result_multi.contains("4: line 4\r");
+	let multi_has_line1 = result_multi.contains("1: line 1") || result_multi.contains("1: line 1\r");
+	let multi_has_line2 = result_multi.contains("2: line 2") || result_multi.contains("2: line 2\r");
+	let multi_has_line3 = result_multi.contains("3: line 3") || result_multi.contains("3: line 3\r");
+	let multi_has_line4 = result_multi.contains("4: line 4") || result_multi.contains("4: line 4\r");
 
 	assert!(
 		multi_has_line1,
@@ -261,13 +245,7 @@ fn test_render_files_as_text() {
 #[test]
 fn test_xml_escaping() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content(
-		"src/test.rs",
-		1,
-		1,
-		vec!["1: let x = \"<test>\" & 'value';"],
-		None,
-	);
+	let content = create_test_file_content("src/test.rs", 1, 1, vec!["1: let x = \"<test>\" & 'value';"], None);
 	file_contents.insert("src/test.rs".to_string(), vec![content]);
 
 	let result = render_files_as_xml(&file_contents);
@@ -281,13 +259,7 @@ fn test_xml_escaping() {
 #[test]
 fn test_render_error_xml() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content(
-		"missing.rs",
-		1,
-		10,
-		vec![],
-		Some("File not found: missing.rs"),
-	);
+	let content = create_test_file_content("missing.rs", 1, 10, vec![], Some("File not found: missing.rs"));
 	file_contents.insert("missing.rs".to_string(), vec![content]);
 
 	let result = render_files_as_xml(&file_contents);
@@ -300,13 +272,7 @@ fn test_render_error_xml() {
 #[test]
 fn test_render_error_text() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content(
-		"missing.rs",
-		1,
-		10,
-		vec![],
-		Some("File not found: missing.rs"),
-	);
+	let content = create_test_file_content("missing.rs", 1, 10, vec![], Some("File not found: missing.rs"));
 	file_contents.insert("missing.rs".to_string(), vec![content]);
 
 	let result = render_files_as_text(&file_contents);

@@ -58,7 +58,7 @@ The shipped root settings begin with the following. Edit these existing keys bef
 them beneath `[model]`. Leave `version` to the migration system.
 
 ```toml
-version = 13
+version = 22
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false

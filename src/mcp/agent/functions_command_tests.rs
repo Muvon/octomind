@@ -28,8 +28,7 @@ fn agent_call(tool_name: &str, params: serde_json::Value) -> McpToolCall {
 
 fn test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -76,10 +75,7 @@ async fn test_agent_tool_validation_arms() {
 
 	// Agent that exists neither in config nor as a dynamic agent
 	let result = execute_agent_command(
-		&agent_call(
-			"agent___functest_nonexistent",
-			serde_json::json!({"task": "do it"}),
-		),
+		&agent_call("agent___functest_nonexistent", serde_json::json!({"task": "do it"})),
 		&config,
 		None,
 	)
@@ -158,8 +154,7 @@ fn write_agent_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 	use std::os::unix::fs::PermissionsExt;
 	let path = dir.join("fake-agent.sh");
 	std::fs::write(&path, format!("#!/bin/sh\n{body}")).expect("write fake agent script");
-	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-		.expect("make fake agent script executable");
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("make fake agent script executable");
 	path
 }
 
@@ -224,10 +219,7 @@ async fn async_config_agent_without_job_manager_is_error() {
 	// execution must refuse instead of silently running synchronously.
 	let config = config_with_agent("octomind-test-no-such-binary");
 	let result = execute_agent_command(
-		&agent_call(
-			"agent_scripted",
-			serde_json::json!({"task": "x", "async": true}),
-		),
+		&agent_call("agent_scripted", serde_json::json!({"task": "x", "async": true})),
 		&config,
 		None,
 	)
@@ -258,10 +250,7 @@ async fn async_config_agent_runs_to_completion_in_background() {
 	crate::session::context::with_session_id(sid, async {
 		init_job_manager();
 		let result = execute_agent_command(
-			&agent_call(
-				"agent_scripted",
-				serde_json::json!({"task": "x", "async": true}),
-			),
+			&agent_call("agent_scripted", serde_json::json!({"task": "x", "async": true})),
 			&config,
 			None,
 		)
@@ -272,10 +261,7 @@ async fn async_config_agent_runs_to_completion_in_background() {
 
 		let manager = get_job_manager().expect("session job manager");
 		let completed = manager.wait_all().await;
-		assert_eq!(
-			completed, 1,
-			"the background job must complete and be reaped"
-		);
+		assert_eq!(completed, 1, "the background job must complete and be reaped");
 		assert_eq!(manager.active_count(), 0, "the slot must be released");
 	})
 	.await;
@@ -292,10 +278,7 @@ async fn async_config_agent_rejects_when_job_limit_is_reached() {
 		while manager.try_acquire().is_ok() {}
 		let config = config_with_agent("octomind-test-no-such-binary");
 		let result = execute_agent_command(
-			&agent_call(
-				"agent_scripted",
-				serde_json::json!({"task": "x", "async": true}),
-			),
+			&agent_call("agent_scripted", serde_json::json!({"task": "x", "async": true})),
 			&config,
 			None,
 		)
@@ -337,8 +320,7 @@ async fn dynamic_agent_conflicting_with_config_agent_is_ambiguous() {
 	let config = config_with_agent("octomind acp --role scripted");
 	let sid = "__agenttest_clash".to_string();
 	crate::session::context::with_session_id(sid, async {
-		crate::mcp::runtime::dynamic_agents::register_agent(dyn_agent("scripted"))
-			.expect("register dynamic agent");
+		crate::mcp::runtime::dynamic_agents::register_agent(dyn_agent("scripted")).expect("register dynamic agent");
 		crate::mcp::runtime::dynamic_agents::enable_agent("scripted").expect("enable");
 		let result = execute_agent_command(
 			&agent_call("agent_scripted", serde_json::json!({"task": "x"})),
@@ -364,17 +346,13 @@ async fn async_dynamic_agent_rejects_when_job_limit_is_reached() {
 	let sid = "__agenttest_dynlimit".to_string();
 	crate::session::context::with_session_id(sid, async {
 		init_job_manager();
-		crate::mcp::runtime::dynamic_agents::register_agent(dyn_agent("dynlimited"))
-			.expect("register dynamic agent");
+		crate::mcp::runtime::dynamic_agents::register_agent(dyn_agent("dynlimited")).expect("register dynamic agent");
 		crate::mcp::runtime::dynamic_agents::enable_agent("dynlimited").expect("enable");
 		let manager = get_job_manager().expect("session job manager");
 		while manager.try_acquire().is_ok() {}
 		let config = test_config();
 		let result = execute_agent_command(
-			&agent_call(
-				"agent_dynlimited",
-				serde_json::json!({"task": "x", "async": true}),
-			),
+			&agent_call("agent_dynlimited", serde_json::json!({"task": "x", "async": true})),
 			&config,
 			None,
 		)
@@ -401,10 +379,7 @@ fn build_agent_config_without_server_refs_disables_mcp() {
 	let agent = dyn_agent("nomcp");
 	let merged = build_agent_config(&agent, &base);
 	assert!(merged.mcp.servers.is_empty(), "servers must be cleared");
-	assert!(
-		merged.mcp.allowed_tools.is_empty(),
-		"tools filter must be cleared"
-	);
+	assert!(merged.mcp.allowed_tools.is_empty(), "tools filter must be cleared");
 	assert_eq!(merged.model, base.model, "model must be untouched");
 }
 
@@ -421,11 +396,7 @@ fn build_agent_config_resolves_refs_filters_tools_and_overrides_model() {
 	agent.model = Some("openai:gpt-4o".to_string());
 	let merged = build_agent_config(&agent, &base);
 	let names: Vec<&str> = merged.mcp.servers.iter().map(|s| s.name()).collect();
-	assert_eq!(
-		names,
-		vec!["alpha"],
-		"only the referenced server is enabled"
-	);
+	assert_eq!(names, vec!["alpha"], "only the referenced server is enabled");
 	assert_eq!(merged.mcp.allowed_tools, vec!["alpha:tool_a".to_string()]);
 	assert_eq!(merged.model, "openai:gpt-4o");
 }

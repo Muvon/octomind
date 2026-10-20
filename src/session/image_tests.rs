@@ -20,9 +20,7 @@ use super::*;
 
 fn write_test_image(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 	let path = dir.join(name);
-	let img = image::RgbImage::from_fn(4, 4, |x, y| {
-		image::Rgb([(x * 60) as u8, (y * 60) as u8, 128])
-	});
+	let img = image::RgbImage::from_fn(4, 4, |x, y| image::Rgb([(x * 60) as u8, (y * 60) as u8, 128]));
 	img.save(&path).expect("save test image");
 	path
 }
@@ -145,15 +143,8 @@ fn test_unknown_proxy_model_remains_permissive_for_video() {
 
 // --- URL loading against a local HTTP server ---
 
-async fn serve_image(
-	status: &'static str,
-	content_type: &'static str,
-	path: &'static str,
-	body: Vec<u8>,
-) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
+async fn serve_image(status: &'static str, content_type: &'static str, path: &'static str, body: Vec<u8>) -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
 	let addr = listener.local_addr().expect("addr");
 	tokio::spawn(async move {
 		use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -164,10 +155,7 @@ async fn serve_image(
 			"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
 			body.len()
 		);
-		socket
-			.write_all(header.as_bytes())
-			.await
-			.expect("write head");
+		socket.write_all(header.as_bytes()).await.expect("write head");
 		socket.write_all(&body).await.expect("write body");
 	});
 	format!("http://{addr}{path}")
@@ -182,9 +170,7 @@ fn png_bytes() -> Vec<u8> {
 #[tokio::test]
 async fn test_load_from_url_success() {
 	let url = serve_image("200 OK", "image/png", "/pic.png", png_bytes()).await;
-	let attachment = ImageProcessor::load_from_url(&url)
-		.await
-		.expect("load from url");
+	let attachment = ImageProcessor::load_from_url(&url).await.expect("load from url");
 	assert_eq!(attachment.media_type, "image/png");
 	assert!(matches!(attachment.source_type, SourceType::Url));
 	assert_eq!(attachment.dimensions, Some((4, 4)));
@@ -201,16 +187,12 @@ async fn test_load_from_url_rejections() {
 
 	// Filename does not look like an image
 	let url = serve_image("200 OK", "image/png", "/file.txt", png_bytes()).await;
-	let err = ImageProcessor::load_from_url(&url)
-		.await
-		.expect_err("non-image name");
+	let err = ImageProcessor::load_from_url(&url).await.expect_err("non-image name");
 	assert!(err.to_string().contains("does not appear to point"));
 
 	// HTTP error status
 	let url = serve_image("404 Not Found", "image/png", "/pic.png", Vec::new()).await;
-	let err = ImageProcessor::load_from_url(&url)
-		.await
-		.expect_err("http error");
+	let err = ImageProcessor::load_from_url(&url).await.expect_err("http error");
 	assert!(err.to_string().contains("HTTP 404"));
 
 	// Non-image content type
@@ -221,16 +203,8 @@ async fn test_load_from_url_rejections() {
 	assert!(err.to_string().contains("does not return an image"));
 
 	// Oversized download (checked before decoding)
-	let url = serve_image(
-		"200 OK",
-		"image/png",
-		"/pic.png",
-		vec![0u8; 6 * 1024 * 1024],
-	)
-	.await;
-	let err = ImageProcessor::load_from_url(&url)
-		.await
-		.expect_err("too large");
+	let url = serve_image("200 OK", "image/png", "/pic.png", vec![0u8; 6 * 1024 * 1024]).await;
+	let err = ImageProcessor::load_from_url(&url).await.expect_err("too large");
 	assert!(err.to_string().contains("too large"));
 }
 
@@ -245,9 +219,7 @@ fn test_oversized_file_rejected_before_decode() {
 
 #[test]
 fn test_resize_if_needed_shrinks_oversized_dimensions() {
-	let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(2000, 100, |_, _| {
-		image::Rgb([1, 2, 3])
-	}));
+	let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(2000, 100, |_, _| image::Rgb([1, 2, 3])));
 	let resized = ImageProcessor::resize_if_needed(img);
 	assert!(resized.width() <= ImageProcessor::MAX_WIDTH);
 	assert!(resized.height() <= ImageProcessor::MAX_HEIGHT);
@@ -264,9 +236,7 @@ fn test_format_to_media_type_rejects_unsupported() {
 #[test]
 fn test_convert_clipboard_image_encodes_png() {
 	// 2x2 RGBA clipboard buffer
-	let rgba: Vec<u8> = vec![
-		255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-	];
+	let rgba: Vec<u8> = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
 	let img_data = arboard::ImageData {
 		width: 2,
 		height: 2,
@@ -343,9 +313,7 @@ fn test_build_kitty_escape_splits_long_payloads_into_chunks() {
 #[test]
 fn test_shrink_for_preview_resizes_large_images_only() {
 	let small_b64 = {
-		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(100, 50, |_, _| {
-			image::Rgb([9, 9, 9])
-		}));
+		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(100, 50, |_, _| image::Rgb([9, 9, 9])));
 		let mut buf = Vec::new();
 		img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
 			.expect("encode");
@@ -355,9 +323,7 @@ fn test_shrink_for_preview_resizes_large_images_only() {
 	assert!(!shrunk.is_empty());
 
 	let big_b64 = {
-		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(400, 400, |_, _| {
-			image::Rgb([7, 7, 7])
-		}));
+		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(400, 400, |_, _| image::Rgb([7, 7, 7])));
 		let mut buf = Vec::new();
 		img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
 			.expect("encode");
@@ -377,9 +343,7 @@ fn test_support_predicates_edge_cases() {
 	assert!(!ImageProcessor::is_supported_image(std::path::Path::new(
 		"/tmp/pic.\u{FF}"
 	)));
-	assert!(!ImageProcessor::is_supported_image(std::path::Path::new(
-		"/tmp/README"
-	)));
+	assert!(!ImageProcessor::is_supported_image(std::path::Path::new("/tmp/README")));
 	assert!(!ImageProcessor::is_supported_image_by_name("noext"));
 	assert!(ImageProcessor::guess_media_type_from_url("no-dot").is_none());
 	assert_eq!(

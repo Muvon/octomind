@@ -53,8 +53,7 @@ pub async fn run_dep_entries(
 		} else {
 			crate::log_debug!("checking dep: {}", entry);
 		}
-		run_dep_script(entry, &deps_root)
-			.with_context(|| format!("Dependency '{entry}' failed"))?;
+		run_dep_script(entry, &deps_root).with_context(|| format!("Dependency '{entry}' failed"))?;
 	}
 
 	Ok(())
@@ -68,11 +67,7 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 	let script_path = deps_root.join(format!("{entry}.sh"));
 
 	if !script_path.exists() {
-		anyhow::bail!(
-			"Dep script not found: {} (looked in {})",
-			entry,
-			script_path.display()
-		);
+		anyhow::bail!("Dep script not found: {} (looked in {})", entry, script_path.display());
 	}
 
 	crate::log_debug!("running dep script: {}", entry);

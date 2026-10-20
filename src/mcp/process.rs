@@ -134,10 +134,7 @@ pub fn derive_project_id_from_path(path: &std::path::Path) -> String {
 		return id.clone();
 	}
 	let id = octolib::utils::path_to_id(path);
-	PROJECT_IDS
-		.write()
-		.unwrap()
-		.insert(path.to_path_buf(), id.clone());
+	PROJECT_IDS.write().unwrap().insert(path.to_path_buf(), id.clone());
 	id
 }
 /// Set the session context (role + project + workdir) that will be sent to MCP servers on initialization.
@@ -152,8 +149,7 @@ pub fn set_session_context(role: &str, project: &str, workdir: &str) {
 		// This CLI global is not used, but we set it for backward compatibility
 	}
 	// Always set CLI global for backward compatibility
-	*CLI_SESSION_CONTEXT.write().unwrap() =
-		(role.to_string(), project.to_string(), workdir.to_string());
+	*CLI_SESSION_CONTEXT.write().unwrap() = (role.to_string(), project.to_string(), workdir.to_string());
 }
 
 /// Get the session context (role domain, spec, project, session_id, workdir).
@@ -274,14 +270,12 @@ pub(crate) fn emit_notification(
 	session_id: Option<&str>,
 	tool_id: Option<String>,
 ) {
-	let msg = crate::websocket::ServerMessage::McpNotification(
-		crate::websocket::McpNotificationPayload {
-			server: server_name.to_string(),
-			method: method.to_string(),
-			params: params.clone(),
-			tool_id,
-		},
-	);
+	let msg = crate::websocket::ServerMessage::McpNotification(crate::websocket::McpNotificationPayload {
+		server: server_name.to_string(),
+		method: method.to_string(),
+		params: params.clone(),
+		tool_id,
+	});
 
 	// Use explicit session_id if provided, otherwise try task-local
 	let effective_session_id = session_id
@@ -338,9 +332,7 @@ pub(crate) fn register_pgid(_server_name: &str, _pid: u32) {}
 #[cfg(unix)]
 pub(crate) fn is_stdio_process_alive(server_name: &str) -> Option<bool> {
 	let pgids = SERVER_PGIDS.read().unwrap();
-	pgids
-		.get(server_name)
-		.map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
+	pgids.get(server_name).map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
 }
 
 #[cfg(not(unix))]
@@ -397,9 +389,7 @@ impl ServerProcess {
 					match child.try_wait() {
 						Ok(Some(_)) => return Ok(()), // Process terminated
 						Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-						Err(e) => {
-							return Err(anyhow::anyhow!("Error waiting for HTTP process: {}", e))
-						}
+						Err(e) => return Err(anyhow::anyhow!("Error waiting for HTTP process: {}", e)),
 					}
 				}
 				crate::log_debug!("HTTP process did not terminate within timeout, may be zombie");
@@ -468,17 +458,13 @@ async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String>
 	// Check if the server is already running and healthy.
 	let is_alive = match server.connection_type() {
 		McpConnectionType::Stdin => {
-			super::client::is_connected(server_id)
-				&& is_stdio_process_alive(server_id).unwrap_or(true)
+			super::client::is_connected(server_id) && is_stdio_process_alive(server_id).unwrap_or(true)
 		}
 		McpConnectionType::Http => {
 			let processes = SERVER_PROCESSES.read().unwrap();
 			match processes.get(server_id) {
 				Some(process_arc) => match process_arc.try_lock() {
-					Ok(mut process) => process
-						.try_wait()
-						.map(|status| status.is_none())
-						.unwrap_or(false),
+					Ok(mut process) => process.try_wait().map(|status| status.is_none()).unwrap_or(false),
 					// Mutex held — process is being managed elsewhere, treat as alive.
 					Err(_) => true,
 				},
@@ -545,11 +531,7 @@ async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String>
 			}
 			// Already logged with full detail by start_server_process; just
 			// propagate so callers (init / health monitor) can react.
-			Err(anyhow::anyhow!(
-				"Failed to start server '{}': {}",
-				server_id,
-				e
-			))
+			Err(anyhow::anyhow!("Failed to start server '{}': {}", server_id, e))
 		}
 	}
 }
@@ -677,10 +659,7 @@ pub fn stop_all_servers() -> Result<()> {
 				}
 			}
 			Err(_) => {
-				crate::log_debug!(
-					"Could not acquire lock for server '{}', using PGID for SIGKILL",
-					name
-				);
+				crate::log_debug!("Could not acquire lock for server '{}', using PGID for SIGKILL", name);
 			}
 		}
 	}
@@ -736,8 +715,7 @@ pub fn stop_all_servers() -> Result<()> {
 // session that still needs the server gets it back automatically via the
 // start-once path in ensure_server_running().
 pub fn cleanup_server_process(server_name: &str) -> Result<()> {
-	let had_client =
-		super::client::is_connected(server_name) || super::client::get(server_name).is_some();
+	let had_client = super::client::is_connected(server_name) || super::client::get(server_name).is_some();
 	super::client::disconnect(server_name);
 
 	let had_process = {
@@ -773,10 +751,7 @@ pub fn cleanup_server_process(server_name: &str) -> Result<()> {
 	}
 
 	if !had_client && !had_process {
-		return Err(anyhow::anyhow!(
-			"Server '{}' not found in registry",
-			server_name
-		));
+		return Err(anyhow::anyhow!("Server '{}' not found in registry", server_name));
 	}
 
 	// Clear function cache for this server
@@ -810,10 +785,7 @@ pub fn is_server_running(server_name: &str) -> bool {
 		let processes = SERVER_PROCESSES.read().unwrap();
 		processes.get(server_name).map(|process_arc| {
 			match process_arc.try_lock() {
-				Ok(mut process) => process
-					.try_wait()
-					.map(|status| status.is_none())
-					.unwrap_or(false),
+				Ok(mut process) => process.try_wait().map(|status| status.is_none()).unwrap_or(false),
 				// Mutex held — something is actively managing the process.
 				Err(_) => true,
 			}
@@ -831,9 +803,7 @@ pub fn is_server_running(server_name: &str) -> bool {
 
 	{
 		let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-		let info = restart_info_guard
-			.entry(server_name.to_string())
-			.or_default();
+		let info = restart_info_guard.entry(server_name.to_string()).or_default();
 		info.health_status = if is_alive {
 			ServerHealth::Running
 		} else {
@@ -856,10 +826,7 @@ pub fn get_server_health(server_name: &str) -> ServerHealth {
 // Get server restart information
 pub fn get_server_restart_info(server_name: &str) -> ServerRestartInfo {
 	let restart_info_guard = SERVER_RESTART_INFO.read().unwrap();
-	restart_info_guard
-		.get(server_name)
-		.cloned()
-		.unwrap_or_default()
+	restart_info_guard.get(server_name).cloned().unwrap_or_default()
 }
 
 // Reset server failure state (useful for manual recovery)

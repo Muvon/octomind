@@ -88,9 +88,9 @@ async fn image_server(status: &str, content_type: &str, body: Vec<u8>) -> String
 		let mut request = [0_u8; 2048];
 		let _ = socket.read(&mut request).await;
 		let headers = format!(
-				"HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-				body.len()
-			);
+			"HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+			body.len()
+		);
 		socket.write_all(headers.as_bytes()).await.unwrap();
 		socket.write_all(&body).await.unwrap();
 	});
@@ -113,9 +113,7 @@ async fn load_from_url_covers_success_status_and_content_type_errors() {
 	let url = image_server("200 OK", "text/plain", b"no".to_vec()).await;
 	assert!(ImageProcessor::load_from_url(&url).await.is_err());
 	assert!(ImageProcessor::load_from_url("not a url").await.is_err());
-	assert!(
-		ImageProcessor::load_from_url("https://example.com/file.txt")
-			.await
-			.is_err()
-	);
+	assert!(ImageProcessor::load_from_url("https://example.com/file.txt")
+		.await
+		.is_err());
 }

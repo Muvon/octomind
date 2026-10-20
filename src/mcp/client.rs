@@ -24,17 +24,16 @@ use crate::config::{McpConnectionType, McpServerConfig};
 use crate::mcp::{oauth, McpToolCall};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
-	CacheScope, CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams,
-	CancelledNotificationParam, ClientCapabilities, ClientConfig, ClientRequest,
-	ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability,
-	ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation, InputRequest,
-	InputResponses, ListToolsRequest, PaginatedRequestParams, ProgressToken, ProtocolVersion,
-	RequestMetaObject, ServerNotification, ServerResult, SubscriptionFilter, TaskPayload,
-	UpdateTaskParams, UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
+	CacheScope, CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams, CancelledNotificationParam,
+	ClientCapabilities, ClientConfig, ClientRequest, ElicitRequestParams, ElicitResult, ElicitationAction,
+	ElicitationCapability, ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation,
+	InputRequest, InputResponses, ListToolsRequest, PaginatedRequestParams, ProgressToken, ProtocolVersion,
+	RequestMetaObject, ServerNotification, ServerResult, SubscriptionFilter, TaskPayload, UpdateTaskParams,
+	UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
-	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
-	RunningService, ServiceError,
+	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext, RunningService,
+	ServiceError,
 };
 use rmcp::{ClientHandler, Peer, RoleClient};
 use std::collections::HashMap;
@@ -101,13 +100,7 @@ impl OctoClientHandler {
 	}
 
 	fn emit(&self, method: &str, params: &serde_json::Value) {
-		super::process::emit_notification(
-			&self.server_name,
-			method,
-			params,
-			self.session_id.as_deref(),
-			None,
-		);
+		super::process::emit_notification(&self.server_name, method, params, self.session_id.as_deref(), None);
 	}
 
 	fn emit_progress(&self, params: &serde_json::Value, tool_id: Option<String>) {
@@ -135,11 +128,7 @@ impl ClientHandler for OctoClientHandler {
 		params: rmcp::model::ProgressNotificationParam,
 		_context: NotificationContext<RoleClient>,
 	) {
-		let tool_id = PROGRESS_TOOL_IDS
-			.read()
-			.unwrap()
-			.get(&params.progress_token)
-			.cloned();
+		let tool_id = PROGRESS_TOOL_IDS.read().unwrap().get(&params.progress_token).cloned();
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
 		self.emit_progress(&value, tool_id);
 	}
@@ -161,11 +150,7 @@ impl ClientHandler for OctoClientHandler {
 		self.emit("notifications/tools/list_changed", &serde_json::Value::Null);
 	}
 
-	async fn on_cancelled(
-		&self,
-		params: CancelledNotificationParam,
-		_context: NotificationContext<RoleClient>,
-	) {
+	async fn on_cancelled(&self, params: CancelledNotificationParam, _context: NotificationContext<RoleClient>) {
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
 		self.emit("notifications/cancelled", &value);
 	}
@@ -185,17 +170,11 @@ impl ClientHandler for OctoClientHandler {
 	}
 
 	async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
-		self.emit(
-			"notifications/resources/list_changed",
-			&serde_json::Value::Null,
-		);
+		self.emit("notifications/resources/list_changed", &serde_json::Value::Null);
 	}
 
 	async fn on_prompt_list_changed(&self, _context: NotificationContext<RoleClient>) {
-		self.emit(
-			"notifications/prompts/list_changed",
-			&serde_json::Value::Null,
-		);
+		self.emit("notifications/prompts/list_changed", &serde_json::Value::Null);
 	}
 
 	async fn on_subscriptions_acknowledged(
@@ -251,21 +230,10 @@ impl ClientHandler for OctoClientHandler {
 /// so it neither blocks the caller nor re-enters the receive loop. Shared by
 /// both delivery paths: the unsolicited push (legacy servers) and the
 /// `subscriptions/listen` stream (2026-07-28).
-async fn deliver_resource_update(
-	server_name: &str,
-	session_id: Option<&str>,
-	uri: String,
-	peer: Peer<RoleClient>,
-) {
+async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, uri: String, peer: Peer<RoleClient>) {
 	let param = rmcp::model::ResourceUpdatedNotificationParam::new(uri.clone());
 	let value = serde_json::to_value(&param).unwrap_or(serde_json::Value::Null);
-	super::process::emit_notification(
-		server_name,
-		"notifications/resources/updated",
-		&value,
-		session_id,
-		None,
-	);
+	super::process::emit_notification(server_name, "notifications/resources/updated", &value, session_id, None);
 
 	// Owned copy: the delivery task outlives this call, and a borrowed
 	// &str cannot cross `tokio::spawn`. The caller's session id is only a hint:
@@ -280,9 +248,7 @@ async fn deliver_resource_update(
 	{
 		Some(session_id) => session_id,
 		None => {
-			crate::log_debug!(
-				"resource {uri} updated but no session watches it; dropping completion"
-			);
+			crate::log_debug!("resource {uri} updated but no session watches it; dropping completion");
 			return;
 		}
 	};
@@ -355,10 +321,7 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 	if protocol_version >= ProtocolVersion::V_2026_07_28 {
 		let mut extensions = ExtensionCapabilities::new();
 		extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
-		extensions.insert(
-			WATCH_RESOURCE_LINKS_EXTENSION.to_string(),
-			serde_json::Map::new(),
-		);
+		extensions.insert(WATCH_RESOURCE_LINKS_EXTENSION.to_string(), serde_json::Map::new());
 		capabilities.extensions = Some(extensions);
 		capabilities.elicitation = Some(
 			ElicitationCapability::new()
@@ -366,11 +329,8 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 				.with_url(UrlElicitationCapability::default()),
 		);
 	}
-	ClientConfig::new(
-		capabilities,
-		Implementation::new("octomind", env!("CARGO_PKG_VERSION")),
-	)
-	.with_protocol_version(protocol_version)
+	ClientConfig::new(capabilities, Implementation::new("octomind", env!("CARGO_PKG_VERSION")))
+		.with_protocol_version(protocol_version)
 }
 
 fn lifecycle() -> ClientLifecycleMode {
@@ -469,16 +429,14 @@ pub async fn connect_stdio(server: &McpServerConfig) -> Result<Arc<McpService>> 
 		server.name(),
 		modern_err
 	);
-	connect_stdio_once(server, true)
-		.await
-		.map_err(|legacy_err| {
-			anyhow!(
-				"Failed to initialize MCP server '{}' (modern: {}; legacy: {})",
-				server.name(),
-				modern_err,
-				legacy_err
-			)
-		})
+	connect_stdio_once(server, true).await.map_err(|legacy_err| {
+		anyhow!(
+			"Failed to initialize MCP server '{}' (modern: {}; legacy: {})",
+			server.name(),
+			modern_err,
+			legacy_err
+		)
+	})
 }
 
 /// Collect `{{ENV:KEY}}` placeholders from a server's command, args, env, and
@@ -532,11 +490,9 @@ enum HttpAuthSource {
 }
 
 fn http_auth_source(server: &McpServerConfig) -> HttpAuthSource {
-	let has_authorization = server.headers().is_some_and(|headers| {
-		headers
-			.keys()
-			.any(|name| name.eq_ignore_ascii_case("authorization"))
-	});
+	let has_authorization = server
+		.headers()
+		.is_some_and(|headers| headers.keys().any(|name| name.eq_ignore_ascii_case("authorization")));
 	if has_authorization {
 		HttpAuthSource::StaticHeader
 	} else {
@@ -550,15 +506,14 @@ fn resolve_http_headers(server: &McpServerConfig) -> Result<reqwest::header::Hea
 		return Ok(resolved);
 	};
 	for (name, value) in headers {
-		let header_name =
-			reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
-				anyhow!(
-					"Invalid HTTP header name '{}' for MCP server '{}': {}",
-					name,
-					server.name(),
-					e
-				)
-			})?;
+		let header_name = reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
+			anyhow!(
+				"Invalid HTTP header name '{}' for MCP server '{}': {}",
+				name,
+				server.name(),
+				e
+			)
+		})?;
 		let value = resolve_env_placeholders(value);
 		let header_value = reqwest::header::HeaderValue::from_str(&value).map_err(|e| {
 			anyhow!(
@@ -589,13 +544,10 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 	}
 
 	let (command, args, cwd) = match server {
-		McpServerConfig::Stdin {
-			command, args, cwd, ..
-		} => {
+		McpServerConfig::Stdin { command, args, cwd, .. } => {
 			// Resolve {{ENV:KEY}} in command and args from the parent environment.
 			let cmd = resolve_env_placeholders(command);
-			let resolved_args: Vec<String> =
-				args.iter().map(|a| resolve_env_placeholders(a)).collect();
+			let resolved_args: Vec<String> = args.iter().map(|a| resolve_env_placeholders(a)).collect();
 			(cmd, resolved_args, cwd.clone())
 		}
 		_ => return Err(anyhow!("connect_stdio requires a stdio server config")),
@@ -694,13 +646,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 	let http_client = reqwest::Client::builder()
 		.default_headers(headers)
 		.build()
-		.map_err(|e| {
-			anyhow!(
-				"Failed to build HTTP client for MCP server '{}': {}",
-				server_name,
-				e
-			)
-		})?;
+		.map_err(|e| anyhow!("Failed to build HTTP client for MCP server '{}': {}", server_name, e))?;
 
 	let auth_token = match http_auth_source(server) {
 		HttpAuthSource::StaticHeader => None,
@@ -709,9 +655,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 
 	let make_transport = || {
 		let mut config =
-			rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
-				url.clone(),
-			);
+			rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url.clone());
 		if let Some(token) = &auth_token {
 			config = config.auth_header(token.clone());
 		}
@@ -722,9 +666,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 	let connect_timeout = Duration::from_secs(server.timeout_seconds());
 	let service = match tokio::time::timeout(
 		connect_timeout,
-		handler
-			.clone()
-			.serve_with_lifecycle(make_transport(), lifecycle()),
+		handler.clone().serve_with_lifecycle(make_transport(), lifecycle()),
 	)
 	.await
 	{
@@ -743,8 +685,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 			};
 			tokio::time::timeout(
 				connect_timeout,
-				legacy_handler
-					.serve_with_lifecycle(make_transport(), ClientLifecycleMode::Initialize),
+				legacy_handler.serve_with_lifecycle(make_transport(), ClientLifecycleMode::Initialize),
 			)
 			.await
 			.map_err(|_| anyhow!("Timed out connecting to MCP server '{}'", server_name))?
@@ -762,12 +703,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 				.context(message)
 			})?
 		}
-		Err(_) => {
-			return Err(anyhow!(
-				"Timed out connecting to MCP server '{}'",
-				server_name
-			))
-		}
+		Err(_) => return Err(anyhow!("Timed out connecting to MCP server '{}'", server_name)),
 	};
 
 	HTTP_AUTH_TOKENS
@@ -785,27 +721,16 @@ async fn fetch_http_token(url: &str, server_name: &str) -> Option<String> {
 		Ok(discovered) => match oauth::get_access_token(&discovered, server_name, false).await {
 			Ok(Some(token)) => Some(token),
 			Ok(None) => {
-				crate::log_error!(
-					"OAuth authentication was cancelled for server '{}'",
-					server_name
-				);
+				crate::log_error!("OAuth authentication was cancelled for server '{}'", server_name);
 				None
 			}
 			Err(e) => {
-				crate::log_error!(
-					"Failed to get OAuth access token for server '{}': {}",
-					server_name,
-					e
-				);
+				crate::log_error!("Failed to get OAuth access token for server '{}': {}", server_name, e);
 				None
 			}
 		},
 		Err(e) => {
-			crate::log_debug!(
-				"MCP Authorization discovery failed for server '{}': {}",
-				server_name,
-				e
-			);
+			crate::log_debug!("MCP Authorization discovery failed for server '{}': {}", server_name, e);
 			None
 		}
 	}
@@ -826,16 +751,13 @@ pub async fn get_or_connect(server: &McpServerConfig) -> Result<Arc<McpService>>
 		}
 		McpConnectionType::Stdin => {
 			if let Some(service) = get(server.name()) {
-				if !service.is_closed()
-					&& super::process::is_stdio_process_alive(server.name()).unwrap_or(true)
-				{
+				if !service.is_closed() && super::process::is_stdio_process_alive(server.name()).unwrap_or(true) {
 					return Ok(service);
 				}
 				disconnect(server.name());
 			}
 			super::process::ensure_server_running(server).await?;
-			get(server.name())
-				.ok_or_else(|| anyhow!("Server '{}' started but not registered", server.name()))
+			get(server.name()).ok_or_else(|| anyhow!("Server '{}' started but not registered", server.name()))
 		}
 		McpConnectionType::Builtin => Err(anyhow!("Builtin servers have no MCP client")),
 	}
@@ -902,8 +824,7 @@ pub async fn list_tools(server: &McpServerConfig) -> Result<ToolList> {
 		};
 		let mut cursor = None;
 		loop {
-			let request =
-				ListToolsRequest::with_param(PaginatedRequestParams::default().with_cursor(cursor));
+			let request = ListToolsRequest::with_param(PaginatedRequestParams::default().with_cursor(cursor));
 			let response = peer
 				.send_request_with_option(
 					ClientRequest::ListToolsRequest(request),
@@ -979,15 +900,11 @@ async fn call_tool_round(
 	// external kill. The cap scales with the server's configured timeout, so
 	// deliberately long-tool servers keep their headroom.
 	const PROGRESS_EXTENSION_CAP: u64 = 20;
-	let absolute_cap =
-		Duration::from_secs(idle_timeout_seconds.saturating_mul(PROGRESS_EXTENSION_CAP));
+	let absolute_cap = Duration::from_secs(idle_timeout_seconds.saturating_mul(PROGRESS_EXTENSION_CAP));
 	let tool_name = params.name.clone();
 	let handle = service
 		.peer()
-		.send_cancellable_request(
-			ClientRequest::CallToolRequest(CallToolRequest::new(params)),
-			options,
-		)
+		.send_cancellable_request(ClientRequest::CallToolRequest(CallToolRequest::new(params)), options)
 		.await
 		.map_err(|e| anyhow!("Failed to send tools/call to '{}': {}", server.name(), e))?;
 	let request_id = handle.id.clone();
@@ -1037,10 +954,7 @@ async fn call_tool_round(
 	}
 }
 
-async fn fulfill_input_requests(
-	service: &McpService,
-	requests: rmcp::model::InputRequests,
-) -> Result<InputResponses> {
+async fn fulfill_input_requests(service: &McpService, requests: rmcp::model::InputRequests) -> Result<InputResponses> {
 	let mut responses = InputResponses::new();
 	for (key, request) in requests {
 		let context = RequestContext::new(
@@ -1110,23 +1024,18 @@ async fn drive_task(
 		if cancellation_token.as_ref().is_some_and(|rx| *rx.borrow()) {
 			let _ = tokio::time::timeout(
 				Duration::from_secs(server.timeout_seconds()),
-				service
-					.peer()
-					.cancel_task(CancelTaskParams::new(task_id.clone())),
+				service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
 			)
 			.await;
 			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
-		let delay =
-			Duration::from_millis(poll_interval_ms.saturating_mul(1u64 << failed_polls.min(10)))
-				.min(MAX_TASK_POLL_BACKOFF.max(Duration::from_millis(poll_interval_ms)));
+		let delay = Duration::from_millis(poll_interval_ms.saturating_mul(1u64 << failed_polls.min(10)))
+			.min(MAX_TASK_POLL_BACKOFF.max(Duration::from_millis(poll_interval_ms)));
 		if let Err(error) = sleep_or_cancel(delay, cancellation_token).await {
 			if crate::session::cancellation::is_cancelled(&error) {
 				let _ = tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
-					service
-						.peer()
-						.cancel_task(CancelTaskParams::new(task_id.clone())),
+					service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
 				)
 				.await;
 			}
@@ -1147,18 +1056,14 @@ async fn drive_task(
 		};
 		let state = match polled {
 			Ok(Ok(state)) => state,
-			Ok(Err(ServiceError::McpError(error)))
-				if error.code == rmcp::model::ErrorCode::INVALID_PARAMS =>
-			{
+			Ok(Err(ServiceError::McpError(error))) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {
 				return Err(anyhow!(
 					"the server no longer knows MCP task '{task_id}' (it may have restarted): {}",
 					error.message
 				));
 			}
 			Ok(Err(
-				ServiceError::TransportClosed
-				| ServiceError::TransportSend(_)
-				| ServiceError::Cancelled { .. },
+				ServiceError::TransportClosed | ServiceError::TransportSend(_) | ServiceError::Cancelled { .. },
 			)) => {
 				failed_polls += 1;
 				// A fresh connection may be a fresh server process; the next poll
@@ -1166,9 +1071,7 @@ async fn drive_task(
 				match get_or_connect(server).await {
 					Ok(fresh) => service = fresh,
 					Err(error) => {
-						crate::log_debug!(format!(
-							"reconnecting for MCP task '{task_id}' failed: {error}"
-						))
+						crate::log_debug!(format!("reconnecting for MCP task '{task_id}' failed: {error}"))
 					}
 				}
 				continue;
@@ -1182,12 +1085,7 @@ async fn drive_task(
 			}
 		};
 		failed_polls = 0;
-		poll_interval_ms = state
-			.task
-			.task
-			.poll_interval_ms
-			.unwrap_or(poll_interval_ms)
-			.max(50);
+		poll_interval_ms = state.task.task.poll_interval_ms.unwrap_or(poll_interval_ms).max(50);
 		on_status(&state.task.task);
 		match state.task.payload {
 			TaskPayload::Working => {}
@@ -1253,55 +1151,49 @@ fn background_task(
 	// Task-locals do not cross `tokio::spawn`: re-enter the session so a reconnect
 	// while polling carries this session's context to the server.
 	let scope = session_id.clone();
-	tokio::spawn(crate::session::context::with_session_id(
-		scope,
-		async move {
-			let mut cancellation_token = Some(stop);
-			let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
-				if let Some(status) = state.status_message.as_deref() {
-					shell_jobs::set_task_status_for_session(&session_id, &key, status);
-				}
-			})
-			.await;
-			let stopped = cancellation_token
-				.as_ref()
-				.is_some_and(|stop| *stop.borrow());
-			let (body, is_error) = match outcome {
-				Ok(result) => (
-					result
-						.content
-						.iter()
-						.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
-						.collect::<Vec<_>>()
-						.join("\n"),
-					result.is_error == Some(true),
-				),
-				Err(_) if stopped => (
-					"stopped on request; the server was asked to cancel it".to_string(),
-					true,
-				),
-				Err(error) if crate::session::cancellation::is_cancelled(&error) => {
-					("the server cancelled the task".to_string(), true)
-				}
-				Err(error) => (format!("{error:#}"), true),
-			};
-			// False once the session was torn down: nobody is left to deliver to.
-			if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
-				return;
+	tokio::spawn(crate::session::context::with_session_id(scope, async move {
+		let mut cancellation_token = Some(stop);
+		let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
+			if let Some(status) = state.status_message.as_deref() {
+				shell_jobs::set_task_status_for_session(&session_id, &key, status);
 			}
-			let error = if is_error { " is_error=\"true\"" } else { "" };
-			let content =
-				format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
-			crate::session::inbox::push_inbox_message_for_session(
-				&session_id,
-				crate::session::inbox::InboxMessage {
-					source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
-					content,
-				},
-			);
-			shell_jobs::complete_for_session(&session_id, &key, &body);
-		},
-	));
+		})
+		.await;
+		let stopped = cancellation_token.as_ref().is_some_and(|stop| *stop.borrow());
+		let (body, is_error) = match outcome {
+			Ok(result) => (
+				result
+					.content
+					.iter()
+					.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+					.collect::<Vec<_>>()
+					.join("\n"),
+				result.is_error == Some(true),
+			),
+			Err(_) if stopped => (
+				"stopped on request; the server was asked to cancel it".to_string(),
+				true,
+			),
+			Err(error) if crate::session::cancellation::is_cancelled(&error) => {
+				("the server cancelled the task".to_string(), true)
+			}
+			Err(error) => (format!("{error:#}"), true),
+		};
+		// False once the session was torn down: nobody is left to deliver to.
+		if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
+			return;
+		}
+		let error = if is_error { " is_error=\"true\"" } else { "" };
+		let content = format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
+		crate::session::inbox::push_inbox_message_for_session(
+			&session_id,
+			crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
+				content,
+			},
+		);
+		shell_jobs::complete_for_session(&session_id, &key, &body);
+	}));
 
 	rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(notice)])
 }
@@ -1313,11 +1205,7 @@ fn background_task(
 /// capability, transport — the unsolicited-push path in `on_resource_updated`
 /// still covers delivery, so this only upgrades the channel, never gates the
 /// feature.
-async fn watch_resource_links(
-	service: &McpService,
-	server_name: &str,
-	result: &rmcp::model::CallToolResult,
-) {
+async fn watch_resource_links(service: &McpService, server_name: &str, result: &rmcp::model::CallToolResult) {
 	use crate::session::shell_jobs::WatchEvent;
 
 	let links = crate::session::shell_jobs::resource_links_in(result);
@@ -1337,9 +1225,7 @@ async fn watch_resource_links(
 			Err(error) => {
 				// Expected for legacy servers (method unknown) — the
 				// unsolicited push remains the delivery path.
-				crate::log_debug!(format!(
-					"subscriptions/listen for {uri} unavailable: {error}"
-				));
+				crate::log_debug!(format!("subscriptions/listen for {uri} unavailable: {error}"));
 				continue;
 			}
 		};
@@ -1437,15 +1323,7 @@ pub async fn call_tool(
 
 	let mut state_only_rounds = 0usize;
 	for _ in 0..DEFAULT_MRTR_MAX_ROUNDS {
-		match call_tool_round(
-			&service,
-			server,
-			params.clone(),
-			&call.tool_id,
-			&mut cancellation_token,
-		)
-		.await?
-		{
+		match call_tool_round(&service, server, params.clone(), &call.tool_id, &mut cancellation_token).await? {
 			CallToolResponse::Complete(result) => {
 				// Register any resource link the tool advertised (a detached
 				// background job) BEFORE returning — synchronously, while the
@@ -1487,9 +1365,7 @@ pub async fn call_tool(
 						"server returned input_required without inputRequests or requestState"
 					));
 				}
-				let responses =
-					fulfill_input_requests(&service, result.input_requests.unwrap_or_default())
-						.await?;
+				let responses = fulfill_input_requests(&service, result.input_requests.unwrap_or_default()).await?;
 				params.input_responses = (!responses.is_empty()).then_some(responses);
 				params.request_state = result.request_state;
 				if had_requests {

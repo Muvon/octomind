@@ -79,10 +79,7 @@ fn callback_result_supports_clone_and_debug() {
 
 #[tokio::test]
 async fn process_callback_rejects_mismatched_state() {
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	match process_callback("code=abc&state=wrong-state", &state).await {
 		OAuthCallbackResult::Error { error, description } => {
 			assert_eq!(error, "invalid_state");
@@ -94,10 +91,7 @@ async fn process_callback_rejects_mismatched_state() {
 
 #[tokio::test]
 async fn process_callback_rejects_missing_state() {
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	match process_callback("code=abc", &state).await {
 		OAuthCallbackResult::Error { error, .. } => assert_eq!(error, "missing_state"),
 		other => panic!("expected missing_state, got {other:?}"),
@@ -106,20 +100,14 @@ async fn process_callback_rejects_missing_state() {
 
 #[tokio::test]
 async fn process_callback_rejects_missing_or_blank_code() {
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	match process_callback("state=expected-state", &state).await {
 		OAuthCallbackResult::Error { error, .. } => assert_eq!(error, "missing_code"),
 		other => panic!("expected missing_code, got {other:?}"),
 	}
 
 	// Whitespace-only code is treated as missing
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	match process_callback("code=%20%20&state=expected-state", &state).await {
 		OAuthCallbackResult::Error { error, .. } => assert_eq!(error, "missing_code"),
 		other => panic!("expected missing_code, got {other:?}"),
@@ -128,10 +116,7 @@ async fn process_callback_rejects_missing_or_blank_code() {
 
 #[tokio::test]
 async fn process_callback_returns_error_from_provider() {
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	// error_description arrives URL-encoded and must be decoded
 	match process_callback(
 		"error=access_denied&error_description=User%20denied%20access&state=expected-state",
@@ -151,10 +136,7 @@ async fn process_callback_returns_error_from_provider() {
 async fn process_callback_rejects_reuse_of_consumed_state() {
 	// A first callback consumes the expected state (take()); a second
 	// callback must be rejected as already processed.
-	let state = test_state(
-		Some("expected-state"),
-		"https://auth.example.com/oauth/token",
-	);
+	let state = test_state(Some("expected-state"), "https://auth.example.com/oauth/token");
 	match process_callback("state=expected-state", &state).await {
 		OAuthCallbackResult::Error { error, .. } => assert_eq!(error, "missing_code"),
 		other => panic!("expected missing_code, got {other:?}"),
@@ -237,9 +219,7 @@ async fn process_callback_success_exchanges_and_persists_token() {
 	assert_eq!(saved.refresh_token.as_deref(), Some("stub-refresh"));
 	assert!(saved.expires_at > 0);
 
-	clear_token(&state.server_name, false, None, None, None)
-		.await
-		.unwrap();
+	clear_token(&state.server_name, false, None, None, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -250,16 +230,12 @@ async fn process_callback_zero_expires_in_defaults_to_one_year() {
 	let state = test_state(Some("expected-state"), &token_url);
 
 	match process_callback("code=abc&state=expected-state", &state).await {
-		OAuthCallbackResult::Success {
-			expires_in, scopes, ..
-		} => {
+		OAuthCallbackResult::Success { expires_in, scopes, .. } => {
 			assert_eq!(expires_in, 365 * 24 * 60 * 60);
 			assert_eq!(scopes, vec!["repo", "user"]);
 		}
 		other => panic!("expected Success, got {other:?}"),
 	}
 
-	clear_token(&state.server_name, false, None, None, None)
-		.await
-		.unwrap();
+	clear_token(&state.server_name, false, None, None, None).await.unwrap();
 }

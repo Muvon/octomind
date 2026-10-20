@@ -21,45 +21,21 @@ fn test_output_mode_from_cli_arg() {
 	assert_eq!(OutputMode::from_cli_arg("jsonl", false), OutputMode::Jsonl);
 
 	// Plain mode depends on terminal
-	assert_eq!(
-		OutputMode::from_cli_arg("plain", true),
-		OutputMode::Interactive
-	);
-	assert_eq!(
-		OutputMode::from_cli_arg("plain", false),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_cli_arg("plain", true), OutputMode::Interactive);
+	assert_eq!(OutputMode::from_cli_arg("plain", false), OutputMode::NonInteractive);
 
 	// Unknown mode defaults based on terminal
-	assert_eq!(
-		OutputMode::from_cli_arg("unknown", true),
-		OutputMode::Interactive
-	);
-	assert_eq!(
-		OutputMode::from_cli_arg("unknown", false),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_cli_arg("unknown", true), OutputMode::Interactive);
+	assert_eq!(OutputMode::from_cli_arg("unknown", false), OutputMode::NonInteractive);
 }
 
 #[test]
 fn test_output_mode_from_runtime_mode() {
-	assert_eq!(
-		OutputMode::from_runtime_mode("interactive"),
-		OutputMode::Interactive
-	);
-	assert_eq!(
-		OutputMode::from_runtime_mode("plain"),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_runtime_mode("interactive"), OutputMode::Interactive);
+	assert_eq!(OutputMode::from_runtime_mode("plain"), OutputMode::NonInteractive);
 	assert_eq!(OutputMode::from_runtime_mode("jsonl"), OutputMode::Jsonl);
-	assert_eq!(
-		OutputMode::from_runtime_mode("websocket"),
-		OutputMode::WebSocket
-	);
-	assert_eq!(
-		OutputMode::from_runtime_mode("unknown"),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_runtime_mode("websocket"), OutputMode::WebSocket);
+	assert_eq!(OutputMode::from_runtime_mode("unknown"), OutputMode::NonInteractive);
 }
 
 #[test]
@@ -136,9 +112,7 @@ fn test_websocket_sink_sends_through_channel() {
 
 	// Verify message was sent and is the correct variant
 	let received = rx.try_recv().unwrap();
-	assert!(
-		matches!(received, ServerMessage::Assistant(AssistantPayload { content, .. }) if content == "test")
-	);
+	assert!(matches!(received, ServerMessage::Assistant(AssistantPayload { content, .. }) if content == "test"));
 }
 
 #[test]
@@ -178,28 +152,16 @@ fn test_from_cli_arg_is_case_sensitive() {
 	// Only lowercase "jsonl"/"plain" are recognized; anything else —
 	// including different casing — falls back to terminal detection.
 	assert_ne!(OutputMode::from_cli_arg("JSONL", true), OutputMode::Jsonl);
-	assert_eq!(
-		OutputMode::from_cli_arg("JSONL", true),
-		OutputMode::Interactive
-	);
-	assert_eq!(
-		OutputMode::from_cli_arg("Plain", false),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_cli_arg("JSONL", true), OutputMode::Interactive);
+	assert_eq!(OutputMode::from_cli_arg("Plain", false), OutputMode::NonInteractive);
 }
 
 #[test]
 fn test_from_cli_arg_has_no_websocket_arm() {
 	// WebSocket is a runtime mode only; the CLI arg falls through to the
 	// terminal-based default rather than selecting the WebSocket sink.
-	assert_eq!(
-		OutputMode::from_cli_arg("websocket", true),
-		OutputMode::Interactive
-	);
-	assert_eq!(
-		OutputMode::from_cli_arg("websocket", false),
-		OutputMode::NonInteractive
-	);
+	assert_eq!(OutputMode::from_cli_arg("websocket", true), OutputMode::Interactive);
+	assert_eq!(OutputMode::from_cli_arg("websocket", false), OutputMode::NonInteractive);
 }
 
 #[test]

@@ -69,8 +69,8 @@ fn tap_call(params: serde_json::Value) -> McpToolCall {
 }
 
 fn test_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -87,10 +87,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -133,22 +130,16 @@ async fn dispatch_missing_action_is_error() {
 		.await
 		.expect("dispatch");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("Missing required parameter 'action'"));
+	assert!(result.extract_content().contains("Missing required parameter 'action'"));
 }
 
 #[tokio::test]
 async fn dispatch_blank_or_non_string_action_is_error() {
 	let config = test_config();
 	for params in [json!({"action": "   "}), json!({"action": 42})] {
-		let result = execute_tap_command(&tap_call(params), &config)
-			.await
-			.expect("dispatch");
+		let result = execute_tap_command(&tap_call(params), &config).await.expect("dispatch");
 		assert!(result.is_error());
-		assert!(result
-			.extract_content()
-			.contains("Missing required parameter 'action'"));
+		assert!(result.extract_content().contains("Missing required parameter 'action'"));
 	}
 }
 
@@ -159,9 +150,7 @@ async fn dispatch_unknown_action_is_error() {
 		.await
 		.expect("dispatch");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("Unknown action 'explode'"));
+	assert!(result.extract_content().contains("Unknown action 'explode'"));
 }
 
 #[tokio::test]
@@ -200,8 +189,7 @@ async fn list_returns_registered_jobs_newest_first() {
 	tap_runs::clear_for_session(&sid);
 
 	assert!(!out.is_error());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("list payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("list payload is JSON");
 	assert_eq!(payload["count"].as_u64(), Some(2));
 	let runs = payload["runs"].as_array().expect("runs array");
 	assert_eq!(runs.len(), 2);
@@ -216,13 +204,8 @@ async fn list_returns_registered_jobs_newest_first() {
 #[tokio::test]
 async fn stop_requires_session_param() {
 	let config = test_config();
-	for params in [
-		json!({"action": "stop"}),
-		json!({"action": "stop", "session": "  "}),
-	] {
-		let result = execute_tap_command(&tap_call(params), &config)
-			.await
-			.expect("dispatch");
+	for params in [json!({"action": "stop"}), json!({"action": "stop", "session": "  "})] {
+		let result = execute_tap_command(&tap_call(params), &config).await.expect("dispatch");
 		assert!(result.is_error());
 		assert!(result
 			.extract_content()
@@ -257,19 +240,15 @@ async fn stop_running_job_cancels_it() {
 			TapJobStatus::Running,
 			SystemTime::UNIX_EPOCH,
 		);
-		execute_tap_command(
-			&tap_call(json!({"action": "stop", "session": "tap-stop-me"})),
-			&config,
-		)
-		.await
-		.expect("dispatch")
+		execute_tap_command(&tap_call(json!({"action": "stop", "session": "tap-stop-me"})), &config)
+			.await
+			.expect("dispatch")
 	})
 	.await;
 	tap_runs::clear_for_session(&sid);
 
 	assert!(!out.is_error());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("stop payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("stop payload is JSON");
 	assert_eq!(payload["id"].as_str(), Some("tap-stop-me"));
 	assert_eq!(payload["status"].as_str(), Some("cancelled"));
 }
@@ -297,8 +276,7 @@ async fn stop_finished_job_reports_terminal_status() {
 	tap_runs::clear_for_session(&sid);
 
 	assert!(!out.is_error());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("stop payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("stop payload is JSON");
 	assert_eq!(payload["status"].as_str(), Some("done"));
 }
 
@@ -309,13 +287,9 @@ async fn discover_requires_intent() {
 		json!({"action": "discover"}),
 		json!({"action": "discover", "intent": "  "}),
 	] {
-		let result = execute_tap_command(&tap_call(params), &config)
-			.await
-			.expect("dispatch");
+		let result = execute_tap_command(&tap_call(params), &config).await.expect("dispatch");
 		assert!(result.is_error());
-		assert!(result
-			.extract_content()
-			.contains("Missing required parameter 'intent'"));
+		assert!(result.extract_content().contains("Missing required parameter 'intent'"));
 	}
 }
 
@@ -341,13 +315,9 @@ async fn capability_requires_prompt() {
 		json!({"action": "capability"}),
 		json!({"action": "capability", "prompt": "   "}),
 	] {
-		let result = execute_tap_command(&tap_call(params), &config)
-			.await
-			.expect("dispatch");
+		let result = execute_tap_command(&tap_call(params), &config).await.expect("dispatch");
 		assert!(result.is_error());
-		assert!(result
-			.extract_content()
-			.contains("Missing required parameter 'prompt'"));
+		assert!(result.extract_content().contains("Missing required parameter 'prompt'"));
 	}
 }
 
@@ -361,24 +331,17 @@ async fn run_requires_prompt() {
 	.await
 	.expect("dispatch");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("Missing required parameter 'prompt'"));
+	assert!(result.extract_content().contains("Missing required parameter 'prompt'"));
 }
 
 #[tokio::test]
 async fn run_requires_role_or_session() {
 	let config = test_config();
-	let result = execute_tap_command(
-		&tap_call(json!({"action": "run", "prompt": "do work"})),
-		&config,
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_tap_command(&tap_call(json!({"action": "run", "prompt": "do work"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("Missing 'role' for new run"));
+	assert!(result.extract_content().contains("Missing 'role' for new run"));
 }
 
 #[tokio::test]

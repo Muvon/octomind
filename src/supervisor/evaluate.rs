@@ -44,16 +44,12 @@
 //! trial sample that already carries a verify-gate verdict, and every sample
 //! in both arms of one artifact is measured the same way.
 
-use octolib::evaluation::{
-	Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question,
-};
+use octolib::evaluation::{Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// The unit of routing, stats, and unavailable outcomes.
-#[derive(
-	Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Seam {
 	Recall,
@@ -261,20 +257,23 @@ pub fn retention_merge_question() -> BTreeMap<String, Question> {
 }
 
 pub fn memory_question() -> BTreeMap<String, Question> {
-	BTreeMap::from([(
-		SUPPORT_QUESTION_ID.to_string(),
-		Question::noul(MEMORY_QUESTION),
-	)])
+	BTreeMap::from([(SUPPORT_QUESTION_ID.to_string(), Question::noul(MEMORY_QUESTION))])
 }
 
 pub fn authorizer_confirmation_questions<'a>(
 	ids: impl IntoIterator<Item = &'a str>,
 	judgment: &str,
 ) -> BTreeMap<String, Question> {
-	ids.into_iter().map(|id| (
-		id.to_string(),
-		Question::noul(format!("For proposed call {id}, should this proposed decision be confirmed?\n{judgment}")),
-	)).collect()
+	ids.into_iter()
+		.map(|id| {
+			(
+				id.to_string(),
+				Question::noul(format!(
+					"For proposed call {id}, should this proposed decision be confirmed?\n{judgment}"
+				)),
+			)
+		})
+		.collect()
 }
 
 const PLAN_REQUEST_QUESTION: &str = "Does the work remaining on the current request need an external plan? Yes only when the remaining work has at least three meaningful dependent phases, material context-loss risk, or a real branch that must be tracked; no for an answer, a review with one deliverable, a focused fix, or a routine read, change and check sequence, and no when the runtime evidence shows the work is already mostly done.";
@@ -304,11 +303,7 @@ pub const AUTHORIZER_NOULS: [(&str, &str); 2] = [
 /// Master switch and seam switch together: false means no call, ever.
 pub fn enabled(config: &crate::config::Config, seam: Seam) -> bool {
 	config.supervisor.enabled
-		&& config
-			.decision
-			.model
-			.as_deref()
-			.is_some_and(|model| !model.is_empty())
+		&& config.decision.model.as_deref().is_some_and(|model| !model.is_empty())
 		&& seam.switched_on(&config.decision)
 }
 
@@ -359,9 +354,7 @@ pub fn authorizer_question_id(call_id: &str, noul: &str) -> String {
 
 /// One Noul per [`AUTHORIZER_NOULS`] entry per pending call, each naming the
 /// call it judges by id and tool so a batch of several calls is not scored as one.
-pub fn authorizer_questions<'a>(
-	calls: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> BTreeMap<String, Question> {
+pub fn authorizer_questions<'a>(calls: impl IntoIterator<Item = (&'a str, &'a str)>) -> BTreeMap<String, Question> {
 	calls
 		.into_iter()
 		.flat_map(|(id, tool)| {
@@ -382,9 +375,7 @@ pub fn condense_question_id(chunk: usize) -> String {
 /// One Noul per chunk of one window, keyed by the chunk's slot in that
 /// window. Each question names its chunk by index and line range so the
 /// answer is tied to that chunk's text, not to an opaque id.
-pub fn condense_questions(
-	chunks: impl IntoIterator<Item = (usize, usize, usize)>,
-) -> BTreeMap<String, Question> {
+pub fn condense_questions(chunks: impl IntoIterator<Item = (usize, usize, usize)>) -> BTreeMap<String, Question> {
 	chunks
 		.into_iter()
 		.enumerate()
@@ -405,9 +396,7 @@ pub fn compression_question_id(unit: usize) -> String {
 
 /// One Noul per scoring unit of one window, keyed by the unit's slot. Each
 /// question names its packet id so the answer is tied to that unit.
-pub fn compression_questions<'a>(
-	ids: impl IntoIterator<Item = &'a str>,
-) -> BTreeMap<String, Question> {
+pub fn compression_questions<'a>(ids: impl IntoIterator<Item = &'a str>) -> BTreeMap<String, Question> {
 	ids.into_iter()
 		.enumerate()
 		.map(|(slot, id)| {
@@ -441,19 +430,14 @@ pub const PLAN_QUESTION_ID: &str = "plan";
 
 /// The `request` pre-screen: does the remaining work need a plan at all?
 pub fn plan_request_question() -> BTreeMap<String, Question> {
-	BTreeMap::from([(
-		PLAN_QUESTION_ID.to_string(),
-		Question::noul(PLAN_REQUEST_QUESTION),
-	)])
+	BTreeMap::from([(PLAN_QUESTION_ID.to_string(), Question::noul(PLAN_REQUEST_QUESTION))])
 }
 
 /// The `phase_complete` pre-screen names the phase outcome it judges.
 pub fn plan_phase_question(done_when: &str) -> BTreeMap<String, Question> {
 	BTreeMap::from([(
 		PLAN_QUESTION_ID.to_string(),
-		Question::noul(format!(
-			"{PLAN_PHASE_QUESTION} The phase's done_when: {done_when}"
-		)),
+		Question::noul(format!("{PLAN_PHASE_QUESTION} The phase's done_when: {done_when}")),
 	)])
 }
 
@@ -508,11 +492,7 @@ pub fn probability(answers: &BTreeMap<String, Answer>, id: &str) -> f64 {
 /// cap and whose question count stays under the per-call bound. `header_tokens`
 /// is the cost of the state with no item in it. An item larger than a whole
 /// window gets one of its own and fails the state cap at call time.
-pub fn windows<T>(
-	items: Vec<T>,
-	header_tokens: usize,
-	item_tokens: impl Fn(&T) -> usize,
-) -> Vec<Vec<T>> {
+pub fn windows<T>(items: Vec<T>, header_tokens: usize, item_tokens: impl Fn(&T) -> usize) -> Vec<Vec<T>> {
 	let budget = MAX_STATE_TOKENS.saturating_sub(WINDOW_SLACK_TOKENS + header_tokens);
 	let mut out: Vec<Vec<T>> = Vec::new();
 	let mut current: Vec<T> = Vec::new();
@@ -545,12 +525,9 @@ pub fn unavailable(seam: Seam, reason: &str) {
 /// Output tokens and wall time are not counted, so the figure is a floor.
 pub fn avoided(config: &crate::config::Config, seam: Seam, input_tokens: usize) {
 	let model = config.get_supervisor_model_profile().model;
-	let name = model
-		.split_once(':')
-		.map_or(model.as_str(), |(_, name)| name);
+	let name = model.split_once(':').map_or(model.as_str(), |(_, name)| name);
 	let cost =
-		octolib::llm::reference_pricing::calculate_reference_cost(name, input_tokens as u64, 0, 0)
-			.unwrap_or(0.0);
+		octolib::llm::reference_pricing::calculate_reference_cost(name, input_tokens as u64, 0, 0).unwrap_or(0.0);
 	super::stats::evaluate_avoided(seam, input_tokens as u64, cost);
 }
 
@@ -633,11 +610,7 @@ async fn attempt(
 	let response = match tokio::time::timeout(
 		TIMEOUT,
 		call(
-			config
-				.decision
-				.model
-				.as_deref()
-				.expect("enabled decision model"),
+			config.decision.model.as_deref().expect("enabled decision model"),
 			request,
 		),
 	)

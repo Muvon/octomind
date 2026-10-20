@@ -104,9 +104,7 @@ command = "also-never-invoked.sh"
 	let error = run_with_rules("multi-match", toml, "developer", "hello", false)
 		.await
 		.expect_err("two matches must be an error");
-	assert!(error
-		.to_string()
-		.contains("Multiple [[pipe]] entries matched"));
+	assert!(error.to_string().contains("Multiple [[pipe]] entries matched"));
 }
 
 #[tokio::test]
@@ -120,9 +118,7 @@ command = "definitely-missing-script-9f3a.sh"
 		.await
 		.expect_err("a missing script must be an error");
 	assert!(
-		error
-			.to_string()
-			.contains("was not found when the session started"),
+		error.to_string().contains("was not found when the session started"),
 		"got: {error}"
 	);
 }
@@ -132,8 +128,7 @@ fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::Pat
 	use std::os::unix::fs::PermissionsExt;
 	let path = dir.join(name);
 	std::fs::write(&path, body).expect("script writes");
-	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-		.expect("script becomes executable");
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("script becomes executable");
 	path
 }
 
@@ -149,8 +144,7 @@ async fn run_pipe_feeds_stdin_and_returns_stdout() {
 		script.display().to_string()
 	);
 	std::fs::create_dir_all(dir.path().join(".agents")).expect("create .agents dir");
-	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml)
-		.expect("write guardrails.toml");
+	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml).expect("write guardrails.toml");
 
 	let out = crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(&sid, dir.path().to_path_buf());
@@ -160,10 +154,7 @@ async fn run_pipe_feeds_stdin_and_returns_stdout() {
 	.await;
 	crate::session::guardrails::clear_for_session(&sid);
 
-	assert_eq!(
-		out.expect("echo pipe succeeds"),
-		Some("HELLO PIPE".to_string())
-	);
+	assert_eq!(out.expect("echo pipe succeeds"), Some("HELLO PIPE".to_string()));
 }
 
 #[cfg(unix)]
@@ -182,8 +173,7 @@ async fn run_pipe_hard_stops_on_a_nonzero_exit() {
 		script.display().to_string()
 	);
 	std::fs::create_dir_all(dir.path().join(".agents")).expect("create .agents dir");
-	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml)
-		.expect("write guardrails.toml");
+	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml).expect("write guardrails.toml");
 
 	let out = crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(&sid, dir.path().to_path_buf());
@@ -216,8 +206,7 @@ async fn run_pipe_times_out_and_kills_a_script_that_never_exits() {
 		script.display().to_string()
 	);
 	std::fs::create_dir_all(dir.path().join(".agents")).expect("create .agents dir");
-	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml)
-		.expect("write guardrails.toml");
+	std::fs::write(dir.path().join(".agents/guardrails.toml"), toml).expect("write guardrails.toml");
 
 	let out = crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(&sid, dir.path().to_path_buf());

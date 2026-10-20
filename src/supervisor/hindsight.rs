@@ -97,11 +97,7 @@ async fn model(spec: &str) -> Option<Arc<Hindsight>> {
 
 /// Score the boundary at the end of `messages`. `None` when the seam is off,
 /// the model failed to load, or the trace has no user turn yet.
-pub async fn observe(
-	config: &crate::config::Config,
-	session_name: &str,
-	messages: &[Message],
-) -> Option<Scores> {
+pub async fn observe(config: &crate::config::Config, session_name: &str, messages: &[Message]) -> Option<Scores> {
 	if !enabled(config) {
 		return None;
 	}
@@ -124,12 +120,7 @@ pub async fn observe(
 		}
 	};
 	let ms = started.elapsed().as_millis();
-	crate::log_debug!(
-		"hindsight: {} ({} events, {} ms)",
-		scores.summary(),
-		events,
-		ms
-	);
+	crate::log_debug!("hindsight: {} ({} events, {} ms)", scores.summary(), events, ms);
 	super::notify(&format!("hindsight {}", scores.summary()));
 	super::stats::hindsight(scores.p_correction);
 	super::stats::record_call(super::stats::CallKind::Hindsight, 0, 0, 0, 0, 0.0);
@@ -186,11 +177,7 @@ fn record(line: serde_json::Value) {
 	}
 }
 
-fn score_cached(
-	model: Arc<Hindsight>,
-	name: &str,
-	events: Vec<Event>,
-) -> anyhow::Result<(Scores, usize)> {
+fn score_cached(model: Arc<Hindsight>, name: &str, events: Vec<Event>) -> anyhow::Result<(Scores, usize)> {
 	let mut traces = TRACES.lock().unwrap_or_else(|p| p.into_inner());
 	let traces = traces.get_or_insert_with(HashMap::new);
 	let cached = traces.entry(name.to_string()).or_insert_with(|| Cached {
@@ -200,9 +187,7 @@ fn score_cached(
 	});
 	// Compression rewrites the message list; a changed prefix means the cached
 	// vectors no longer describe this trace.
-	if cached.consumed > events.len()
-		|| fingerprint(&events[..cached.consumed]) != cached.fingerprint
-	{
+	if cached.consumed > events.len() || fingerprint(&events[..cached.consumed]) != cached.fingerprint {
 		cached.session = Session::new(model);
 		cached.consumed = 0;
 	}
@@ -217,9 +202,7 @@ fn score_cached(
 fn fingerprint(events: &[Event]) -> u64 {
 	let mut hasher = std::hash::DefaultHasher::new();
 	for event in events {
-		serde_json::to_string(event)
-			.unwrap_or_default()
-			.hash(&mut hasher);
+		serde_json::to_string(event).unwrap_or_default().hash(&mut hasher);
 	}
 	hasher.finish()
 }
@@ -262,18 +245,12 @@ pub fn trace(messages: &[Message]) -> Vec<Event> {
 				}
 			}
 			"tool" => {
-				events.push(Event::tool_result(
-					&message.content,
-					result_status(&message.content),
-				));
+				events.push(Event::tool_result(&message.content, result_status(&message.content)));
 			}
 			_ => {}
 		}
 	}
-	match events
-		.iter()
-		.position(|e| matches!(e, Event::UserTurn { .. }))
-	{
+	match events.iter().position(|e| matches!(e, Event::UserTurn { .. })) {
 		Some(first) => {
 			events.drain(..first);
 		}
@@ -298,9 +275,7 @@ fn call_event(call: &serde_json::Value) -> Option<Event> {
 		.cloned()
 		.unwrap_or(serde_json::Value::Null);
 	let mut args = match raw_args {
-		serde_json::Value::String(text) => {
-			serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)
-		}
+		serde_json::Value::String(text) => serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
 		other => other,
 	};
 	if !args.is_object() {
@@ -359,10 +334,7 @@ fn result_status(content: &str) -> Status {
 		.to_ascii_lowercase();
 	if head.starts_with("[request interrupted") || head.contains("interrupted by user") {
 		Status::Interrupted
-	} else if head.starts_with("blocked")
-		|| head.starts_with("denied")
-		|| head.starts_with("permission denied")
-	{
+	} else if head.starts_with("blocked") || head.starts_with("denied") || head.starts_with("permission denied") {
 		Status::Denied
 	} else if head.starts_with("error") {
 		Status::Error

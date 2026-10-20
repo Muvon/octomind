@@ -67,16 +67,9 @@ async fn status_jobs_view_reports_a_task_from_its_polled_status() {
 			"the task has reported no status yet"
 		);
 
-		crate::session::shell_jobs::set_task_status_for_session(
-			&session_id,
-			&key,
-			"shell: cargo test · running 30s",
-		);
+		crate::session::shell_jobs::set_task_status_for_session(&session_id, &key, "shell: cargo test · running 30s");
 		let data = output_data(handle_status(&["jobs"]).await.expect("status command"));
-		assert_eq!(
-			data["jobs"][0]["resource_status"],
-			"shell: cargo test · running 30s"
-		);
+		assert_eq!(data["jobs"][0]["resource_status"], "shell: cargo test · running 30s");
 
 		crate::session::shell_jobs::clear_for_session(&session_id);
 	})
@@ -154,10 +147,7 @@ async fn status_rejects_unknown_filters() {
 	crate::session::context::with_session_id(session_id, async {
 		let data = output_data(handle_status(&["unknown"]).await.expect("status command"));
 		assert_eq!(data["view"], "error");
-		assert!(data["message"]
-			.as_str()
-			.unwrap()
-			.contains("Unknown status filter"));
+		assert!(data["message"].as_str().unwrap().contains("Unknown status filter"));
 	})
 	.await;
 }

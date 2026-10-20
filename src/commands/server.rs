@@ -47,8 +47,7 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 	use octomind::websocket::WebSocketServer;
 
 	let (resolved_config, role) =
-		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None)
-			.await?;
+		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None).await?;
 
 	// Initialize tracing for WebSocket mode - logs to file
 	// stdout/stderr are used for server status messages
@@ -64,14 +63,8 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 
 	// Create and start WebSocket server. The token comes from the environment
 	// only: a command-line flag would show it to every local user in `ps`.
-	let server = WebSocketServer::new(
-		&args.host,
-		args.port,
-		resolved_config,
-		role,
-		args.allow_origin.clone(),
-	)?
-	.with_token(std::env::var("OCTOMIND_SERVER_TOKEN").ok());
+	let server = WebSocketServer::new(&args.host, args.port, resolved_config, role, args.allow_origin.clone())?
+		.with_token(std::env::var("OCTOMIND_SERVER_TOKEN").ok());
 	server.start().await?;
 
 	Ok(())

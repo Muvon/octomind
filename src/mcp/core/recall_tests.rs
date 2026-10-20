@@ -40,11 +40,7 @@ fn block_digest(id: &str, messages: &[Message]) -> String {
 		hasher.update([0u8]);
 		hasher.update(serde_json::to_vec(message).expect("message serializes"));
 	}
-	hasher
-		.finalize()
-		.iter()
-		.map(|b| format!("{b:02x}"))
-		.collect()
+	hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Write `<data>/sessions/archive/<session>/<cid>.jsonl` plus its
@@ -118,10 +114,7 @@ async fn recall_errors_when_nothing_was_archived_yet() {
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	let err = result.expect_err("registry is empty");
-	assert!(
-		err.to_string().contains("no compressed blocks archived"),
-		"err: {err}"
-	);
+	assert!(err.to_string().contains("no compressed blocks archived"), "err: {err}");
 }
 
 #[tokio::test]
@@ -136,10 +129,7 @@ async fn recall_returns_archived_messages_verbatim() {
 		data_dir.path(),
 		&session,
 		"cid-1",
-		&[
-			msg("user", "fix the parser"),
-			msg("tool", "error at line 42"),
-		],
+		&[msg("user", "fix the parser"), msg("tool", "error at line 42")],
 		&[("b:alpha", 1, 2)],
 	);
 
@@ -153,10 +143,7 @@ async fn recall_returns_archived_messages_verbatim() {
 	assert_eq!(out.tool_id, "t1");
 	assert!(!out.is_error());
 	let content = out.extract_content();
-	assert!(
-		content.contains("<recall ids=\"b:alpha\">"),
-		"content: {content}"
-	);
+	assert!(content.contains("<recall ids=\"b:alpha\">"), "content: {content}");
 	assert!(content.contains("[user] fix the parser"));
 	assert!(content.contains("[tool] error at line 42"));
 	assert!(content.contains("</recall>"));
@@ -220,21 +207,13 @@ async fn recall_groups_ids_per_sidecar_index() {
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	let content = result.expect("both blocks resolve").extract_content();
-	let one = content
-		.find("<recall ids=\"b:one\">")
-		.expect("group one: {content}");
-	let two = content
-		.find("<recall ids=\"b:two\">")
-		.expect("group two: {content}");
+	let one = content.find("<recall ids=\"b:one\">").expect("group one: {content}");
+	let two = content.find("<recall ids=\"b:two\">").expect("group two: {content}");
 	assert!(one < two, "indexes iterate in path order: {content}");
 	assert!(content.contains("[user] a1"));
 	assert!(content.contains("[tool] a2"));
 	assert!(content.contains("[assistant] b1"));
-	assert_eq!(
-		content.matches("</recall>").count(),
-		2,
-		"content: {content}"
-	);
+	assert_eq!(content.matches("</recall>").count(), 2, "content: {content}");
 }
 
 #[tokio::test]
@@ -277,8 +256,5 @@ fn recall_function_schema_bounds_the_batch_size() {
 	assert_eq!(f.name, "recall");
 	assert_eq!(f.parameters["required"][0], "ids");
 	assert_eq!(f.parameters["properties"]["ids"]["minItems"], 1);
-	assert_eq!(
-		f.parameters["properties"]["ids"]["maxItems"],
-		MAX_BLOCKS_PER_CALL
-	);
+	assert_eq!(f.parameters["properties"]["ids"]["maxItems"], MAX_BLOCKS_PER_CALL);
 }

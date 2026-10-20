@@ -32,8 +32,7 @@
 
 use anyhow::Result;
 use landlock::{
-	make_bitflags, path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr,
-	RulesetStatus, ABI,
+	make_bitflags, path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
 };
 
 pub fn apply(dir: &std::path::Path) -> Result<()> {

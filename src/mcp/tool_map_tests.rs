@@ -18,8 +18,8 @@ use serial_test::serial;
 /// Parse the shipped default template and replace the MCP server list.
 /// Builtin-only servers keep every test offline: no stdio spawn, no HTTP.
 fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.mcp.servers = servers;
 	config
 }
@@ -27,11 +27,7 @@ fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
 /// Single builtin server no branch in `build_tool_server_map_impl` recognizes —
 /// initializes to a deterministic, empty tool map.
 fn empty_map_config() -> Config {
-	config_with_servers(vec![McpServerConfig::builtin(
-		"no-such-builtin",
-		30,
-		vec![],
-	)])
+	config_with_servers(vec![McpServerConfig::builtin("no-such-builtin", 30, vec![])])
 }
 
 /// TOOL_MAP is a process-global OnceLock shared with every other test in this
@@ -50,9 +46,7 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 #[tokio::test]
 async fn lookup_is_case_sensitive_and_rejects_lookalikes() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	register_dynamic_agent_tool("reviewer");
 	assert!(get_server_for_tool("agent_reviewer").is_some());
@@ -71,9 +65,7 @@ async fn lookup_is_case_sensitive_and_rejects_lookalikes() {
 #[tokio::test]
 async fn duplicate_dynamic_registration_keeps_single_entry() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	register_dynamic_agent_tool("reviewer");
 	register_dynamic_agent_tool("reviewer");
@@ -84,11 +76,7 @@ async fn duplicate_dynamic_registration_keeps_single_entry() {
 	);
 
 	let server = McpServerConfig::builtin("dyn-local", 30, vec![]);
-	register_dynamic_server_tools(
-		"dyn-local",
-		&server,
-		&["alpha".to_string(), "alpha".to_string()],
-	);
+	register_dynamic_server_tools("dyn-local", &server, &["alpha".to_string(), "alpha".to_string()]);
 	assert_eq!(
 		get_tools_for_server("dyn-local"),
 		vec!["alpha".to_string()],
@@ -118,17 +106,12 @@ async fn registration_while_uninitialized_is_invisible() {
 #[tokio::test]
 async fn unregister_unknown_tools_is_a_noop() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	unregister_dynamic_agent_tool("ghost");
 	unregister_dynamic_server_tools("ghost-server", &["never_existed".to_string()]);
 
-	assert!(
-		is_initialized(),
-		"unregistering unknown tools must not deinitialize"
-	);
+	assert!(is_initialized(), "unregistering unknown tools must not deinitialize");
 	assert_eq!(get_server_for_tool("never_existed"), None);
 
 	reset_tool_map();
@@ -138,9 +121,7 @@ async fn unregister_unknown_tools_is_a_noop() {
 #[tokio::test]
 async fn dynamic_reregistration_overwrites_previous_server() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	let first = McpServerConfig::builtin("first-server", 30, vec![]);
 	let second = McpServerConfig::http("second-server", "http://127.0.0.1:1/mcp", 30, vec![]);
@@ -153,10 +134,7 @@ async fn dynamic_reregistration_overwrites_previous_server() {
 		"last registration must win for the same tool name"
 	);
 	assert!(get_tools_for_server("first-server").is_empty());
-	assert_eq!(
-		get_tools_for_server("second-server"),
-		vec!["shared".to_string()]
-	);
+	assert_eq!(get_tools_for_server("second-server"), vec!["shared".to_string()]);
 
 	reset_tool_map();
 }
@@ -165,9 +143,7 @@ async fn dynamic_reregistration_overwrites_previous_server() {
 #[tokio::test]
 async fn dynamic_servers_keep_tool_sets_isolated() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	let left = McpServerConfig::builtin("left-server", 30, vec![]);
 	let right = McpServerConfig::builtin("right-server", 30, vec![]);
@@ -204,10 +180,7 @@ fn allowed_tools_patterns_match_exact_and_wildcard() {
 	);
 	assert!(allowed("core:plan", &patterns(&["core:*"])));
 	assert!(!allowed("runtime:plan", &patterns(&["core:*"])));
-	assert!(
-		allowed("whatever", &patterns(&["*"])),
-		"bare * matches everything"
-	);
+	assert!(allowed("whatever", &patterns(&["*"])), "bare * matches everything");
 	assert!(
 		allowed("plan", &patterns(&["plan", "other"])),
 		"any single match suffices"

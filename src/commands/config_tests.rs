@@ -76,8 +76,8 @@ fn args() -> ConfigArgs {
 }
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -101,17 +101,11 @@ fn test_show_configuration_renders() {
 #[test]
 fn test_show_configuration_root_model_labels_default() {
 	let mut config = template_config();
-	assert_eq!(
-		format_root_model(&config),
-		format!("{} (default)", default_model())
-	);
+	assert_eq!(format_root_model(&config), format!("{} (default)", default_model()));
 
 	// The old hardcoded "default" is now a deliberate user choice.
 	config.model = "openrouter:anthropic/claude-3.5-haiku".to_string();
-	assert_eq!(
-		format_root_model(&config),
-		"openrouter:anthropic/claude-3.5-haiku"
-	);
+	assert_eq!(format_root_model(&config), "openrouter:anthropic/claude-3.5-haiku");
 }
 
 #[test]
@@ -168,10 +162,7 @@ fn test_show_configuration_renders_external_servers() {
 		30,
 		vec![],
 	));
-	config
-		.mcp
-		.servers
-		.push(McpServerConfig::builtin("custom", 30, vec![]));
+	config.mcp.servers.push(McpServerConfig::builtin("custom", 30, vec![]));
 	show_configuration(&config).expect("show renders external server details");
 }
 
@@ -182,10 +173,7 @@ fn test_validate_invalid_config_returns_error() {
 	let mut a = args();
 	a.validate = true;
 	let err = execute(&a, config).expect_err("empty model must fail validation");
-	assert!(
-		err.to_string().contains("main.name cannot be empty"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("main.name cannot be empty"), "got: {err}");
 }
 
 #[test]
@@ -196,8 +184,7 @@ fn test_validate_config_with_ignored_keys_returns_error() {
 	a.validate = true;
 	let err = execute(&a, config).expect_err("ignored keys must fail validation");
 	assert!(
-		err.to_string()
-			.contains("Found 1 unknown or ignored configuration key"),
+		err.to_string().contains("Found 1 unknown or ignored configuration key"),
 		"got: {err}"
 	);
 }
@@ -213,10 +200,7 @@ fn test_model_without_provider_is_rejected() {
 	let mut a = args();
 	a.model = Some("no-colon-here".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"rejected model must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "rejected model must not save");
 }
 
 #[test]
@@ -228,10 +212,7 @@ fn test_api_key_without_colon_is_rejected() {
 	let mut a = args();
 	a.api_key = Some("openrouter".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"rejected api key must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "rejected api key must not save");
 }
 
 #[test]
@@ -243,10 +224,7 @@ fn test_api_key_directs_to_environment_variable() {
 	let mut a = args();
 	a.api_key = Some("openrouter:secret-value".to_string());
 	execute(&a, template_config()).expect("env-var guidance is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"api key must never be written"
-	);
+	assert!(!saved_config_path(&dir).exists(), "api key must never be written");
 }
 
 #[test]
@@ -258,10 +236,7 @@ fn test_invalid_log_level_is_rejected() {
 	let mut a = args();
 	a.log_level = Some("verbose".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"rejected log level must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "rejected log level must not save");
 }
 
 #[test]
@@ -273,10 +248,7 @@ fn test_invalid_theme_is_rejected() {
 	let mut a = args();
 	a.markdown_theme = Some("neon-pink".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"rejected theme must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "rejected theme must not save");
 }
 
 #[test]
@@ -288,10 +260,7 @@ fn test_mcp_server_without_config_parts_is_rejected() {
 	let mut a = args();
 	a.mcp_server = Some("lonely".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"rejected mcp server must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "rejected mcp server must not save");
 }
 
 #[test]
@@ -305,10 +274,7 @@ fn test_mcp_server_blank_name_is_rejected() {
 		a.mcp_server = Some(format!("{name},url=http://127.0.0.1:9/mcp"));
 
 		execute(&a, template_config()).expect("rejected input is not a hard error");
-		assert!(
-			!saved_config_path(&dir).exists(),
-			"a blank server name must not save"
-		);
+		assert!(!saved_config_path(&dir).exists(), "a blank server name must not save");
 	}
 }
 
@@ -339,10 +305,7 @@ fn test_http_mcp_server_without_url_is_rejected() {
 	let mut a = args();
 	a.mcp_server = Some("web,type=http".to_string());
 	execute(&a, template_config()).expect("rejected input is not a hard error");
-	assert!(
-		!saved_config_path(&dir).exists(),
-		"url-less http server must not save"
-	);
+	assert!(!saved_config_path(&dir).exists(), "url-less http server must not save");
 }
 
 #[test]
@@ -473,8 +436,7 @@ fn test_http_mcp_server_persists_with_timeout() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_server =
-		Some("web,url=http://127.0.0.1:9/mcp?token=abc==&mode=full,timeout=45".to_string());
+	a.mcp_server = Some("web,url=http://127.0.0.1:9/mcp?token=abc==&mode=full,timeout=45".to_string());
 	execute(&a, template_config()).expect("add http server saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
@@ -485,10 +447,7 @@ fn test_http_mcp_server_persists_with_timeout() {
 		.find(|s| s.name() == "web")
 		.expect("web saved");
 	assert!(matches!(srv, McpServerConfig::Http { .. }));
-	assert_eq!(
-		srv.url(),
-		Some("http://127.0.0.1:9/mcp?token=abc==&mode=full")
-	);
+	assert_eq!(srv.url(), Some("http://127.0.0.1:9/mcp?token=abc==&mode=full"));
 	assert_eq!(srv.timeout_seconds(), 45);
 }
 
@@ -500,10 +459,8 @@ fn test_stdio_mcp_server_persists_with_args() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_server = Some(
-		"local,type=stdio,command=node,args=server.js --verbose --token=abc==,timeout_seconds=20"
-			.to_string(),
-	);
+	a.mcp_server =
+		Some("local,type=stdio,command=node,args=server.js --verbose --token=abc==,timeout_seconds=20".to_string());
 	execute(&a, template_config()).expect("add stdio server saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
@@ -558,8 +515,7 @@ fn test_mcp_server_unknown_keys_warn_but_save() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_server =
-		Some("warnsrv,url=http://127.0.0.1:9/mcp,type=funky,timeout=abc,flavor=sweet".to_string());
+	a.mcp_server = Some("warnsrv,url=http://127.0.0.1:9/mcp,type=funky,timeout=abc,flavor=sweet".to_string());
 	execute(&a, template_config()).expect("unknown keys warn but still save");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
@@ -592,17 +548,8 @@ fn test_mcp_server_replaces_same_name() {
 	execute(&a, template_config()).expect("replacing a server saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
-	let cores: Vec<_> = reloaded
-		.mcp
-		.servers
-		.iter()
-		.filter(|s| s.name() == "core")
-		.collect();
-	assert_eq!(
-		cores.len(),
-		1,
-		"same-name server must be replaced, not duplicated"
-	);
+	let cores: Vec<_> = reloaded.mcp.servers.iter().filter(|s| s.name() == "core").collect();
+	assert_eq!(cores.len(), 1, "same-name server must be replaced, not duplicated");
 	assert!(matches!(cores[0], McpServerConfig::Http { .. }));
 }
 
@@ -622,10 +569,7 @@ fn test_no_changes_reports_or_creates_config_file() {
 	let dir = sandbox("nochange-missing");
 	std::env::set_var(DATA_DIR_KEY, &dir);
 	execute(&args(), template_config()).expect("no-change run creates default config");
-	assert!(
-		saved_config_path(&dir).exists(),
-		"default config must be created"
-	);
+	assert!(saved_config_path(&dir).exists(), "default config must be created");
 }
 
 #[test]
@@ -646,7 +590,6 @@ fn test_upgrade_missing_config_errors_and_current_config_succeeds() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 	let path = saved_config_path(&dir);
 	std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
-	std::fs::write(&path, include_str!("../../config-templates/default.toml"))
-		.expect("seed current config");
+	std::fs::write(&path, include_str!("../../config-templates/default.toml")).expect("seed current config");
 	execute(&a, template_config()).expect("upgrading a current config succeeds");
 }

@@ -27,10 +27,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -91,10 +88,7 @@ fn set_session_title_trims_whitespace() {
 	let _guard = DataDirGuard::new();
 	let applied = set_session_title("s", Some("  hello world  "), None, None).unwrap();
 	assert_eq!(applied.as_deref(), Some("hello world"));
-	assert_eq!(
-		get_session_meta("s").unwrap().title.as_deref(),
-		Some("hello world")
-	);
+	assert_eq!(get_session_meta("s").unwrap().title.as_deref(), Some("hello world"));
 }
 
 #[test]
@@ -178,10 +172,7 @@ fn record_session_meta_preserves_existing_title() {
 	let _guard = DataDirGuard::new();
 	set_session_title("s", Some("keep me"), None, None).unwrap();
 	record_session_meta("s", "developer", "openrouter:m");
-	assert_eq!(
-		get_session_meta("s").unwrap().title.as_deref(),
-		Some("keep me")
-	);
+	assert_eq!(get_session_meta("s").unwrap().title.as_deref(), Some("keep me"));
 }
 
 #[test]
@@ -193,8 +184,5 @@ fn corrupt_store_falls_back_to_empty_and_recovers() {
 	assert!(get_session_meta("s").is_none());
 	// The store still accepts writes after corruption
 	set_session_title("s", Some("fresh"), None, None).unwrap();
-	assert_eq!(
-		get_session_meta("s").unwrap().title.as_deref(),
-		Some("fresh")
-	);
+	assert_eq!(get_session_meta("s").unwrap().title.as_deref(), Some("fresh"));
 }

@@ -21,9 +21,8 @@ use super::*;
 use serial_test::serial;
 
 fn template_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -38,10 +37,7 @@ impl TestDataDir {
 		let dir = tempfile::tempdir().expect("temporary data dir");
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -105,9 +101,7 @@ async fn test_invalid_plain_role_is_rejected_up_front() {
 	};
 	assert_eq!(error, "Invalid role: no-such-role");
 	let context = context.expect("context");
-	let roles = context["available_roles"]
-		.as_array()
-		.expect("available_roles array");
+	let roles = context["available_roles"].as_array().expect("available_roles array");
 	assert!(
 		roles.iter().any(|r| r == "assistant"),
 		"context must list valid roles: {roles:?}"
@@ -132,10 +126,7 @@ async fn test_same_role_is_a_no_op() {
 	else {
 		panic!("expected Role output");
 	};
-	assert_eq!(
-		old_role, None,
-		"no switch happened, nothing to report as old"
-	);
+	assert_eq!(old_role, None, "no switch happened, nothing to report as old");
 	assert_eq!(new_role, "assistant");
 	assert_eq!(current_role.as_deref(), Some("assistant"));
 	assert!(!changed);
@@ -152,12 +143,7 @@ async fn test_tap_tag_resolution_failure_leaves_session_untouched() {
 	session.role = "task_refiner".to_string();
 	let mut config = template_config();
 
-	let output = run(
-		&mut session,
-		&mut config,
-		&["no-such-domain:no-such-variant"],
-	)
-	.await;
+	let output = run(&mut session, &mut config, &["no-such-domain:no-such-variant"]).await;
 	let CommandOutput::Error { error, context } = output else {
 		panic!("expected Error output");
 	};

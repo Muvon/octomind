@@ -42,9 +42,9 @@ pub fn parse_tag(tag: &str) -> Result<(String, String, Option<String>)> {
 		(tag, None)
 	};
 
-	let (category, variant) = name_part.split_once(':').context(format!(
-		"Invalid agent tag '{tag}': expected 'category:variant'"
-	))?;
+	let (category, variant) = name_part
+		.split_once(':')
+		.context(format!("Invalid agent tag '{tag}': expected 'category:variant'"))?;
 
 	if category.is_empty() || variant.is_empty() {
 		anyhow::bail!("Invalid agent tag '{tag}': category and variant must be non-empty");
@@ -58,10 +58,7 @@ fn cache_path(category: &str, variant: &str) -> Result<PathBuf> {
 	let dir = crate::directories::get_octomind_data_dir()?
 		.join("agents")
 		.join(category);
-	fs::create_dir_all(&dir).context(format!(
-		"Failed to create agent cache dir: {}",
-		dir.display()
-	))?;
+	fs::create_dir_all(&dir).context(format!("Failed to create agent cache dir: {}", dir.display()))?;
 	Ok(dir.join(format!("{variant}.toml")))
 }
 
@@ -73,9 +70,7 @@ fn is_stale(path: &PathBuf, ttl_hours: u64) -> bool {
 	let Ok(modified) = meta.modified() else {
 		return true;
 	};
-	let age = SystemTime::now()
-		.duration_since(modified)
-		.unwrap_or(Duration::MAX);
+	let age = SystemTime::now().duration_since(modified).unwrap_or(Duration::MAX);
 	age > Duration::from_secs(ttl_hours * 3600)
 }
 
@@ -83,11 +78,7 @@ fn is_stale(path: &PathBuf, ttl_hours: u64) -> bool {
 ///
 /// For GitHub taps: reads from cloned repo at `~/.local/share/octomind/taps/user/octomind-repo/`
 /// For local taps: reads from the specified local path
-async fn fetch_from_tap(
-	tap: &crate::agent::taps::Tap,
-	category: &str,
-	variant: &str,
-) -> Result<String> {
+async fn fetch_from_tap(tap: &crate::agent::taps::Tap, category: &str, variant: &str) -> Result<String> {
 	let agents_dir = tap.agents_dir()?;
 	let manifest_path = agents_dir.join(category).join(format!("{variant}.toml"));
 	fs::read_to_string(&manifest_path).context(format!(
@@ -133,11 +124,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		.count();
 	if providing_count > 1 {
 		if let Some(ref tap) = providing_tap {
-			crate::log_debug!(
-				"'{}' found in multiple taps — using first match: {}",
-				tag,
-				tap.name
-			);
+			crate::log_debug!("'{}' found in multiple taps — using first match: {}", tag, tap.name);
 		}
 	}
 
@@ -156,19 +143,15 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 
 	// Return cached copy if fresh
 	if cache.exists() && !is_stale(&cache, registry.cache_ttl_hours) {
-		let toml = fs::read_to_string(&cache).context(format!(
-			"Failed to read cached manifest: {}",
-			cache.display()
-		))?;
+		let toml =
+			fs::read_to_string(&cache).context(format!("Failed to read cached manifest: {}", cache.display()))?;
 		return Ok((toml, tap_root));
 	}
 
 	// If stale but exists, return cached and refresh in background
 	if cache.exists() {
-		let cached = fs::read_to_string(&cache).context(format!(
-			"Failed to read cached manifest: {}",
-			cache.display()
-		))?;
+		let cached =
+			fs::read_to_string(&cache).context(format!("Failed to read cached manifest: {}", cache.display()))?;
 
 		let cat = category.clone();
 		let var = variant.clone();
@@ -270,12 +253,9 @@ pub fn parse_agent_meta(raw_toml: &str, tag: &str) -> Result<AgentMeta> {
 			}
 		}
 	}
-	let title = title.ok_or_else(|| {
-		anyhow::anyhow!("Agent '{tag}' is missing required `# Title:` header comment.")
-	})?;
-	let description = description.ok_or_else(|| {
-		anyhow::anyhow!("Agent '{tag}' is missing required `# Description:` header comment.")
-	})?;
+	let title = title.ok_or_else(|| anyhow::anyhow!("Agent '{tag}' is missing required `# Title:` header comment."))?;
+	let description = description
+		.ok_or_else(|| anyhow::anyhow!("Agent '{tag}' is missing required `# Description:` header comment."))?;
 	Ok(AgentMeta { title, description })
 }
 
@@ -291,8 +271,7 @@ mod meta_tests;
 /// order (later taps with same tag are skipped). Used by the `tap` core
 /// tool to power `discover`.
 pub fn list_all_tap_agents() -> Result<Vec<TapAgent>> {
-	let taps =
-		crate::agent::taps::get_taps().context("Failed to load taps for agent enumeration")?;
+	let taps = crate::agent::taps::get_taps().context("Failed to load taps for agent enumeration")?;
 
 	let mut seen: HashSet<String> = HashSet::new();
 	let mut out: Vec<TapAgent> = Vec::new();
@@ -369,8 +348,7 @@ pub struct TapWorkflow {
 /// precedence as `taps::fetch_workflow`). Used to power `octomind workflow`
 /// (no arg) listing and shell completion.
 pub fn list_all_tap_workflows() -> Result<Vec<TapWorkflow>> {
-	let taps =
-		crate::agent::taps::get_taps().context("Failed to load taps for workflow enumeration")?;
+	let taps = crate::agent::taps::get_taps().context("Failed to load taps for workflow enumeration")?;
 
 	let mut seen: HashSet<String> = HashSet::new();
 	let mut out: Vec<TapWorkflow> = Vec::new();
@@ -402,11 +380,7 @@ pub fn list_all_tap_workflows() -> Result<Vec<TapWorkflow>> {
 			};
 			// Best-effort description; skip files that don't parse as TOML.
 			let description = match toml::from_str::<toml::Value>(&raw) {
-				Ok(v) => v
-					.get("description")
-					.and_then(|d| d.as_str())
-					.unwrap_or("")
-					.to_string(),
+				Ok(v) => v.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
 				Err(_) => continue,
 			};
 			seen.insert(name.clone());
@@ -491,10 +465,9 @@ fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<(Vec<String>
 			config_path.display()
 		);
 	}
-	let raw = fs::read_to_string(&config_path)
-		.with_context(|| format!("Failed to read {}", config_path.display()))?;
-	let value: toml::Value = toml::from_str(&raw)
-		.with_context(|| format!("Failed to parse {}", config_path.display()))?;
+	let raw = fs::read_to_string(&config_path).with_context(|| format!("Failed to read {}", config_path.display()))?;
+	let value: toml::Value =
+		toml::from_str(&raw).with_context(|| format!("Failed to parse {}", config_path.display()))?;
 
 	let read_string_array = |field: &str| -> Vec<String> {
 		value
@@ -538,10 +511,7 @@ fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<(Vec<String>
 /// `capabilities: [...]`, by `capability enable`, or when
 /// `auto_activate_capabilities` flips a capability on. The returned `name`
 /// is always the bare name.
-pub fn parse_capability_toml(
-	cap_ref: &str,
-	overrides: &HashMap<String, String>,
-) -> Result<ResolvedCapability> {
+pub fn parse_capability_toml(cap_ref: &str, overrides: &HashMap<String, String>) -> Result<ResolvedCapability> {
 	let (provider_path, tap_root) = capability_source(cap_ref, None, overrides)?;
 	let cap_name = capability_bare_name(cap_ref);
 	let cap_dir = provider_path
@@ -579,10 +549,7 @@ pub fn parse_capability_toml(
 		.and_then(|d| d.get("require"))
 		.and_then(|r| r.as_array())
 	{
-		resolved.deps = deps
-			.iter()
-			.filter_map(|v| v.as_str().map(String::from))
-			.collect();
+		resolved.deps = deps.iter().filter_map(|v| v.as_str().map(String::from)).collect();
 	}
 
 	// [roles.mcp] server_refs
@@ -592,10 +559,7 @@ pub fn parse_capability_toml(
 		.and_then(|m| m.get("server_refs"))
 		.and_then(|s| s.as_array())
 	{
-		resolved.server_refs = refs
-			.iter()
-			.filter_map(|v| v.as_str().map(String::from))
-			.collect();
+		resolved.server_refs = refs.iter().filter_map(|v| v.as_str().map(String::from)).collect();
 	}
 
 	// [roles.mcp] allowed_tools
@@ -605,18 +569,11 @@ pub fn parse_capability_toml(
 		.and_then(|m| m.get("allowed_tools"))
 		.and_then(|a| a.as_array())
 	{
-		resolved.allowed_tools = tools
-			.iter()
-			.filter_map(|v| v.as_str().map(String::from))
-			.collect();
+		resolved.allowed_tools = tools.iter().filter_map(|v| v.as_str().map(String::from)).collect();
 	}
 
 	// [[mcp.servers]] blocks — deserialize into McpServerConfig
-	if let Some(servers) = cap
-		.get("mcp")
-		.and_then(|m| m.get("servers"))
-		.and_then(|s| s.as_array())
-	{
+	if let Some(servers) = cap.get("mcp").and_then(|m| m.get("servers")).and_then(|s| s.as_array()) {
 		for server_val in servers {
 			let server_str = toml::to_string(server_val).unwrap_or_default();
 			match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
@@ -664,11 +621,8 @@ pub fn parse_capability_toml(
 /// the resolved metadata for each. Used at runtime by the `capability` tool to
 /// answer `list` and `discover` queries without the agent needing to know
 /// which tap provides what.
-pub fn list_all_capabilities(
-	overrides: &HashMap<String, String>,
-) -> Result<Vec<ResolvedCapability>> {
-	let taps =
-		crate::agent::taps::get_taps().context("Failed to load taps for capability enumeration")?;
+pub fn list_all_capabilities(overrides: &HashMap<String, String>) -> Result<Vec<ResolvedCapability>> {
+	let taps = crate::agent::taps::get_taps().context("Failed to load taps for capability enumeration")?;
 
 	let mut seen_names: HashSet<String> = HashSet::new();
 	let mut resolved: Vec<ResolvedCapability> = Vec::new();
@@ -747,17 +701,8 @@ fn capability_source(
 ) -> Result<(PathBuf, PathBuf)> {
 	// Overrides are keyed by bare capability name — a provider swap applies to
 	// the capability, not to the tap it was reached through.
-	let provider_file = |name: &str| {
-		format!(
-			"{}.toml",
-			overrides.get(name).map(|s| s.as_str()).unwrap_or("default")
-		)
-	};
-	let candidate = |root: &Path, name: &str| {
-		root.join("capabilities")
-			.join(name)
-			.join(provider_file(name))
-	};
+	let provider_file = |name: &str| format!("{}.toml", overrides.get(name).map(|s| s.as_str()).unwrap_or("default"));
+	let candidate = |root: &Path, name: &str| root.join("capabilities").join(name).join(provider_file(name));
 
 	let Some((prefix, name)) = cap_ref.split_once('/') else {
 		// Unprefixed: agent's own tap first so a tap always wins for its own
@@ -768,8 +713,7 @@ fn capability_source(
 				return Ok((own, own_root.to_path_buf()));
 			}
 		}
-		let taps = crate::agent::taps::get_taps()
-			.context("Failed to load taps for capability resolution")?;
+		let taps = crate::agent::taps::get_taps().context("Failed to load taps for capability resolution")?;
 		for tap in &taps {
 			let Ok(root) = tap.local_dir() else { continue };
 			let path = candidate(&root, cap_ref);
@@ -798,8 +742,7 @@ fn capability_source(
 		.local_dir()
 		.context("Failed to locate the baseline tap")?
 	} else {
-		let taps = crate::agent::taps::get_taps()
-			.context("Failed to load taps for capability resolution")?;
+		let taps = crate::agent::taps::get_taps().context("Failed to load taps for capability resolution")?;
 		taps.iter()
 			.find(|tap| tap.name.split('/').next() == Some(prefix))
 			.map(|tap| tap.local_dir())
@@ -850,8 +793,7 @@ pub fn resolve_capabilities(
 	tap_root: &Path,
 	overrides: &HashMap<String, String>,
 ) -> Result<(String, Vec<(String, PathBuf)>)> {
-	let mut value: toml::Value =
-		toml::from_str(raw_toml).context("Failed to parse agent manifest TOML")?;
+	let mut value: toml::Value = toml::from_str(raw_toml).context("Failed to parse agent manifest TOML")?;
 
 	// Deps declared by the agent itself always belong to the agent's own tap.
 	let own_deps: Vec<(String, PathBuf)> = value
@@ -867,10 +809,7 @@ pub fn resolve_capabilities(
 
 	// Extract and remove capabilities list
 	let cap_names: Vec<String> = match value.get("capabilities") {
-		Some(toml::Value::Array(arr)) => arr
-			.iter()
-			.filter_map(|v| v.as_str().map(String::from))
-			.collect(),
+		Some(toml::Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
 		_ => return Ok((raw_toml.to_string(), own_deps)), // No capabilities declared — pass through
 	};
 	if let toml::Value::Table(t) = &mut value {
@@ -953,11 +892,7 @@ pub fn resolve_capabilities(
 		}
 
 		// [[mcp.servers]] blocks — deduplicate by name
-		if let Some(servers) = cap
-			.get("mcp")
-			.and_then(|m| m.get("servers"))
-			.and_then(|s| s.as_array())
-		{
+		if let Some(servers) = cap.get("mcp").and_then(|m| m.get("servers")).and_then(|s| s.as_array()) {
 			for server in servers {
 				let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
 				if !name.is_empty() && seen_server_names.insert(name.to_string()) {
@@ -1021,25 +956,17 @@ pub fn resolve_capabilities(
 		}
 	}
 
-	let rendered = toml::to_string(&value)
-		.context("Failed to re-serialize agent manifest after capability resolution")?;
+	let rendered =
+		toml::to_string(&value).context("Failed to re-serialize agent manifest after capability resolution")?;
 	Ok((rendered, all_deps))
 }
 
 /// Merge a list of strings into an existing TOML array field, deduplicating.
-fn merge_string_array(
-	table: &mut toml::map::Map<String, toml::Value>,
-	key: &str,
-	additions: &[String],
-) {
+fn merge_string_array(table: &mut toml::map::Map<String, toml::Value>, key: &str, additions: &[String]) {
 	let existing: Vec<String> = table
 		.get(key)
 		.and_then(|v| v.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect()
-		})
+		.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 		.unwrap_or_default();
 
 	let mut merged = existing;

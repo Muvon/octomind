@@ -50,8 +50,7 @@ fn learning_stats_persist_and_default_for_old_sessions() {
 	let mut current = SessionInfo::default();
 	current.learning_stats.record_pack(4, 700);
 	current.learning_stats.record_use(0.05);
-	let restored: SessionInfo =
-		serde_json::from_value(serde_json::to_value(current).unwrap()).unwrap();
+	let restored: SessionInfo = serde_json::from_value(serde_json::to_value(current).unwrap()).unwrap();
 	assert_eq!(restored.learning_stats.items, 4);
 	assert_eq!(restored.learning_stats.tokens, 700);
 	assert_eq!(restored.learning_stats.used, 1);
@@ -183,23 +182,11 @@ fn test_has_incomplete_tool_calls_complete_sequence() {
 		create_test_message(
 			"assistant",
 			"I'll list the files for you.",
-			Some(
-				json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}]),
-			),
+			Some(json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}])),
 			None,
 		),
-		create_test_message(
-			"tool",
-			"file1.txt\nfile2.txt",
-			None,
-			Some("call_123".to_string()),
-		),
-		create_test_message(
-			"assistant",
-			"Here are the files in the directory.",
-			None,
-			None,
-		),
+		create_test_message("tool", "file1.txt\nfile2.txt", None, Some("call_123".to_string())),
+		create_test_message("assistant", "Here are the files in the directory.", None, None),
 	];
 
 	// This should NOT be considered incomplete
@@ -214,9 +201,7 @@ fn test_has_incomplete_tool_calls_incomplete_sequence() {
 		create_test_message(
 			"assistant",
 			"I'll list the files for you.",
-			Some(
-				json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}]),
-			),
+			Some(json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}])),
 			None,
 		),
 		// Missing tool response - this should be detected as incomplete
@@ -240,12 +225,7 @@ fn test_has_incomplete_tool_calls_multiple_calls_partial() {
 			])),
 			None,
 		),
-		create_test_message(
-			"tool",
-			"file1.txt\nfile2.txt",
-			None,
-			Some("call_123".to_string()),
-		),
+		create_test_message("tool", "file1.txt\nfile2.txt", None, Some("call_123".to_string())),
 		// Missing response for call_456 - this should be detected as incomplete
 	];
 
@@ -273,17 +253,10 @@ fn test_clean_interrupted_tool_calls_preserves_complete() {
 		create_test_message(
 			"assistant",
 			"I'll list the files for you.",
-			Some(
-				json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}]),
-			),
+			Some(json!([{"id": "call_123", "name": "list_files", "arguments": {"directory": "."}}])),
 			None,
 		),
-		create_test_message(
-			"tool",
-			"file1.txt\nfile2.txt",
-			None,
-			Some("call_123".to_string()),
-		),
+		create_test_message("tool", "file1.txt\nfile2.txt", None, Some("call_123".to_string())),
 		create_test_message("assistant", "Here are the files.", None, None),
 	];
 
@@ -500,10 +473,7 @@ fn test_session_loading_preserves_stats_from_summary() {
 		session.info.total_cost, 0.002,
 		"Total cost should be from final SUMMARY"
 	);
-	assert_eq!(
-		session.info.tool_calls, 10,
-		"Tool calls should be from final SUMMARY"
-	);
+	assert_eq!(session.info.tool_calls, 10, "Tool calls should be from final SUMMARY");
 	assert_eq!(
 		session.info.total_api_time_ms, 1000,
 		"API time should be from final SUMMARY"
@@ -518,11 +488,7 @@ fn test_session_loading_preserves_stats_from_summary() {
 	);
 
 	// CRITICAL: Verify layer_stats are preserved
-	assert_eq!(
-		session.info.layer_stats.len(),
-		1,
-		"Layer stats should be preserved"
-	);
+	assert_eq!(session.info.layer_stats.len(), 1, "Layer stats should be preserved");
 	assert_eq!(
 		session.info.layer_stats[0].input_tokens, 200,
 		"Layer stats should match final SUMMARY"
@@ -538,10 +504,7 @@ fn test_session_loading_preserves_stats_from_summary() {
 
 	// Verify messages are loaded
 	assert_eq!(session.messages.len(), 1, "Should have 1 message");
-	assert_eq!(
-		session.messages[0].role, "user",
-		"Message should be user message"
-	);
+	assert_eq!(session.messages[0].role, "user", "Message should be user message");
 
 	// Verify model is preserved from SUMMARY
 	assert_eq!(
@@ -779,8 +742,7 @@ fn normalized_token_totals_include_each_category_once() {
 		};
 		assert_eq!(info.prompt_tokens(), prompt);
 		assert_eq!(info.total_tokens(), total);
-		let restored: SessionInfo =
-			serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
+		let restored: SessionInfo = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
 		assert_eq!(restored.prompt_tokens(), prompt);
 		assert_eq!(restored.total_tokens(), total);
 	}

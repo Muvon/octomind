@@ -172,9 +172,12 @@ Running a specialist fetches its manifest from the tap registry, installs any re
 Build and register your own:
 
 ```bash
-octomind tap init yourteam/octomind-tap   # scaffold, validate, git-init, and register locally
-octomind tap yourteam/octomind-tap        # on another machine, after publishing to GitHub
+octomind tap init yourteam/my-tap   # scaffold, validate, git-init, and register locally
+octomind tap yourteam/my-tap        # on another machine, after publishing to GitHub
 ```
+
+The `octomind-` prefix is added automatically: `yourteam/my-tap` maps to the repository
+`yourteam/octomind-my-tap`.
 
 ## Installation
 

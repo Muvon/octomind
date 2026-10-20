@@ -155,12 +155,7 @@ pub fn display_injected_input(msg: &InboxMessage) {
 	let first_line = msg.content.lines().next().unwrap_or("");
 	let rest = msg.content.lines().skip(1).collect::<Vec<_>>();
 
-	println!(
-		"{} {} {}",
-		icon,
-		format!("[{label}]").bright_black(),
-		first_line
-	);
+	println!("{} {} {}", icon, format!("[{label}]").bright_black(), first_line);
 	for line in rest {
 		println!("   {}", line);
 	}
@@ -284,15 +279,14 @@ pub fn push_monitor_message_for_session(
 	max_batch_bytes: usize,
 ) {
 	let mut guard = INBOX.write().unwrap();
-	let Some(queue) = guard
-		.as_mut()
-		.and_then(|registry| registry.get_mut(session_id))
-	else {
+	let Some(queue) = guard.as_mut().and_then(|registry| registry.get_mut(session_id)) else {
 		return;
 	};
-	if let Some(pending) = queue.messages.iter_mut().find(|message| {
-		matches!(&message.source, InboxSource::Monitor { id: pending_id, .. } if pending_id == id)
-	}) {
+	if let Some(pending) = queue
+		.messages
+		.iter_mut()
+		.find(|message| matches!(&message.source, InboxSource::Monitor { id: pending_id, .. } if pending_id == id))
+	{
 		append_monitor_content(&mut pending.content, &content, max_batch_bytes);
 	} else {
 		let mut content = content;
@@ -381,10 +375,7 @@ pub fn try_pop_system_managed_message() -> Option<InboxMessage> {
 	let mut guard = INBOX.write().unwrap();
 	let registry = guard.as_mut()?;
 	let queue = registry.get_mut(&session_id)?;
-	let idx = queue
-		.messages
-		.iter()
-		.position(|msg| msg.source.is_system_managed())?;
+	let idx = queue.messages.iter().position(|msg| msg.source.is_system_managed())?;
 	queue.messages.remove(idx)
 }
 
@@ -397,10 +388,7 @@ pub fn drain_inbox_batch() -> Vec<InboxMessage> {
 		return Vec::new();
 	};
 	let mut guard = INBOX.write().unwrap();
-	let Some(queue) = guard
-		.as_mut()
-		.and_then(|registry| registry.get_mut(&session_id))
-	else {
+	let Some(queue) = guard.as_mut().and_then(|registry| registry.get_mut(&session_id)) else {
 		return Vec::new();
 	};
 	let Some(head) = queue.messages.pop_front() else {
@@ -409,11 +397,7 @@ pub fn drain_inbox_batch() -> Vec<InboxMessage> {
 	let head_is_system_managed = head.source.is_system_managed();
 	let mut batch = vec![head];
 	if head_is_system_managed {
-		while queue
-			.messages
-			.front()
-			.is_some_and(|msg| msg.source.is_system_managed())
-		{
+		while queue.messages.front().is_some_and(|msg| msg.source.is_system_managed()) {
 			if let Some(msg) = queue.messages.pop_front() {
 				batch.push(msg);
 			}
@@ -441,11 +425,7 @@ pub fn has_inbox_messages() -> bool {
 /// Takes an explicit session_id so it works from any thread.
 pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 	let guard = INBOX.read().unwrap();
-	let msg = guard
-		.as_ref()
-		.and_then(|r| r.get(session_id))?
-		.messages
-		.front()?;
+	let msg = guard.as_ref().and_then(|r| r.get(session_id))?.messages.front()?;
 	let source = match &msg.source {
 		InboxSource::Schedule { .. } => "scheduled message",
 		InboxSource::Monitor { id, description } => {
@@ -478,19 +458,8 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		}
 	};
 	// Truncate content preview to first line, max 80 chars
-	let preview: String = msg
-		.content
-		.lines()
-		.next()
-		.unwrap_or("")
-		.chars()
-		.take(80)
-		.collect();
-	let ellipsis = if preview.len() < msg.content.len() {
-		"…"
-	} else {
-		""
-	};
+	let preview: String = msg.content.lines().next().unwrap_or("").chars().take(80).collect();
+	let ellipsis = if preview.len() < msg.content.len() { "…" } else { "" };
 	Some(format!("{source}: {preview}{ellipsis}"))
 }
 

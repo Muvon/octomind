@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn base_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -54,18 +54,9 @@ fn make_role(name: &str, server_refs: Vec<String>, allowed_tools: Vec<String>) -
 
 #[test]
 fn log_level_serde_roundtrip_and_helpers() {
-	assert_eq!(
-		serde_json::from_str::<LogLevel>("\"none\"").unwrap(),
-		LogLevel::None
-	);
-	assert_eq!(
-		serde_json::from_str::<LogLevel>("\"info\"").unwrap(),
-		LogLevel::Info
-	);
-	assert_eq!(
-		serde_json::from_str::<LogLevel>("\"debug\"").unwrap(),
-		LogLevel::Debug
-	);
+	assert_eq!(serde_json::from_str::<LogLevel>("\"none\"").unwrap(), LogLevel::None);
+	assert_eq!(serde_json::from_str::<LogLevel>("\"info\"").unwrap(), LogLevel::Info);
+	assert_eq!(serde_json::from_str::<LogLevel>("\"debug\"").unwrap(), LogLevel::Debug);
 	assert!(serde_json::from_str::<LogLevel>("\"verbose\"").is_err());
 
 	assert!(!LogLevel::None.is_info_enabled());
@@ -84,22 +75,13 @@ fn log_level_serde_roundtrip_and_helpers() {
 
 #[test]
 fn reasoning_effort_parse_accepts_aliases_and_is_case_insensitive() {
-	assert_eq!(
-		ReasoningEffortConfig::parse("low"),
-		Some(ReasoningEffortConfig::Low)
-	);
+	assert_eq!(ReasoningEffortConfig::parse("low"), Some(ReasoningEffortConfig::Low));
 	assert_eq!(
 		ReasoningEffortConfig::parse("  MEDIUM "),
 		Some(ReasoningEffortConfig::Medium)
 	);
-	assert_eq!(
-		ReasoningEffortConfig::parse("med"),
-		Some(ReasoningEffortConfig::Medium)
-	);
-	assert_eq!(
-		ReasoningEffortConfig::parse("High"),
-		Some(ReasoningEffortConfig::High)
-	);
+	assert_eq!(ReasoningEffortConfig::parse("med"), Some(ReasoningEffortConfig::Medium));
+	assert_eq!(ReasoningEffortConfig::parse("High"), Some(ReasoningEffortConfig::High));
 	assert_eq!(
 		ReasoningEffortConfig::parse("xhigh"),
 		Some(ReasoningEffortConfig::XHigh)
@@ -112,10 +94,7 @@ fn reasoning_effort_parse_accepts_aliases_and_is_case_insensitive() {
 		ReasoningEffortConfig::parse("extra-high"),
 		Some(ReasoningEffortConfig::XHigh)
 	);
-	assert_eq!(
-		ReasoningEffortConfig::parse("max"),
-		Some(ReasoningEffortConfig::Max)
-	);
+	assert_eq!(ReasoningEffortConfig::parse("max"), Some(ReasoningEffortConfig::Max));
 	assert_eq!(
 		ReasoningEffortConfig::parse("maximum"),
 		Some(ReasoningEffortConfig::Max)
@@ -213,10 +192,7 @@ fn mcp_config_with_servers_renames_entries_to_map_keys() {
 	let names: Vec<&str> = mcp.servers.iter().map(|s| s.name()).collect();
 	assert_eq!(names.len(), 3);
 	for expected in ["b", "h", "s"] {
-		assert!(
-			names.contains(&expected),
-			"missing renamed server {expected}"
-		);
+		assert!(names.contains(&expected), "missing renamed server {expected}");
 	}
 	assert_eq!(mcp.allowed_tools, vec!["b:*".to_string()]);
 
@@ -241,9 +217,7 @@ fn config_effective_model_and_tokens_come_from_root() {
 #[test]
 fn config_server_and_hook_lookups() {
 	let config = base_config();
-	let core = config
-		.get_server_config("core")
-		.expect("core server in template");
+	let core = config.get_server_config("core").expect("core server in template");
 	assert_eq!(core.name(), "core");
 	assert_eq!(core.connection_type(), McpConnectionType::Builtin);
 	assert!(config.get_server_config("no-such-server").is_none());
@@ -269,10 +243,7 @@ fn output_mode_maps_runtime_modes() {
 #[test]
 fn working_directory_defaults_to_cwd_and_can_be_overridden() {
 	let mut config = base_config();
-	assert_eq!(
-		config.get_working_directory(),
-		std::env::current_dir().unwrap()
-	);
+	assert_eq!(config.get_working_directory(), std::env::current_dir().unwrap());
 	let marker = PathBuf::from("/tmp/octomind-config-test-cwd");
 	config.set_working_directory(marker.clone());
 	assert_eq!(config.get_working_directory(), marker);
@@ -292,20 +263,14 @@ fn build_role_map_indexes_all_roles() {
 #[test]
 fn get_role_config_returns_exact_role_and_falls_back() {
 	let mut config = base_config();
-	config.roles = vec![
-		make_role("alpha", vec![], vec![]),
-		make_role("beta", vec![], vec![]),
-	];
+	config.roles = vec![make_role("alpha", vec![], vec![]), make_role("beta", vec![], vec![])];
 	config.build_role_map();
 
 	let (role_config, mcp, _layers, _commands, system) = config.get_role_config("alpha");
 	assert_eq!(system, "system prompt for alpha");
 	assert_eq!(role_config.system, "system prompt for alpha");
 	assert!(mcp.server_refs.is_empty());
-	assert_eq!(
-		config.get_role_config_struct("beta").system,
-		"system prompt for beta"
-	);
+	assert_eq!(config.get_role_config_struct("beta").system, "system prompt for beta");
 
 	// Unknown role falls back to some configured role instead of panicking.
 	let (_rc, _m, _l, _c, fallback_system) = config.get_role_config("ghost");
@@ -340,19 +305,14 @@ fn get_enabled_servers_for_role_delegates_to_role_mcp_config() {
 fn merged_config_for_role_filters_servers_and_patches_refs() {
 	let mut config = base_config();
 	config.roles = vec![
-		make_role(
-			"alpha",
-			vec!["core".to_string()],
-			vec!["core:plan".to_string()],
-		),
+		make_role("alpha", vec!["core".to_string()], vec!["core:plan".to_string()]),
 		make_role("beta", vec![], vec![]),
 	];
 	config.build_role_map();
 	config.mcp.servers = vec![
 		McpServerConfig::builtin("core", 30, vec![]),
 		McpServerConfig::builtin("unused", 30, vec![]),
-		McpServerConfig::builtin("auto-srv", 30, vec![])
-			.with_auto_bind(Some(vec!["beta".to_string()])),
+		McpServerConfig::builtin("auto-srv", 30, vec![]).with_auto_bind(Some(vec!["beta".to_string()])),
 	];
 
 	let merged = config.get_merged_config_for_role("alpha");
@@ -384,8 +344,7 @@ fn merged_config_for_role_appends_wildcard_for_auto_bind_when_filtered() {
 	config.build_role_map();
 	config.mcp.servers = vec![
 		McpServerConfig::builtin("core", 30, vec![]),
-		McpServerConfig::builtin("auto-srv", 30, vec![])
-			.with_auto_bind(Some(vec!["gamma".to_string()])),
+		McpServerConfig::builtin("auto-srv", 30, vec![]).with_auto_bind(Some(vec!["gamma".to_string()])),
 	];
 
 	let merged = config.get_merged_config_for_role("gamma");
@@ -402,32 +361,16 @@ fn merged_config_for_role_appends_wildcard_for_auto_bind_when_filtered() {
 fn merged_config_for_default_template_roles() {
 	let config = base_config();
 	let merged = config.get_merged_config_for_role("assistant");
-	let names: Vec<String> = merged
-		.mcp
-		.servers
-		.iter()
-		.map(|s| s.name().to_string())
-		.collect();
+	let names: Vec<String> = merged.mcp.servers.iter().map(|s| s.name().to_string()).collect();
 	for expected in ["core", "orchestration", "runtime", "agent"] {
-		assert!(
-			names.contains(&expected.to_string()),
-			"assistant must see {expected}"
-		);
+		assert!(names.contains(&expected.to_string()), "assistant must see {expected}");
 	}
 	// "filesystem" is referenced by the role but absent from the template
 	// registry — it is skipped, not synthesized.
 	assert!(!names.contains(&"filesystem".to_string()));
 	assert_eq!(
 		merged.system.as_deref(),
-		Some(
-			config
-				.role_map
-				.get("assistant")
-				.unwrap()
-				.config
-				.system
-				.as_str()
-		)
+		Some(config.role_map.get("assistant").unwrap().config.system.as_str())
 	);
 
 	// task_refiner has no servers: its merged registry is empty.
@@ -451,10 +394,7 @@ fn interactive_role_merge_synthesizes_orchestration() {
 		.iter()
 		.find(|s| s.name() == "orchestration")
 		.expect("orchestration synthesized for interactive session");
-	assert_eq!(
-		orchestration.tools(),
-		&["schedule".to_string(), "monitor".to_string()]
-	);
+	assert_eq!(orchestration.tools(), &["schedule".to_string(), "monitor".to_string()]);
 	let solo = merged.role_map.get("solo").unwrap();
 	assert!(solo.mcp.server_refs.iter().any(|n| n == "orchestration"));
 	// Unrestricted role: no allowed_tools grants to append.
@@ -485,19 +425,10 @@ fn interactive_role_merge_unions_concrete_tool_grants() {
 			"missing interactive tool {tool}"
 		);
 	}
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:schedule".to_string()));
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:monitor".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:schedule".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:monitor".to_string()));
 	let dev = merged.role_map.get("dev").unwrap();
-	assert!(dev
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:schedule".to_string()));
+	assert!(dev.mcp.allowed_tools.contains(&"orchestration:schedule".to_string()));
 }
 
 #[test]
@@ -514,14 +445,8 @@ fn interactive_role_merge_keeps_empty_tool_list_as_full_grant() {
 		.find(|s| s.name() == "orchestration")
 		.expect("orchestration enabled for assistant");
 	assert!(orchestration.tools().is_empty());
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:schedule".to_string()));
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:monitor".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:schedule".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:monitor".to_string()));
 }
 
 // --- thread-local / process-global config plumbing ----------------------------------------
@@ -545,14 +470,8 @@ fn thread_role_roundtrip_via_process_global() {
 
 #[test]
 fn reasoning_effort_none_parses_and_maps_to_thinking_off() {
-	assert_eq!(
-		ReasoningEffortConfig::parse("none"),
-		Some(ReasoningEffortConfig::None)
-	);
-	assert_eq!(
-		ReasoningEffortConfig::parse("off"),
-		Some(ReasoningEffortConfig::None)
-	);
+	assert_eq!(ReasoningEffortConfig::parse("none"), Some(ReasoningEffortConfig::None));
+	assert_eq!(ReasoningEffortConfig::parse("off"), Some(ReasoningEffortConfig::None));
 	assert_eq!(ReasoningEffortConfig::None.as_str(), "none");
 	assert_eq!(
 		ReasoningEffortConfig::None.to_octolib(),

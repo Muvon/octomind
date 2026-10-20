@@ -24,11 +24,7 @@ async fn outcome_credit_updates_only_materially_used_memory() {
 	let role = "__credit_role";
 	let project = "__credit_project";
 	let backend = crate::supervisor::learning::backend::FileBackend;
-	for content in [
-		"exposed but unused",
-		"materially used",
-		"used without verdict",
-	] {
+	for content in ["exposed but unused", "materially used", "used without verdict"] {
 		backend
 			.store(&crate::supervisor::learning::Lesson {
 				content: content.to_string(),
@@ -40,8 +36,7 @@ async fn outcome_credit_updates_only_materially_used_memory() {
 			.await
 			.unwrap();
 	}
-	let config: Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	let config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.recalled_refs = vec![
 		(

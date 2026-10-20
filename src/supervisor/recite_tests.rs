@@ -83,10 +83,7 @@ fn constraints_cover_acceptance_criteria_not_only_prohibitions() {
 		c.iter().any(|x| x.contains("remaining visual width")),
 		"dropped the acceptance criterion that decides the fix: {c:?}"
 	);
-	assert!(
-		c.iter().any(|x| x.contains("space-indented fenced blocks")),
-		"{c:?}"
-	);
+	assert!(c.iter().any(|x| x.contains("space-indented fenced blocks")), "{c:?}");
 	// A listed criterion stays a criterion however long it is: the requester
 	// marked it as one. Unlisted prose keeps the strict cap.
 	let long_bullet = "- A response cookie whose name starts with `__Host-` must be Secure, \
@@ -121,18 +118,10 @@ defaults a missing Path, so the parsed cookie alone cannot tell you this)";
 	);
 
 	// A wrapped sentence cut at the line end must not be recited as a stub.
-	let wrapped =
-		"- Preserve the\n  existing rejection path.\n- Preserve current default formatting.";
+	let wrapped = "- Preserve the\n  existing rejection path.\n- Preserve current default formatting.";
 	let c = extract_constraints(wrapped);
-	assert!(
-		!c.iter().any(|x| x == "Preserve the"),
-		"recited a stub: {c:?}"
-	);
-	assert!(
-		c.iter()
-			.any(|x| x == "Preserve current default formatting."),
-		"{c:?}"
-	);
+	assert!(!c.iter().any(|x| x == "Preserve the"), "recited a stub: {c:?}");
+	assert!(c.iter().any(|x| x == "Preserve current default formatting."), "{c:?}");
 }
 
 #[test]
@@ -175,8 +164,7 @@ fn recites_intent_and_next_steps() {
 		0,
 	);
 	let live = Some(crate::session::anchor::task_sig("the ask"));
-	let note = recite_note(&a, None, &[], &[], live, VerificationPolicy::Unspecified)
-		.expect("should recite");
+	let note = recite_note(&a, None, &[], &[], live, VerificationPolicy::Unspecified).expect("should recite");
 	// Excluded from the gate's real-task search.
 	assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 	assert!(note.contains("<intent>Add the truncation detector</intent>"));
@@ -195,8 +183,7 @@ fn recites_intent_only_when_no_next_steps() {
 		0,
 	);
 	let live = Some(crate::session::anchor::task_sig("the ask"));
-	let note = recite_note(&a, None, &[], &[], live, VerificationPolicy::Unspecified)
-		.expect("should recite");
+	let note = recite_note(&a, None, &[], &[], live, VerificationPolicy::Unspecified).expect("should recite");
 	assert!(note.contains("<intent>Refactor auth</intent>"));
 	assert!(!note.contains("Last-known next steps"));
 }
@@ -334,9 +321,8 @@ fn active_constraints_do_not_union_superseded_turns() {
 	];
 	assert!(active_constraints(&messages, None).is_empty());
 
-	let resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
-		"Continue task A. Never run tests for task A.",
-	);
+	let resolved =
+		crate::supervisor::resolve::ResolvedTask::self_contained("Continue task A. Never run tests for task A.");
 	assert_eq!(
 		active_constraints(&messages, Some(&resolved)),
 		vec!["Never run tests for task A."]
@@ -350,9 +336,8 @@ fn operational_constraints_from_the_resolver_ride_the_same_channel() {
 		content: "Swap the models; I will rerun it on the server.".into(),
 		..Default::default()
 	}];
-	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
-		"Swap the models; I will rerun it on the server.",
-	);
+	let mut resolved =
+		crate::supervisor::resolve::ResolvedTask::self_contained("Swap the models; I will rerun it on the server.");
 	resolved.operational_constraints = vec!["I will rerun it on the server".into()];
 	assert_eq!(
 		active_constraints(&messages, Some(&resolved)),
@@ -367,13 +352,9 @@ fn recitation_drops_ungrounded_operational_facts_even_from_resolved_state() {
 		content: "Change the files. I run tests myself.".into(),
 		..Default::default()
 	}];
-	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
-		"Change the files. All releases run in production.",
-	);
-	resolved.operational_constraints = vec![
-		"All releases run in production".into(),
-		"I run tests myself".into(),
-	];
+	let mut resolved =
+		crate::supervisor::resolve::ResolvedTask::self_contained("Change the files. All releases run in production.");
+	resolved.operational_constraints = vec!["All releases run in production".into(), "I run tests myself".into()];
 	let constraints = active_constraints(&messages, Some(&resolved));
 	assert!(constraints.iter().any(|c| c == "I run tests myself"));
 	// The operational selection cannot use a model rewrite as its user source.
@@ -382,28 +363,14 @@ fn recitation_drops_ungrounded_operational_facts_even_from_resolved_state() {
 
 #[test]
 fn verification_policy_is_projected_as_boundary_not_task() {
-	let forbidden = recite_note(
-		&Anchor::default(),
-		None,
-		&[],
-		&[],
-		None,
-		VerificationPolicy::Forbidden,
-	)
-	.expect("forbidden policy recites alone");
+	let forbidden = recite_note(&Anchor::default(), None, &[], &[], None, VerificationPolicy::Forbidden)
+		.expect("forbidden policy recites alone");
 	assert!(crate::supervisor::gate::is_supervisor_injection(&forbidden));
 	assert!(forbidden.contains("not task scope"));
 	assert!(forbidden.contains("do not execute tests"));
 
-	let allowed = recite_note(
-		&Anchor::default(),
-		None,
-		&[],
-		&[],
-		None,
-		VerificationPolicy::Allowed,
-	)
-	.expect("revocation recites alone");
+	let allowed = recite_note(&Anchor::default(), None, &[], &[], None, VerificationPolicy::Allowed)
+		.expect("revocation recites alone");
 	assert!(allowed.contains("revoked the prior no-verification rule"));
 	assert!(allowed.contains("permitted, not required"));
 }
@@ -444,8 +411,7 @@ fn a_mid_sentence_fragment_is_dropped_rather_than_recited() {
 #[test]
 fn markers_match_whole_words_only() {
 	// "whenever" contains "never " as a substring; it is not a prohibition.
-	let got =
-		extract_constraints("Ask through render_ui, not prose, whenever the answer is a choice.");
+	let got = extract_constraints("Ask through render_ui, not prose, whenever the answer is a choice.");
 	assert!(got.is_empty(), "{got:?}");
 	let got = extract_constraints("Never publish without my explicit ask.");
 	assert_eq!(got, vec!["Never publish without my explicit ask."]);

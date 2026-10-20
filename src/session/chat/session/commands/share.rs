@@ -23,31 +23,25 @@ pub async fn handle_share(session: &ChatSession) -> Result<CommandResult> {
 	let session_file = match session.session.session_file.as_ref() {
 		Some(p) => p.clone(),
 		None => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: "No session file available to share.".to_string(),
-					context: Some(serde_json::json!({
-						"hint": "Sessions are auto-saved after each interaction. Try sending a message first."
-					})),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: "No session file available to share.".to_string(),
+				context: Some(serde_json::json!({
+					"hint": "Sessions are auto-saved after each interaction. Try sending a message first."
+				})),
+			})));
 		}
 	};
 
 	match share::share_session(&session_file).await {
-		Ok(result) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Share {
-				id: result.id,
-				url: result.url,
-			},
-		))),
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Failed to share session: {}", e),
-				context: Some(serde_json::json!({
-					"hint": "Override the host with OCTOMIND_SHARE_URL=<url> if you're testing against a local dev server."
-				})),
-			},
-		))),
+		Ok(result) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Share {
+			id: result.id,
+			url: result.url,
+		}))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Failed to share session: {}", e),
+			context: Some(serde_json::json!({
+				"hint": "Override the host with OCTOMIND_SHARE_URL=<url> if you're testing against a local dev server."
+			})),
+		}))),
 	}
 }

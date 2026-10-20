@@ -52,10 +52,7 @@ impl PickerEntry {
 		if title.is_empty() {
 			format!("{}  {}  {}  {}", created, self.name, role, model_short)
 		} else {
-			format!(
-				"{}  {} — {}  {}  {}",
-				created, self.name, title, role, model_short
-			)
+			format!("{}  {} — {}  {}  {}", created, self.name, title, role, model_short)
 		}
 	}
 }
@@ -84,14 +81,8 @@ pub fn pick_session() -> Result<Option<String>> {
 				PickerEntry {
 					name,
 					title: meta.as_ref().and_then(|m| m.title.clone()),
-					role: meta
-						.as_ref()
-						.and_then(|m| m.role.clone())
-						.or(Some(info.role.clone())),
-					model: meta
-						.as_ref()
-						.and_then(|m| m.model.clone())
-						.or(Some(info.model.clone())),
+					role: meta.as_ref().and_then(|m| m.role.clone()).or(Some(info.role.clone())),
+					model: meta.as_ref().and_then(|m| m.model.clone()).or(Some(info.model.clone())),
 					created_at: info.created_at,
 				}
 			})
@@ -137,12 +128,11 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 				selected = filtered.len().saturating_sub(1);
 			}
 
-			execute!(
+			execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
+			write!(
 				stdout,
-				terminal::Clear(terminal::ClearType::All),
-				cursor::MoveTo(0, 0)
+				"Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)\r\n"
 			)?;
-			write!(stdout, "Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)\r\n")?;
 			write!(stdout, "> {}\r\n\r\n", query_str)?;
 
 			let rows = terminal::size().map(|(_, h)| h as usize).unwrap_or(24);
@@ -165,17 +155,10 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 				write!(stdout, "  (no matches — Enter starts a new session)\r\n")?;
 			}
 			// Place the cursor in the query line at its edit position.
-			execute!(
-				stdout,
-				cursor::Show,
-				cursor::MoveTo(2 + cursor_pos as u16, 1)
-			)?;
+			execute!(stdout, cursor::Show, cursor::MoveTo(2 + cursor_pos as u16, 1))?;
 			stdout.flush()?;
 
-			if let Event::Key(KeyEvent {
-				code, modifiers, ..
-			}) = event::read()?
-			{
+			if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
 				let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 				match code {
 					KeyCode::Esc => return Ok(None),

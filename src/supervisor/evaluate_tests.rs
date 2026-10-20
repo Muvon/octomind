@@ -25,8 +25,7 @@ use crate::session::chat::test_support::{
 
 fn config(recall: bool, skills: bool, authorizer: bool) -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("default template must deserialize");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize");
 	config.supervisor.enabled = true;
 	config.decision.recall = recall;
 	config.decision.skills = skills;
@@ -49,10 +48,7 @@ fn snapshot_f64(key: &str) -> f64 {
 #[test]
 fn template_defaults_every_seam_off_on_cloudflare_jev() {
 	let config = config(false, false, false);
-	assert_eq!(
-		config.decision.model.as_deref(),
-		Some("cloudflare:typesafe/jev")
-	);
+	assert_eq!(config.decision.model.as_deref(), Some("cloudflare:typesafe/jev"));
 	assert!(!config.decision.recall && !config.decision.skills && !config.decision.supervisor);
 	for seam in Seam::ALL {
 		assert!(!enabled(&config, seam));
@@ -76,21 +72,14 @@ fn master_switch_off_disables_every_seam() {
 
 #[tokio::test]
 async fn seams_off_make_no_call_and_touch_no_counter() {
-	let fake =
-		install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.9)]))]).await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.9)]))]).await;
 	let before: Vec<u64> = Seam::ALL
 		.iter()
 		.map(|seam| evaluate_counter(*seam, "calls") + evaluate_counter(*seam, "unavailable"))
 		.collect();
 	let mut config = config(false, false, false);
 	for seam in Seam::ALL {
-		let answers = run(
-			&config,
-			seam,
-			serde_json::json!("state"),
-			recall_questions(1),
-		)
-		.await;
+		let answers = run(&config, seam, serde_json::json!("state"), recall_questions(1)).await;
 		assert!(answers.is_none());
 	}
 	// Master switch off wins even with every seam switched on.
@@ -99,14 +88,9 @@ async fn seams_off_make_no_call_and_touch_no_counter() {
 	config.decision.supervisor = true;
 	config.supervisor.enabled = false;
 	for seam in Seam::ALL {
-		assert!(run(
-			&config,
-			seam,
-			serde_json::json!("state"),
-			recall_questions(1)
-		)
-		.await
-		.is_none());
+		assert!(run(&config, seam, serde_json::json!("state"), recall_questions(1))
+			.await
+			.is_none());
 	}
 	assert!(fake.requests().is_empty());
 	let after: Vec<u64> = Seam::ALL
@@ -118,11 +102,7 @@ async fn seams_off_make_no_call_and_touch_no_counter() {
 
 #[tokio::test]
 async fn answers_come_back_keyed_by_question_id_and_are_attributed() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
-		("c0", 0.91),
-		("c1", 0.08),
-	]))])
-	.await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.91), ("c1", 0.08)]))]).await;
 	let config = config(true, false, false);
 	let calls = evaluate_counter(Seam::Recall, "calls");
 	let evaluate_calls = snapshot_u64("evaluate_calls");
@@ -168,33 +148,20 @@ async fn answers_come_back_keyed_by_question_id_and_are_attributed() {
 
 #[tokio::test]
 async fn missing_key_falls_through_with_one_unavailable() {
-	let fake =
-		install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
 	let config = config(true, false, false);
 	let unavailable = evaluate_counter(Seam::Recall, "unavailable");
 	let calls = evaluate_counter(Seam::Recall, "calls");
-	let answers = run(
-		&config,
-		Seam::Recall,
-		serde_json::json!("state"),
-		recall_questions(1),
-	)
-	.await;
+	let answers = run(&config, Seam::Recall, serde_json::json!("state"), recall_questions(1)).await;
 	assert!(answers.is_none());
 	assert_eq!(fake.requests().len(), 1);
-	assert_eq!(
-		evaluate_counter(Seam::Recall, "unavailable"),
-		unavailable + 1
-	);
+	assert_eq!(evaluate_counter(Seam::Recall, "unavailable"), unavailable + 1);
 	assert_eq!(evaluate_counter(Seam::Recall, "calls"), calls + 1);
 }
 
 #[tokio::test]
 async fn a_hung_provider_is_cut_at_the_timeout() {
-	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Sleep(
-		std::time::Duration::from_secs(6),
-	)])
-	.await;
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Sleep(std::time::Duration::from_secs(6))]).await;
 	let config = config(false, true, false);
 	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
 	let started = std::time::Instant::now();
@@ -202,46 +169,27 @@ async fn a_hung_provider_is_cut_at_the_timeout() {
 		&config,
 		Seam::Skills,
 		serde_json::json!("state"),
-		std::collections::BTreeMap::from([(
-			SKILL_QUESTION_ID.to_string(),
-			skill_question([("a", "A"), ("b", "B")]),
-		)]),
+		std::collections::BTreeMap::from([(SKILL_QUESTION_ID.to_string(), skill_question([("a", "A"), ("b", "B")]))]),
 	)
 	.await;
 	assert!(answers.is_none());
 	assert!(started.elapsed() <= std::time::Duration::from_millis(5_500));
-	assert_eq!(
-		evaluate_counter(Seam::Skills, "unavailable"),
-		unavailable + 1
-	);
+	assert_eq!(evaluate_counter(Seam::Skills, "unavailable"), unavailable + 1);
 }
 
 #[tokio::test]
 async fn oversized_state_is_never_sent() {
-	let fake =
-		install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.9)]))]).await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.9)]))]).await;
 	let config = config(true, false, false);
 	let unavailable = evaluate_counter(Seam::Recall, "unavailable");
 	let calls = evaluate_counter(Seam::Recall, "calls");
 	// ~25k tokens of distinct words; well above the 24,000 cap.
-	let state = (0..25_000)
-		.map(|i| format!("w{i}"))
-		.collect::<Vec<_>>()
-		.join(" ");
+	let state = (0..25_000).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
 	assert!(crate::session::estimate_tokens(&state) > MAX_STATE_TOKENS);
-	let answers = run(
-		&config,
-		Seam::Recall,
-		serde_json::json!(state),
-		recall_questions(1),
-	)
-	.await;
+	let answers = run(&config, Seam::Recall, serde_json::json!(state), recall_questions(1)).await;
 	assert!(answers.is_none());
 	assert!(fake.requests().is_empty());
-	assert_eq!(
-		evaluate_counter(Seam::Recall, "unavailable"),
-		unavailable + 1
-	);
+	assert_eq!(evaluate_counter(Seam::Recall, "unavailable"), unavailable + 1);
 	assert_eq!(evaluate_counter(Seam::Recall, "calls"), calls);
 }
 
@@ -255,27 +203,14 @@ async fn missing_or_mistyped_answers_are_an_invalid_response() {
 	let config = config(true, false, false);
 	let unavailable = evaluate_counter(Seam::Recall, "unavailable");
 	// Two questions asked, one answered.
-	assert!(run(
-		&config,
-		Seam::Recall,
-		serde_json::json!("s"),
-		recall_questions(2)
-	)
-	.await
-	.is_none());
+	assert!(run(&config, Seam::Recall, serde_json::json!("s"), recall_questions(2))
+		.await
+		.is_none());
 	// Right id, wrong answer type.
-	assert!(run(
-		&config,
-		Seam::Recall,
-		serde_json::json!("s"),
-		recall_questions(1)
-	)
-	.await
-	.is_none());
-	assert_eq!(
-		evaluate_counter(Seam::Recall, "unavailable"),
-		unavailable + 2
-	);
+	assert!(run(&config, Seam::Recall, serde_json::json!("s"), recall_questions(1))
+		.await
+		.is_none());
+	assert_eq!(evaluate_counter(Seam::Recall, "unavailable"), unavailable + 2);
 }
 
 #[tokio::test]
@@ -286,10 +221,7 @@ async fn snapshot_lists_every_active_seam_with_its_three_counters() {
 	let snapshot = crate::supervisor::stats::snapshot().expect("non-idle");
 	let recall = &snapshot["evaluate"]["recall"];
 	for key in ["calls", "unavailable", "applied"] {
-		assert!(
-			recall.get(key).and_then(|v| v.as_u64()).is_some(),
-			"missing {key}"
-		);
+		assert!(recall.get(key).and_then(|v| v.as_u64()).is_some(), "missing {key}");
 	}
 	assert!(recall["calls"].as_u64().unwrap() >= 1);
 	assert!(recall["applied"].as_u64().unwrap() >= 1);
@@ -298,10 +230,7 @@ async fn snapshot_lists_every_active_seam_with_its_three_counters() {
 #[test]
 fn question_builders_use_stable_ids_and_documented_options() {
 	let recall = recall_questions(3);
-	assert_eq!(
-		recall.keys().cloned().collect::<Vec<_>>(),
-		vec!["c0", "c1", "c2"]
-	);
+	assert_eq!(recall.keys().cloned().collect::<Vec<_>>(), vec!["c0", "c1", "c2"]);
 	assert!(recall.values().all(|q| matches!(q, Question::Noul { .. })));
 	let instructions = |question: &Question| match question {
 		Question::Noul { instructions, .. } => instructions.as_str().unwrap_or("").to_string(),
@@ -372,10 +301,7 @@ fn windows_respect_the_state_cap_and_the_question_bound_in_order() {
 	assert!(packed.len() >= 2);
 	for window in &packed {
 		let tokens: usize = window.iter().map(|(_, t)| *t).sum();
-		assert!(
-			tokens + 500 <= MAX_STATE_TOKENS,
-			"window over the cap: {tokens}"
-		);
+		assert!(tokens + 500 <= MAX_STATE_TOKENS, "window over the cap: {tokens}");
 	}
 	assert!(windows(Vec::<usize>::new(), 0, |_| 1).is_empty());
 }
@@ -400,10 +326,7 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 		seam,
 		vec![
 			(serde_json::json!({"w": 0}), condense_questions([(0, 1, 9)])),
-			(
-				serde_json::json!({"w": 1}),
-				condense_questions([(1, 10, 20)]),
-			),
+			(serde_json::json!({"w": 1}), condense_questions([(1, 10, 20)])),
 		],
 	)
 	.await
@@ -419,23 +342,14 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 		&config,
 		seam,
 		vec![
-			(
-				serde_json::json!({"w": 2}),
-				condense_questions([(2, 21, 30)]),
-			),
-			(
-				serde_json::json!({"w": 3}),
-				condense_questions([(3, 31, 40)]),
-			),
+			(serde_json::json!({"w": 2}), condense_questions([(2, 21, 30)])),
+			(serde_json::json!({"w": 3}), condense_questions([(3, 31, 40)])),
 		],
 	)
 	.await;
 	assert!(failed.is_none());
 	assert_eq!(evaluate_counter(seam, "calls") - calls_before, 4);
-	assert_eq!(
-		evaluate_counter(seam, "unavailable") - unavailable_before,
-		1
-	);
+	assert_eq!(evaluate_counter(seam, "unavailable") - unavailable_before, 1);
 
 	// Seam off: no call, no counter, and an empty round is not a fallback.
 	config.decision.supervisor = false;
@@ -447,10 +361,7 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 	.await
 	.is_none());
 	config.decision.supervisor = true;
-	assert_eq!(
-		run_windows(&config, seam, Vec::new()).await,
-		Some(Vec::new())
-	);
+	assert_eq!(run_windows(&config, seam, Vec::new()).await, Some(Vec::new()));
 	assert_eq!(fake.requests().len(), 4);
 }
 
@@ -485,8 +396,7 @@ async fn run_windows_issues_every_window_concurrently() {
 #[tokio::test]
 async fn run_windows_keeps_at_most_four_windows_in_flight() {
 	let delay = std::time::Duration::from_millis(200);
-	let _fake =
-		install_fake_evaluation((0..5).map(|_| FakeEvaluationStep::Sleep(delay)).collect()).await;
+	let _fake = install_fake_evaluation((0..5).map(|_| FakeEvaluationStep::Sleep(delay)).collect()).await;
 	let mut config = config(false, false, false);
 	config.decision.compression = true;
 	let started = std::time::Instant::now();
@@ -511,9 +421,8 @@ async fn avoided_chat_calls_are_counted_and_priced_at_the_supervisor_model() {
 	let _fake = install_fake_evaluation(Vec::new()).await;
 	let mut config = crate::session::chat::test_support::fake_provider_config();
 	config.supervisor.model.model = Some("openai:gpt-5.6-terra".to_string());
-	let expected =
-		octolib::llm::reference_pricing::calculate_reference_cost("gpt-5.6-terra", 1_000, 0, 0)
-			.expect("a priced reference model");
+	let expected = octolib::llm::reference_pricing::calculate_reference_cost("gpt-5.6-terra", 1_000, 0, 0)
+		.expect("a priced reference model");
 	assert!(expected > 0.0);
 	let calls = snapshot_u64("evaluate_avoided_calls");
 	let tokens = snapshot_u64("evaluate_avoided_tokens");
@@ -526,9 +435,7 @@ async fn avoided_chat_calls_are_counted_and_priced_at_the_supervisor_model() {
 	assert_eq!(evaluate_counter(Seam::Plan, "avoided") - seam, 1);
 
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	let unpriced =
-		octolib::llm::reference_pricing::calculate_reference_cost("fake-model", 10, 0, 0)
-			.unwrap_or(0.0);
+	let unpriced = octolib::llm::reference_pricing::calculate_reference_cost("fake-model", 10, 0, 0).unwrap_or(0.0);
 	let cost = snapshot_f64("evaluate_avoided_cost");
 	avoided(&config, Seam::Gate, 10);
 	assert!((snapshot_f64("evaluate_avoided_cost") - cost - unpriced).abs() < 1e-12);
@@ -541,16 +448,10 @@ fn condense_and_compression_questions_are_nouls_keyed_by_slot() {
 		_ => panic!("every seam question is a Noul"),
 	};
 	let condense = condense_questions([(4, 1, 10), (5, 11, 20), (6, 21, 30)]);
-	assert_eq!(
-		condense.keys().cloned().collect::<Vec<_>>(),
-		["k0", "k1", "k2"]
-	);
+	assert_eq!(condense.keys().cloned().collect::<Vec<_>>(), ["k0", "k1", "k2"]);
 	assert!(instructions(&condense["k1"]).starts_with("Chunk 5 (lines 11-20): "));
 	let compression = compression_questions(["b:one", "b:two"]);
-	assert_eq!(
-		compression.keys().cloned().collect::<Vec<_>>(),
-		["u0", "u1"]
-	);
+	assert_eq!(compression.keys().cloned().collect::<Vec<_>>(), ["u0", "u1"]);
 	assert!(instructions(&compression["u1"]).starts_with("Packet b:two: "));
 	assert_eq!(Seam::ALL.len(), SEAM_COUNT);
 	for (i, seam) in Seam::ALL.iter().enumerate() {
@@ -571,10 +472,7 @@ fn distill_plan_and_gate_questions_name_their_item() {
 	assert_eq!(gate.keys().cloned().collect::<Vec<_>>(), ["f0", "f1"]);
 	assert!(instructions(&gate["f0"]).starts_with("Finding 1: "));
 	let request = plan_request_question();
-	assert_eq!(
-		request.keys().cloned().collect::<Vec<_>>(),
-		[PLAN_QUESTION_ID]
-	);
+	assert_eq!(request.keys().cloned().collect::<Vec<_>>(), [PLAN_QUESTION_ID]);
 	let phase = plan_phase_question("cargo test exits 0");
 	assert!(instructions(&phase[PLAN_QUESTION_ID]).ends_with("done_when: cargo test exits 0"));
 	let answers = crate::session::chat::test_support::nouls(&[("l0", 0.93), ("l1", 0.11)]);
@@ -609,14 +507,9 @@ async fn absent_or_empty_model_disables_every_switched_on_seam_without_attempts(
 		config.decision.compression = true;
 		for seam in Seam::ALL {
 			assert!(!enabled(&config, seam));
-			assert!(run(
-				&config,
-				seam,
-				serde_json::json!("state"),
-				recall_questions(1)
-			)
-			.await
-			.is_none());
+			assert!(run(&config, seam, serde_json::json!("state"), recall_questions(1))
+				.await
+				.is_none());
 		}
 	}
 	assert!(fake.requests().is_empty());
@@ -641,6 +534,12 @@ fn p2_questions_and_thresholds_match_the_approved_contract() {
 		let Question::Noul { instructions, .. } = &questions[id] else {
 			panic!("Noul required")
 		};
-		assert_eq!(instructions.as_str(), Some(format!("For proposed call {id}, should this proposed decision be confirmed?\nverbatim judgment").as_str()));
+		assert_eq!(
+			instructions.as_str(),
+			Some(
+				format!("For proposed call {id}, should this proposed decision be confirmed?\nverbatim judgment")
+					.as_str()
+			)
+		);
 	}
 }

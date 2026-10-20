@@ -22,15 +22,13 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 	// Handle model command
 	if params.is_empty() {
 		// Build JSON output
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Model {
-				old_model: None,
-				new_model: session.model.clone(),
-				changed: false,
-				saved: None,
-				save_error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Model {
+			old_model: None,
+			new_model: session.model.clone(),
+			changed: false,
+			saved: None,
+			save_error: None,
+		})));
 	}
 
 	// Change to a new model (runtime only)
@@ -42,15 +40,13 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 	// like "/model gpt5" would otherwise be saved and fail on the next request,
 	// with no path back short of editing the session file.
 	if let Err(e) = crate::providers::ProviderFactory::get_provider_for_model(&new_model) {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Invalid model '{}': {}", new_model, e),
-				context: Some(serde_json::json!({
-					"expected": "provider:model",
-					"example": "openrouter:anthropic/claude-3.5-sonnet"
-				})),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Invalid model '{}': {}", new_model, e),
+			context: Some(serde_json::json!({
+				"expected": "provider:model",
+				"example": "openrouter:anthropic/claude-3.5-sonnet"
+			})),
+		})));
 	}
 
 	let old_model = session.model.clone();
@@ -71,25 +67,21 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 	let saved = match session.save() {
 		Ok(_) => Some(true),
 		Err(e) => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Model {
-					old_model: Some(old_model),
-					new_model,
-					changed: true,
-					saved: Some(false),
-					save_error: Some(e.to_string()),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Model {
+				old_model: Some(old_model),
+				new_model,
+				changed: true,
+				saved: Some(false),
+				save_error: Some(e.to_string()),
+			})));
 		}
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Model {
-			old_model: Some(old_model),
-			new_model,
-			changed: true,
-			saved,
-			save_error: None,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Model {
+		old_model: Some(old_model),
+		new_model,
+		changed: true,
+		saved,
+		save_error: None,
+	})))
 }

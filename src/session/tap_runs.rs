@@ -114,9 +114,7 @@ where
 	F: FnOnce(&mut Registry) -> R,
 {
 	let mut guard = REGISTRY.write().ok()?;
-	let reg = guard.get_or_insert_with(|| Registry {
-		jobs: HashMap::new(),
-	});
+	let reg = guard.get_or_insert_with(|| Registry { jobs: HashMap::new() });
 	Some(f(reg))
 }
 
@@ -201,12 +199,8 @@ pub fn has_running_jobs() -> bool {
 	let Some(jobs) = reg.jobs.get(&session_id) else {
 		return false;
 	};
-	jobs.iter().any(|j| {
-		j.status
-			.read()
-			.map(|s| *s == TapJobStatus::Running)
-			.unwrap_or(false)
-	})
+	jobs.iter()
+		.any(|j| j.status.read().map(|s| *s == TapJobStatus::Running).unwrap_or(false))
 }
 
 /// Labels of the current session's still-running tap-runs, `"role (id)"` each,
@@ -312,9 +306,7 @@ pub fn cancel_job(id: &str) -> Option<TapJobStatus> {
 /// running job. Used by `tap run` when a caller resumes by id — we need the
 /// shared status cell (so the resumed turn flips it back to terminal) and
 /// a cancel receiver subscribed to the existing sender.
-pub fn get_status_and_cancel(
-	id: &str,
-) -> Option<(Arc<RwLock<TapJobStatus>>, watch::Receiver<bool>)> {
+pub fn get_status_and_cancel(id: &str) -> Option<(Arc<RwLock<TapJobStatus>>, watch::Receiver<bool>)> {
 	let session_id = crate::session::context::current_session_id()?;
 	let guard = REGISTRY.read().ok()?;
 	let reg = guard.as_ref()?;

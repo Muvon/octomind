@@ -40,8 +40,8 @@ pub mod workdir;
 
 pub use utils::{guess_tool_category, tool_results_to_messages, ToolResponseMessage};
 pub use workdir::{
-	get_thread_original_working_directory, get_thread_working_directory,
-	set_session_working_directory, set_thread_working_directory,
+	get_thread_original_working_directory, get_thread_working_directory, set_session_working_directory,
+	set_thread_working_directory,
 };
 
 // Cache for internal server function definitions (static during session)
@@ -85,9 +85,7 @@ impl McpToolResult {
 		Self {
 			tool_name,
 			tool_id,
-			result: rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
-				content,
-			)]),
+			result: rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(content)]),
 		}
 	}
 
@@ -102,10 +100,7 @@ impl McpToolResult {
 			tool_name,
 			tool_id,
 			result: {
-				let mut r =
-					rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
-						content,
-					)]);
+				let mut r = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(content)]);
 				r.structured_content = Some(metadata);
 				r
 			},
@@ -117,9 +112,7 @@ impl McpToolResult {
 		Self {
 			tool_name,
 			tool_id,
-			result: rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-				error_message,
-			)]),
+			result: rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(error_message)]),
 		}
 	}
 
@@ -217,10 +210,7 @@ pub async fn initialize_servers_for_role_with_callback(
 		return Ok(());
 	}
 
-	crate::log_debug!(
-		"Initializing {} MCP servers for role",
-		config.mcp.servers.len()
-	);
+	crate::log_debug!("Initializing {} MCP servers for role", config.mcp.servers.len());
 
 	// Collect external servers that need initialization (parallel-safe)
 	let external_servers: Vec<_> = config
@@ -252,12 +242,12 @@ pub async fn initialize_servers_for_role_with_callback(
 		.collect();
 
 	// Log internal servers (no initialization needed)
-	for server in config.mcp.servers.iter().filter(|s| {
-		!matches!(
-			s.connection_type(),
-			McpConnectionType::Http | McpConnectionType::Stdin
-		)
-	}) {
+	for server in config
+		.mcp
+		.servers
+		.iter()
+		.filter(|s| !matches!(s.connection_type(), McpConnectionType::Http | McpConnectionType::Stdin))
+	{
 		crate::log_debug!(
 			"Skipping initialization for internal server: {} ({:?})",
 			server.name(),
@@ -268,10 +258,7 @@ pub async fn initialize_servers_for_role_with_callback(
 	// Notify progress callback that we're starting
 	if let Some(callback) = &progress_callback {
 		callback(McpInitProgress::Starting {
-			servers: external_servers
-				.iter()
-				.map(|s| s.name().to_string())
-				.collect(),
+			servers: external_servers.iter().map(|s| s.name().to_string()).collect(),
 		});
 	}
 
@@ -352,9 +339,7 @@ pub async fn initialize_mcp_for_role_with_callback(
 	process::init_session_context(role);
 
 	// Step 1: Initialize MCP servers first
-	if let Err(e) =
-		initialize_servers_for_role_with_callback(&config_for_role, progress_callback).await
-	{
+	if let Err(e) = initialize_servers_for_role_with_callback(&config_for_role, progress_callback).await {
 		crate::log_debug!("Warning: Failed to initialize MCP servers: {}", e);
 		// Continue anyway - servers can be started on-demand if needed
 	}
@@ -390,10 +375,7 @@ async fn ensure_unique_tool_names(config: &crate::config::Config) -> Result<()> 
 	let mut clashes = Vec::new();
 	for (name, source) in sources {
 		match owners.get(&name) {
-			Some(first) => clashes.push(format!(
-				"'{}' is provided by both {} and {}",
-				name, first, source
-			)),
+			Some(first) => clashes.push(format!("'{}' is provided by both {} and {}", name, first, source)),
 			None => {
 				owners.insert(name, source);
 			}
@@ -433,14 +415,10 @@ async fn server_functions_for(
 				let fns = core::get_all_functions(config);
 				filter_tools_by_patterns(fns, &allowed)
 			}
-			"runtime" => {
-				get_filtered_server_functions("runtime", &allowed, runtime::get_all_functions)
+			"runtime" => get_filtered_server_functions("runtime", &allowed, runtime::get_all_functions),
+			"orchestration" => {
+				get_filtered_server_functions("orchestration", &allowed, orchestration::get_all_functions)
 			}
-			"orchestration" => get_filtered_server_functions(
-				"orchestration",
-				&allowed,
-				orchestration::get_all_functions,
-			),
 			"agent" => {
 				let fns = agent::get_all_functions(config);
 				filter_tools_by_patterns(fns, &allowed)
@@ -450,19 +428,17 @@ async fn server_functions_for(
 				Vec::new()
 			}
 		},
-		McpConnectionType::Http | McpConnectionType::Stdin => {
-			match server::get_server_functions_cached(server).await {
-				Ok(fns) => filter_tools_by_patterns(fns, &allowed),
-				Err(e) => {
-					crate::log_error!(
+		McpConnectionType::Http | McpConnectionType::Stdin => match server::get_server_functions_cached(server).await {
+			Ok(fns) => filter_tools_by_patterns(fns, &allowed),
+			Err(e) => {
+				crate::log_error!(
 						"Failed to get cached functions from external server '{}': {} (will be available when server starts)",
 						server.name(),
 						e
 					);
-					Vec::new()
-				}
+				Vec::new()
 			}
-		}
+		},
 	}
 }
 
@@ -479,9 +455,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	for server in &config.mcp.servers {
 		// Skip config servers that are disabled in the dynamic registry
 		if let Some(ref sid) = session_id {
-			if let Some((_, enabled)) =
-				crate::session::context::get_dynamic_server_for_session(sid, server.name())
-			{
+			if let Some((_, enabled)) = crate::session::context::get_dynamic_server_for_session(sid, server.name()) {
 				if !enabled {
 					continue;
 				}
@@ -626,9 +600,7 @@ pub async fn execute_tool_call(
 	// capability, bump its last_used so eviction tracks real usage.
 	// Cheap (one HashMap scan); only walks active capabilities.
 	if result.is_ok() {
-		if let Some(server_name) =
-			crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&call.tool_name)
-		{
+		if let Some(server_name) = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&call.tool_name) {
 			crate::mcp::runtime::capability::touch_capability_for_server(&server_name);
 		}
 	}
@@ -653,9 +625,7 @@ pub async fn build_tool_server_map(
 		let server_functions = server_functions_for(server, config).await;
 		for function in server_functions {
 			// CONFIGURATION ORDER PRIORITY: First server wins for each tool
-			tool_map
-				.entry(function.name)
-				.or_insert_with(|| server.clone());
+			tool_map.entry(function.name).or_insert_with(|| server.clone());
 		}
 	}
 
@@ -675,8 +645,7 @@ async fn try_execute_tool_call(
 	}
 
 	// Create the actual tool execution future (without cancellation handling)
-	let tool_execution_future =
-		execute_tool_without_cancellation(call, config, cancellation_token.clone());
+	let tool_execution_future = execute_tool_without_cancellation(call, config, cancellation_token.clone());
 
 	// Apply centralized cancellation wrapper
 	if let Some(token) = cancellation_token {
@@ -727,23 +696,14 @@ async fn route_builtin_tool(
 				"recall" => core::recall::execute_recall(call)
 					.await
 					.map_err(|e| format!("Recall failed: {}", e)),
-				other => {
-					return Err(anyhow::anyhow!(
-						"Tool '{}' not implemented in core server",
-						other
-					))
-				}
+				other => return Err(anyhow::anyhow!("Tool '{}' not implemented in core server", other)),
 			};
 			match result {
 				Ok(mut r) => {
 					r.tool_id = call.tool_id.clone();
 					Ok(r)
 				}
-				Err(msg) => Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					msg,
-				)),
+				Err(msg) => Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), msg)),
 			}
 		}
 		"orchestration" => {
@@ -769,11 +729,7 @@ async fn route_builtin_tool(
 					r.tool_id = call.tool_id.clone();
 					Ok(r)
 				}
-				Err(msg) => Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					msg,
-				)),
+				Err(msg) => Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), msg)),
 			}
 		}
 		"runtime" => {
@@ -785,11 +741,7 @@ async fn route_builtin_tool(
 					r.tool_id = call.tool_id.clone();
 					Ok(r)
 				}
-				Err(msg) => Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					msg,
-				)),
+				Err(msg) => Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), msg)),
 			}
 		}
 		"agent" => {
@@ -835,15 +787,11 @@ async fn execute_tool_without_cancellation(
 			// Dynamic agent tools (agent_* prefix): allow if config-defined or owned by this session
 			if let Some(agent_name) = call.tool_name.strip_prefix("agent_") {
 				let is_config_agent = config.agents.iter().any(|a| a.name == agent_name);
-				if !is_config_agent && !runtime::dynamic_agents::is_dynamic_by_tool(&call.tool_name)
-				{
+				if !is_config_agent && !runtime::dynamic_agents::is_dynamic_by_tool(&call.tool_name) {
 					return Ok(McpToolResult::error(
 						call.tool_name.clone(),
 						call.tool_id.clone(),
-						format!(
-							"Tool '{}' not found (belongs to another session)",
-							call.tool_name
-						),
+						format!("Tool '{}' not found (belongs to another session)", call.tool_name),
 					));
 				}
 			}
@@ -853,19 +801,12 @@ async fn execute_tool_without_cancellation(
 			if !runtime::dynamic::is_dynamic_by_tool(&call.tool_name)
 				&& target_server.name() != core::local_tool::SERVER_NAME
 			{
-				let is_config_server = config
-					.mcp
-					.servers
-					.iter()
-					.any(|s| s.name() == target_server.name());
+				let is_config_server = config.mcp.servers.iter().any(|s| s.name() == target_server.name());
 				if !is_config_server {
 					return Ok(McpToolResult::error(
 						call.tool_name.clone(),
 						call.tool_id.clone(),
-						format!(
-							"Tool '{}' not found (belongs to another session)",
-							call.tool_name
-						),
+						format!("Tool '{}' not found (belongs to another session)", call.tool_name),
 					));
 				}
 			}
@@ -879,10 +820,7 @@ async fn execute_tool_without_cancellation(
 			serde_json::to_string(&call.parameters)
 				.map(|value| {
 					if crate::session::estimate_tokens(&value) > 200 {
-						format!(
-							"{}… [truncated]",
-							crate::session::truncate_to_tokens(&value, 200)
-						)
+						format!("{}… [truncated]", crate::session::truncate_to_tokens(&value, 200))
 					} else {
 						value
 					}
@@ -895,8 +833,7 @@ async fn execute_tool_without_cancellation(
 				route_builtin_tool(call, target_server.name(), config, cancellation_token).await
 			}
 			McpConnectionType::Http | McpConnectionType::Stdin => {
-				let mut result =
-					server::execute_tool_call(call, &target_server, cancellation_token).await?;
+				let mut result = server::execute_tool_call(call, &target_server, cancellation_token).await?;
 				result.tool_id = call.tool_id.clone();
 				Ok(result)
 			}

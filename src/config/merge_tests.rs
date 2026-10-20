@@ -79,10 +79,7 @@ fn test_get_role_config_unknown_falls_back_without_panic() {
 	let config = test_config();
 	let (_, _, _, _, system) = config.get_role_config("no-such-role");
 	// Falls back to SOME defined role instead of tearing the session down
-	assert!(config
-		.roles
-		.iter()
-		.any(|role| role.config.system == *system));
+	assert!(config.roles.iter().any(|role| role.config.system == *system));
 }
 
 #[test]
@@ -167,17 +164,8 @@ fn test_interactive_role_extends_restricted_grants() {
 	let merged = config.get_merged_config_for_interactive_role("restricted");
 
 	// Restricted roles get explicit grants for the two session-flow tools
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:schedule".to_string()));
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:monitor".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:schedule".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"orchestration:monitor".to_string()));
 	// The original grant survives
-	assert!(merged
-		.mcp
-		.allowed_tools
-		.contains(&"testsrv:alpha".to_string()));
+	assert!(merged.mcp.allowed_tools.contains(&"testsrv:alpha".to_string()));
 }

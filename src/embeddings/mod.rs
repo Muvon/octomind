@@ -318,8 +318,7 @@ async fn model() -> Result<&'static Model> {
 	if let Some(m) = MODEL.get() {
 		return Ok(m);
 	}
-	let provider =
-		octolib::create_embedding_provider_from_parts(&EMBED_BACKEND, MODEL_NAME).await?;
+	let provider = octolib::create_embedding_provider_from_parts(&EMBED_BACKEND, MODEL_NAME).await?;
 	// Both are `Some` for every in-process provider (ONNX and HuggingFace);
 	// `None` is the API-provider case, which `EMBED_BACKEND` rules out.
 	let revision = provider
@@ -589,15 +588,8 @@ pub fn chunk_to_token_limit(text: &str, max_tokens: usize) -> Vec<String> {
 	while start < n {
 		let end = (start + content_cap).min(n);
 		let start_byte = offsets[start].0;
-		let end_byte = if end < n {
-			offsets[end].0
-		} else {
-			trimmed.len()
-		};
-		let piece = trimmed
-			.get(start_byte..end_byte)
-			.map(str::trim)
-			.unwrap_or("");
+		let end_byte = if end < n { offsets[end].0 } else { trimmed.len() };
+		let piece = trimmed.get(start_byte..end_byte).map(str::trim).unwrap_or("");
 		if !piece.is_empty() {
 			chunks.push(piece.to_string());
 		}
@@ -620,10 +612,7 @@ fn chunk_by_chars(text: &str, max_chars: usize) -> Vec<String> {
 	if chars.len() <= max_chars {
 		return vec![trimmed.to_string()];
 	}
-	chars
-		.chunks(max_chars)
-		.map(|c| c.iter().collect())
-		.collect()
+	chars.chunks(max_chars).map(|c| c.iter().collect()).collect()
 }
 
 #[cfg(test)]

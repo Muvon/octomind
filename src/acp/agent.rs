@@ -20,14 +20,13 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use agent_client_protocol::schema::v1::{
-	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse,
-	AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents,
-	CancelNotification, ClientRequest, ContentBlock, ContentChunk, EmbeddedResourceResource,
-	ExtRequest, ExtResponse, Implementation, InitializeRequest, InitializeResponse,
-	LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest,
-	NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate,
-	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
-	ToolCallUpdateFields, UnstructuredCommandInput,
+	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
+	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification, ClientRequest,
+	ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest, ExtResponse, Implementation, InitializeRequest,
+	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest,
+	NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification,
+	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+	UnstructuredCommandInput,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
@@ -38,8 +37,8 @@ use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
-	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled,
-	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
+	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled, setup_and_initialize_session,
+	setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::output::{OutputMode, WebSocketSink};
 use crate::websocket::ServerMessage;
@@ -219,23 +218,13 @@ impl OctomindAgent {
 ///
 /// Returns a modified clone of `base_config` with the injected servers merged in.
 /// `self.config` is never mutated — injected servers are scoped to the session only.
-fn build_config_with_injected_servers(
-	base_config: &Config,
-	role: &str,
-	servers: &[McpServer],
-) -> Config {
+fn build_config_with_injected_servers(base_config: &Config, role: &str, servers: &[McpServer]) -> Config {
 	let mut config = base_config.clone();
 	for server in servers {
 		let server_config = match server {
 			McpServer::Stdio(s) => {
 				let args: Vec<String> = s.args.iter().map(|a| a.to_string()).collect();
-				McpServerConfig::stdin(
-					&s.name,
-					s.command.to_string_lossy().as_ref(),
-					args,
-					30,
-					vec![],
-				)
+				McpServerConfig::stdin(&s.name, s.command.to_string_lossy().as_ref(), args, 30, vec![])
 			}
 			McpServer::Http(s) => McpServerConfig::http(&s.name, &s.url, 30, vec![]),
 			McpServer::Sse(s) => {
@@ -262,8 +251,7 @@ fn build_config_with_injected_servers(
 }
 
 fn usage_notification(session: &mut ChatSession, session_id: &str) -> SessionNotification {
-	let usage =
-		crate::session::chat::response::session_cost_payload(session, session_id.to_owned());
+	let usage = crate::session::chat::response::session_cost_payload(session, session_id.to_owned());
 	let mut meta = serde_json::Map::new();
 	meta.insert(
 		"octomind.usage".to_owned(),
@@ -285,11 +273,7 @@ fn usage_notification(session: &mut ChatSession, session_id: &str) -> SessionNot
 	.meta(meta)
 }
 
-pub(super) fn notify_usage(
-	conn: Option<&ConnectionTo<Client>>,
-	session_id: &str,
-	session: &mut ChatSession,
-) {
+pub(super) fn notify_usage(conn: Option<&ConnectionTo<Client>>, session_id: &str, session: &mut ChatSession) {
 	let notification = usage_notification(session, session_id);
 	if let Some(conn) = conn {
 		if let Err(error) = conn.send_notification(notification) {
@@ -303,12 +287,8 @@ pub(super) fn notify_usage(
 /// `None` for messages that have no ACP equivalent (e.g. Cost — sent separately).
 fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> {
 	match msg {
-		ServerMessage::Assistant(p) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-			p.content.into(),
-		))),
-		ServerMessage::Thinking(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-			p.content.into(),
-		))),
+		ServerMessage::Assistant(p) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(p.content.into()))),
+		ServerMessage::Thinking(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(p.content.into()))),
 		ServerMessage::ToolUse(p) => {
 			let tc = ToolCall::new(p.tool_id.clone(), p.tool.clone())
 				.status(ToolCallStatus::InProgress)
@@ -358,15 +338,12 @@ mod tests;
 ///
 /// Command names are sent WITHOUT the leading `/` — the client prepends it when displaying.
 fn build_available_commands() -> Vec<AvailableCommand> {
-	let unstructured =
-		|hint: &str| AvailableCommandInput::Unstructured(UnstructuredCommandInput::new(hint));
+	let unstructured = |hint: &str| AvailableCommandInput::Unstructured(UnstructuredCommandInput::new(hint));
 
 	vec![
 		AvailableCommand::new("help", "Show available commands"),
-		AvailableCommand::new("role", "View or change current role")
-			.input(unstructured("<role_name>")),
-		AvailableCommand::new("model", "View or change current AI model")
-			.input(unstructured("<provider:model>")),
+		AvailableCommand::new("role", "View or change current role").input(unstructured("<role_name>")),
+		AvailableCommand::new("model", "View or change current AI model").input(unstructured("<provider:model>")),
 		AvailableCommand::new(
 			"done",
 			"Finalize task with memorization, summarization, and auto-commit",
@@ -377,34 +354,22 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("context", "Display session context")
 			.input(unstructured("[all|assistant|user|tool|large]")),
 		AvailableCommand::new("list", "List all available sessions").input(unstructured("[page]")),
-		AvailableCommand::new("session", "Switch to or create a session")
-			.input(unstructured("[session_name]")),
-		AvailableCommand::new("run", "Execute a command layer")
-			.input(unstructured("<command_name>")),
-		AvailableCommand::new("workflow", "Execute a workflow")
-			.input(unstructured("<workflow_name> [input]")),
+		AvailableCommand::new("session", "Switch to or create a session").input(unstructured("[session_name]")),
+		AvailableCommand::new("run", "Execute a command layer").input(unstructured("<command_name>")),
+		AvailableCommand::new("workflow", "Execute a workflow").input(unstructured("<workflow_name> [input]")),
 		AvailableCommand::new("mcp", "MCP server management")
 			.input(unstructured("[info|list|full|health|dump|validate]")),
 		AvailableCommand::new("plan", "Display current supervisor-owned plan"),
-		AvailableCommand::new("prompt", "Manage prompt templates")
-			.input(unstructured("[template_name]")),
-		AvailableCommand::new("image", "Attach image to next message")
-			.input(unstructured("<path>")),
-		AvailableCommand::new("video", "Attach video to next message")
-			.input(unstructured("<path>")),
-		AvailableCommand::new("loglevel", "Set logging level")
-			.input(unstructured("[none|info|debug]")),
+		AvailableCommand::new("prompt", "Manage prompt templates").input(unstructured("[template_name]")),
+		AvailableCommand::new("image", "Attach image to next message").input(unstructured("<path>")),
+		AvailableCommand::new("video", "Attach video to next message").input(unstructured("<path>")),
+		AvailableCommand::new("loglevel", "Set logging level").input(unstructured("[none|info|debug]")),
 		AvailableCommand::new("report", "Generate detailed usage report for this session")
 			.input(unstructured("[day|week|month] [here]")),
-		AvailableCommand::new("skill", "List, filter, or toggle skills")
-			.input(unstructured("[name|pattern|page]")),
+		AvailableCommand::new("skill", "List, filter, or toggle skills").input(unstructured("[name|pattern|page]")),
 		AvailableCommand::new("effort", "View or change reasoning effort level")
 			.input(unstructured("[low|medium|high]")),
-		AvailableCommand::new(
-			"schedule",
-			"Schedule a message to be injected at a future time",
-		)
-		.input(unstructured(
+		AvailableCommand::new("schedule", "Schedule a message to be injected at a future time").input(unstructured(
 			"[list|add|remove|edit] [<id>] [when=...] [message=...] [every=...]",
 		)),
 		AvailableCommand::new("agents", "Show running/offloaded agents in this session")
@@ -418,9 +383,7 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 /// Send the available commands list to the ACP client for the given session.
 async fn send_available_commands(conn: Option<ConnectionTo<Client>>, session_id: &str) {
 	if let Some(conn) = conn {
-		let update = SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(
-			build_available_commands(),
-		));
+		let update = SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(build_available_commands()));
 		let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id), update);
 		if let Err(e) = conn.send_notification(notif) {
 			log_error!("ACP: failed to send available_commands_update: {}", e);
@@ -449,195 +412,168 @@ impl OctomindAgent {
 			loop {
 				// Process phase: flush due schedules into inbox, then drain.
 				// Returns true to exit the monitor loop.
-				let should_exit =
-					crate::session::context::with_session_id(session_id.clone(), async {
-						crate::mcp::orchestration::flush_due_to_inbox();
-						// Idle-mode entries fire here too — ACP monitor runs only when nothing
-						// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
-						crate::mcp::orchestration::flush_idle_to_inbox();
+				let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
+					crate::mcp::orchestration::flush_due_to_inbox();
+					// Idle-mode entries fire here too — ACP monitor runs only when nothing
+					// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
+					crate::mcp::orchestration::flush_idle_to_inbox();
 
-						// Drain inbox while there are messages. Acquire the per-session
-						// exclusion lock before POPPING the message: graceful shutdown also
-						// takes this lock when checking for idle, so it can never mistake a
-						// popped-but-not-yet-processed completion for an empty inbox.
-						while crate::session::inbox::has_inbox_messages()
-							&& sessions.borrow().contains_key(&session_id)
-						{
-							// Acquire exclusion lock for this session. If prompt() is
-							// currently holding it (mid-API-call), we wait here until it
-							// releases — instead of removing an empty entry and racing.
-							let lock = session_locks
-								.borrow_mut()
-								.entry(session_id.clone())
-								.or_default()
-								.clone();
-							let _guard = lock.lock().await;
-							if !sessions.borrow().contains_key(&session_id) {
-								break;
-							}
-							let batch = crate::session::inbox::drain_inbox_batch();
-							if batch.is_empty() {
-								break;
-							}
+					// Drain inbox while there are messages. Acquire the per-session
+					// exclusion lock before POPPING the message: graceful shutdown also
+					// takes this lock when checking for idle, so it can never mistake a
+					// popped-but-not-yet-processed completion for an empty inbox.
+					while crate::session::inbox::has_inbox_messages() && sessions.borrow().contains_key(&session_id) {
+						// Acquire exclusion lock for this session. If prompt() is
+						// currently holding it (mid-API-call), we wait here until it
+						// releases — instead of removing an empty entry and racing.
+						let lock = session_locks
+							.borrow_mut()
+							.entry(session_id.clone())
+							.or_default()
+							.clone();
+						let _guard = lock.lock().await;
+						if !sessions.borrow().contains_key(&session_id) {
+							break;
+						}
+						let batch = crate::session::inbox::drain_inbox_batch();
+						if batch.is_empty() {
+							break;
+						}
 
-							for inbox_msg in &batch {
-								log_debug!(
-									"ACP monitor: processing inbox message from {:?} for {}",
-									inbox_msg.source,
-									session_id
-								);
-							}
-
-							// Take session for exclusive access.
-							let entry = sessions.borrow_mut().remove(&session_id);
-							let (mut chat_session, session_cwd) = match entry {
-								Some(s) => s,
-								None => {
-									// Session truly gone (cleanup_session). Preserve the batch
-									// only if its inbox still exists.
-									for inbox_msg in batch {
-										crate::session::inbox::push_inbox_message(inbox_msg);
-									}
-									break;
-								}
-							};
-
-							// Restore working directory for tool calls.
-							crate::mcp::set_session_working_directory(session_cwd.clone());
-							let config_for_role = config.borrow().get_merged_config_for_role(&role);
-
-							let op_rx = cancellations
-								.borrow_mut()
-								.entry(session_id.clone())
-								.or_default()
-								.new_operation();
-
-							// Tell the client what's about to drive the AI, before we kick off
-							// the API call. Rendered as a user-side chunk so the client UI shows
-							// the injected message in the conversation, prefixed with its source.
-							let conn_client = conn.borrow().as_ref().cloned();
-							if let Some(c) = conn_client {
-								for inbox_msg in &batch {
-									let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-									let text = format!(
-										"[{}] {}",
-										inbox_msg.source.display_label(),
-										inbox_msg.content
-									);
-									let update = SessionUpdate::UserMessageChunk(
-										ContentChunk::new(text.into()),
-									);
-									let notif = SessionNotification::new(sid_arc, update);
-									if let Err(e) = c.send_notification(notif) {
-										log_error!(
-											"ACP monitor: failed to send injected-message notification: {}",
-											e
-										);
-									}
-								}
-							}
-
-							if let Err(e) = chat_session.add_inbox_batch(&batch) {
-								log_error!("ACP monitor: failed to add inbox message: {}", e);
-								sessions
-									.borrow_mut()
-									.insert(session_id.clone(), (chat_session, session_cwd));
-								idle_notify.notify_waiters();
-								continue;
-							}
-
-							if let Err(e) =
-								crate::supervisor::accounting::background(prepare_for_api_call(
-									&mut chat_session,
-									&config_for_role,
-									op_rx.clone(),
-								))
-								.await
-							{
-								log_error!("ACP monitor: failed to prepare API call: {}", e);
-								sessions
-									.borrow_mut()
-									.insert(session_id.clone(), (chat_session, session_cwd));
-								idle_notify.notify_waiters();
-								continue;
-							}
-
-							// Stream results to the ACP client via a forwarding task.
-							let (ws_tx, mut ws_rx) =
-								tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
-							let ws_sink = WebSocketSink::new(ws_tx.clone());
-
-							crate::mcp::process::set_notification_sender(
-								Some(session_id.clone()),
-								ws_tx,
+						for inbox_msg in &batch {
+							log_debug!(
+								"ACP monitor: processing inbox message from {:?} for {}",
+								inbox_msg.source,
+								session_id
 							);
+						}
 
-							let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-							let conn_for_fwd = conn.borrow().as_ref().cloned();
-							let forward_task = tokio::task::spawn_local(async move {
-								while let Some(msg) = ws_rx.recv().await {
-									if let (Some(update), Some(c)) = (
-										translate_server_message_to_acp(msg),
-										conn_for_fwd.as_ref(),
-									) {
-										let notif =
-											SessionNotification::new(sid_arc.clone(), update);
-										if let Err(e) = c.send_notification(notif) {
-											log_error!(
-												"ACP monitor: failed to send notification: {}",
-												e
-											);
-										}
-									}
+						// Take session for exclusive access.
+						let entry = sessions.borrow_mut().remove(&session_id);
+						let (mut chat_session, session_cwd) = match entry {
+							Some(s) => s,
+							None => {
+								// Session truly gone (cleanup_session). Preserve the batch
+								// only if its inbox still exists.
+								for inbox_msg in batch {
+									crate::session::inbox::push_inbox_message(inbox_msg);
 								}
-							});
-
-							let result = crate::supervisor::accounting::background(
-								execute_api_call_and_process_response(
-									&mut chat_session,
-									&config_for_role,
-									&role,
-									op_rx,
-									OutputMode::WebSocket,
-									ws_sink,
-								),
-							)
-							.await;
-
-							crate::mcp::process::clear_notification_sender(Some(
-								session_id.clone(),
-							));
-							let _ = forward_task.await;
-							notify_usage(conn.borrow().as_ref(), &session_id, &mut chat_session);
-							if let Err(error) = chat_session.save() {
-								log_error!("ACP monitor: failed to save session: {}", error);
+								break;
 							}
+						};
 
-							if let Err(e) = result {
-								log_debug!("ACP monitor: error processing inbox message: {}", e);
+						// Restore working directory for tool calls.
+						crate::mcp::set_session_working_directory(session_cwd.clone());
+						let config_for_role = config.borrow().get_merged_config_for_role(&role);
+
+						let op_rx = cancellations
+							.borrow_mut()
+							.entry(session_id.clone())
+							.or_default()
+							.new_operation();
+
+						// Tell the client what's about to drive the AI, before we kick off
+						// the API call. Rendered as a user-side chunk so the client UI shows
+						// the injected message in the conversation, prefixed with its source.
+						let conn_client = conn.borrow().as_ref().cloned();
+						if let Some(c) = conn_client {
+							for inbox_msg in &batch {
+								let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+								let text = format!("[{}] {}", inbox_msg.source.display_label(), inbox_msg.content);
+								let update = SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+								let notif = SessionNotification::new(sid_arc, update);
+								if let Err(e) = c.send_notification(notif) {
+									log_error!("ACP monitor: failed to send injected-message notification: {}", e);
+								}
 							}
+						}
 
-							// Put session back.
+						if let Err(e) = chat_session.add_inbox_batch(&batch) {
+							log_error!("ACP monitor: failed to add inbox message: {}", e);
 							sessions
 								.borrow_mut()
 								.insert(session_id.clone(), (chat_session, session_cwd));
 							idle_notify.notify_waiters();
+							continue;
 						}
 
-						false // don't exit
-					})
-					.await;
+						if let Err(e) = crate::supervisor::accounting::background(prepare_for_api_call(
+							&mut chat_session,
+							&config_for_role,
+							op_rx.clone(),
+						))
+						.await
+						{
+							log_error!("ACP monitor: failed to prepare API call: {}", e);
+							sessions
+								.borrow_mut()
+								.insert(session_id.clone(), (chat_session, session_cwd));
+							idle_notify.notify_waiters();
+							continue;
+						}
+
+						// Stream results to the ACP client via a forwarding task.
+						let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+						let ws_sink = WebSocketSink::new(ws_tx.clone());
+
+						crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
+
+						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+						let conn_for_fwd = conn.borrow().as_ref().cloned();
+						let forward_task = tokio::task::spawn_local(async move {
+							while let Some(msg) = ws_rx.recv().await {
+								if let (Some(update), Some(c)) =
+									(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
+								{
+									let notif = SessionNotification::new(sid_arc.clone(), update);
+									if let Err(e) = c.send_notification(notif) {
+										log_error!("ACP monitor: failed to send notification: {}", e);
+									}
+								}
+							}
+						});
+
+						let result = crate::supervisor::accounting::background(execute_api_call_and_process_response(
+							&mut chat_session,
+							&config_for_role,
+							&role,
+							op_rx,
+							OutputMode::WebSocket,
+							ws_sink,
+						))
+						.await;
+
+						crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
+						let _ = forward_task.await;
+						notify_usage(conn.borrow().as_ref(), &session_id, &mut chat_session);
+						if let Err(error) = chat_session.save() {
+							log_error!("ACP monitor: failed to save session: {}", error);
+						}
+
+						if let Err(e) = result {
+							log_debug!("ACP monitor: error processing inbox message: {}", e);
+						}
+
+						// Put session back.
+						sessions
+							.borrow_mut()
+							.insert(session_id.clone(), (chat_session, session_cwd));
+						idle_notify.notify_waiters();
+					}
+
+					false // don't exit
+				})
+				.await;
 
 				if should_exit {
 					break;
 				}
 
 				// Exit if session inbox was destroyed (session truly gone via cleanup_session).
-				let inbox_gone =
-					crate::session::context::with_session_id(session_id.clone(), async {
-						crate::session::inbox::get_inbox_notify().is_none()
-					})
-					.await;
+				let inbox_gone = crate::session::context::with_session_id(session_id.clone(), async {
+					crate::session::inbox::get_inbox_notify().is_none()
+				})
+				.await;
 				if inbox_gone {
 					log_debug!("ACP monitor: inbox cleared for {}, exiting", session_id);
 					break;
@@ -667,10 +603,7 @@ impl OctomindAgent {
 }
 
 impl OctomindAgent {
-	async fn initialize(
-		&self,
-		args: InitializeRequest,
-	) -> agent_client_protocol::Result<InitializeResponse> {
+	async fn initialize(&self, args: InitializeRequest) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
 
 		// Advertise extension capabilities in _meta per ACP spec
@@ -689,30 +622,23 @@ impl OctomindAgent {
 					// Advertise HTTP MCP transport support so clients offer us HTTP servers.
 					// SSE is not supported — we skip those servers silently in inject_acp_mcp_servers.
 					.mcp_capabilities(McpCapabilities::new().http(true))
-					.prompt_capabilities(
-						PromptCapabilities::default()
-							.image(true)
-							.embedded_context(true),
-					)
+					.prompt_capabilities(PromptCapabilities::default().image(true).embedded_context(true))
 					.meta(meta),
 			)
 			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")))
 			.auth_methods(vec![AuthMethod::Agent(
 				AuthMethodAgent::new(LOGIN_AUTH_METHOD, "Sign in to Octomind").description(
-					"Confirm a one-time code in your browser. Not needed with your own provider keys."
-						.to_string(),
+					"Confirm a one-time code in your browser. Not needed with your own provider keys.".to_string(),
 				),
 			)]);
 		Ok(response)
 	}
 
-	async fn authenticate(
-		&self,
-		args: AuthenticateRequest,
-	) -> agent_client_protocol::Result<AuthenticateResponse> {
+	async fn authenticate(&self, args: AuthenticateRequest) -> agent_client_protocol::Result<AuthenticateResponse> {
 		if &*args.method_id.0 != LOGIN_AUTH_METHOD {
-			return Err(agent_client_protocol::Error::invalid_params()
-				.data(format!("unknown auth method: {}", args.method_id)));
+			return Err(
+				agent_client_protocol::Error::invalid_params().data(format!("unknown auth method: {}", args.method_id))
+			);
 		}
 		let start = crate::account::start_login()
 			.await
@@ -724,22 +650,16 @@ impl OctomindAgent {
 				"could not open a browser ({e}); run `octomind login` in a terminal instead"
 			))
 		})?;
-		let claim = crate::account::poll_login(
-			&start.device_code,
-			std::time::Duration::from_secs(start.interval),
-		)
-		.await
-		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+		let claim = crate::account::poll_login(&start.device_code, std::time::Duration::from_secs(start.interval))
+			.await
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 		crate::account::finish_login(&claim)
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 		log_info!("ACP: signed in to Octomind, key {}", claim.key_name);
 		Ok(AuthenticateResponse::default())
 	}
 
-	async fn new_session(
-		&self,
-		args: NewSessionRequest,
-	) -> agent_client_protocol::Result<NewSessionResponse> {
+	async fn new_session(&self, args: NewSessionRequest) -> agent_client_protocol::Result<NewSessionResponse> {
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
@@ -747,25 +667,16 @@ impl OctomindAgent {
 			.meta
 			.as_ref()
 			.and_then(|meta| meta.get(crate::supervisor::authorizer::META_KEY))
-			.map(|value| {
-				serde_json::from_value::<crate::supervisor::authorizer::AuthorizationContext>(
-					value.clone(),
-				)
-			})
+			.map(|value| serde_json::from_value::<crate::supervisor::authorizer::AuthorizationContext>(value.clone()))
 			.transpose()
 			.map_err(|e| {
-				agent_client_protocol::Error::invalid_params()
-					.data(format!("invalid inherited authorization: {e}"))
+				agent_client_protocol::Error::invalid_params().data(format!("invalid inherited authorization: {e}"))
 			})?;
 		let has_inherited_authorization = inherited_authorization.is_some();
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
-		let config_snapshot = build_config_with_injected_servers(
-			&self.config.borrow(),
-			&self.role,
-			&args.mcp_servers,
-		);
+		let config_snapshot = build_config_with_injected_servers(&self.config.borrow(), &self.role, &args.mcp_servers);
 
 		// Start any newly injected servers and register their tools in the tool map.
 		// initialize_mcp_for_role is idempotent: already-running servers and already-registered
@@ -796,9 +707,7 @@ impl OctomindAgent {
 		crate::session::context::with_session_id(session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
-				&session_id_for_restore,
-			);
+			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
 
@@ -817,13 +726,10 @@ impl OctomindAgent {
 				let sid = session_id.clone();
 				crate::session::context::with_session_id(sid, async {
 					crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
-					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None)
-						.await;
+					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 				})
 				.await;
-				self.sessions
-					.borrow_mut()
-					.insert(session_id.clone(), (session, cwd));
+				self.sessions.borrow_mut().insert(session_id.clone(), (session, cwd));
 			}
 		}
 
@@ -908,26 +814,24 @@ impl OctomindAgent {
 			// /done <instructions>: compress then process instructions as a user message.
 			// Must be intercepted before the slash-command block because we need to
 			// fall through to the user-message pipeline after compression.
-			let done_instructions: Option<String> =
-				if input.trim().starts_with(crate::session::chat::DONE_COMMAND) {
-					input
-						.trim()
-						.strip_prefix(crate::session::chat::DONE_COMMAND)
-						.map(|s| s.trim())
-						.filter(|s| !s.is_empty())
-						.map(|s| s.to_owned())
-				} else {
-					None
-				};
+			let done_instructions: Option<String> = if input.trim().starts_with(crate::session::chat::DONE_COMMAND) {
+				input
+					.trim()
+					.strip_prefix(crate::session::chat::DONE_COMMAND)
+					.map(|s| s.trim())
+					.filter(|s| !s.is_empty())
+					.map(|s| s.to_owned())
+			} else {
+				None
+			};
 			if input.trim() == crate::session::chat::DONE_COMMAND || done_instructions.is_some() {
-				let (mut chat_session, session_cwd) =
-					match self.sessions.borrow_mut().remove(&session_id) {
-						Some(s) => s,
-						None => {
-							return Err(agent_client_protocol::Error::invalid_params()
-								.data(format!("session not found: {session_id}")));
-						}
-					};
+				let (mut chat_session, session_cwd) = match self.sessions.borrow_mut().remove(&session_id) {
+					Some(s) => s,
+					None => {
+						return Err(agent_client_protocol::Error::invalid_params()
+							.data(format!("session not found: {session_id}")));
+					}
+				};
 				crate::mcp::set_session_working_directory(session_cwd.clone());
 				let operation_rx = self
 					.cancellations
@@ -959,12 +863,8 @@ impl OctomindAgent {
 					// Send compression status then fall through to user-message processing.
 					let conn = self.conn.borrow().clone();
 					if let Some(conn) = conn {
-						let update =
-							SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
-						let notif = SessionNotification::new(
-							std::sync::Arc::<str>::from(session_id.as_str()),
-							update,
-						);
+						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id.as_str()), update);
 						if let Err(e) = conn.send_notification(notif) {
 							crate::log_error!("ACP: failed to send /done status: {}", e);
 						}
@@ -989,12 +889,8 @@ impl OctomindAgent {
 						.insert(session_id.clone(), (chat_session, session_cwd));
 					let conn = self.conn.borrow().clone();
 					if let Some(conn) = conn {
-						let update =
-							SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
-						let notif = SessionNotification::new(
-							std::sync::Arc::<str>::from(session_id.as_str()),
-							update,
-						);
+						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id.as_str()), update);
 						if let Err(e) = conn.send_notification(notif) {
 							crate::log_error!("ACP: failed to send /done status: {}", e);
 						}
@@ -1007,14 +903,13 @@ impl OctomindAgent {
 			// Intercept them here before the AI pipeline, execute via process_command,
 			// and stream the result back as an AgentMessageChunk.
 			if input.trim_start().starts_with('/') {
-				let (mut chat_session, session_cwd) =
-					match self.sessions.borrow_mut().remove(&session_id) {
-						Some(s) => s,
-						None => {
-							return Err(agent_client_protocol::Error::invalid_params()
-								.data(format!("session not found: {session_id}")));
-						}
-					};
+				let (mut chat_session, session_cwd) = match self.sessions.borrow_mut().remove(&session_id) {
+					Some(s) => s,
+					None => {
+						return Err(agent_client_protocol::Error::invalid_params()
+							.data(format!("session not found: {session_id}")));
+					}
+				};
 
 				crate::mcp::set_session_working_directory(session_cwd.clone());
 
@@ -1044,12 +939,10 @@ impl OctomindAgent {
 					.insert(session_id.clone(), (chat_session, session_cwd));
 
 				let text = match result {
-					Ok(
-						crate::session::chat::session::commands::CommandResult::HandledWithOutput(
-							output,
-						),
-					) => serde_json::to_string_pretty(&output.to_json())
-						.unwrap_or_else(|_| "Command executed.".to_string()),
+					Ok(crate::session::chat::session::commands::CommandResult::HandledWithOutput(output)) => {
+						serde_json::to_string_pretty(&output.to_json())
+							.unwrap_or_else(|_| "Command executed.".to_string())
+					}
 					Ok(crate::session::chat::session::commands::CommandResult::Handled) => {
 						"Command executed.".to_string()
 					}
@@ -1057,16 +950,14 @@ impl OctomindAgent {
 						crate::session::chat::session::commands::CommandResult::Exit
 						| crate::session::chat::session::commands::CommandResult::SwitchSession(_),
 					) => "Session exit requested.".to_string(),
-					Ok(
-						crate::session::chat::session::commands::CommandResult::TreatAsUserInput,
-					) => {
+					Ok(crate::session::chat::session::commands::CommandResult::TreatAsUserInput) => {
 						let available: Vec<&str> = crate::session::chat::COMMANDS.to_vec();
 
 						format!(
-						"The {} command is not supported by Octomind.\n\nAvailable commands: {}",
-						input.trim(),
-						available.join(", ")
-					)
+							"The {} command is not supported by Octomind.\n\nAvailable commands: {}",
+							input.trim(),
+							available.join(", ")
+						)
 					}
 					Err(e) => format!("Command failed: {e}"),
 				};
@@ -1074,10 +965,7 @@ impl OctomindAgent {
 				let conn = self.conn.borrow().clone();
 				if let Some(conn) = conn {
 					let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(text.into()));
-					let notif = SessionNotification::new(
-						std::sync::Arc::<str>::from(session_id.as_str()),
-						update,
-					);
+					let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id.as_str()), update);
 					if let Err(e) = conn.send_notification(notif) {
 						log_error!("ACP: failed to send command result: {}", e);
 					}
@@ -1087,14 +975,14 @@ impl OctomindAgent {
 			}
 
 			// Take session out of map for exclusive access
-			let (mut chat_session, session_cwd) =
-				match self.sessions.borrow_mut().remove(&session_id) {
-					Some(s) => s,
-					None => {
-						return Err(agent_client_protocol::Error::invalid_params()
-							.data(format!("session not found: {session_id}")));
-					}
-				};
+			let (mut chat_session, session_cwd) = match self.sessions.borrow_mut().remove(&session_id) {
+				Some(s) => s,
+				None => {
+					return Err(
+						agent_client_protocol::Error::invalid_params().data(format!("session not found: {session_id}"))
+					);
+				}
+			};
 
 			// Restore this session's working directory for tool calls
 			crate::mcp::set_session_working_directory(session_cwd.clone());
@@ -1116,11 +1004,7 @@ impl OctomindAgent {
 			let config_for_role = self.config.borrow().get_merged_config_for_role(&self.role);
 
 			// Get or create cancellation for this session
-			let mut cancellation = self
-				.cancellations
-				.borrow_mut()
-				.remove(&session_id)
-				.unwrap_or_default();
+			let mut cancellation = self.cancellations.borrow_mut().remove(&session_id).unwrap_or_default();
 			cancellation.reset();
 			// NOTE: the main-call `operation_rx` is created AFTER the pre-user
 			// inbox drain below. The drain calls new_operation() per message,
@@ -1128,9 +1012,7 @@ impl OctomindAgent {
 			// receiver here would leave the main call holding a closed channel,
 			// which tool execution treats as instant cancellation.
 			// Re-insert cancellation so cancel() can find it during prompt execution
-			self.cancellations
-				.borrow_mut()
-				.insert(session_id.clone(), cancellation);
+			self.cancellations.borrow_mut().insert(session_id.clone(), cancellation);
 
 			// Flush any due schedule entries and process inbox messages that arrived
 			// before this user prompt (background agents, scheduled entries, skills).
@@ -1142,28 +1024,17 @@ impl OctomindAgent {
 						break;
 					}
 					for inbox_msg in &batch {
-						log_debug!(
-							"ACP pre-user: processing inbox message from {:?}",
-							inbox_msg.source
-						);
+						log_debug!("ACP pre-user: processing inbox message from {:?}", inbox_msg.source);
 						// Surface the injected message to the client as a user-side chunk so
 						// the user sees what triggered the AI's upcoming response.
 						let conn_client = self.conn.borrow().as_ref().cloned();
 						if let Some(c) = conn_client {
 							let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-							let text = format!(
-								"[{}] {}",
-								inbox_msg.source.display_label(),
-								inbox_msg.content
-							);
-							let update =
-								SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+							let text = format!("[{}] {}", inbox_msg.source.display_label(), inbox_msg.content);
+							let update = SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
 							let notif = SessionNotification::new(sid_arc, update);
 							if let Err(e) = c.send_notification(notif) {
-								log_error!(
-									"ACP: failed to send injected-message notification: {}",
-									e
-								);
+								log_error!("ACP: failed to send injected-message notification: {}", e);
 							}
 						}
 					}
@@ -1179,10 +1050,7 @@ impl OctomindAgent {
 						.new_operation();
 					// Per-request spending boundary (see websocket/server.rs handle_user_message).
 					chat_session.start_request_spending_tracking();
-					if let Err(e) =
-						prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone())
-							.await
-					{
+					if let Err(e) = prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await {
 						log_error!("ACP: failed to prepare inbox API call: {}", e);
 						continue;
 					}
@@ -1190,13 +1058,9 @@ impl OctomindAgent {
 					// Stream the AI's response to this inbox message back to the client,
 					// just like a normal user prompt. Without this forwarding the
 					// receiver would drop and all chunks would silently disappear.
-					let (ws_tx, mut ws_rx) =
-						tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+					let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
 					let sink = WebSocketSink::new(ws_tx.clone());
-					crate::mcp::process::set_notification_sender(
-						Some(session_id.to_string()),
-						ws_tx,
-					);
+					crate::mcp::process::set_notification_sender(Some(session_id.to_string()), ws_tx);
 
 					let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
 					let conn_for_fwd = self.conn.borrow().as_ref().cloned();
@@ -1253,8 +1117,7 @@ impl OctomindAgent {
 			// session is permanently lost from self.sessions and every subsequent
 			// prompt to this session_id fails with "session not found".
 			let first_message_processed = !chat_session.session.messages.is_empty();
-			let pipe_result =
-				run_pipe_if_enabled(&input, &self.role, first_message_processed).await;
+			let pipe_result = run_pipe_if_enabled(&input, &self.role, first_message_processed).await;
 			let processed_input = match pipe_result {
 				Ok(v) => v,
 				Err(e) => {
@@ -1284,10 +1147,7 @@ impl OctomindAgent {
 			// Prepare for API call
 			// Per-request spending boundary (see websocket/server.rs handle_user_message).
 			chat_session.start_request_spending_tracking();
-			if let Err(e) =
-				prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone())
-					.await
-			{
+			if let Err(e) = prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd));
@@ -1312,12 +1172,12 @@ impl OctomindAgent {
 			let forward_task = tokio::task::spawn_local(async move {
 				while let Some(msg) = ws_rx.recv().await {
 					let update = match msg {
-						ServerMessage::Assistant(p) => Some(SessionUpdate::AgentMessageChunk(
-							ContentChunk::new(p.content.into()),
-						)),
-						ServerMessage::Thinking(p) => Some(SessionUpdate::AgentThoughtChunk(
-							ContentChunk::new(p.content.into()),
-						)),
+						ServerMessage::Assistant(p) => {
+							Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(p.content.into())))
+						}
+						ServerMessage::Thinking(p) => {
+							Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(p.content.into())))
+						}
 						ServerMessage::ToolUse(p) => {
 							let tool_call = ToolCall::new(p.tool_id.clone(), p.tool.clone())
 								.status(ToolCallStatus::InProgress)
@@ -1360,10 +1220,7 @@ impl OctomindAgent {
 								)
 								.meta(meta);
 								if let Err(error) = conn.send_notification(notification) {
-									log_error!(
-										"ACP: failed to send evolution notification: {}",
-										error
-									);
+									log_error!("ACP: failed to send evolution notification: {}", error);
 								}
 							}
 							None
@@ -1407,10 +1264,7 @@ impl OctomindAgent {
 				if let Some(conn) = conn {
 					let text = format!("Stopped: {stop} spending threshold reached");
 					let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(text.into()));
-					let notif = SessionNotification::new(
-						std::sync::Arc::<str>::from(session_id.as_str()),
-						update,
-					);
+					let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id.as_str()), update);
 					if let Err(e) = conn.send_notification(notif) {
 						log_error!("ACP: failed to send spending stop: {}", e);
 					}
@@ -1425,17 +1279,13 @@ impl OctomindAgent {
 			// tracks verification: an untracked child has no verdict to give, and
 			// silence keeps the parent on its own (conservative) signal.
 			if let Some(conn) = self.conn.borrow().as_ref().cloned() {
-				let tracks =
-					config_for_role.supervisor.enabled && config_for_role.supervisor.gate.enabled;
+				let tracks = config_for_role.supervisor.enabled && config_for_role.supervisor.gate.enabled;
 				let verified = tracks
 					&& !chat_session
 						.detectors
 						.needs_verification(crate::supervisor::workdir::fingerprint());
 				let mut meta = serde_json::Map::new();
-				meta.insert(
-					"octomind.verified".to_string(),
-					serde_json::Value::Bool(verified),
-				);
+				meta.insert("octomind.verified".to_string(), serde_json::Value::Bool(verified));
 				if let Some(stop) = spending_stop {
 					meta.insert(
 						"octomind.spending_stop".to_string(),
@@ -1512,10 +1362,7 @@ impl OctomindAgent {
 		Ok(())
 	}
 
-	async fn load_session(
-		&self,
-		args: LoadSessionRequest,
-	) -> agent_client_protocol::Result<LoadSessionResponse> {
+	async fn load_session(&self, args: LoadSessionRequest) -> agent_client_protocol::Result<LoadSessionResponse> {
 		let session_id = args.session_id.to_string();
 		log_debug!("ACP: load_session requested: {}", session_id);
 
@@ -1525,11 +1372,7 @@ impl OctomindAgent {
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
-		let config_snapshot = build_config_with_injected_servers(
-			&self.config.borrow(),
-			&self.role,
-			&args.mcp_servers,
-		);
+		let config_snapshot = build_config_with_injected_servers(&self.config.borrow(), &self.role, &args.mcp_servers);
 		crate::mcp::initialize_mcp_for_role(&self.role, &config_snapshot)
 			.await
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
@@ -1554,9 +1397,7 @@ impl OctomindAgent {
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
-				&session_id_for_restore,
-			);
+			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
 
@@ -1574,13 +1415,10 @@ impl OctomindAgent {
 				let sid = actual_session_id.clone();
 				crate::session::context::with_session_id(sid, async {
 					crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
-					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None)
-						.await;
+					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 				})
 				.await;
-				self.sessions
-					.borrow_mut()
-					.insert(session_id.clone(), (session, cwd));
+				self.sessions.borrow_mut().insert(session_id.clone(), (session, cwd));
 			}
 		}
 
@@ -1720,9 +1558,7 @@ fn forward<Resp>(
 	cmd_tx: &mpsc::UnboundedSender<Command>,
 	cx: &ConnectionTo<Client>,
 	responder: Responder<Resp>,
-	make: impl FnOnce(oneshot::Sender<Result<Resp, agent_client_protocol::Error>>) -> Command
-		+ Send
-		+ 'static,
+	make: impl FnOnce(oneshot::Sender<Result<Resp, agent_client_protocol::Error>>) -> Command + Send + 'static,
 ) -> Result<(), agent_client_protocol::Error>
 where
 	Resp: agent_client_protocol::JsonRpcResponse + Send + 'static,
@@ -1741,11 +1577,7 @@ where
 }
 
 /// Build and run the ACP agent over stdio until the client disconnects.
-pub(super) async fn serve(
-	config: Config,
-	role: String,
-	options: crate::acp::AcpRunOptions,
-) -> anyhow::Result<()> {
+pub(super) async fn serve(config: Config, role: String, options: crate::acp::AcpRunOptions) -> anyhow::Result<()> {
 	let agent = Rc::new(OctomindAgent::new(config, role, options));
 
 	let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -1784,9 +1616,7 @@ pub(super) async fn serve(
 			{
 				let cmd_tx = cmd_tx.clone();
 				async move |req: AuthenticateRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| {
-						Command::Authenticate(req, tx)
-					})
+					forward(&cmd_tx, &cx, responder, move |tx| Command::Authenticate(req, tx))
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1795,9 +1625,7 @@ pub(super) async fn serve(
 			{
 				let cmd_tx = cmd_tx.clone();
 				async move |req: NewSessionRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| {
-						Command::NewSession(req, tx)
-					})
+					forward(&cmd_tx, &cx, responder, move |tx| Command::NewSession(req, tx))
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1806,9 +1634,7 @@ pub(super) async fn serve(
 			{
 				let cmd_tx = cmd_tx.clone();
 				async move |req: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| {
-						Command::LoadSession(req, tx)
-					})
+					forward(&cmd_tx, &cx, responder, move |tx| Command::LoadSession(req, tx))
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1827,38 +1653,28 @@ pub(super) async fn serve(
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
-				async move |req: ClientRequest,
-				            responder: Responder<serde_json::Value>,
-				            cx: ConnectionTo<Client>| {
+				async move |req: ClientRequest, responder: Responder<serde_json::Value>, cx: ConnectionTo<Client>| {
 					match req {
 						ClientRequest::ExtMethodRequest(ext) => {
 							let cmd_tx = cmd_tx.clone();
 							cx.spawn(async move {
 								let (tx, rx) = oneshot::channel();
 								cmd_tx.send(Command::Ext(ext, tx)).map_err(|_| {
-									agent_client_protocol::util::internal_error(
-										"acp actor unavailable",
-									)
+									agent_client_protocol::util::internal_error("acp actor unavailable")
 								})?;
 								let value = rx
 									.await
 									.map_err(|_| {
-										agent_client_protocol::util::internal_error(
-											"acp actor dropped reply",
-										)
+										agent_client_protocol::util::internal_error("acp actor dropped reply")
 									})?
 									.and_then(|resp| {
-										serde_json::to_value(resp).map_err(|e| {
-											agent_client_protocol::util::internal_error(
-												e.to_string(),
-											)
-										})
+										serde_json::to_value(resp)
+											.map_err(|e| agent_client_protocol::util::internal_error(e.to_string()))
 									});
 								responder.respond_with_result(value)
 							})
 						}
-						_ => responder
-							.respond_with_error(agent_client_protocol::Error::method_not_found()),
+						_ => responder.respond_with_error(agent_client_protocol::Error::method_not_found()),
 					}
 				}
 			},

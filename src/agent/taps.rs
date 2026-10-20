@@ -149,13 +149,8 @@ fn parse_tap_arg(arg: &str) -> Result<Tap> {
 	let parts: Vec<&str> = arg.splitn(2, ' ').collect();
 	let name = parts[0].trim().to_string();
 
-	// Validate name format
-	let mut halves = name.split('/');
-	let user = halves.next().unwrap_or_default();
-	let repo = halves.next().unwrap_or_default();
-	if halves.next().is_some() || user.is_empty() || repo.is_empty() {
-		anyhow::bail!("Tap name must be in 'user/repo' format, got: {}", name);
-	}
+	// Same `user/repo` rule as `tap init`, so the two commands accept the same names.
+	super::tap_scaffold::split_tap_id(&name)?;
 
 	let local_path = if parts.len() == 2 {
 		Some(parts[1].trim().to_string())

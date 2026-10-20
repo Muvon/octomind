@@ -213,7 +213,7 @@ fn populate(
 }
 
 /// Split `owner/name`, rejecting anything that is not exactly two non-empty parts.
-fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
+pub(crate) fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
 	let mut parts = tap_id.split('/');
 	match (parts.next(), parts.next(), parts.next()) {
 		(Some(owner), Some(name), None) if !owner.is_empty() && !name.is_empty() => Ok((owner, name)),

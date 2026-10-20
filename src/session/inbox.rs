@@ -54,7 +54,7 @@ pub enum InboxSource {
 	Skill { name: String },
 	/// A skill validator failure that needs to be fed back to the AI.
 	SkillValidator { name: String },
-	/// An external injection via `octomind inject` CLI command.
+	/// An external injection via `octomind send` CLI command.
 	Inject,
 	/// A webhook hook that received an HTTP request.
 	Webhook { hook: String },

@@ -266,7 +266,7 @@ Full list: [Session commands](doc/reference/02-session-commands.md).
 Octomind reports anonymous usage: which commands, tools, and models are used, plus timings, token counts, and error kinds. It never sends your code, prompts, file paths, tool arguments, or environment values. Opt out in any of three ways:
 
 ```bash
-export DO_NOT_TRACK=1          # the cross-tool standard, honoured first
+export DO_NOT_TRACK=1          # the cross-tool standard, honored first
 export OCTOMIND_TELEMETRY=0    # for subsequent commands in this shell
 # or set `telemetry = false` in config.toml
 ```

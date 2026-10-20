@@ -48,11 +48,18 @@ pub fn handle_effort(session: &mut ChatSession, config: &Config, params: &[&str]
 		}
 	};
 
-	let old_effort = session
-		.reasoning_effort
-		.unwrap_or(config.reasoning_effort)
-		.as_str()
-		.to_string();
+	let current = session.reasoning_effort.unwrap_or(config.reasoning_effort);
+	if parsed == current {
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Effort {
+			old_effort: None,
+			new_effort: parsed.as_str().to_string(),
+			changed: false,
+			saved: None,
+			save_error: None,
+		})));
+	}
+
+	let old_effort = current.as_str().to_string();
 
 	if let Some(session_file) = &session.session.session_file {
 		if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {

@@ -49,8 +49,8 @@ path differences.
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required
 main `[model]`.
 
-Only `run` and `workflow` accept `--format`; neither restricts its value through clap. `jsonl` selects JSON Lines; other
-strings use the ordinary output path.
+Only `run` and `workflow` accept `--format`. Both accept only `plain` or `jsonl`; clap rejects any
+other value.
 
 ## `octomind login`
 
@@ -161,7 +161,7 @@ Start an interactive or non-interactive AI session.
 | `--name NAME` | `-n` | Create a named session, or resume it if it already exists. |
 | `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
-| `--format FORMAT` | | Output mode: use `plain` or `jsonl`. Unset by default; non-`jsonl` strings take the plain path. |
+| `--format FORMAT` | | Output mode: `plain` or `jsonl` only; other values are rejected. Unset by default, resolving to `plain`. |
 | `--model MODEL` | `-m` | Override model (`provider:model` format) |
 | `--daemon` | | Keep the session alive for injected messages. Pair with `--format jsonl` for headless use; TTY use remains interactive-capable. |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
@@ -409,7 +409,7 @@ Run a multi-step workflow defined in a TOML file.
 |------|-------|-------------|
 | `NAME|FILE` | | Tap workflow name or local TOML path. Omit to list available tap workflows. |
 | `--dry-run` | | Validate and print the execution plan without running any steps |
-| `--format <FORMAT>` | | `jsonl` streams one `assistant` event per step + a final aggregated `cost` event to stdout |
+| `--format <FORMAT>` | | `plain` or `jsonl` only; other values are rejected. `jsonl` streams one `assistant` event per step + a final aggregated `cost` event to stdout |
 
 Running a workflow reads input from stdin; listing workflows and `--dry-run` do not. Public tap workflows may reference
 only public tap roles; local files are not subject to that restriction. Per-step assistant responses, progress, cost,
@@ -477,7 +477,8 @@ prints nothing. `distill` reads and deletes its snapshot before parsing and extr
 |---|---|---|
 | `complete SUBCOMMAND` | Required | `run` lists agent tags and configured roles; `workflow` lists public workflows. |
 | `distill --messages PATH` | Required | JSON array of session messages; consumed and deleted. |
-| `distill --role ROLE` | `""` | Originating role. |
+| `distill --session-file PATH` | Optional | Owning session journal for background usage; omit for standalone extraction. |
+| `distill --role ROLE` | Required | Originating role. |
 | `distill --project PROJECT` | `""` | Project storage scope. |
 | `distill --session SESSION` | `""` | Originating session name. |
 | `distill --outcome OUTCOME` | `unknown` | `verified`, `failed`, or `unknown` completion evidence. |

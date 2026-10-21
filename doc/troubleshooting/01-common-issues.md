@@ -424,7 +424,7 @@ Run from the project directory you intend to modify.
 
 | Platform | Filesystem policy |
 |---|---|
-| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd and existing `~/.local/share`. |
+| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd, `~/.local/share`, `/tmp` and `/dev` device nodes. |
 | macOS (Seatbelt) | Writes: cwd, `~/.local/share`, `/dev`, `/tmp`, `/private/tmp`, `/private/var/folders`. |
 | Windows | Sandbox requests log a warning and continue without OS write restrictions. |
 

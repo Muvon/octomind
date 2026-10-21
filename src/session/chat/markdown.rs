@@ -446,6 +446,12 @@ impl MarkdownRenderer {
 		Ok(())
 	}
 
+	pub fn render_and_eprint(&self, markdown: &str) -> Result<()> {
+		// Workflow JSONL reserves stdout for structured results.
+		eprint!("{}", self.render_with_syntax_highlighting(markdown)?);
+		Ok(())
+	}
+
 	fn render_with_syntax_highlighting(&self, markdown: &str) -> Result<String> {
 		let mut rendered = String::new();
 		// Split markdown by code blocks and process each part separately

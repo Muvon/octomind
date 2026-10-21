@@ -1055,7 +1055,7 @@ fn print_response(output: &str, markdown_enabled: bool, markdown_theme: &str) {
 	if markdown_enabled && is_markdown_content(t) {
 		let theme = markdown_theme.parse().unwrap_or_default();
 		let renderer = MarkdownRenderer::with_theme(theme);
-		match renderer.render_and_print(t) {
+		match renderer.render_and_eprint(t) {
 			Ok(_) => {}
 			Err(_) => eprintln!("{t}"),
 		}

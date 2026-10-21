@@ -446,8 +446,8 @@ impl MarkdownRenderer {
 		Ok(())
 	}
 
+	/// Same as [`Self::render_and_print`], but writes to stderr.
 	pub fn render_and_eprint(&self, markdown: &str) -> Result<()> {
-		// Workflow JSONL reserves stdout for structured results.
 		eprint!("{}", self.render_with_syntax_highlighting(markdown)?);
 		Ok(())
 	}

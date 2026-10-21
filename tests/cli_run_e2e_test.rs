@@ -29,11 +29,16 @@ const MARKER: &str = "E2E-OK-MARKER";
 /// Minimal always-answers OpenAI-compatible stub. Every request gets the
 /// same final response carrying MARKER.
 async fn spawn_openai_stub() -> String {
+	spawn_openai_stub_with_response(format!("{MARKER}: everything works")).await
+}
+
+async fn spawn_openai_stub_with_response(response_content: String) -> String {
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
 		while let Ok((mut sock, _)) = listener.accept().await {
+			let response_content = response_content.clone();
 			tokio::spawn(async move {
 				let mut buf = Vec::new();
 				let mut tmp = [0u8; 8192];
@@ -62,7 +67,7 @@ async fn spawn_openai_stub() -> String {
 				}
 				let body = serde_json::json!({
 					"choices": [{
-						"message": {"role": "assistant", "content": format!("{MARKER}: everything works")},
+						"message": {"role": "assistant", "content": response_content},
 						"finish_reason": "stop"
 					}],
 					"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18, "cost": 0.0001}
@@ -370,6 +375,65 @@ prompt = "{{input}}"
 	assert!(
 		stdout.contains(MARKER),
 		"step output missing marker.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_workflow_jsonl_keeps_markdown_step_output_off_stdout() {
+	let stub_url = spawn_openai_stub_with_response(format!("# {MARKER}\n\n- markdown step")).await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let workflow_path = home.path().join("markdown-workflow.toml");
+	std::fs::write(
+		&workflow_path,
+		r#"name = "markdown-e2e"
+
+[[steps]]
+name = "answer"
+role = "assistant"
+session = "fresh"
+prompt = "{{input}}"
+"#,
+	)
+	.expect("write workflow");
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args([
+			"workflow",
+			workflow_path.to_str().expect("utf8 path"),
+			"--format",
+			"jsonl",
+		])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn markdown workflow");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"answer with markdown\n")
+		.expect("write input");
+
+	let output = child.wait_with_output().expect("workflow exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		output.status.success(),
+		"markdown workflow failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+	for (line_no, line) in stdout.lines().enumerate() {
+		if line.trim().is_empty() {
+			continue;
+		}
+		serde_json::from_str::<serde_json::Value>(line)
+			.unwrap_or_else(|err| panic!("stdout line {} is not JSON: {err}\nstdout:\n{stdout}", line_no + 1));
+	}
+	assert!(
+		stderr.contains(MARKER),
+		"markdown step output must be visible on stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
 	);
 }
 

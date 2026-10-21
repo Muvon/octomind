@@ -461,6 +461,9 @@ fn test_argument_candidates_cover_alias_and_unknown() {
 	assert!(CC::argument_candidates("/schedule").expect("schedule").contains(&"rm"));
 	assert!(CC::argument_candidates("/learning").expect("learning").contains(&"get"));
 	assert!(CC::argument_candidates("/effort").expect("effort").contains(&"x-high"));
+	// `off` is the alias of `none`; without it the highlighter marks a
+	// valid argument red.
+	assert!(CC::argument_candidates("/effort").expect("effort").contains(&"off"));
 
 	// Commands with free-form or dynamic arguments are not validated
 	assert!(CC::argument_candidates("/run").is_none());

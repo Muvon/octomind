@@ -144,7 +144,7 @@ impl<'a> CommandCompleter<'a> {
 			"/effort" => ReasoningEffortConfig::ALL
 				.iter()
 				.map(|level| level.as_str())
-				.chain(["med", "x-high", "extra-high", "maximum"])
+				.chain(["med", "x-high", "extra-high", "maximum", "off"])
 				.collect(),
 			_ => return None,
 		};

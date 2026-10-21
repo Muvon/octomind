@@ -21,7 +21,7 @@
 //! WebSocket mode sends the raw JSON without using these display functions.
 
 use super::CommandOutput;
-use crate::config::Config;
+use crate::config::{Config, ReasoningEffortConfig};
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::tool_display::{
 	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
@@ -206,6 +206,17 @@ pub fn display_model(output: &CommandOutput) {
 	}
 }
 
+/// The levels `/effort` accepts, in order. Built from the config so the
+/// list cannot drift from the parser - `none` is a real level, and a
+/// hand-written list kept forgetting it.
+fn effort_levels() -> String {
+	ReasoningEffortConfig::ALL
+		.iter()
+		.map(|level| level.as_str())
+		.collect::<Vec<_>>()
+		.join(", ")
+}
+
 pub fn display_effort(output: &CommandOutput) {
 	if let CommandOutput::Effort {
 		old_effort,
@@ -238,7 +249,7 @@ pub fn display_effort(output: &CommandOutput) {
 		} else {
 			let kw = key_width(["current", "available"]);
 			block_row("current", &new_effort.bright_white().to_string(), kw);
-			block_row("available", &"low, medium, high, xhigh, max".dimmed().to_string(), kw);
+			block_row("available", &effort_levels().dimmed().to_string(), kw);
 			block_line(&"Usage: /effort <level> (e.g., /effort high)".dimmed().to_string());
 			block_close_ok("/effort", Some(new_effort));
 		}

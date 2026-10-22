@@ -272,7 +272,7 @@ async fn test_info_marks_unstarted_stdio_server_dead() {
 
 	let entry = server_entry(&data, "cov-stdio-dead");
 	assert_eq!(entry["health"], "dead", "unstarted stdio server: {entry}");
-	assert_eq!(entry["connection_type"], "stdin");
+	assert_eq!(entry["connection_type"], "stdio");
 
 	// The on-demand probe writes restart-info side effects; undo them.
 	crate::mcp::process::SERVER_RESTART_INFO

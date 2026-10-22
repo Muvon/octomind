@@ -33,10 +33,11 @@ pub struct WorkflowDef {
 	/// cycles. Required when graph mode is enabled.
 	#[serde(default)]
 	pub max_transitions: Option<u32>,
-	/// Optional hard spending cap (USD) for the whole workflow. Once the summed
-	/// cost across completed steps exceeds this, the workflow aborts before the
-	/// next step — bounds runaway loops where per-session caps reset each step.
-	/// None = no cap.
+	/// Optional soft spending cap (USD) for the whole workflow, checked between
+	/// steps: once the summed cost of completed steps exceeds it, the workflow
+	/// aborts before the next step. A running step is never interrupted, so the
+	/// final total can overshoot by up to one step's spend. Bounds runaway loops
+	/// where per-session caps reset each step. None = no cap.
 	#[serde(default)]
 	pub max_cost: Option<f64>,
 	#[serde(default)]

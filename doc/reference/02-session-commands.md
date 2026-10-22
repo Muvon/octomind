@@ -459,14 +459,14 @@ listing the valid ones.
 
 ### `/mcp [ACTION]`
 
-Inspect MCP servers and their tools. The session `/mcp` command is **read-only**; it has exactly these six subcommands:
+Inspect MCP servers and their tools. The session `/mcp` command cannot add, enable, disable, or remove servers; it has exactly these six subcommands:
 
 | Action | Description |
 |--------|-------------|
 | `/mcp` or `/mcp info` | Default: server status plus tools with short descriptions |
 | `/mcp list` | Tool names grouped by server |
 | `/mcp full` | Full tool details, including parameters |
-| `/mcp health` | Force a health check on all servers |
+| `/mcp health` | Check every external server of the active role now. Restarts a dead stdio server and reconnects an HTTP server without a live connection, with the same cooldown and failure limit as the background monitor |
 | `/mcp dump` | Dump all tools with name, description, and parameter schemas |
 | `/mcp validate` | Validate tool parameter schemas |
 

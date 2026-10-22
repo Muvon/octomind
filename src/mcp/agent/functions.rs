@@ -33,7 +33,7 @@ const ACP_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// Used as fallback for CLI mode when not in a session context.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
 
-/// Get reasonable max concurrent jobs based on CPU cores (minimum 4)
+/// Max concurrent jobs = available CPU parallelism; 4 only when that cannot be determined
 fn get_max_concurrent_jobs() -> usize {
 	std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4)
 }

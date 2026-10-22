@@ -21,7 +21,7 @@ mod copy;
 pub use copy::CopyScope;
 mod display;
 mod done;
-pub use done::{handle_done, DoneOutcome};
+pub use done::{handle_done, DoneOutcome, LessonHandoff};
 mod analyze;
 mod effort;
 mod exit;
@@ -439,7 +439,7 @@ pub async fn process_command(
 			// command messages route it straight here — so handle it for real
 			// instead of panicking the connection task. handle_done is
 			// transport-agnostic; the CLI still uses its own lifecycle path.
-			match done::handle_done(session, config, operation_cancelled).await? {
+			match done::handle_done(session, config, operation_cancelled, done::LessonHandoff::Task).await? {
 				done::DoneOutcome::Compressed => Ok(CommandResult::Handled),
 				done::DoneOutcome::NothingToCompress => Ok(CommandResult::Handled),
 				done::DoneOutcome::Failed(e) => Err(anyhow::anyhow!("/done failed: {}", e)),

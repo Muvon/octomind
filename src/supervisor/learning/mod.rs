@@ -18,9 +18,9 @@
 //! into future sessions. Separate from memory (octobrain) — learning is narrower
 //! and structured: actionable facts scored by confidence with deduplication.
 //!
-//! Two backends:
-//! - `file` (default): `.md` files with YAML frontmatter in `learning/{role}/{project}/`
-//! - `mcp`: any MCP tool (e.g. octobrain) with configurable field mapping
+//! One backend: `file` — `.md` files with YAML frontmatter in
+//! `learning/{project}/{role_base}/` (cross-project lessons in `learning/_/`).
+//! External memory MCP tools are never a learning store.
 
 pub mod backend;
 pub mod evolution;

@@ -36,6 +36,10 @@ use std::sync::OnceLock;
 struct ArgvSpan {
 	start: *mut libc::c_char,
 	capacity: usize,
+	/// NUL bytes that must remain inside the span after the title, so a
+	/// reader walking the argv strings stops before the environment that
+	/// directly follows them in memory (see [`fill_argv_area`]).
+	terminators: usize,
 }
 
 // Safety: the argv block lives in process-static memory for the lifetime of
@@ -79,7 +83,13 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 	let last_len = libc::strlen(last);
 	let end = last.add(last_len + 1);
 	let capacity = end.offset_from(first) as usize;
-	Some(ArgvSpan { start: first, capacity })
+	// `ps` (via KERN_PROCARGS2) prints `argc` NUL-terminated strings starting
+	// at argv[0]; the environment strings follow argv[argc-1] directly.
+	Some(ArgvSpan {
+		start: first,
+		capacity,
+		terminators: argc as usize,
+	})
 }
 
 #[cfg(target_os = "linux")]
@@ -96,7 +106,14 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 	let capacity = std::fs::read("/proc/self/cmdline")
 		.map(|v| v.len())
 		.unwrap_or_else(|_| libc::strlen(arg0));
-	Some(ArgvSpan { start: arg0, capacity })
+	// /proc/PID/cmdline reads arg_start..arg_end and continues into the
+	// environment only when the last byte of that area is not NUL (the
+	// setproctitle convention) — one trailing NUL keeps it inside argv.
+	Some(ArgvSpan {
+		start: arg0,
+		capacity,
+		terminators: 1,
+	})
 }
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
@@ -120,15 +137,26 @@ pub fn set_process_title(title: &str) {
 	// Overwrite the argv block in place so `ps`/Activity Monitor pick it up.
 	let span = ARGV_SPAN.get_or_init(|| unsafe { capture_argv_span() });
 	if let Some(span) = span {
-		unsafe {
-			let title_bytes = title.as_bytes();
-			let copy_len = title_bytes.len().min(span.capacity.saturating_sub(1));
-			std::ptr::copy_nonoverlapping(title_bytes.as_ptr(), span.start as *mut u8, copy_len);
-			// Pad the remainder of the span with NULs so leftover argv text
-			// doesn't show up after our title.
-			std::ptr::write_bytes(span.start.add(copy_len), 0u8, span.capacity - copy_len);
-		}
+		// Safety: the span is the process's own argv block, captured once at
+		// first use and never freed; it is only ever written from here.
+		let area = unsafe { std::slice::from_raw_parts_mut(span.start as *mut u8, span.capacity) };
+		fill_argv_area(area, title.as_bytes(), span.terminators);
 	}
+}
+
+/// Write `title` at the start of the argv `area` and NUL-fill the rest,
+/// truncating the title so at least `terminators` NULs stay inside the area.
+///
+/// The environment strings sit directly after argv in memory. A reader that
+/// walks a fixed number of NUL-terminated strings (macOS `ps` walks `argc` of
+/// them) runs past the end of argv when the area holds fewer NULs than that,
+/// and prints environment strings — API keys included — after the title.
+/// Leftover argv text is cleared too, so it never shows up after the title.
+#[cfg(unix)]
+fn fill_argv_area(area: &mut [u8], title: &[u8], terminators: usize) {
+	let copy_len = title.len().min(area.len().saturating_sub(terminators));
+	area[..copy_len].copy_from_slice(&title[..copy_len]);
+	area[copy_len..].fill(0);
 }
 
 #[cfg(not(unix))]

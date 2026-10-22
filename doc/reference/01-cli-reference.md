@@ -527,6 +527,19 @@ the sandbox is unsupported.
 octomind run developer:general --sandbox
 ```
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success. |
+| `1` | The command failed; the error is printed to stderr. A non-daemon `run` also exits `1` when a provider call fails. |
+| `2` | Invalid command-line arguments (reported by the argument parser before anything runs). |
+| `75` | A non-interactive `run` stopped at a spending threshold (`max_request_spending_threshold` or `max_session_spending_threshold`). stderr ends with `Stopped: request spending threshold reached` or `Stopped: session spending threshold reached`. The session is saved, so the run can be resumed (`EX_TEMPFAIL`). |
+| `130` | A `run` session was force-stopped: a second Ctrl+C, or SIGTERM on Unix. The first Ctrl+C only cancels the current operation. |
+
+In an interactive TTY, a session spending threshold asks `Do you want to continue? (y/N)` instead of stopping the
+process with `75`.
+
 ## Common questions
 
 - **Why does `--format` reject startup?** Pipe a nonempty prompt; redirected empty stdin also fails in daemon mode.

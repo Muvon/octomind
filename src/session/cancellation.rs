@@ -125,7 +125,9 @@ impl SessionCancellation {
 						}
 					} => {},
 					_ = sigterm.recv() => {
-						println!("\n🛑 Termination signal received - exiting...");
+						// stderr: stdout carries the session's data (`--format jsonl` events,
+						// plain answers), so a human notice there corrupts the stream.
+						eprintln!("\n🛑 Termination signal received - exiting...");
 						std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 						let _ = crate::mcp::server::cleanup_servers();
 						std::process::exit(130);
@@ -227,9 +229,10 @@ impl CancelHandle {
 fn handle_interrupt(first_interrupt: &Arc<AtomicBool>, op_tx: &Arc<Mutex<watch::Sender<bool>>>) -> bool {
 	if first_interrupt.load(Ordering::SeqCst) {
 		// Second Ctrl+C - force exit (always visible)
-		// Use std::println! directly to avoid with_suspended_spinner which could deadlock
-		// with the animation task's indicatif lock
-		std::println!("\n\u{1f6d1} Forcing exit...");
+		// Use std::eprintln! directly to avoid with_suspended_spinner which could deadlock
+		// with the animation task's indicatif lock. stderr, not stdout: stdout carries the
+		// session's data (`--format jsonl` events, plain answers).
+		std::eprintln!("\n\u{1f6d1} Forcing exit...");
 		std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 		let _ = crate::mcp::server::cleanup_servers();
 		std::process::exit(130);

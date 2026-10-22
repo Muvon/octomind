@@ -97,7 +97,8 @@ struct Executor {
 	/// `--format jsonl` — emit a per-step `assistant` event to stdout as each
 	/// step completes, plus an aggregated `cost` event at the end.
 	jsonl: bool,
-	/// Optional hard spending cap (USD) for the whole workflow. None = no cap.
+	/// Optional soft spending cap (USD) for the whole workflow, checked between
+	/// steps (see `enforce_budget`). None = no cap.
 	max_cost: Option<f64>,
 	/// Graph mode uses explicit routes rather than declaration order. Kept here
 	/// so block executors can preserve legacy `last_step` semantics exactly.

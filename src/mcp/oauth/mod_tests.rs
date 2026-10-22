@@ -13,9 +13,9 @@
 // limitations under the License.
 
 //! External unit tests for OAuth flow orchestration: `get_access_token`
-//! token-store integration (valid / expired / force-refresh paths) and
-//! `start_oauth_flow` config validation. Complements the inline `mod tests`
-//! (which covers `OAuthConfig` construction, validation, and serde).
+//! token-store integration (valid / expired / force-refresh / refresh-token
+//! paths) and `start_oauth_flow` config validation. Complements the inline
+//! `mod tests` (which covers `OAuthConfig` construction, validation, and serde).
 
 use super::token_store::{clear_token, save_token, TokenMetadata};
 use super::*;
@@ -124,6 +124,173 @@ async fn get_access_token_missing_token_starts_flow() {
 
 	let err = get_access_token(&invalid_config(), &server, false).await.unwrap_err();
 	assert!(err.to_string().contains("OAuth config validation failed"), "{err}");
+}
+
+// ------------------------------------------------------------------
+// get_access_token — refresh-token grant
+// ------------------------------------------------------------------
+
+/// One-shot token endpoint: answers the first request with `status` + `body`
+/// and hands back the request body it received.
+async fn spawn_token_endpoint(status: &'static str, body: String) -> (String, tokio::task::JoinHandle<String>) {
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind token stub");
+	let url = format!("http://{}/oauth/token", listener.local_addr().expect("addr"));
+	let handle = tokio::spawn(async move {
+		let (mut sock, _) = listener.accept().await.expect("accept");
+		let mut buf = Vec::new();
+		let mut tmp = [0u8; 4096];
+		let header_end = loop {
+			let n = sock.read(&mut tmp).await.expect("read");
+			assert!(n > 0, "client closed before sending headers");
+			buf.extend_from_slice(&tmp[..n]);
+			if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+				break pos + 4;
+			}
+		};
+		let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+		let content_length: usize = headers
+			.lines()
+			.find_map(|l| l.strip_prefix("content-length:"))
+			.and_then(|v| v.trim().parse().ok())
+			.expect("content-length header");
+		while buf.len() < header_end + content_length {
+			let n = sock.read(&mut tmp).await.expect("read body");
+			assert!(n > 0, "client closed mid-body");
+			buf.extend_from_slice(&tmp[..n]);
+		}
+		let response = format!(
+			"HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+			body.len()
+		);
+		sock.write_all(response.as_bytes()).await.expect("write response");
+		String::from_utf8_lossy(&buf[header_end..header_end + content_length]).into_owned()
+	});
+	(url, handle)
+}
+
+async fn store_refreshable_token(server: &str, expires_at: u64) {
+	save_token(
+		server,
+		&TokenMetadata {
+			server_name: server.to_string(),
+			access_token: "near-expiry-token".to_string(),
+			refresh_token: Some("stored-refresh-token".to_string()),
+			expires_at,
+			scopes: vec!["mcp:read".to_string()],
+		},
+	)
+	.await
+	.expect("save token");
+}
+
+#[serial]
+#[tokio::test]
+async fn get_access_token_renews_near_expiry_token_with_refresh_token() {
+	let server = unique_server("oauth-refresh");
+	// Inside the 300s refresh buffer: no longer "valid", but refreshable.
+	store_refreshable_token(&server, now_secs() + 60).await;
+	let (token_url, endpoint) = spawn_token_endpoint(
+		"200 OK",
+		r#"{"access_token":"refreshed-token","token_type":"Bearer","expires_in":3600}"#.to_string(),
+	)
+	.await;
+	let mut config = valid_config();
+	config.token_url = token_url;
+
+	let token = get_access_token(&config, &server, false)
+		.await
+		.expect("refresh must succeed without a browser flow");
+	assert_eq!(token.as_deref(), Some("refreshed-token"));
+
+	let request: serde_json::Value = serde_json::from_str(&endpoint.await.expect("endpoint")).expect("json body");
+	assert_eq!(request["grant_type"], "refresh_token");
+	assert_eq!(request["refresh_token"], "stored-refresh-token");
+	assert!(
+		request.get("client_secret").is_none(),
+		"public client must not send a secret"
+	);
+
+	// The renewed token is persisted; the non-rotated refresh token is kept.
+	let stored = token_store::load_token(&server).await.unwrap().expect("stored token");
+	assert_eq!(stored.access_token, "refreshed-token");
+	assert_eq!(stored.refresh_token.as_deref(), Some("stored-refresh-token"));
+	assert!(stored.expires_at > now_secs() + 3000, "expiry must move forward");
+
+	clear_token(&server, false, None, None, None).await.unwrap();
+}
+
+#[serial]
+#[tokio::test]
+async fn get_access_token_rejected_refresh_falls_back_to_sign_in() {
+	let server = unique_server("oauth-refresh-rejected");
+	store_refreshable_token(&server, now_secs() + 60).await;
+	let (token_url, endpoint) =
+		spawn_token_endpoint("400 Bad Request", r#"{"error":"invalid_grant"}"#.to_string()).await;
+	// Empty client_id: the refresh request still goes out, then the sign-in
+	// flow aborts at validation — proving the fallback was reached.
+	let mut config = invalid_config();
+	config.token_url = token_url;
+
+	let err = get_access_token(&config, &server, false).await.unwrap_err();
+	assert!(err.to_string().contains("OAuth config validation failed"), "{err}");
+	let request = endpoint.await.expect("refresh was attempted first");
+	assert!(request.contains("refresh_token"), "{request}");
+
+	clear_token(&server, false, None, None, None).await.unwrap();
+}
+
+// ------------------------------------------------------------------
+// get_access_token_non_interactive — never reaches the browser flow
+// ------------------------------------------------------------------
+
+#[serial]
+#[tokio::test]
+async fn non_interactive_token_renews_near_expiry_token() {
+	let server = unique_server("oauth-noninteractive-refresh");
+	store_refreshable_token(&server, now_secs() + 60).await;
+	let (token_url, endpoint) = spawn_token_endpoint(
+		"200 OK",
+		r#"{"access_token":"refreshed-token","refresh_token":"rotated-refresh-token","expires_in":3600}"#.to_string(),
+	)
+	.await;
+	let mut config = valid_config();
+	config.token_url = token_url;
+
+	let token = get_access_token_non_interactive(&config, &server)
+		.await
+		.expect("refresh");
+	assert_eq!(token.as_deref(), Some("refreshed-token"));
+	endpoint.await.expect("refresh request served");
+	// A rotated refresh token replaces the stored one.
+	let stored = token_store::load_token(&server).await.unwrap().expect("stored token");
+	assert_eq!(stored.refresh_token.as_deref(), Some("rotated-refresh-token"));
+
+	clear_token(&server, false, None, None, None).await.unwrap();
+}
+
+#[serial]
+#[tokio::test]
+async fn non_interactive_token_rejected_refresh_yields_none_without_sign_in() {
+	let server = unique_server("oauth-noninteractive-rejected");
+	store_refreshable_token(&server, now_secs() + 60).await;
+	let (token_url, endpoint) =
+		spawn_token_endpoint("400 Bad Request", r#"{"error":"invalid_grant"}"#.to_string()).await;
+	// Empty client_id: reaching the sign-in flow would fail validation with an
+	// Err, so Ok(None) proves the browser flow was never entered.
+	let mut config = invalid_config();
+	config.token_url = token_url;
+
+	let token = get_access_token_non_interactive(&config, &server)
+		.await
+		.expect("rejection is Ok(None), not an error");
+	assert_eq!(token, None);
+	let request = endpoint.await.expect("refresh was attempted");
+	assert!(request.contains("refresh_token"), "{request}");
+
+	clear_token(&server, false, None, None, None).await.unwrap();
 }
 
 // ------------------------------------------------------------------

@@ -62,46 +62,23 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 		.to_str()
 		.ok_or_else(|| anyhow::anyhow!("sandbox: config directory path is not valid UTF-8"))
 		.map(escape_profile_str)?;
+	// The session inject listener binds its socket here after the sandbox is
+	// applied. The default `$TMPDIR` location is already covered by
+	// /private/var/folders, but `$XDG_RUNTIME_DIR` or a custom `$TMPDIR` moves it
+	// elsewhere. Seatbelt matches resolved paths (`/var` is a symlink), so the
+	// rule must name the canonical path.
+	let run_dir = crate::directories::get_run_dir()?.canonicalize()?;
+	let run_dir_str = run_dir
+		.to_str()
+		.ok_or_else(|| anyhow::anyhow!("sandbox: run directory path is not valid UTF-8"))
+		.map(escape_profile_str)?;
 
-	// Build the Seatbelt profile.
-	// - Allow everything by default (reads, network, process ops, etc.)
-	// - Deny reads of sensitive credential dirs (ssh keys, cloud creds, gpg keys)
-	// - Deny all file writes globally
-	// - Re-allow writes to:
-	//   • the target working directory (the whole point of the sandbox)
-	//   • ~/.local/share — XDG data home; MCP servers write logs/state here
-	//   • <config_dir>/octolib — provider auth state (ChatGPT token refresh)
-	//   • /dev — pipes, ttys, and other character devices
-	//   • /tmp, /private/tmp — standard temp files
-	//   • /private/var/folders — macOS per-user temp cache (used by many syscalls)
-	let profile = format!(
-		r#"(version 1)
-(allow default)
-(deny file-read* file-write*
-  (subpath "{home}/.ssh")
-  (subpath "{home}/.gnupg")
-  (subpath "{home}/.aws")
-  (subpath "{home}/.kube")
-  (subpath "{home}/.config/gcloud")
-  (subpath "{home}/.azure")
-  (subpath "{home}/.config/op")
-)
-(deny file-write*
-  (subpath "/")
-)
-(allow file-write*
-  (subpath "{dir}")
-  (subpath "{xdg_data_home}")
-  (subpath "{octolib_config}")
-  (subpath "/dev")
-  (subpath "/tmp")
-  (subpath "/private/tmp")
-  (subpath "/private/var/folders")
-)"#,
-		home = home_str,
-		dir = dir_str,
-		xdg_data_home = xdg_data_home_str,
-		octolib_config = octolib_config_str,
+	let profile = build_profile(
+		&dir_str,
+		&home_str,
+		&xdg_data_home_str,
+		&octolib_config_str,
+		&run_dir_str,
 	);
 
 	let profile_cstr = CString::new(profile).map_err(|_| anyhow::anyhow!("sandbox: profile contains null byte"))?;
@@ -123,6 +100,47 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 
 	crate::log_info!("Sandbox active (Seatbelt): writes locked to {}", dir.display());
 	Ok(())
+}
+
+/// Build the Seatbelt profile from already-escaped paths.
+/// - Allow everything by default (reads, network, process ops, etc.)
+/// - Deny reads of sensitive credential dirs (ssh keys, cloud creds, gpg keys)
+/// - Deny all file writes globally
+/// - Re-allow writes to:
+///   • the target working directory (the whole point of the sandbox)
+///   • ~/.local/share — XDG data home; MCP servers write logs/state here
+///   • <config_dir>/octolib — provider auth state (ChatGPT token refresh)
+///   • the run dir — session inject sockets and PID files (`octomind send`)
+///   • /dev — pipes, ttys, and other character devices
+///   • /tmp, /private/tmp — standard temp files
+///   • /private/var/folders — macOS per-user temp cache (used by many syscalls)
+fn build_profile(dir: &str, home: &str, xdg_data_home: &str, octolib_config: &str, run_dir: &str) -> String {
+	format!(
+		r#"(version 1)
+(allow default)
+(deny file-read* file-write*
+  (subpath "{home}/.ssh")
+  (subpath "{home}/.gnupg")
+  (subpath "{home}/.aws")
+  (subpath "{home}/.kube")
+  (subpath "{home}/.config/gcloud")
+  (subpath "{home}/.azure")
+  (subpath "{home}/.config/op")
+)
+(deny file-write*
+  (subpath "/")
+)
+(allow file-write*
+  (subpath "{dir}")
+  (subpath "{xdg_data_home}")
+  (subpath "{octolib_config}")
+  (subpath "{run_dir}")
+  (subpath "/dev")
+  (subpath "/tmp")
+  (subpath "/private/tmp")
+  (subpath "/private/var/folders")
+)"#
+	)
 }
 
 #[cfg(test)]

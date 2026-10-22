@@ -23,8 +23,9 @@
 //!   while allowing reads everywhere else is not possible with Landlock v1-v3.
 //! - We therefore apply the practical safe default:
 //!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
-//!   • Read+write on cwd, ~/.local/share (MCP server state/logs) and
+//!   • Read+write on cwd, ~/.local/share (MCP server state/logs),
 //!   <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh)
+//!   and the run dir (session inject sockets, PID files — `octomind send`)
 //!   • All writes outside those paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.
@@ -34,8 +35,9 @@ use anyhow::Result;
 use landlock::{
 	make_bitflags, path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
 };
+use std::path::Path;
 
-pub fn apply(dir: &std::path::Path) -> Result<()> {
+pub fn apply(dir: &Path) -> Result<()> {
 	let abi = ABI::V3;
 	let all_access = AccessFs::from_all(abi);
 	// Read-only rights: read files, list dirs, execute — intersected with ABI support.
@@ -48,6 +50,11 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	let octolib_config = dirs::config_dir()
 		.ok_or_else(|| anyhow::anyhow!("sandbox: could not determine config directory"))?
 		.join("octolib");
+	// The session inject listener binds its socket here after the sandbox is
+	// applied; binding creates a filesystem node, which Landlock denies outside
+	// the write rules. Resolving it now also creates the dir, so the rule below
+	// can open it.
+	let run_dir = crate::directories::get_run_dir()?;
 
 	let mut ruleset = Ruleset::default().handle_access(all_access)?.create()?;
 
@@ -55,14 +62,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	// configs, and project files outside cwd.
 	ruleset = ruleset.add_rules(path_beneath_rules(["/"], read_only))?;
 
-	// Read+write on cwd, XDG data home (MCP server logs/state) and octolib auth state.
-	let mut rw_paths: Vec<&std::path::Path> = vec![dir];
-	if xdg_data_home.exists() {
-		rw_paths.push(xdg_data_home.as_path());
-	}
-	if octolib_config.exists() {
-		rw_paths.push(octolib_config.as_path());
-	}
+	let rw_paths = writable_paths(dir, &xdg_data_home, &octolib_config, &run_dir);
 	ruleset = ruleset.add_rules(path_beneath_rules(rw_paths, all_access))?;
 
 	let status = ruleset.restrict_self()?;
@@ -89,3 +89,26 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 
 	Ok(())
 }
+
+/// Read+write roots: cwd, the run dir (inject sockets and PID files), the XDG
+/// data home (MCP server logs/state) and octolib auth state. The last two are
+/// optional — Landlock cannot add a rule for a path that does not exist.
+fn writable_paths<'a>(
+	dir: &'a Path,
+	xdg_data_home: &'a Path,
+	octolib_config: &'a Path,
+	run_dir: &'a Path,
+) -> Vec<&'a Path> {
+	let mut rw_paths = vec![dir, run_dir];
+	if xdg_data_home.exists() {
+		rw_paths.push(xdg_data_home);
+	}
+	if octolib_config.exists() {
+		rw_paths.push(octolib_config);
+	}
+	rw_paths
+}
+
+#[cfg(test)]
+#[path = "linux_tests.rs"]
+mod tests;

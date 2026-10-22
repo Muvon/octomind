@@ -941,6 +941,47 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+/// A one-shot run ends right after a bare `/done`, and the tokio runtime dies
+/// with it — an in-process extraction task would be aborted at its first await
+/// and the lesson lost. `/done` must hand its pre-compression transcript to the
+/// detached `octomind distill` child, the same path the exit uses.
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_done_hands_lessons_to_detached_distill() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+	persisted_compressible_session("done-distill-handoff").await;
+
+	let url = spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"<should_compress>true</should_compress>\n<session_context>DONE-HANDOFF-SUMMARY</session_context>",
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.learning.enabled = true;
+	let args = super::super::GenericSessionArgs::resume("done-distill-handoff".to_string(), "assistant".to_string());
+	run_interactive_session_with_input(&args, &config, "/done")
+		.await
+		.expect("bare /done exits cleanly");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	// The child is the test binary itself (unknown subcommand → exits without
+	// reading), so the snapshot the parent wrote for it is still on disk.
+	let snapshot = std::env::temp_dir().join(format!(
+		"octomind-distill-done-distill-handoff-{}.json",
+		std::process::id()
+	));
+	let handed_off = std::fs::read_to_string(&snapshot);
+	let _ = std::fs::remove_file(&snapshot);
+	let handed_off = handed_off.expect("/done must hand its transcript to the detached distill child");
+	assert!(
+		handed_off.contains("build the frobnicator widget"),
+		"the distiller must get the raw pre-compression turns: {handed_off}"
+	);
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {

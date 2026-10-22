@@ -16,7 +16,7 @@
 
 name        = "fan-out-aggregate"
 description = "Same task on three models in parallel, one judge synthesizes the best"
-# max_cost  = 5.00   # optional hard USD ceiling for the whole run
+# max_cost  = 5.00   # optional USD budget for the whole run, checked between steps
 
 # ── Fan out: the SAME prompt, three different models, in parallel ─────────────
 # `min_success = 2` lets one branch fail without aborting the workflow.

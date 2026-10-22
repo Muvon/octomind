@@ -15,8 +15,9 @@
 use super::*;
 
 /// Test fixture: default template + a controlled server/role set.
-/// `testsrv` auto-binds to `binder`; `restricted` grants itself only
-/// `testsrv:alpha`; `excluded` references testsrv but grants it nothing.
+/// `testsrv` auto-binds to `binder` and `filtered_binder` (the latter has a
+/// restrictive role filter that never names it); `restricted` grants itself
+/// only `testsrv:alpha`; `excluded` references testsrv but grants it nothing.
 const TEST_FIXTURE: &str = r#"
 
 [[mcp.servers]]
@@ -24,7 +25,7 @@ name = "testsrv"
 type = "builtin"
 timeout_seconds = 30
 tools = ["alpha", "beta"]
-auto_bind = ["binder"]
+auto_bind = ["binder", "filtered_binder"]
 
 [[roles]]
 name = "binder"
@@ -34,6 +35,15 @@ top_k = 20
 system = "Binder role."
 welcome = "hi"
 mcp = { server_refs = [], allowed_tools = [] }
+
+[[roles]]
+name = "filtered_binder"
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+system = "Filtered binder role."
+welcome = "hi"
+mcp = { server_refs = ["core"], allowed_tools = ["core:*"] }
 
 [[roles]]
 name = "restricted"
@@ -134,6 +144,31 @@ fn test_merged_config_drops_server_with_no_matching_grant() {
 	// (inverted-default fix: an unmatched server must not expose all tools)
 	assert!(names.contains(&"core"));
 	assert!(!names.contains(&"testsrv"));
+}
+
+/// A session merges twice: setup builds the role config, then MCP init merges
+/// that result again. The first pass records an auto-bound server as
+/// `<server>:*` in the restrictive role's grant; the second pass must still
+/// expose only the server's own `tools` filter, not every tool it advertises.
+#[test]
+fn test_auto_bind_server_keeps_its_own_tool_filter_across_remerge() {
+	let config = test_config();
+	let once = config.get_merged_config_for_role("filtered_binder");
+	let twice = once.get_merged_config_for_role("filtered_binder");
+
+	for (pass, merged) in [("first", &once), ("second", &twice)] {
+		let testsrv = merged
+			.mcp
+			.servers
+			.iter()
+			.find(|s| s.name() == "testsrv")
+			.unwrap_or_else(|| panic!("{pass} merge: auto-bound testsrv missing"));
+		assert_eq!(
+			testsrv.tools().to_vec(),
+			vec!["alpha".to_string(), "beta".to_string()],
+			"{pass} merge must keep the server-level tools filter"
+		);
+	}
 }
 
 #[test]

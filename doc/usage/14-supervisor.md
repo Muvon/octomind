@@ -415,7 +415,9 @@ builds. Return each finding with its source path and line number, and state that
 1. **Free signals gate the model.** Counters and the self-report run every turn without a separate model call; model
   calls serve completion, task resolution, planning, or an oversized tool round.
 2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. Steering is advisory;
-  completion verification can leave a turn unverified. No mid-trajectory judge ever blocks a tool call.
+  completion verification can leave a turn unverified. The only mid-trajectory component that blocks a tool call is the
+  opt-in authorizer (`[supervisor.authorizer]`, off by default), and only on an independently confirmed conflict; the
+  blocked call returns a visible tool error, never a silent rewrite.
 3. **Out-of-band.** Status tokens are stripped from display; raw status protocol is removed from stored/displayed
   assistant text; runtime notes and debug diagnostics are separate.
 

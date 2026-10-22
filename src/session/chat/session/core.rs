@@ -511,6 +511,12 @@ impl ChatSession {
 	pub async fn initialize(params: SessionInitParams<'_>) -> Result<Self> {
 		let sessions_dir = get_sessions_dir()?;
 
+		// Skip CLI output in structured output modes (websocket, jsonl): stdout
+		// carries their events.
+		let suppress_cli_output =
+			crate::session::output::OutputMode::from_runtime_mode(params.output_mode.as_deref().unwrap_or("plain"))
+				.should_suppress_cli_output();
+
 		// Handle resume_recent flag
 		let effective_resume = if params.resume_recent {
 			// Get current working directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
@@ -519,18 +525,22 @@ impl ChatSession {
 			match crate::session::find_most_recent_session_for_project(&current_dir)? {
 				Some(session_name) => {
 					use colored::*;
-					println!(
-						"{}",
-						format!("✓ Found recent session for current project: {}", session_name).bright_green()
-					);
+					if !suppress_cli_output {
+						println!(
+							"{}",
+							format!("✓ Found recent session for current project: {}", session_name).bright_green()
+						);
+					}
 					Some(session_name)
 				}
 				None => {
 					use colored::*;
-					println!(
-						"{}",
-						"⚠ No recent session found for current project. Creating new session.".yellow()
-					);
+					if !suppress_cli_output {
+						println!(
+							"{}",
+							"⚠ No recent session found for current project. Creating new session.".yellow()
+						);
+					}
 					None
 				}
 			}
@@ -587,13 +597,7 @@ impl ChatSession {
 					let runtime_state =
 						crate::session::extract_runtime_state_from_log(&session_file).unwrap_or_default();
 
-					// Skip CLI output in structured output modes (websocket, jsonl)
-					let suppress = crate::session::output::OutputMode::from_runtime_mode(
-						params.output_mode.as_deref().unwrap_or("plain"),
-					)
-					.should_suppress_cli_output();
-
-					if !suppress {
+					if !suppress_cli_output {
 						// When session is loaded successfully, show its info
 						println!("{}", format!("✓ Resuming session: {}", session_name).bright_green());
 						if let Some(title) =
@@ -783,28 +787,20 @@ impl ChatSession {
 					}
 
 					// If loading fails for named session, inform the user and create a new session
-					println!(
-						"{}: {}",
-						format!("Failed to load session {}", session_name).bright_red(),
-						e
-					);
-					println!("{}", "Creating a new session instead...".yellow());
-
-					// Generate a new unique session name using the new format
 					let new_session_name = generate_session_name();
-					let new_session_file = sessions_dir.join(format!("{}.jsonl.zst", new_session_name));
-
-					// Skip CLI output in structured output modes
-					let suppress = crate::session::output::OutputMode::from_runtime_mode(
-						params.output_mode.as_deref().unwrap_or("plain"),
-					)
-					.should_suppress_cli_output();
-					if !suppress {
+					if !suppress_cli_output {
+						println!(
+							"{}: {}",
+							format!("Failed to load session {}", session_name).bright_red(),
+							e
+						);
+						println!("{}", "Creating a new session instead...".yellow());
 						println!(
 							"{}",
 							format!("Starting new session: {}", new_session_name).bright_green()
 						);
 					}
+					let new_session_file = sessions_dir.join(format!("{}.jsonl.zst", new_session_name));
 
 					let mut chat_session = ChatSession::new(ChatSessionParams {
 						name: new_session_name.clone(),
@@ -818,10 +814,7 @@ impl ChatSession {
 			}
 		} else {
 			// Create new session - skip CLI output in structured output modes
-			let suppress =
-				crate::session::output::OutputMode::from_runtime_mode(params.output_mode.as_deref().unwrap_or("plain"))
-					.should_suppress_cli_output();
-			if !suppress {
+			if !suppress_cli_output {
 				use colored::*;
 				println!("{}", format!("Starting new session: {}", session_name).bright_green());
 			}

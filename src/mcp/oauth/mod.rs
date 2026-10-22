@@ -16,7 +16,7 @@ pub use cimd::{resolve_client_id, stop_cimd_server};
 pub use discovery::{clear_all_discovered_oauth_cache, clear_discovered_oauth_cache, discover_oauth_from_mcp_server};
 pub use flow::{
 	build_authorization_url, exchange_code_for_token, generate_pkce_pair, generate_state, is_token_expired,
-	refresh_access_token, OAuthTokenResponse, PkcePair,
+	refresh_access_token, token_expires_at, OAuthTokenResponse, PkcePair,
 };
 pub use token_store::{clear_token, get_valid_token, load_token, save_token, TokenMetadata, TokenResult};
 
@@ -174,16 +174,8 @@ pub async fn get_access_token(
 	server_name: &str,
 	force_refresh: bool,
 ) -> Result<Option<String>, anyhow::Error> {
-	// Get or create a lock for this server to prevent concurrent OAuth flows
-	let lock = {
-		let mut locks = OAUTH_LOCKS.lock().await;
-		locks
-			.entry(server_name.to_string())
-			.or_insert_with(|| Arc::new(Mutex::new(())))
-			.clone()
-	};
-
-	// Acquire the lock for this specific server
+	// One OAuth flow or refresh per server at a time
+	let lock = server_lock(server_name).await;
 	let _guard = lock.lock().await;
 
 	// Check for valid token again after acquiring lock (another thread might have completed OAuth)
@@ -203,11 +195,17 @@ pub async fn get_access_token(
 			);
 			return Ok(Some(metadata.access_token));
 		} else {
-			crate::log_debug!("⚠️  GET_ACCESS_TOKEN: No valid token found, starting OAuth flow");
+			crate::log_debug!("⚠️  GET_ACCESS_TOKEN: No valid token found, trying refresh before OAuth flow");
 		}
 	}
 
-	// No valid token - start standard web OAuth flow (PKCE + callback)
+	// A stored refresh token renews the access token without the user; only a
+	// missing or rejected refresh token needs the browser sign-in.
+	if let Some(access_token) = refresh_stored_token(config, server_name).await? {
+		return Ok(Some(access_token));
+	}
+
+	// No usable token - start standard web OAuth flow (PKCE + callback)
 	let result = start_oauth_flow(config, server_name).await?;
 
 	match result {
@@ -220,6 +218,80 @@ pub async fn get_access_token(
 		OAuthCallbackResult::Cancelled => Ok(None),
 		OAuthCallbackResult::Timeout => Err(anyhow::anyhow!("OAuth timed out")),
 	}
+}
+
+/// Access token for `server_name` without user interaction: the stored token
+/// while valid, else a refresh-token renewal. Never opens a browser — `Ok(None)`
+/// means only an interactive sign-in can produce a token.
+pub async fn get_access_token_non_interactive(
+	config: &OAuthConfig,
+	server_name: &str,
+) -> Result<Option<String>, anyhow::Error> {
+	let lock = server_lock(server_name).await;
+	let _guard = lock.lock().await;
+
+	let valid_token = get_valid_token(server_name, config.refresh_buffer_seconds)
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to check token: {}", e))?;
+	if let Some(metadata) = valid_token {
+		return Ok(Some(metadata.access_token));
+	}
+	refresh_stored_token(config, server_name).await
+}
+
+/// Per-server lock serializing sign-in and refresh, so a rotating refresh
+/// token is never spent twice.
+async fn server_lock(server_name: &str) -> Arc<Mutex<()>> {
+	OAUTH_LOCKS
+		.lock()
+		.await
+		.entry(server_name.to_string())
+		.or_insert_with(|| Arc::new(Mutex::new(())))
+		.clone()
+}
+
+/// Renew the stored access token with its refresh token (RFC 6749 §6).
+/// `Ok(None)` when no refresh token is stored or the authorization server
+/// rejects it; the rejection is logged because it is why the user is asked to
+/// sign in again.
+async fn refresh_stored_token(config: &OAuthConfig, server_name: &str) -> Result<Option<String>, anyhow::Error> {
+	let stored = load_token(server_name)
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to load token: {}", e))?;
+	let Some(stored) = stored else {
+		return Ok(None);
+	};
+	let Some(refresh_token) = stored.refresh_token.clone() else {
+		return Ok(None);
+	};
+
+	let response = match refresh_access_token(config, &refresh_token).await {
+		Ok(response) => response,
+		Err(e) => {
+			crate::log_error!(
+				"OAuth token refresh for '{}' rejected, sign-in required: {}",
+				server_name,
+				e
+			);
+			return Ok(None);
+		}
+	};
+
+	let metadata = TokenMetadata {
+		server_name: server_name.to_string(),
+		access_token: response.access_token.clone(),
+		// A server that does not rotate refresh tokens omits the field: the
+		// stored one stays valid.
+		refresh_token: response.refresh_token.or(Some(refresh_token)),
+		expires_at: token_expires_at(response.expires_in),
+		scopes: response.scope.unwrap_or(stored.scopes),
+	};
+	// Same contract as the sign-in callback: the token works for this process
+	// either way, a failed save only means renewing again next time.
+	if let Err(e) = save_token(server_name, &metadata).await {
+		crate::log_error!("Failed to persist refreshed OAuth token for '{}': {}", server_name, e);
+	}
+	Ok(Some(response.access_token))
 }
 
 /// Checks if a server is authenticated.

@@ -219,16 +219,24 @@ pub async fn exchange_code_for_token(
 	}
 }
 
+/// Exchange a stored refresh token for a new access token (RFC 6749 §6).
+/// Mirrors [`exchange_code_for_token`]'s body: public PKCE clients send no
+/// secret, and the RFC 9728 resource scopes the refreshed token too.
 pub async fn refresh_access_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthTokenResponse, String> {
 	let client = reqwest::Client::new();
 
 	// GitHub requires JSON body
-	let body = serde_json::json!({
+	let mut body = serde_json::json!({
 		"grant_type": "refresh_token",
 		"client_id": config.client_id,
-		"client_secret": config.client_secret,
 		"refresh_token": refresh_token,
 	});
+	if let Some(resource) = &config.resource {
+		body["resource"] = serde_json::json!(resource);
+	}
+	if !config.client_secret.is_empty() {
+		body["client_secret"] = serde_json::json!(config.client_secret);
+	}
 
 	let response = client
 		.post(&config.token_url)
@@ -246,6 +254,23 @@ pub async fn refresh_access_token(config: &OAuthConfig, refresh_token: &str) -> 
 	}
 
 	serde_json::from_str(&text).map_err(|e| format!("Invalid response: {}", e))
+}
+
+/// Lifetime assumed for tokens issued without `expires_in` (GitHub's never
+/// expire): one year, so the token is still re-checked eventually.
+pub const NON_EXPIRING_TOKEN_SECS: u64 = 365 * 24 * 60 * 60;
+
+/// Absolute expiry (unix seconds) for a token response's `expires_in`.
+pub fn token_expires_at(expires_in: u64) -> u64 {
+	let lifetime = if expires_in > 0 {
+		expires_in
+	} else {
+		NON_EXPIRING_TOKEN_SECS
+	};
+	SystemTime::now()
+		.checked_add(std::time::Duration::from_secs(lifetime))
+		.map(|t| t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs())
+		.unwrap_or(0)
 }
 
 pub fn is_token_expired(expires_at: u64, buffer_seconds: u64) -> bool {

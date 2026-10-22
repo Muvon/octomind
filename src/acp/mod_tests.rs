@@ -191,6 +191,38 @@ async fn acp_stdio_serves_initialize_new_session_prompt_and_eof() {
 	assert!(status.success(), "clean exit expected: {status}");
 }
 
+/// A client may pipeline `initialize` + `session/new` and close stdin at
+/// once (a one-shot script, `printf … | octomind acp`). EOF must not cut off
+/// requests that were already accepted: both responses have to reach stdout
+/// before the process exits.
+#[tokio::test(flavor = "current_thread")]
+async fn acp_stdio_answers_requests_pipelined_before_eof() {
+	let data = tempfile::tempdir().expect("tempdir");
+	let stub_url =
+		crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+			"ACP-EOF-UNUSED",
+		)])
+		.await;
+	let mut child = spawn_fixture("pipelined_eof", data.path(), &[("OLLAMA_API_URL", &stub_url)]);
+
+	let new_session =
+		serde_json::to_value(NewSessionRequest::new(data.path().to_path_buf())).expect("serialize session/new");
+	child.send(&rpc_line(1, "initialize", initialize_params())).await;
+	child.send(&rpc_line(2, "session/new", new_session)).await;
+	child.close_stdin().await;
+
+	let response = child.wait_for_id(1).await;
+	assert!(response["result"]["agentInfo"].is_object(), "got: {response}");
+	let response = child.wait_for_id(2).await;
+	assert!(
+		response["result"]["sessionId"].is_string(),
+		"session/new must be answered after EOF: {response}"
+	);
+
+	let status = child.wait_exit().await;
+	assert!(status.success(), "clean exit expected: {status}");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn acp_tracing_failure_is_recorded_in_the_init_error_log() {
 	let data = tempfile::tempdir().expect("tempdir");

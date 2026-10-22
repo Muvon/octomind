@@ -544,7 +544,9 @@ MCP servers are monitored automatically:
   Octomind (the HTTP config has no launch command).
 - Three consecutive restart failures mark a server failed; attempts are separated by a 30-second cooldown
 - A terminal `Failed` state is left alone by the monitor; it is not automatically probed or restarted again
-- Use `/mcp health` to force a health check
+- Use `/mcp health` to run a check immediately on the active role's external servers. It is not read-only: it
+  applies the same rules as the background monitor, so a dead stdio server is restarted (subject to the cooldown and
+  failure limit above), an HTTP server without a live connection is reconnected, and `Failed` servers are skipped
 
 ## Common Questions
 

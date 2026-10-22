@@ -3,7 +3,7 @@
 // OAuth 2.1 Callback Server
 
 use super::OAuthConfig;
-use crate::mcp::oauth::flow::exchange_code_for_token;
+use crate::mcp::oauth::flow::{exchange_code_for_token, token_expires_at, NON_EXPIRING_TOKEN_SECS};
 use crate::mcp::oauth::token_store::{save_token, TokenMetadata};
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -311,19 +311,7 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 			let access_token = token_response.access_token.clone();
 			let expires_in = token_response.expires_in;
 
-			// GitHub tokens don't expire, so use a far-future date if expires_in is 0
-			let expires_at = if expires_in > 0 {
-				std::time::SystemTime::now()
-					.checked_add(std::time::Duration::from_secs(expires_in))
-					.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-					.unwrap_or(0)
-			} else {
-				// GitHub tokens don't expire - set to 1 year from now
-				std::time::SystemTime::now()
-					.checked_add(std::time::Duration::from_secs(365 * 24 * 60 * 60))
-					.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-					.unwrap_or(0)
-			};
+			let expires_at = token_expires_at(expires_in);
 
 			let metadata = TokenMetadata {
 				server_name: state.server_name.clone(),
@@ -345,7 +333,11 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 			OAuthCallbackResult::Success {
 				access_token,
 				refresh_token,
-				expires_in: if expires_in > 0 { expires_in } else { 365 * 24 * 60 * 60 },
+				expires_in: if expires_in > 0 {
+					expires_in
+				} else {
+					NON_EXPIRING_TOKEN_SECS
+				},
 				scopes,
 			}
 		}

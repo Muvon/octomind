@@ -21,7 +21,6 @@
 use super::process;
 use super::{McpFunction, McpToolCall, McpToolResult};
 use crate::config::{Config, McpConnectionType, McpServerConfig};
-use crate::mcp::oauth::token_store;
 use crate::session::context::SessionId;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -122,13 +121,14 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 	};
 
 	if should_fetch {
-		// Check if we have a cached OAuth token before attempting fetch
-		// This prevents triggering OAuth flow during tool map initialization
+		// Resolve an OAuth token without user interaction before attempting fetch:
+		// a valid stored token, else a refresh-token renewal. This never triggers
+		// the browser flow during tool map initialization.
 		// Only check for servers that have been discovered to require OAuth
-		if crate::mcp::oauth::discovery::has_cached_discovery(server_id) {
-			match token_store::get_valid_token(server_id, 300).await {
+		if let Some(oauth_config) = crate::mcp::oauth::discovery::cached_discovery(server_id) {
+			match crate::mcp::oauth::get_access_token_non_interactive(&oauth_config, server_id).await {
 				Ok(None) => {
-					// No valid token - don't trigger OAuth, return empty
+					// No valid or refreshable token - don't trigger OAuth, return empty
 					crate::log_debug!(
 						"Server '{}' requires OAuth but no token available - skipping cache fetch",
 						server_id
@@ -144,7 +144,7 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 					return Ok(Vec::new());
 				}
 				Ok(Some(_)) => {
-					// Token exists, proceed with fetch
+					// Token available, proceed with fetch
 				}
 			}
 		}

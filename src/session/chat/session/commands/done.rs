@@ -28,23 +28,43 @@ pub enum DoneOutcome {
 	Failed(String),
 }
 
+/// Where `/done` sends its pre-compression transcript for lesson extraction.
+#[derive(Debug, Clone, Copy)]
+pub enum LessonHandoff {
+	/// In-process task: the caller's process outlives it (interactive loop,
+	/// ACP, WebSocket), so the prompt is never blocked on the LLM round-trip.
+	Task,
+	/// Detached `octomind distill` child: a one-shot run may end right after
+	/// `/done`, and the dying runtime would abort an in-process task.
+	DetachedProcess,
+}
+
 /// Force-compress conversation context, bypassing all automatic threshold/cooldown/cost guards.
 /// The user explicitly requested compression, so we always run it.
 pub async fn handle_done(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
+	handoff: LessonHandoff,
 ) -> Result<DoneOutcome> {
+	// The session's own live role, the same key recall reads.
+	let role = session.role.clone();
 	// `/done` compresses before it starts learning. Preserve the raw transcript
 	// now; otherwise extraction sees only the generated summary and cannot cite
-	// the user's actual words or the original tool evidence.
-	let learning_snapshot = config.supervisor.learning.enabled.then(|| {
-		(
+	// the user's actual words or the original tool evidence. The detached child
+	// takes its copy at spawn (a snapshot file), so it is handed off right here.
+	let learning_snapshot = match (config.supervisor.learning.enabled, handoff) {
+		(false, _) => None,
+		(true, LessonHandoff::DetachedProcess) => {
+			crate::supervisor::learning::extract::extract_lessons_before_exit(session, config, role.clone(), None);
+			None
+		}
+		(true, LessonHandoff::Task) => Some((
 			session.session.messages.clone(),
 			session.session.info.name.clone(),
 			session.learning_outcome,
-		)
-	});
+		)),
+	};
 	let outcome = match crate::session::chat::conversation_compression::check_and_compress_conversation(
 		session,
 		config,
@@ -60,12 +80,9 @@ pub async fn handle_done(
 
 	crate::log_debug!("/done: outcome={:?}", outcome);
 
-	// Fire-and-forget lesson extraction — do NOT block the prompt on the LLM round-trip.
-	// The process keeps living after /done, so dropping the handle is safe here
-	// (unlike the /exit and Ctrl+D paths, which must await it).
+	// Lesson extraction never blocks the prompt on the LLM round-trip; the
+	// handoff decides what keeps it alive (see `LessonHandoff`).
 	if config.supervisor.learning.enabled {
-		// The session's own live role, the same key recall reads.
-		let role = session.role.clone();
 		if let Some((messages, session_name, outcome)) = learning_snapshot {
 			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
 				messages,

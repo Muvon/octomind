@@ -33,3 +33,22 @@ fn quotes_and_backslashes_stay_inside_the_string_literal() {
 	// Backslashes are escaped before quotes, so `\"` does not become `\\"`.
 	assert_eq!(escape_profile_str("a\\\"b"), "a\\\\\\\"b");
 }
+
+#[test]
+fn run_dir_is_writable_so_send_reaches_a_sandboxed_session() {
+	let profile = build_profile(
+		"/Users/dev/project",
+		"/Users/dev",
+		"/Users/dev/.local/share",
+		"/Users/dev/Library/Application Support/octolib",
+		"/run/user/501/octomind",
+	);
+
+	let (_, allowed) = profile
+		.split_once("(allow file-write*")
+		.expect("profile re-allows writes");
+	assert!(
+		allowed.contains("(subpath \"/run/user/501/octomind\")"),
+		"run dir missing from the write allowlist:\n{profile}"
+	);
+}

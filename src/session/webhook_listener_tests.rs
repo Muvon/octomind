@@ -217,3 +217,40 @@ async fn webhook_listener_handles_script_failure() {
 	})
 	.await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn webhook_listener_rejects_oversized_body_without_running_script() {
+	let marker_dir = TempDir::new().unwrap();
+	let marker = marker_dir.path().join("script-ran");
+	let script = make_script(&format!("touch '{}'; echo ran", marker.display()));
+
+	let session_name = "webhook-oversize-test";
+	crate::session::context::with_session_id(session_name.to_string(), async move {
+		inbox::init_inbox_for_session();
+
+		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let addr = listener.local_addr().unwrap();
+
+		let script_path = script.path().to_path_buf();
+		let handle = tokio::spawn(async move {
+			let _ = run_listener(listener, session_name, "oversize-hook", &script_path, 10).await;
+		});
+
+		tokio::time::sleep(Duration::from_millis(50)).await;
+
+		let resp = reqwest::Client::new()
+			.post(format!("http://{}", addr))
+			.body(vec![b'x'; MAX_BODY_BYTES + 1])
+			.send()
+			.await
+			.unwrap();
+
+		assert_eq!(resp.status(), 413);
+		assert!(!marker.exists(), "hook script must not run for an oversized body");
+		assert!(inbox::try_pop_inbox_message().is_none());
+
+		handle.abort();
+	})
+	.await;
+}

@@ -8,13 +8,12 @@ attaches a JSON Schema to model requests. WebSocket and ACP expose activity thro
 
 ## Get Started with JSONL
 
-The `run` command takes a `--format` string. The runtime implements two output modes:
+The `run` command takes a `--format` flag with two accepted values:
 
 - `plain` — human-formatted terminal output (the default).
 - `jsonl` — one JSON object per line (JSON Lines) on stdout.
 
-Clap does not constrain the string to an enum, but any value other than `jsonl` resolves to the plain output path; use
-only the two documented values.
+Any other value is rejected by the argument parser before the session starts.
 
 Setting `--format jsonl` switches Octomind into non-interactive mode: it reads the prompt from **stdin** and streams the
 session as JSONL.

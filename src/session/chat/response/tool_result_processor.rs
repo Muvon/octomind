@@ -189,8 +189,9 @@ pub async fn process_tool_results(
 				// User chose not to continue due to spending threshold
 				// Stop global animation before returning
 				animation_manager.stop_current().await;
+				// stderr: stdout carries the session's data (`--format jsonl` events).
 				if !crate::logging::tracing_setup::is_structured_output_mode() {
-					println!(
+					eprintln!(
 						"{}",
 						"✗ Tool follow-up cancelled due to spending threshold.".bright_red()
 					);
@@ -201,7 +202,7 @@ pub async fn process_tool_results(
 		Err(e) => {
 			// Error checking threshold, log warning and continue
 			use colored::*;
-			println!(
+			eprintln!(
 				"{}: {}",
 				"Warning: Error checking spending threshold".bright_yellow(),
 				e
@@ -217,7 +218,7 @@ pub async fn process_tool_results(
 				// Stop global animation before returning
 				animation_manager.stop_current().await;
 				if !crate::logging::tracing_setup::is_structured_output_mode() {
-					println!(
+					eprintln!(
 						"{}",
 						"✗ Tool follow-up cancelled due to request spending threshold.".bright_red()
 					);
@@ -228,7 +229,7 @@ pub async fn process_tool_results(
 		Err(e) => {
 			// Error checking request threshold, log warning and continue
 			use colored::*;
-			println!(
+			eprintln!(
 				"{}: {}",
 				"Warning: Error checking request spending threshold".bright_yellow(),
 				e
@@ -277,7 +278,11 @@ pub async fn process_tool_results(
 	// they get real user-turn semantics.
 	while let Some(msg) = crate::session::inbox::try_pop_system_managed_message() {
 		crate::log_debug!("Inbox delivered mid-turn from {:?}", msg.source);
-		if crate::logging::tracing_setup::is_structured_output_mode() {
+		// `--format jsonl` is structured too: its notification sender prints the
+		// event as a JSON line, where the human rendering would corrupt stdout.
+		if crate::logging::tracing_setup::is_structured_output_mode()
+			|| config.output_mode().should_suppress_cli_output()
+		{
 			let injected = crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
 				source_kind: msg.source.display_kind().to_string(),
 				source_label: msg.source.display_label(),

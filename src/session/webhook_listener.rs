@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -38,6 +38,10 @@ use tokio::task::JoinHandle;
 use crate::config::HookConfig;
 use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
 use crate::{log_debug, log_error, log_info};
+
+/// Largest request body a hook accepts. Larger bodies get 413 and never reach
+/// the script. Same 10 MiB ceiling as the WebSocket server's message size.
+const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// RAII guard that stops the webhook listener on drop.
 pub struct WebhookListenerGuard {
@@ -196,9 +200,17 @@ async fn handle_request(
 		}
 	}
 
-	// Read body.
-	let body_bytes = match req.collect().await {
+	// Read body, bounded: an oversized body is refused before the script runs.
+	let body_bytes = match Limited::new(req.into_body(), MAX_BODY_BYTES).collect().await {
 		Ok(collected) => collected.to_bytes(),
+		Err(e) if e.is::<LengthLimitError>() => {
+			log_error!(
+				"Webhook '{}': request body exceeds {} bytes, rejected",
+				hook_name,
+				MAX_BODY_BYTES
+			);
+			return Ok(response(StatusCode::PAYLOAD_TOO_LARGE, "Payload too large\n"));
+		}
 		Err(e) => {
 			log_error!("Webhook '{}': failed to read body: {}", hook_name, e);
 			return Ok(response(

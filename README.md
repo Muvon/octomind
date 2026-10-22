@@ -43,7 +43,7 @@ Most coding agents assume a human is watching the screen. Octomind is built for 
 - **Proven on real PRs.** It solved 24 of 25 held-out tasks at lower cost than the closest competitor. See the [benchmarks](#benchmarks).
 - **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving while retaining task knowledge and the live exchange.
-- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session.
+- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and set spend thresholds per request and per session. A request over its threshold stops; at the session threshold a terminal session asks y/N before continuing, while a non-interactive `octomind run` stops with exit code 75.
 - **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 
 ## Quick Start

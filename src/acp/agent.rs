@@ -32,6 +32,7 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tokio_util::task::TaskTracker;
 
 use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
@@ -844,6 +845,7 @@ impl OctomindAgent {
 					&mut chat_session,
 					&config_for_role,
 					operation_rx,
+					crate::session::chat::session::commands::LessonHandoff::Task,
 				)
 				.await
 				{
@@ -1553,9 +1555,11 @@ async fn run_actor(agent: Rc<OctomindAgent>, mut rx: mpsc::UnboundedReceiver<Com
 
 /// Bridge one typed ACP request to the actor: offload onto a background task (so the
 /// dispatch loop stays free for `cancel`), forward the request, await the actor's
-/// reply, and deliver it through the `Responder`.
+/// reply, and deliver it through the `Responder`. The task is registered with
+/// `in_flight` before it is spawned, so EOF shutdown waits for its reply.
 fn forward<Resp>(
 	cmd_tx: &mpsc::UnboundedSender<Command>,
+	in_flight: &TaskTracker,
 	cx: &ConnectionTo<Client>,
 	responder: Responder<Resp>,
 	make: impl FnOnce(oneshot::Sender<Result<Resp, agent_client_protocol::Error>>) -> Command + Send + 'static,
@@ -1564,7 +1568,7 @@ where
 	Resp: agent_client_protocol::JsonRpcResponse + Send + 'static,
 {
 	let cmd_tx = cmd_tx.clone();
-	cx.spawn(async move {
+	cx.spawn(in_flight.track_future(async move {
 		let (tx, rx) = oneshot::channel();
 		cmd_tx
 			.send(make(tx))
@@ -1573,7 +1577,7 @@ where
 			.await
 			.map_err(|_| agent_client_protocol::util::internal_error("acp actor dropped reply"))?;
 		responder.respond_with_result(result)
-	})
+	}))
 }
 
 /// Build and run the ACP agent over stdio until the client disconnects.
@@ -1583,20 +1587,12 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 	let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
 	tokio::task::spawn_local(run_actor(Rc::clone(&agent), cmd_rx));
 
-	// The SDK never resolves `connect_to` on a clean stdin EOF: its incoming
-	// actor returns Ok while the remaining background actors keep waiting, so
-	// the process would serve a dead pipe forever — with the parent that
-	// spawned us blocked in `child.wait()` and the tap-run stuck in `running`.
-	// Wrap stdin so EOF fires a oneshot, and use that as the foreground future
-	// of `connect_with` to shut the connection down deterministically.
-	let (eof_tx, eof_rx) = oneshot::channel::<()>();
-	let transport = ByteStreams::new(
-		tokio::io::stdout().compat_write(),
-		SignalOnEof {
-			inner: tokio::io::stdin().compat(),
-			eof_tx: Some(eof_tx),
-		},
-	);
+	// Every accepted client request, from its handler until its response is
+	// queued. A client may pipeline requests and close stdin at once; EOF must
+	// not drop those replies.
+	let in_flight = TaskTracker::new();
+
+	let transport = ByteStreams::new(tokio::io::stdout().compat_write(), tokio::io::stdin().compat());
 
 	let result = agent_client_protocol::Agent
 		.builder()
@@ -1604,8 +1600,9 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: InitializeRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| {
+					forward(&cmd_tx, &in_flight, &cx, responder, move |tx| {
 						Command::Initialize(Box::new(req), tx)
 					})
 				}
@@ -1615,8 +1612,11 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: AuthenticateRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| Command::Authenticate(req, tx))
+					forward(&cmd_tx, &in_flight, &cx, responder, move |tx| {
+						Command::Authenticate(req, tx)
+					})
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1624,8 +1624,11 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: NewSessionRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| Command::NewSession(req, tx))
+					forward(&cmd_tx, &in_flight, &cx, responder, move |tx| {
+						Command::NewSession(req, tx)
+					})
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1633,8 +1636,11 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| Command::LoadSession(req, tx))
+					forward(&cmd_tx, &in_flight, &cx, responder, move |tx| {
+						Command::LoadSession(req, tx)
+					})
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1642,8 +1648,9 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: PromptRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| Command::Prompt(req, tx))
+					forward(&cmd_tx, &in_flight, &cx, responder, move |tx| Command::Prompt(req, tx))
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1653,11 +1660,12 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
+				let in_flight = in_flight.clone();
 				async move |req: ClientRequest, responder: Responder<serde_json::Value>, cx: ConnectionTo<Client>| {
 					match req {
 						ClientRequest::ExtMethodRequest(ext) => {
 							let cmd_tx = cmd_tx.clone();
-							cx.spawn(async move {
+							cx.spawn(in_flight.track_future(async move {
 								let (tx, rx) = oneshot::channel();
 								cmd_tx.send(Command::Ext(ext, tx)).map_err(|_| {
 									agent_client_protocol::util::internal_error("acp actor unavailable")
@@ -1672,7 +1680,7 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 											.map_err(|e| agent_client_protocol::util::internal_error(e.to_string()))
 									});
 								responder.respond_with_result(value)
-							})
+							}))
 						}
 						_ => responder.respond_with_error(agent_client_protocol::Error::method_not_found()),
 					}
@@ -1692,11 +1700,16 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		)
 		.connect_with(transport, async move |cx: ConnectionTo<Client>| {
 			// Hand the long-lived client connection to the actor once serving starts.
-			let _ = cmd_tx.send(Command::SetConnection(cx));
-			// EOF means the client will send no more prompts. Keep stdout and the
-			// session monitors alive until finite background work has reported and
-			// every resulting inbox turn has finished.
-			let _ = eof_rx.await;
+			let _ = cmd_tx.send(Command::SetConnection(cx.clone()));
+			// `incoming_closed` resolves only after the SDK has dispatched every
+			// frame read before EOF, so each request the client sent is already
+			// registered in `in_flight`. Wait for their replies, then keep stdout
+			// and the session monitors alive until finite background work has
+			// reported and every resulting inbox turn has finished. Returning
+			// drains queued output before the connection closes.
+			cx.incoming_closed().await;
+			in_flight.close();
+			in_flight.wait().await;
 			let (idle_tx, idle_rx) = oneshot::channel();
 			if cmd_tx.send(Command::WaitUntilIdle(idle_tx)).is_ok() {
 				let _ = idle_rx.await;
@@ -1710,28 +1723,4 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 	}
 	agent.record_telemetry();
 	Ok(())
-}
-
-/// Stdin wrapper that fires a oneshot the moment the stream hits EOF — i.e.
-/// the client closed our stdin or died. `serve` awaits this signal to shut
-/// the connection down (see the comment there).
-struct SignalOnEof<R> {
-	inner: R,
-	eof_tx: Option<oneshot::Sender<()>>,
-}
-
-impl<R: futures::io::AsyncRead + Unpin> futures::io::AsyncRead for SignalOnEof<R> {
-	fn poll_read(
-		mut self: std::pin::Pin<&mut Self>,
-		cx: &mut std::task::Context<'_>,
-		buf: &mut [u8],
-	) -> std::task::Poll<std::io::Result<usize>> {
-		let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
-		if matches!(poll, std::task::Poll::Ready(Ok(0))) {
-			if let Some(tx) = self.eof_tx.take() {
-				let _ = tx.send(());
-			}
-		}
-		poll
-	}
 }

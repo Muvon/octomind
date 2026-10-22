@@ -19,6 +19,7 @@
 //! health gates by seeding SERVER_RESTART_INFO with unique server names.
 
 use super::*;
+use crate::mcp::oauth::token_store;
 use serial_test::serial;
 
 fn rmcp_tool(name: &str, description: Option<&str>, read_only: Option<bool>) -> rmcp::model::Tool {
@@ -678,6 +679,56 @@ async fn test_oauth_discovered_server_with_token_fetches_functions() {
 		"functions: {:?}",
 		functions.iter().map(|f| f.name.clone()).collect::<Vec<_>>()
 	);
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache_for_server(NAME);
+	crate::mcp::oauth::discovery::clear_discovered_oauth_cache(NAME);
+	let _ = token_store::clear_token(NAME, false, None, None, None).await;
+}
+
+/// An OAuth-discovered server whose stored token is inside the refresh buffer
+/// is renewed with its refresh token (no browser flow) and the fetch proceeds.
+#[serial]
+#[tokio::test]
+async fn test_oauth_discovered_server_near_expiry_token_refreshes_and_fetches() {
+	const NAME: &str = "srv-oauth-refresh";
+	let (url, mut child) = spawn_fake_http_server("oauth-refresh", "oauth").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+
+	crate::mcp::oauth::discovery::discover_oauth_from_mcp_server(&url, NAME)
+		.await
+		.expect("fake discovery documents must satisfy the chain");
+	// 60s left: inside the 300s refresh buffer, so no longer "valid".
+	let expires_at = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.expect("clock after epoch")
+		.as_secs()
+		+ 60;
+	token_store::save_token(
+		NAME,
+		&token_store::TokenMetadata {
+			server_name: NAME.to_string(),
+			access_token: "near-expiry-token".to_string(),
+			refresh_token: Some("stored-refresh-token".to_string()),
+			expires_at,
+			scopes: vec![],
+		},
+	)
+	.await
+	.expect("seed token");
+
+	let functions = get_server_functions_cached(&server)
+		.await
+		.expect("refreshable token must allow the fetch");
+	assert!(
+		functions.iter().any(|f| f.name == "echo"),
+		"functions: {:?}",
+		functions.iter().map(|f| f.name.clone()).collect::<Vec<_>>()
+	);
+	// The fake token endpoint's grant replaced the near-expiry token.
+	let stored = token_store::load_token(NAME).await.unwrap().expect("stored token");
+	assert_eq!(stored.access_token, "test-token-xyz");
 
 	let _ = child.kill().await;
 	crate::mcp::client::disconnect(NAME);

@@ -105,21 +105,23 @@ impl ChatSession {
 			use colored::*;
 			use std::io::{self, Write};
 
-			println!();
-			println!("{}", "⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold());
-			println!("{} ${:.5}", "Current session cost:".bright_cyan(), current_cost);
-			println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
-			println!(
+			// The notice and the y/N prompt go to stderr: stdout carries the session's
+			// data (`--format jsonl` events, plain answers) and must stay parseable.
+			eprintln!();
+			eprintln!("{}", "⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold());
+			eprintln!("{} ${:.5}", "Current session cost:".bright_cyan(), current_cost);
+			eprintln!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
+			eprintln!(
 				"{} ${:.5}",
 				"Cost since last checkpoint:".bright_cyan(),
 				cost_since_checkpoint
 			);
-			println!();
-			println!("{}", "Continuing may result in additional charges.".bright_yellow());
+			eprintln!();
+			eprintln!("{}", "Continuing may result in additional charges.".bright_yellow());
 
 			// Auto-decline in non-interactive mode (run command, piped input, etc.)
 			if !std::io::stdin().is_terminal() {
-				println!(
+				eprintln!(
 					"{}",
 					"Spending threshold reached but automatically declining in non-interactive mode. Stopping execution.".bright_red()
 				);
@@ -128,8 +130,8 @@ impl ChatSession {
 			}
 
 			// Interactive mode - ask user for confirmation
-			print!("{}", "Do you want to continue? (y/N): ".bright_white().bold());
-			io::stdout().flush()?;
+			eprint!("{}", "Do you want to continue? (y/N): ".bright_white().bold());
+			io::stderr().flush()?;
 
 			let mut input = String::new();
 			io::stdin().read_line(&mut input)?;
@@ -138,11 +140,11 @@ impl ChatSession {
 			if response == "y" || response == "yes" {
 				// User confirmed, reset checkpoint to current cost
 				self.spending_threshold_checkpoint = current_cost;
-				println!("{}", "✓ Continuing session. Threshold checkpoint reset.".bright_green());
-				println!();
+				eprintln!("{}", "✓ Continuing session. Threshold checkpoint reset.".bright_green());
+				eprintln!();
 				Ok(true)
 			} else {
-				println!(
+				eprintln!(
 					"{}",
 					"✗ Session cancelled by user due to spending threshold.".bright_red()
 				);
@@ -167,22 +169,23 @@ impl ChatSession {
 
 		// Check if we've exceeded the threshold since request start
 		if cost_since_request_start >= threshold {
-			// In ACP/WebSocket mode stdout/stderr are reserved for protocol — suppress UI output
+			// In ACP/WebSocket mode stdout/stderr are reserved for protocol — suppress UI output.
+			// Elsewhere the notice goes to stderr: stdout carries the session's data.
 			if !crate::logging::tracing_setup::is_structured_output_mode() {
 				use colored::*;
 
-				println!();
-				println!("{}", "⚠️  REQUEST SPENDING THRESHOLD EXCEEDED ⚠️".bright_red().bold());
-				println!(
+				eprintln!();
+				eprintln!("{}", "⚠️  REQUEST SPENDING THRESHOLD EXCEEDED ⚠️".bright_red().bold());
+				eprintln!(
 					"{} ${:.5}",
 					"Current request cost:".bright_cyan(),
 					cost_since_request_start
 				);
-				println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
-				println!("{} ${:.5}", "Total session cost:".bright_cyan(), current_cost);
-				println!();
-				println!("{}", "Request execution stopped to prevent overspending.".bright_red());
-				println!();
+				eprintln!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
+				eprintln!("{} ${:.5}", "Total session cost:".bright_cyan(), current_cost);
+				eprintln!();
+				eprintln!("{}", "Request execution stopped to prevent overspending.".bright_red());
+				eprintln!();
 			}
 
 			self.spending_stop = Some(SpendingStop::Request);

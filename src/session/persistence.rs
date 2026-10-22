@@ -758,7 +758,8 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		}
 	}
 
-	println!("⚠️  Session loaded with default metadata (SUMMARY was missing)");
+	// stderr: stdout carries the run's data (`--format jsonl` events, plain answers).
+	eprintln!("⚠️  Session loaded with default metadata (SUMMARY was missing)");
 	Ok(Session {
 		info,
 		messages: final_messages,

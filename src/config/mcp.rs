@@ -86,7 +86,7 @@ impl McpConnectionType {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			McpConnectionType::Builtin => "builtin",
-			McpConnectionType::Stdin => "stdin",
+			McpConnectionType::Stdin => "stdio",
 			McpConnectionType::Http => "http",
 		}
 	}
@@ -365,9 +365,11 @@ impl RoleMcpConfig {
 				if !self.allowed_tools.is_empty() {
 					// Convert patterns to actual tool names for this server.
 					let filtered_tools = match self.expand_patterns_for_server(server_name) {
-						// `<server>:*` — all tools allowed. Empty list is read
-						// downstream as "expose all"; extras are implicitly allowed.
-						None => Vec::new(),
+						// `<server>:*` — the role grants the whole server, so the
+						// server's own `tools` filter still applies (empty = all).
+						// Matches the auto-bind path below, so a re-merge (where the
+						// first pass recorded `<server>:*`) keeps the filter.
+						None => server_config.tools().to_vec(),
 						// No pattern matched this server: the restrictive role grants
 						// it nothing, so drop it entirely rather than exposing an
 						// empty (= all) list. This is the inverted-default fix.

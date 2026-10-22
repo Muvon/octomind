@@ -44,12 +44,9 @@ lazy_static::lazy_static! {
 	static ref DISCOVERED_OAUTH_CACHE: RwLock<HashMap<String, OAuthConfig>> = RwLock::new(HashMap::new());
 }
 
-/// Check if a server has a cached OAuth discovery configuration
-pub fn has_cached_discovery(server_name: &str) -> bool {
-	DISCOVERED_OAUTH_CACHE
-		.read()
-		.map(|cache| cache.contains_key(server_name))
-		.unwrap_or(false)
+/// The OAuth configuration cached by an earlier discovery of this server, if any.
+pub fn cached_discovery(server_name: &str) -> Option<OAuthConfig> {
+	DISCOVERED_OAUTH_CACHE.read().unwrap().get(server_name).cloned()
 }
 
 /// Protected Resource Metadata (RFC 9728)

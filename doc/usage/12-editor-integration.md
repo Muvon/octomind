@@ -119,14 +119,17 @@ require("avante").setup({
 
 ## Zed
 
-Zed has native ACP support and configures external ACP agents under `agent_servers` with a `command` and `args`. Add to your Zed `settings.json`:
+Zed has native ACP support and configures external ACP agents under `agent_servers`; a custom agent entry takes
+`"type": "custom"` plus `command`, `args`, and `env`. Add to your Zed `settings.json`:
 
 ```json
 {
   "agent_servers": {
     "Octomind": {
+      "type": "custom",
       "command": "octomind",
-      "args": ["acp", "assistant"]
+      "args": ["acp", "assistant"],
+      "env": {}
     }
   }
 }
@@ -225,15 +228,18 @@ the client prepends it when displaying:
 
 Notes:
 
-- The menu omits some registered commands and also includes three unsupported names. Commands such as `/learning`,
+- The menu omits some registered commands and also includes two unsupported names. Commands such as `/learning`,
   `/share`, `/analyze`, `/rename`, `/reply`, and `/status` are not advertised over ACP. `/reply` still runs when typed,
   but returns the quote as JSON text instead of filling the editor's input.
 - `/done` is handled specially in ACP: it compresses the conversation and reports the result. If you pass trailing
   instructions (`/done <instructions>`), the agent compresses first, sends the compression status, then processes the
   instructions as a normal prompt.
-- Three advertised names are not wired into the shared slash-command dispatcher: `session`, `workflow`, and `agents`.
-  ACP reports them as unsupported if invoked. Use ACP `session/new`/`session/load` for client session management, the
-  external workflow CLI for workflows, and `/status agents` for activity.
+- Two advertised names are not wired into the shared slash-command dispatcher: `session` and `agents`. ACP reports them
+  as unsupported if invoked. Use ACP `session/new`/`session/load` for client session management and `/status agents`
+  for activity.
+- `/workflow` runs tap workflows by name: bare `/workflow` lists them, `/workflow <name>` shows a definition without
+  running it, and `/workflow <name> <input>` runs it and returns its output and cost when it finishes. Workflow files
+  on disk still run through the `octomind workflow` CLI.
 - `/effort` accepts `low`, `medium`, `high`, `xhigh`, or `max` (the advertised input hint only shows the first three).
 - Editors that support arbitrary slash input may send other registered commands even when they are absent from the menu;
   unknown slash commands receive an unsupported-command response rather than reaching the model.

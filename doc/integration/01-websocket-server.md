@@ -63,7 +63,8 @@ Authorization: Bearer <OCTOMIND_SERVER_TOKEN>
 ```
 
 A handshake without the right token is refused with `HTTP 401` before the welcome frame. The `Origin` check below runs
-first, so a browser page is refused with `403` whatever it sends.
+first: a browser page whose origin is not in `--allow-origin` is refused with `403` whatever it sends, and an
+allowlisted origin still needs the token, or it gets `401`.
 
 ## Browser origins
 

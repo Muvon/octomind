@@ -219,7 +219,7 @@ fn test_cache_clear_helpers_never_panic() {
 	// Clearing an untouched entry and an empty cache must be safe
 	clear_discovered_oauth_cache("never-populated-server");
 	clear_all_discovered_oauth_cache();
-	assert!(!has_cached_discovery("never-populated-server"));
+	assert!(cached_discovery("never-populated-server").is_none());
 }
 
 // ------------------------------------------------------------------
@@ -372,14 +372,14 @@ async fn test_discover_pre_discovery_with_cimd_caches_result() {
 	assert_eq!(config.scopes, vec!["mcp:read".to_string()]);
 
 	// Result is cached: a second discovery returns the identical config
-	assert!(has_cached_discovery(&name));
+	assert!(cached_discovery(&name).is_some());
 	let again = discover_oauth_from_mcp_server(&format!("{base}/mcp/"), &name)
 		.await
 		.unwrap();
 	assert_eq!(again.client_id, config.client_id);
 
 	clear_discovered_oauth_cache(&name);
-	assert!(!has_cached_discovery(&name));
+	assert!(cached_discovery(&name).is_none());
 
 	// Stop the local CIMD server so its port does not leak into other tests
 	super::super::cimd::stop_cimd_server().await;
@@ -430,7 +430,7 @@ async fn test_discover_401_flow_with_dcr() {
 	assert_eq!(config.client_id, "dcr-client-123");
 	assert_eq!(config.client_secret, "dcr-secret");
 	assert_eq!(config.token_url, format!("{base}/oauth/token"));
-	assert!(has_cached_discovery(&name));
+	assert!(cached_discovery(&name).is_some());
 
 	clear_discovered_oauth_cache(&name);
 }
@@ -447,7 +447,7 @@ async fn test_discover_errors_without_401() {
 		.await
 		.unwrap_err();
 	assert!(err.to_string().contains("401"), "{err}");
-	assert!(!has_cached_discovery(&name), "failures must not be cached");
+	assert!(cached_discovery(&name).is_none(), "failures must not be cached");
 }
 
 #[tokio::test]
@@ -520,5 +520,5 @@ async fn test_discover_errors_without_cimd_or_dcr() {
 		.await
 		.unwrap_err();
 	assert!(err.to_string().contains("client_id"), "{err}");
-	assert!(!has_cached_discovery(&name), "failures must not be cached");
+	assert!(cached_discovery(&name).is_none(), "failures must not be cached");
 }

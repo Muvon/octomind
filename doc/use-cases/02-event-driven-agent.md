@@ -247,6 +247,7 @@ The listener returns a status code the webhook sender can use for retry and heal
 | `204` | Script exited 0 with empty output; nothing injected |
 | `400` | Request body could not be read |
 | `405` | Request was not `POST` |
+| `413` | Request body larger than 10 MiB; the script is not run |
 | `500` | Script exited non-zero, or failed to spawn / had an IO error |
 | `504` | Script exceeded its `timeout` |
 

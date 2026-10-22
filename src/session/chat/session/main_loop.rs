@@ -944,6 +944,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									&mut chat_session,
 									&current_config,
 									operation_rx.clone(),
+									super::commands::LessonHandoff::Task,
 								) => Some(r),
 							};
 
@@ -1502,25 +1503,36 @@ pub async fn run_interactive_session_with_input(
 						.filter(|s| !s.is_empty())
 						.map(|s| s.to_owned());
 
-					// Force-compress the conversation and fire lesson extraction —
-					// same lifecycle as the interactive and ACP paths.
-					match super::commands::handle_done(&mut chat_session, &current_config, operation_rx.clone()).await {
+					// Force-compress the conversation and hand lessons to the learner.
+					// This process may end right after (bare `/done`, or the turn the
+					// instructions drive), so extraction goes to the detached distill
+					// child like the exit path: an in-process task dies with the runtime.
+					match super::commands::handle_done(
+						&mut chat_session,
+						&current_config,
+						operation_rx.clone(),
+						super::commands::LessonHandoff::DetachedProcess,
+					)
+					.await
+					{
+						// Status notices go to stderr: stdout carries the run's data
+						// (`--format jsonl` events, plain answers) and must stay parseable.
 						Ok(outcome) => {
 							use crate::session::chat::session::commands::DoneOutcome;
 							match outcome {
 								DoneOutcome::Compressed => {
-									println!("{}", "✅ Conversation compressed.".bright_green());
+									eprintln!("{}", "✅ Conversation compressed.".bright_green());
 								}
 								DoneOutcome::NothingToCompress => {
-									println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+									eprintln!("{}", "ℹ️  Nothing to compress.".bright_cyan());
 								}
 								DoneOutcome::Failed(e) => {
-									println!("{}: {}", "❌ Compression failed".bright_red(), e);
+									eprintln!("{}: {}", "❌ Compression failed".bright_red(), e);
 								}
 							}
 						}
 						Err(e) => {
-							println!("{}: {}", "❌ /done command failed".bright_red(), e);
+							eprintln!("{}: {}", "❌ /done command failed".bright_red(), e);
 						}
 					}
 
@@ -1550,7 +1562,7 @@ pub async fn run_interactive_session_with_input(
 					| crate::session::chat::session::commands::CommandResult::SwitchSession(_) => {
 						// Check if it's a session switch command
 						if input.starts_with(crate::session::chat::commands::NEW_COMMAND) {
-							println!(
+							eprintln!(
 								"{}",
 								"Note: /new is not supported in run mode. Start a new session with 'octomind run'."
 									.yellow()

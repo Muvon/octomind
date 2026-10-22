@@ -52,7 +52,7 @@ fn accessors_work_across_variants() {
 #[test]
 fn connection_type_wire_strings_are_stable() {
 	assert_eq!(McpConnectionType::Builtin.as_str(), "builtin");
-	assert_eq!(McpConnectionType::Stdin.as_str(), "stdin");
+	assert_eq!(McpConnectionType::Stdin.as_str(), "stdio");
 	assert_eq!(McpConnectionType::Http.as_str(), "http");
 }
 
@@ -174,8 +174,8 @@ fn enabled_servers_apply_the_role_tool_filter() {
 	assert_eq!(enabled.len(), 2);
 	// Concrete allow-list for `core`.
 	assert_eq!(enabled[0].tools(), tools(&["read"]));
-	// `remote:*` collapses to the empty "expose all" list.
-	assert!(enabled[1].tools().is_empty());
+	// `remote:*` grants the whole server; its own `tools` filter still applies.
+	assert_eq!(enabled[1].tools(), tools(&["fetch"]));
 	// Non-tool fields survive the rewrite.
 	assert_eq!(enabled[1].url(), Some("https://x"));
 }

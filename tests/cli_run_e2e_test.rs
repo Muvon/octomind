@@ -958,6 +958,202 @@ async fn test_run_jsonl_format() {
 	);
 }
 
+/// `--format jsonl` reserves stdout for JSON events: every non-empty line must
+/// parse, whatever human notices the run printed along the way.
+fn assert_stdout_is_jsonl(stdout: &str, stderr: &str) {
+	for (line_no, line) in stdout.lines().enumerate() {
+		if line.trim().is_empty() {
+			continue;
+		}
+		serde_json::from_str::<serde_json::Value>(line).unwrap_or_else(|err| {
+			panic!(
+				"stdout line {} is not JSON: {err}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+				line_no + 1
+			)
+		});
+	}
+}
+
+/// A tool round whose spend crosses the request threshold, answering in
+/// HTML-ish markdown: the threshold banner and the "follow-up cancelled" notice
+/// are human text and must land on stderr, never in the jsonl stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_jsonl_budget_stop_keeps_stdout_json() {
+	let tool_call = serde_json::json!({
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": format!("<n>{MARKER}</n>\n\n# checking"),
+				"tool_calls": [{
+					"id": "call_e2e",
+					"type": "function",
+					"function": {"name": "e2e_missing_tool", "arguments": "{}"}
+				}]
+			},
+			"finish_reason": "tool_calls"
+		}],
+		"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": 0.01}
+	})
+	.to_string();
+	let stub_url = spawn_scripted_stub(vec![tool_call, completion_body(&format!("<n>{MARKER}</n>"))]).await;
+	let home = tempfile::tempdir().expect("temp home");
+	{
+		let mut config: octomind::config::Config =
+			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		config.model = "ollama:fake-model".to_string();
+		config.default = "assistant".to_string();
+		config.supervisor.enabled = false;
+		config.telemetry = false;
+		config.auto_capabilities = false;
+		config.skills.auto_activation = false;
+		config.skills.auto_validation = false;
+		config.max_request_spending_threshold = 0.001;
+		let config_dir = home.path().join(".local/share/octomind/config");
+		std::fs::create_dir_all(&config_dir).expect("create config dir");
+		std::fs::write(
+			config_dir.join("config.toml"),
+			toml::to_string(&config).expect("serialize config"),
+		)
+		.expect("write config");
+	}
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args(["run", "--format", "jsonl"])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn octomind run");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"use your tool\n")
+		.expect("write prompt");
+	let output = child.wait_with_output().expect("octomind exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert_eq!(
+		output.status.code(),
+		Some(75),
+		"a budget stop exits 75.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+	assert_stdout_is_jsonl(&stdout, &stderr);
+	assert!(
+		stderr.contains("REQUEST SPENDING THRESHOLD EXCEEDED"),
+		"threshold notice must be visible on stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+}
+
+/// `/done` in a jsonl run reports its outcome as a human notice: stderr only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_jsonl_done_notice_stays_off_stdout() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args(["run", "--format", "jsonl"])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn octomind run");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"/done\n")
+		.expect("write prompt");
+	let output = child.wait_with_output().expect("octomind exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		output.status.success(),
+		"/done run failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+	assert_stdout_is_jsonl(&stdout, &stderr);
+	assert!(
+		stderr.contains("compress"),
+		"/done outcome must be visible on stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+}
+
+/// SIGTERM ends a jsonl daemon with a human notice; it must not land in the
+/// event stream. Unix-only: SIGTERM has no Windows equivalent.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_jsonl_daemon_sigterm_notice_stays_off_stdout() {
+	use std::io::{BufRead, Read};
+
+	let stub_url = spawn_openai_stub_with_response(format!("<n>{MARKER}</n>")).await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args(["run", "--format", "jsonl", "--daemon"])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn octomind daemon");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"answer with the marker\n")
+		.expect("write prompt");
+
+	// The signal handler is installed before the first turn runs, so once the
+	// answer is out the daemon is idle and SIGTERM takes the notice path.
+	let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
+	let stdout_pipe = child.stdout.take().expect("stdout");
+	let reader = std::thread::spawn(move || {
+		for line in std::io::BufReader::new(stdout_pipe).lines() {
+			let Ok(line) = line else { break };
+			if line_tx.send(line).is_err() {
+				break;
+			}
+		}
+	});
+	let mut stdout = String::new();
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+	loop {
+		let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+		let line = line_rx
+			.recv_timeout(remaining)
+			.unwrap_or_else(|err| panic!("daemon never answered ({err}).\nstdout:\n{stdout}"));
+		stdout.push_str(&line);
+		stdout.push('\n');
+		if line.contains(MARKER) {
+			break;
+		}
+	}
+
+	let status = Command::new("kill")
+		.args(["-TERM", &child.id().to_string()])
+		.status()
+		.expect("run kill");
+	assert!(status.success(), "kill -TERM failed");
+	let exit = child.wait().expect("daemon exits");
+	reader.join().expect("stdout reader");
+	stdout.extend(line_rx.try_iter().map(|line| line + "\n"));
+	let mut stderr = String::new();
+	child
+		.stderr
+		.take()
+		.expect("stderr")
+		.read_to_string(&mut stderr)
+		.expect("read stderr");
+
+	assert_eq!(exit.code(), Some(130), "SIGTERM exits 130.\nstderr:\n{stderr}");
+	assert_stdout_is_jsonl(&stdout, &stderr);
+	assert!(
+		stderr.contains("Termination signal received"),
+		"SIGTERM notice must be visible on stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+}
+
 /// Remaining config surfaces: markdown setters persist, validate and
 /// upgrade run cleanly against the sandbox config.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

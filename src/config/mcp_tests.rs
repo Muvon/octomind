@@ -202,8 +202,9 @@ fn unnamespaced_allowed_tools_narrow_every_referenced_server() {
 		allowed_tools: vec!["read".to_string()],
 	};
 	let enabled = role.get_enabled_servers(&registry, None);
+	// `other` exposes only `fetch`, so the role's `read` grants it nothing.
+	assert_eq!(enabled.len(), 1, "got: {enabled:?}");
 	assert_eq!(enabled[0].tools(), ["read"]);
-	assert_eq!(enabled[1].tools(), ["read"]);
 }
 
 #[test]

@@ -364,7 +364,7 @@ impl RoleMcpConfig {
 				// Apply role-specific tool filtering if specified
 				if !self.allowed_tools.is_empty() {
 					// Convert patterns to actual tool names for this server.
-					let filtered_tools = match self.expand_patterns_for_server(server_name) {
+					let mut filtered_tools = match self.expand_patterns_for_server(server_name) {
 						// `<server>:*` — the role grants the whole server, so the
 						// server's own `tools` filter still applies (empty = all).
 						// Matches the auto-bind path below, so a re-merge (where the
@@ -379,16 +379,29 @@ impl RoleMcpConfig {
 							);
 							continue;
 						}
-						// Concrete allow-list — union runtime capability extras.
-						Some(mut tools) => {
-							for extra in crate::config::runtime_overlay::extras_for_server(server_name) {
-								if !tools.iter().any(|t| t == &extra) {
-									tools.push(extra);
-								}
+						// Concrete allow-list, capped by the server's own `tools`
+						// filter like the `*` grant above.
+						Some(tools) => {
+							let granted = intersect_tool_patterns(&tools, server_config.tools());
+							if granted.is_empty() {
+								crate::log_debug!(
+									"Role filter excludes server '{server_name}': it grants only tools the server's own filter hides"
+								);
+								continue;
 							}
-							tools
+							granted
 						}
 					};
+					// Runtime capability grants reach past both static filters by
+					// design (see `static_server_grant`). An empty list already
+					// exposes everything, so extras would only narrow it.
+					if !filtered_tools.is_empty() {
+						for extra in crate::config::runtime_overlay::extras_for_server(server_name) {
+							if !filtered_tools.iter().any(|t| t == &extra) {
+								filtered_tools.push(extra);
+							}
+						}
+					}
 					// Update tools based on server type
 					server = match server {
 						McpServerConfig::Builtin {
@@ -499,6 +512,34 @@ impl RoleMcpConfig {
 
 		Some(expanded_tools)
 	}
+}
+
+/// Tool patterns allowed by both `role` and `server` filters. Each is an OR-list
+/// of exact names and `prefix*` globs (the shape `is_tool_allowed_by_patterns`
+/// matches); an empty `server` list allows everything. The overlap of two
+/// patterns is the narrower one, or nothing when they are disjoint.
+fn intersect_tool_patterns(role: &[String], server: &[String]) -> Vec<String> {
+	if server.is_empty() {
+		return role.to_vec();
+	}
+	let mut granted: Vec<String> = Vec::new();
+	for r in role {
+		for s in server {
+			let overlap = match (r.strip_suffix('*'), s.strip_suffix('*')) {
+				(None, None) => (r == s).then_some(r),
+				(None, Some(prefix)) => r.starts_with(prefix).then_some(r),
+				(Some(prefix), None) => s.starts_with(prefix).then_some(s),
+				(Some(r_prefix), Some(s_prefix)) if r_prefix.starts_with(s_prefix) => Some(r),
+				(Some(r_prefix), Some(s_prefix)) => s_prefix.starts_with(r_prefix).then_some(s),
+			};
+			if let Some(pattern) = overlap {
+				if !granted.contains(pattern) {
+					granted.push(pattern.clone());
+				}
+			}
+		}
+	}
+	granted
 }
 
 // Note: Core server configurations are now defined in the config file

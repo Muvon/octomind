@@ -924,7 +924,9 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// Wire cancellation to spinner so the watcher inside
 							// AnimationManager auto-clears on Ctrl+C, and race the
 							// handle_done future against operation_rx so a cancellation
-							// returns control to the prompt instantly.
+							// returns control to the prompt instantly. Lessons go to the
+							// detached distill child: a quick /exit right after would
+							// abort an in-process task with the runtime.
 							use crate::session::chat::get_animation_manager;
 							let animation_manager = get_animation_manager();
 							animation_manager.set_cancel_receiver(operation_rx.clone());
@@ -944,7 +946,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									&mut chat_session,
 									&current_config,
 									operation_rx.clone(),
-									super::commands::LessonHandoff::Task,
+									super::commands::LessonHandoff::DetachedProcess,
 								) => Some(r),
 							};
 

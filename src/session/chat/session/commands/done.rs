@@ -31,11 +31,12 @@ pub enum DoneOutcome {
 /// Where `/done` sends its pre-compression transcript for lesson extraction.
 #[derive(Debug, Clone, Copy)]
 pub enum LessonHandoff {
-	/// In-process task: the caller's process outlives it (interactive loop,
-	/// ACP, WebSocket), so the prompt is never blocked on the LLM round-trip.
+	/// In-process task: the caller's process outlives it (ACP, WebSocket), so
+	/// the prompt is never blocked on the LLM round-trip.
 	Task,
-	/// Detached `octomind distill` child: a one-shot run may end right after
-	/// `/done`, and the dying runtime would abort an in-process task.
+	/// Detached `octomind distill` child: the CLI process may end right after
+	/// `/done` (a one-shot run, or `/exit` at the next prompt), and the dying
+	/// runtime would abort an in-process task.
 	DetachedProcess,
 }
 
@@ -57,6 +58,9 @@ pub async fn handle_done(
 		(false, _) => None,
 		(true, LessonHandoff::DetachedProcess) => {
 			crate::supervisor::learning::extract::extract_lessons_before_exit(session, config, role.clone(), None);
+			// The child is already running: a compression cancelled below must
+			// not make /exit extract the same transcript again.
+			session.learning_extracted = true;
 			None
 		}
 		(true, LessonHandoff::Task) => Some((

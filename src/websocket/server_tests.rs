@@ -792,6 +792,7 @@ async fn command_on_a_locked_session_reports_busy() {
 	assert_eq!(ack["type"], "ack");
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
+	assert_eq!(error["request_id"], "r1", "busy error must echo the request: {error}");
 	assert!(
 		error["message"]
 			.as_str()
@@ -2899,12 +2900,13 @@ async fn user_message_on_a_locked_session_is_reported_as_busy() {
 
 	send_json(
 		&mut ws,
-		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hi"}),
+		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hi", "request_id": "m1"}),
 	)
 	.await;
 	let _ack = read_json(&mut ws).await;
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error", "got: {error}");
+	assert_eq!(error["request_id"], "m1", "busy error must echo the request: {error}");
 	assert!(
 		error["message"]
 			.as_str()

@@ -24,8 +24,9 @@
 //! - We therefore apply the practical safe default:
 //!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
 //!   • Read+write on cwd, ~/.local/share (MCP server state/logs),
-//!   <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh)
-//!   and the run dir (session inject sockets, PID files — `octomind send`)
+//!   <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh),
+//!   the run dir (session inject sockets, PID files — `octomind send`)
+//!   and ~/.npm (npm cache for `npx`-launched MCP servers)
 //!   • All writes outside those paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.
@@ -45,6 +46,8 @@ pub fn apply(dir: &Path) -> Result<()> {
 
 	let home = dirs::home_dir().unwrap_or_default();
 	let xdg_data_home = home.join(".local").join("share");
+	// npm's cache: `npx`-launched MCP servers write it on every start.
+	let npm_cache = home.join(".npm");
 	// octolib keeps provider OAuth state here (ChatGPT rewrites its token file and
 	// takes a refresh lock on every token refresh).
 	let octolib_config = dirs::config_dir()
@@ -62,7 +65,7 @@ pub fn apply(dir: &Path) -> Result<()> {
 	// configs, and project files outside cwd.
 	ruleset = ruleset.add_rules(path_beneath_rules(["/"], read_only))?;
 
-	let rw_paths = writable_paths(dir, &xdg_data_home, &octolib_config, &run_dir);
+	let rw_paths = writable_paths(dir, &xdg_data_home, &octolib_config, &npm_cache, &run_dir);
 	ruleset = ruleset.add_rules(path_beneath_rules(rw_paths, all_access))?;
 
 	let status = ruleset.restrict_self()?;
@@ -91,20 +94,21 @@ pub fn apply(dir: &Path) -> Result<()> {
 }
 
 /// Read+write roots: cwd, the run dir (inject sockets and PID files), the XDG
-/// data home (MCP server logs/state) and octolib auth state. The last two are
-/// optional — Landlock cannot add a rule for a path that does not exist.
+/// data home (MCP server logs/state), octolib auth state and the npm cache.
+/// The last three are optional — Landlock cannot add a rule for a path that
+/// does not exist.
 fn writable_paths<'a>(
 	dir: &'a Path,
 	xdg_data_home: &'a Path,
 	octolib_config: &'a Path,
+	npm_cache: &'a Path,
 	run_dir: &'a Path,
 ) -> Vec<&'a Path> {
 	let mut rw_paths = vec![dir, run_dir];
-	if xdg_data_home.exists() {
-		rw_paths.push(xdg_data_home);
-	}
-	if octolib_config.exists() {
-		rw_paths.push(octolib_config);
+	for optional in [xdg_data_home, octolib_config, npm_cache] {
+		if optional.exists() {
+			rw_paths.push(optional);
+		}
 	}
 	rw_paths
 }

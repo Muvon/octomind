@@ -123,6 +123,12 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 
 #[cfg(unix)]
 pub fn set_process_title(title: &str) {
+	// An empty title has no non-empty string to lead the argv area, so macOS
+	// `ps` and `pgrep` would skip it and read on into the environment. Keep
+	// whatever title the process shows now.
+	if title.is_empty() {
+		return;
+	}
 	// Linux: also push the short comm name (visible in htop, /proc/PID/comm).
 	#[cfg(target_os = "linux")]
 	unsafe {

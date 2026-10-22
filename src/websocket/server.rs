@@ -622,10 +622,13 @@ async fn process_client_message(
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
-					let error = ServerMessage::error(format!(
-						"Session '{}' is busy processing another request. Please wait.",
-						session_id
-					));
+					let error = ServerMessage::error_for_request(
+						format!(
+							"Session '{}' is busy processing another request. Please wait.",
+							session_id
+						),
+						msg.request_id.clone(),
+					);
 					send_message(ws_sender, &error).await?;
 					return Ok(());
 				}
@@ -649,10 +652,13 @@ async fn process_client_message(
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
-					let error = ServerMessage::error(format!(
-						"Session '{}' is busy processing another request. Please wait.",
-						session_id
-					));
+					let error = ServerMessage::error_for_request(
+						format!(
+							"Session '{}' is busy processing another request. Please wait.",
+							session_id
+						),
+						msg.request_id.clone(),
+					);
 					send_message(ws_sender, &error).await?;
 					return Ok(());
 				}

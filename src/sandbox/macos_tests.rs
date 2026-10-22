@@ -35,7 +35,7 @@ fn quotes_and_backslashes_stay_inside_the_string_literal() {
 }
 
 #[test]
-fn run_dir_is_writable_so_send_reaches_a_sandboxed_session() {
+fn run_dir_and_npm_cache_are_writable() {
 	let profile = build_profile(
 		"/Users/dev/project",
 		"/Users/dev",
@@ -50,5 +50,9 @@ fn run_dir_is_writable_so_send_reaches_a_sandboxed_session() {
 	assert!(
 		allowed.contains("(subpath \"/run/user/501/octomind\")"),
 		"run dir missing from the write allowlist:\n{profile}"
+	);
+	assert!(
+		allowed.contains("(subpath \"/Users/dev/.npm\")"),
+		"npm cache missing from the write allowlist:\n{profile}"
 	);
 }

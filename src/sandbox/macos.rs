@@ -111,6 +111,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 ///   • ~/.local/share — XDG data home; MCP servers write logs/state here
 ///   • <config_dir>/octolib — provider auth state (ChatGPT token refresh)
 ///   • the run dir — session inject sockets and PID files (`octomind send`)
+///   • ~/.npm — npm's cache; `npx`-launched MCP servers write it on every start
 ///   • /dev — pipes, ttys, and other character devices
 ///   • /tmp, /private/tmp — standard temp files
 ///   • /private/var/folders — macOS per-user temp cache (used by many syscalls)
@@ -135,6 +136,7 @@ fn build_profile(dir: &str, home: &str, xdg_data_home: &str, octolib_config: &st
   (subpath "{xdg_data_home}")
   (subpath "{octolib_config}")
   (subpath "{run_dir}")
+  (subpath "{home}/.npm")
   (subpath "/dev")
   (subpath "/tmp")
   (subpath "/private/tmp")

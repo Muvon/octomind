@@ -192,6 +192,49 @@ fn a_referenced_server_with_no_matching_pattern_is_dropped() {
 }
 
 #[test]
+fn concrete_role_grant_is_capped_by_the_server_tool_filter() {
+	let registry = vec![McpServerConfig::builtin("core", 30, tools(&["read", "text_*"]))];
+	let r = role(&["core"], &["core:read", "core:write", "core:text_view*"]);
+	let enabled = r.get_enabled_servers(&registry, None);
+	// `write` is hidden by the server's own filter; `text_view*` narrows `text_*`.
+	assert_eq!(enabled[0].tools(), tools(&["read", "text_view*"]));
+}
+
+#[test]
+fn a_role_granting_only_server_hidden_tools_drops_the_server() {
+	let registry = vec![McpServerConfig::builtin("core", 30, tools(&["read"]))];
+	let enabled = role(&["core"], &["core:write"]).get_enabled_servers(&registry, None);
+	// An empty list would mean "all tools", so nothing granted means no server.
+	assert!(enabled.is_empty(), "got: {enabled:?}");
+}
+
+#[test]
+fn tool_pattern_overlap_keeps_the_narrower_pattern() {
+	let server = tools(&["read", "text_*", "git_*"]);
+	assert_eq!(
+		intersect_tool_patterns(&tools(&["read", "text_view", "g*", "shell"]), &server),
+		tools(&["read", "text_view", "git_*"])
+	);
+	// Disjoint prefixes share nothing; an empty server filter allows the role's list.
+	assert!(intersect_tool_patterns(&tools(&["file_*"]), &server).is_empty());
+	assert_eq!(intersect_tool_patterns(&tools(&["a*"]), &[]), tools(&["a*"]));
+}
+
+#[test]
+fn capability_extras_reach_past_the_server_filter_on_a_star_grant() {
+	let server_name = "overlay-star-srv";
+	let registry = vec![McpServerConfig::builtin(server_name, 30, tools(&["read"]))];
+	crate::config::runtime_overlay::set_capability_extras(
+		"overlay-star-cap",
+		std::collections::HashMap::from([(server_name.to_string(), tools(&["shell"]))]),
+	);
+	let enabled = role(&[server_name], &["overlay-star-srv:*"]).get_enabled_servers(&registry, None);
+	crate::config::runtime_overlay::clear_capability_extras("overlay-star-cap");
+
+	assert_eq!(enabled[0].tools(), tools(&["read", "shell"]));
+}
+
+#[test]
 fn auto_bound_servers_are_added_once_and_only_for_their_role() {
 	let registry = vec![
 		McpServerConfig::builtin("core", 30, vec![]),

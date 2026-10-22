@@ -78,8 +78,9 @@ fn title_longer_than_argv_keeps_ps_out_of_the_environment() {
 		.expect("argv span");
 	// A title that outgrows argv is truncated; whatever survives must leave
 	// `ps` and `pgrep` enough strings to stop before the environment that
-	// follows argv.
+	// follows argv. An empty title afterwards must change nothing.
 	set_process_title(&"t".repeat(span.capacity * 2));
+	set_process_title("");
 
 	let procargs = own_procargs();
 	for (reader, skip_empty) in [("ps", false), ("pgrep", true)] {

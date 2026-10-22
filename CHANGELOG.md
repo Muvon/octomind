@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.60.0] - 2026-10-22
+
+### 📋 Release Summary
+
+WebSocket sessions now support resumption, and provider retries are surfaced consistently across clients.
+
+### ✨ New Features & Enhancements
+
+- **websocket**: support resumable websocket sessions `c33df219`
+- **providers**: surface provider retries across clients `7794dca2`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib and Candle dependencies `2ca755a3`
+
 ## [0.59.1] - 2026-10-22
 
 ### 📋 Release Summary

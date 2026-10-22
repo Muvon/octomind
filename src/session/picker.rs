@@ -40,7 +40,7 @@ impl PickerEntry {
 	/// One-line label used both for display and as the fuzzy-match target.
 	fn label(&self) -> String {
 		let created = chrono::DateTime::<chrono::Utc>::from_timestamp(self.created_at as i64, 0)
-			.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M").to_string())
+			.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 			.unwrap_or_default();
 		let title = self.title.as_deref().unwrap_or("");
 		let role = self.role.as_deref().unwrap_or("");

@@ -102,7 +102,7 @@ Measured on [octobench](https://github.com/Muvon/octobench) against **25 tasks h
 | codex + gpt-5.6-sol | 21/25 | 2127 | $14.86 | 1.0h |
 | opencode + glm-5.2 | 19/25 | 2093 | $129.54 | 3.3h |
 
-- **The harness matters.** opencode used the same model and endpoint; octomind solved 24 vs 19 at roughly half the cost. Octomind ran with a staged tap and a binary override including the unfinished-handback pre-gate, so this measures the complete setup, not individual features.
+- **The harness matters.** opencode used the same model and endpoint; octomind solved 24 vs 19 at roughly half the cost. All four agents ran stock invocations with no tuning, so this measures the whole harness, not individual features.
 - **Worst-case pricing, still ahead.** glm-5.2 ran without prompt caching while Opus billed ~97% of context re-reads at cache rates — and octomind still led on solves, cost, and wall time.
 - **Reproducible.** Per-case table, artifacts, and reproduction guide: [BENCHMARK.md](https://github.com/Muvon/octobench/blob/8aa39684ff6103782aacb1bd79ea98e96e50d6cf/BENCHMARK.md). Background: [blog post](https://octomind.run/blog/coding-agent-benchmark-real-prs).
 

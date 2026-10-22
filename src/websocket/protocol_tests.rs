@@ -546,6 +546,50 @@ fn test_unknown_type_fails_deserialize() {
 	assert!(serde_json::from_str::<ClientMessage>(json).is_err());
 }
 
+#[test]
+fn test_server_message_retry_is_its_own_non_terminal_frame() {
+	let event = octolib::llm::RetryEvent {
+		attempt: 2,
+		max_retries: 3,
+		delay: std::time::Duration::from_secs(60),
+		reason: "HTTP 503".to_string(),
+	};
+	let value = serde_json::to_value(ServerMessage::retry(&event, Some("sess_123".to_string()))).unwrap();
+	// Clients end a turn on `cost`, `error` and data-carrying `status`: a retry
+	// notice must never reuse one of those types.
+	assert_eq!(value["type"], "retry");
+	assert_eq!(value["attempt"], 2);
+	assert_eq!(value["max_retries"], 3);
+	assert_eq!(value["delay_ms"], 60_000);
+	assert_eq!(value["reason"], "HTTP 503");
+	assert_eq!(
+		value["message"],
+		"Model provider unavailable (HTTP 503) — retrying in 60s, attempt 2/3"
+	);
+	assert_eq!(value["session_id"], "sess_123");
+	assert!(value.get("data").is_none());
+
+	let roundtrip: ServerMessage = serde_json::from_value(value).unwrap();
+	assert!(matches!(roundtrip, ServerMessage::Retry(p) if p.attempt == 2));
+}
+
+#[test]
+fn test_server_message_retry_without_session_omits_it_and_rounds_sub_second_delays() {
+	let event = octolib::llm::RetryEvent {
+		attempt: 1,
+		max_retries: 1,
+		delay: std::time::Duration::from_millis(1500),
+		reason: "connection error".to_string(),
+	};
+	let value = serde_json::to_value(ServerMessage::retry(&event, None)).unwrap();
+	assert!(value.get("session_id").is_none());
+	assert_eq!(value["delay_ms"], 1500);
+	assert_eq!(
+		value["message"],
+		"Model provider unavailable (connection error) — retrying in 2s, attempt 1/1"
+	);
+}
+
 // ---- request_id size boundary ----
 
 #[test]

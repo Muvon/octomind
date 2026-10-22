@@ -576,6 +576,28 @@ pub struct McpNotificationPayload {
 	pub tool_id: Option<String>,
 }
 
+/// A model provider call failed with a retryable error (429, 5xx, a dropped
+/// connection) and the agent is waiting before trying it again. Sent once per
+/// retry, before the wait starts. Informational and mid-turn: it NEVER ends a
+/// turn — the turn's own `cost` (or `error`) frame still does, whether a retry
+/// succeeds or the last one fails. Clients show it until the next real frame.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RetryPayload {
+	/// The retry about to run, 1-based (`1..=max_retries`).
+	pub attempt: u32,
+	/// Retries allowed for this call.
+	pub max_retries: u32,
+	/// Milliseconds the call waits before that retry.
+	pub delay_ms: u64,
+	/// Short cause of the failed attempt: `HTTP 503`, `connection error` or
+	/// `request failed`. Never a response body or credential.
+	pub reason: String,
+	/// The same facts as one line, for clients that just print it.
+	pub message: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub session_id: Option<String>,
+}
+
 /// Outgoing message from server to client.
 /// Tagged by `"type"` — each variant carries only its own typed fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -609,6 +631,9 @@ pub enum ServerMessage {
 	/// (scheduled timer, background agent, skill, …). Emitted just before
 	/// the AI processes it so clients can render the trigger.
 	Injected(InjectedPayload),
+	/// A provider call is being retried after a transient failure. Mid-turn
+	/// progress, never a turn boundary (see [`RetryPayload`]).
+	Retry(RetryPayload),
 }
 
 impl ServerMessage {
@@ -692,6 +717,22 @@ impl ServerMessage {
 			state: state.into(),
 			scope,
 			session_id: session_id.into(),
+		})
+	}
+
+	/// The notice for one provider retry (see [`RetryPayload`]).
+	pub fn retry(event: &octolib::llm::RetryEvent, session_id: Option<String>) -> Self {
+		let delay_secs = event.delay.as_secs_f64().round() as u64;
+		ServerMessage::Retry(RetryPayload {
+			attempt: event.attempt,
+			max_retries: event.max_retries,
+			delay_ms: event.delay.as_millis() as u64,
+			reason: event.reason.clone(),
+			message: format!(
+				"Model provider unavailable ({}) — retrying in {}s, attempt {}/{}",
+				event.reason, delay_secs, event.attempt, event.max_retries
+			),
+			session_id,
 		})
 	}
 }

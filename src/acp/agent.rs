@@ -327,6 +327,11 @@ fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> 
 			);
 			Some(SessionUpdate::ToolCallUpdate(upd))
 		}
+		// ACP has no notice primitive either; a provider retry is the agent's own
+		// progress, so it reads as a thought rather than vanishing.
+		ServerMessage::Retry(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+			format!("{}\n", p.message).into(),
+		))),
 		_ => None,
 	}
 }
@@ -1201,6 +1206,9 @@ impl OctomindAgent {
 							);
 							Some(SessionUpdate::ToolCallUpdate(update))
 						}
+						ServerMessage::Retry(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+							format!("{}\n", p.message).into(),
+						))),
 						ServerMessage::Cost(_) => None,
 						ServerMessage::Evolution(p) => {
 							if let Some(conn) = conn_for_task.as_ref() {

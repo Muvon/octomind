@@ -419,6 +419,11 @@ fn render_event_oneline(msg: &ServerMessage) -> Option<String> {
 			glyph = "✗".bright_red(),
 			msg = truncate(&p.message, 120).red(),
 		),
+		ServerMessage::Retry(p) => format!(
+			"{glyph} {msg}",
+			glyph = "↻".bright_yellow(),
+			msg = truncate(&p.message, 100).bright_black(),
+		),
 		_ => return None,
 	};
 	Some(line)
@@ -475,6 +480,13 @@ fn render_event(prefix: &str, msg: &ServerMessage) {
 				"{prefix}{glyph} {msg}",
 				glyph = "✗".bright_red(),
 				msg = truncate(&p.message, 200).red(),
+			);
+		}
+		ServerMessage::Retry(p) => {
+			eprintln!(
+				"{prefix}{glyph} {msg}",
+				glyph = "↻".bright_yellow(),
+				msg = truncate(&p.message, 200).bright_black(),
 			);
 		}
 		_ => {}

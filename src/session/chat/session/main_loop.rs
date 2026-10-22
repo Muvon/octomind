@@ -1234,6 +1234,11 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									let text = n.params.get("message").and_then(|m| m.as_str()).unwrap_or(&n.method);
 									crate::session::chat::get_animation_manager()
 										.set_phase_if_running(&format!("[{}] {}", n.server, text));
+								} else if let crate::websocket::ServerMessage::Retry(r) = msg {
+									// A provider retry outlives the spinner's phase label (the
+									// backoff can run minutes), so it stays in the transcript.
+									use colored::Colorize;
+									eprintln!("{}", format!("↻ {}", r.message).dimmed());
 								}
 							}
 						});
@@ -1676,6 +1681,11 @@ pub async fn run_interactive_session_with_input(
 									.yellow()
 								);
 							}
+						} else if let crate::websocket::ServerMessage::Retry(r) = msg {
+							if !crate::logging::tracing_setup::is_structured_output_mode() {
+								use colored::Colorize;
+								eprintln!("{}", format!("↻ {}", r.message).dimmed());
+							}
 						}
 					}
 				});
@@ -1840,6 +1850,11 @@ pub async fn run_interactive_session_with_input(
 									)
 									.yellow()
 								);
+							}
+						} else if let crate::websocket::ServerMessage::Retry(r) = msg {
+							if !crate::logging::tracing_setup::is_structured_output_mode() {
+								use colored::Colorize;
+								eprintln!("{}", format!("↻ {}", r.message).dimmed());
 							}
 						}
 					}

@@ -644,6 +644,44 @@ async fn test_octolib_params_cancellation_token_attached() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn test_octolib_params_retry_observer_reaches_the_session_that_built_the_call() {
+	let config = test_config();
+	let messages = vec![msg("user", "hi")];
+	let sid = "providers-retry-notice".to_string();
+	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+	crate::mcp::process::set_notification_sender(Some(sid.clone()), tx);
+	// Built inside the session's scope, as every turn's provider call is...
+	let octo = crate::session::context::with_session_id(sid.clone(), async {
+		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
+			.to_octolib_params()
+			.await
+			.expect("conversion succeeds")
+	})
+	.await;
+
+	// ...but told about the retry outside it: octolib's backoff loop owns no
+	// task-local, so the observer must carry the session itself.
+	let observer = octo.retry_observer.expect("every provider call observes its retries");
+	observer.notify(&octolib::llm::RetryEvent {
+		attempt: 1,
+		max_retries: 3,
+		delay: std::time::Duration::from_secs(30),
+		reason: "HTTP 503".to_string(),
+	});
+	crate::mcp::process::clear_notification_sender(Some(sid.clone()));
+
+	match rx.try_recv().expect("the session's sender receives the notice") {
+		crate::websocket::ServerMessage::Retry(p) => {
+			assert_eq!(p.session_id.as_deref(), Some(sid.as_str()));
+			assert_eq!(p.reason, "HTTP 503");
+			assert_eq!(p.delay_ms, 30_000);
+		}
+		other => panic!("expected a retry frame, got {other:?}"),
+	}
+}
+
+#[tokio::test]
 async fn test_octolib_params_without_tools_keeps_tools_empty() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];

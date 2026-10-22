@@ -243,9 +243,15 @@ pub fn clear_notification_sender(session_id: Option<String>) {
 /// Send any ServerMessage directly through the notification channel.
 /// Uses session-scoped sender if in a session context, otherwise CLI global.
 pub fn send_notification_message(msg: crate::websocket::ServerMessage) {
+	send_notification_message_for(msg, crate::session::context::current_session_id().as_ref());
+}
+
+/// [`send_notification_message`] for a session captured earlier — for callers
+/// that may run outside the task-local `CURRENT_SESSION_ID` scope.
+pub fn send_notification_message_for(msg: crate::websocket::ServerMessage, session_id: Option<&String>) {
 	// Try session-scoped sender first
-	if let Some(session_id) = crate::session::context::current_session_id() {
-		if let Some(sender) = crate::session::context::get_notification_sender_by_id(&session_id) {
+	if let Some(session_id) = session_id {
+		if let Some(sender) = crate::session::context::get_notification_sender_by_id(session_id) {
 			let _ = sender.send(msg);
 			return;
 		}

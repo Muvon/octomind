@@ -277,9 +277,31 @@ impl<'a> ChatCompletionParams<'a> {
 			params = params.with_cancellation_token(token.clone());
 		}
 
+		let session_id = crate::session::context::current_session_id();
+
+		// A failing provider is retried with backoff sleeps that add up to minutes;
+		// tell the user each one instead of going silent. Routed like MCP
+		// notifications — the session's WebSocket, or the CLI drain (spinner
+		// line, stderr, JSONL) — with the session captured here because the call
+		// may run outside the task-local scope.
+		let retry_session_id = session_id.clone();
+		params = params.with_retry_observer(octolib::llm::RetryObserver::new(move |event| {
+			tracing::warn!(
+				"provider call failed ({}), retry {}/{} in {:?}",
+				event.reason,
+				event.attempt,
+				event.max_retries,
+				event.delay
+			);
+			crate::mcp::process::send_notification_message_for(
+				crate::websocket::ServerMessage::retry(event, retry_session_id.clone()),
+				retry_session_id.as_ref(),
+			);
+		}));
+
 		// OpenAI-family providers route prompt caching by this key; without it the
 		// turns of one session miss the cache (0 of 11 turns hit on chatgpt).
-		if let Some(session_id) = crate::session::context::current_session_id() {
+		if let Some(session_id) = session_id {
 			params = params.with_prompt_cache_key(session_id);
 		}
 

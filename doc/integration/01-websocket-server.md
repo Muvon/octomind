@@ -274,9 +274,12 @@ request or inbox work:
 ```json
 {
   "type": "error",
-  "message": "Session 'my-session' is busy processing another request. Please wait."
+  "message": "Session 'my-session' is busy processing another request. Please wait.",
+  "request_id": "req-001"
 }
 ```
+
+The busy error echoes the rejected frame's `request_id` (omitted when the frame had none).
 
 Wait for completion before sending the next request. AI turns normally end with `cost`; commands end with a `status`
 containing `data`, or an `error`. `done` with arguments sends its command status before the follow-up AI turn, so also
@@ -300,7 +303,7 @@ dispatching it. This confirms receipt, not successful execution:
 
 `request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do
 not produce `ack`; they produce an `error` frame instead, except decoded `run_log` requests, whose validation failures
-use a `run_log` reply with an `error` field. If a decoded frame fails protocol validation, its error echoes `request_id`. Some later errors, including busy-session and unknown-command errors, omit it. Response streams do not
+use a `run_log` reply with an `error` field. If a decoded frame fails protocol validation, its error echoes `request_id`. Some later errors, including unknown-command errors, omit it; busy-session errors echo it. Response streams do not
 echo request IDs; the `cost` frame closing a `message` turn does (see Cost tracking).
 
 The `ack` for a `session` frame additionally carries `capabilities`, omitted on other acks:

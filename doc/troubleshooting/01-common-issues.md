@@ -424,8 +424,8 @@ Run from the project directory you intend to modify.
 
 | Platform | Filesystem policy |
 |---|---|
-| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd and existing `~/.local/share`. |
-| macOS (Seatbelt) | Writes: cwd, `~/.local/share`, `/dev`, `/tmp`, `/private/tmp`, `/private/var/folders`. |
+| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd, the run dir (inject sockets, PID files), and, when they exist, `~/.local/share`, `<config_dir>/octolib`, and `~/.npm`. |
+| macOS (Seatbelt) | Writes: cwd, `~/.local/share`, `<config_dir>/octolib`, the run dir, `~/.npm`, `/dev`, `/tmp`, `/private/tmp`, `/private/var/folders`. |
 | Windows | Sandbox requests log a warning and continue without OS write restrictions. |
 
 macOS also denies reads of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, and

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.59.1] - 2026-10-22
+
+### 📋 Release Summary
+
+Fixed runtime, session, and sandbox edge cases, including session control and integration behavior. Process titles no longer expose environment details, `/effort` correctly reports the current level, and workflow markdown step output remains on stderr.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: upgrade octolib to 0.44.0 `03feb0ef`
+- clarify stderr rendering behavior `5120683d`
+
+### 🐛 Bug Fixes & Stability
+
+- fix runtime edge cases across sessions and sandboxes `d721621e`
+- **proctitle**: prevent process titles from leaking environment `ec51a0c8`
+- **runtime**: fix session control and integration edge cases `cd7ac549`
+- **session**: /effort reports no change for the current level `96037615`
+- **workflow**: keep markdown step output on stderr `4864cc3f`
+
+### 📚 Documentation & Examples
+
+- **documentation**: document request IDs and sandbox paths `939748f9`
+
 ## [0.59.0] - 2026-10-20
 
 ### 📋 Release Summary

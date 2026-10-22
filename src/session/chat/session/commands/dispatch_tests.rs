@@ -114,6 +114,55 @@ async fn test_loglevel_mutates_config() {
 	assert!(!matches!(result, CommandResult::TreatAsUserInput));
 }
 
+/// Setting a level must report the level it replaced and only claim a change
+/// when the level actually differs (issue #193).
+#[tokio::test]
+async fn test_loglevel_reports_previous_level_and_real_changes() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	// Normalise to a known starting point, then switch away from it
+	dispatch(&mut session, &mut config, "/loglevel info")
+		.await
+		.expect("set info");
+	let result = dispatch(&mut session, &mut config, "/loglevel debug")
+		.await
+		.expect("set debug");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("loglevel yields typed output");
+	};
+	match *output {
+		CommandOutput::Loglevel {
+			old_level,
+			new_level,
+			changed,
+			..
+		} => {
+			assert_eq!(old_level.as_deref(), Some("info"), "reports where it came from");
+			assert_eq!(new_level.as_deref(), Some("debug"), "reports where it went");
+			assert!(changed, "info → debug is a real change");
+		}
+		other => panic!("expected loglevel output, got {other:?}"),
+	}
+
+	// Re-selecting the active level is not a change and keeps the previous value
+	let result = dispatch(&mut session, &mut config, "/loglevel debug")
+		.await
+		.expect("set debug again");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("loglevel yields typed output");
+	};
+	match *output {
+		CommandOutput::Loglevel {
+			old_level, changed, ..
+		} => {
+			assert_eq!(old_level.as_deref(), Some("debug"));
+			assert!(!changed, "debug → debug is not a change");
+		}
+		other => panic!("expected loglevel output, got {other:?}"),
+	}
+}
+
 #[tokio::test]
 async fn test_model_show_and_set() {
 	let mut session = ChatSession::for_tests(Vec::new());

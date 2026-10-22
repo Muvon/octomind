@@ -3589,54 +3589,301 @@ async fn spawn_hang_then_answer_stub(answer: &'static str) -> String {
 	format!("http://{}/v1/chat/completions", addr)
 }
 
+/// A client that drops mid-turn leaves the turn running (R10). The next bind
+/// that resumes the stream gets every frame the client missed exactly once,
+/// then the rest of the turn live — down to the cost that answers the original
+/// request.
 #[tokio::test]
 #[serial_test::serial]
-async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
+async fn a_turn_outlives_its_dropped_connection_and_a_resuming_bind_reads_the_rest() {
 	let _data = TestDataDirGuard::new();
-	let env = StubEnv {
-		_guard: ENV_LOCK.lock().await,
-	};
-	std::env::set_var("OLLAMA_API_URL", spawn_hang_then_answer_stub("SECOND-OK").await);
+	let _env = SlowStubEnv::new(Duration::from_secs(2)).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let session_id = "resume-1";
 
 	let mut first = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut first).await;
-	let session_id = create_session(&mut first, Some("leave-1")).await;
 	send_json(
 		&mut first,
-		serde_json::json!({"type": "message", "session_id": session_id, "content": "hang"}),
+		serde_json::json!({"type": "session", "session_id": session_id}),
 	)
 	.await;
-	let _ack = read_json(&mut first).await;
-	tokio::time::sleep(Duration::from_millis(300)).await;
+	let ack = read_json(&mut first).await;
+	let stream = ack["stream"]
+		.as_str()
+		.expect("the bind ack names the stream")
+		.to_string();
+	let _greeting = read_json(&mut first).await;
+
+	// A queued result makes the message run an injected turn first, so the
+	// turn streams frames both before and after the connection drops.
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "queued work".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
+
+	send_json(
+		&mut first,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "hello", "request_id": "m1"}),
+	)
+	.await;
+	let message_ack = read_json(&mut first).await;
+	assert_eq!(message_ack["type"], "ack");
+	assert!(message_ack.get("stream_seq").is_none(), "acks are not session output");
+	let injected = read_json(&mut first).await;
+	assert_eq!(injected["type"], "injected", "got: {injected}");
+	assert_eq!(injected["stream_seq"], 1);
+	let answer = read_until(&mut first, |v| v["type"] == "assistant").await;
+	let last_read = answer["stream_seq"].as_u64().expect("session output is numbered");
+	// Gone without a goodbye, while the message's own turn waits on the model.
 	drop(first);
 
-	// The session's next client is served, not told it is busy.
 	let mut second = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut second).await;
-	let mut served = false;
-	for _ in 0..50 {
-		create_session(&mut second, Some("leave-1")).await;
-		send_json(
-			&mut second,
-			serde_json::json!({"type": "message", "session_id": session_id, "content": "again"}),
-		)
-		.await;
-		let _ack = read_json(&mut second).await;
-		let reply = read_until(&mut second, |v| {
-			v["type"] == "cost" || (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
-		})
-		.await;
-		if reply["type"] == "cost" {
-			served = true;
-			break;
-		}
-		tokio::time::sleep(Duration::from_millis(200)).await;
-	}
-	assert!(served, "the abandoned turn kept the session busy");
+	send_json(
+		&mut second,
+		serde_json::json!({
+			"type": "session", "session_id": session_id,
+			"resume": {"stream": stream, "after": last_read}
+		}),
+	)
+	.await;
+	let ack = read_json(&mut second).await;
+	assert_eq!(ack["type"], "ack", "got: {ack}");
+	assert_eq!(ack["stream"], stream.as_str());
+	assert_eq!(ack["resumed"], true, "got: {ack}");
+	let bound_at = ack["stream_seq"].as_u64().expect("the ack reports the stream position");
 
-	crate::session::context::cleanup_session(&session_id);
-	drop(env);
+	let frames = tokio::time::timeout(Duration::from_secs(20), async {
+		let mut frames: Vec<serde_json::Value> = Vec::new();
+		loop {
+			let frame = read_json(&mut second).await;
+			let done = frame["type"] == "cost" && frame["request_id"] == "m1";
+			frames.push(frame);
+			if done {
+				return frames;
+			}
+		}
+	})
+	.await
+	.expect("the turn must finish on the resumed connection");
+
+	let seqs: Vec<u64> = frames.iter().filter_map(|f| f["stream_seq"].as_u64()).collect();
+	let expected: Vec<u64> = (last_read + 1..=last_read + seqs.len() as u64).collect();
+	assert_eq!(
+		seqs, expected,
+		"every missed frame once, in order, then the rest: {frames:?}"
+	);
+	assert!(
+		seqs.iter().any(|seq| *seq > bound_at),
+		"the turn was still running and streamed live after the bind: {frames:?}"
+	);
+	let cost = frames.last().unwrap();
+	assert!(
+		cost.get("cancelled").is_none(),
+		"a dropped client no longer stops its turn: {cost}"
+	);
+	assert!(
+		frames
+			.iter()
+			.any(|f| f["type"] == "assistant" && f["stream_seq"].as_u64() > Some(bound_at)),
+		"the message's own answer arrived live: {frames:?}"
+	);
+
+	crate::session::context::cleanup_session(&session_id.to_string());
+}
+
+/// Starts a slow turn for `session_id` on a fresh connection and returns that
+/// connection once the model has the request.
+async fn connection_running_a_slow_turn(
+	server: &LoopbackServer,
+	env: &SlowStubEnv,
+	session_id: &str,
+	request_id: &str,
+) -> ClientWs {
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	create_session(&mut ws, Some(session_id)).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "hello", "request_id": request_id}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	env.arrived().notified().await;
+	ws
+}
+
+/// A client re-binding without `resume` while another live connection reads a
+/// running turn only binds: the turn keeps streaming to its owner.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_bind_without_resume_does_not_take_a_running_turn_from_its_live_owner() {
+	let _data = TestDataDirGuard::new();
+	let env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut owner = connection_running_a_slow_turn(&server, &env, "owned-1", "m1").await;
+
+	let mut other = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut other).await;
+	send_json(
+		&mut other,
+		serde_json::json!({"type": "session", "session_id": "owned-1"}),
+	)
+	.await;
+	let ack = read_json(&mut other).await;
+	assert_eq!(ack["type"], "ack");
+	assert!(ack["stream"].is_string(), "got: {ack}");
+	assert!(ack.get("resumed").is_none(), "got: {ack}");
+	let greeting = read_json(&mut other).await;
+	assert_eq!(greeting["type"], "status");
+
+	let cost = read_until(&mut owner, |v| v["type"] == "cost").await;
+	assert_eq!(cost["request_id"], "m1", "the owner reads its turn to the end: {cost}");
+	let stray = tokio::time::timeout(Duration::from_millis(500), other.next()).await;
+	assert!(stray.is_err(), "the plain bind received the owner's turn: {stray:?}");
+
+	crate::session::context::cleanup_session(&"owned-1".to_string());
+}
+
+/// When the connection reading a running turn is gone, a plain bind (no
+/// `resume`) takes the rest of that turn live — without a replay; the ack's
+/// `stream_seq` tells it what it did not see.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_bind_without_resume_adopts_a_running_turn_nobody_owns() {
+	let _data = TestDataDirGuard::new();
+	let env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let gone = connection_running_a_slow_turn(&server, &env, "ownerless-1", "m1").await;
+	drop(gone);
+	// Let the server see the connection go.
+	tokio::time::sleep(Duration::from_millis(300)).await;
+
+	let mut adopter = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut adopter).await;
+	send_json(
+		&mut adopter,
+		serde_json::json!({"type": "session", "session_id": "ownerless-1"}),
+	)
+	.await;
+	let ack = read_json(&mut adopter).await;
+	assert!(ack.get("resumed").is_none(), "got: {ack}");
+	let bound_at = ack["stream_seq"].as_u64().expect("the ack reports the stream position");
+	let greeting = read_json(&mut adopter).await;
+	assert_eq!(greeting["type"], "status");
+
+	let rest = frames_through_cost(&mut adopter).await;
+	let cost = rest.last().unwrap();
+	assert_eq!(
+		cost["request_id"], "m1",
+		"the dropped client's turn finished here: {cost}"
+	);
+	assert!(cost.get("cancelled").is_none(), "got: {cost}");
+	assert!(
+		rest.iter()
+			.all(|f| f["stream_seq"].as_u64().is_some_and(|seq| seq > bound_at)),
+		"only live frames, nothing replayed: {rest:?}"
+	);
+
+	crate::session::context::cleanup_session(&"ownerless-1".to_string());
+}
+
+/// Output is numbered without gaps from the first frame a loaded session sends,
+/// and the bind ack says where that numbering stands. A session that is closed
+/// and loaded again starts a new stream, so resuming the old one is refused and
+/// nothing is replayed.
+#[tokio::test]
+#[serial_test::serial]
+async fn session_output_is_numbered_per_stream_and_a_reloaded_session_refuses_the_old_one() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("NUMBERED")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "numbered-1", "request_id": "b1"}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["type"], "ack");
+	assert_eq!(ack["request_id"], "b1");
+	assert_eq!(ack["stream_seq"], 0, "a fresh stream: {ack}");
+	assert!(ack.get("resumed").is_none(), "no resume was asked: {ack}");
+	assert!(
+		ack["capabilities"]
+			.as_array()
+			.is_some_and(|caps| caps.iter().any(|cap| cap == "stream_resume_v1")),
+		"got: {ack}"
+	);
+	let stream = ack["stream"].as_str().expect("stream id").to_string();
+	let greeting = read_json(&mut ws).await;
+	assert_eq!(greeting["type"], "status");
+	assert!(
+		greeting.get("stream_seq").is_none(),
+		"the greeting answers the bind: {greeting}"
+	);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": "numbered-1", "content": "hi", "request_id": "m1"}),
+	)
+	.await;
+	let message_ack = read_json(&mut ws).await;
+	assert!(message_ack.get("stream_seq").is_none(), "got: {message_ack}");
+	let turn = frames_through_cost(&mut ws).await;
+	let seqs: Vec<u64> = turn
+		.iter()
+		.map(|f| f["stream_seq"].as_u64().expect("every turn frame is numbered"))
+		.collect();
+	let expected: Vec<u64> = (1..=seqs.len() as u64).collect();
+	assert_eq!(seqs, expected, "gapless from 1: {turn:?}");
+
+	// Re-binding keeps the stream while the session stays loaded.
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "numbered-1"}),
+	)
+	.await;
+	let rebound = read_json(&mut ws).await;
+	assert_eq!(rebound["stream"], stream.as_str());
+	assert_eq!(rebound["stream_seq"], seqs.len() as u64);
+	let _greeting = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "close", "session_id": "numbered-1"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let closed = read_json(&mut ws).await;
+	assert_eq!(closed["data"]["command_type"], "close", "got: {closed}");
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "session", "session_id": "numbered-1",
+			"resume": {"stream": stream, "after": 1}
+		}),
+	)
+	.await;
+	let reloaded = read_json(&mut ws).await;
+	assert_eq!(reloaded["resumed"], false, "got: {reloaded}");
+	assert_ne!(reloaded["stream"], stream.as_str(), "a reload mints a new stream");
+	assert_eq!(reloaded["stream_seq"], 0);
+	let next = read_json(&mut ws).await;
+	assert_eq!(next["type"], "status", "nothing is replayed: {next}");
+
+	crate::session::context::cleanup_session(&"numbered-1".to_string());
 }
 
 #[tokio::test]

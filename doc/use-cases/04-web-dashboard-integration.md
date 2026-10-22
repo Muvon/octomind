@@ -226,10 +226,10 @@ process's credentials, filesystem access, and configured tools.
 
 | Direction | Type | Purpose |
 |-----------|------|---------|
-| Client -> Server | `session` | Create or resume a session (no AI call). With no `session_id` the server creates an auto-named session; with a `session_id` it resumes that session if it exists on disk, otherwise creates one with that name. |
+| Client -> Server | `session` | Create or resume a session (no AI call). With no `session_id` the server creates an auto-named session; with a `session_id` it resumes that session if it exists on disk, otherwise creates one with that name. Optional `resume` (`stream`, `after`) replays the output a dropped connection missed and takes the session's output over. |
 | Client -> Server | `message` | Send user input (field `content`, max 10 MiB; optional `attachments`) |
 | Client -> Server | `command` | Execute a session command (field `command`, bare name without the leading `/`; optional `args` array) |
-| Server -> Client | `ack` | Receipt acknowledgement when a parsed, validated client input is read (`message_type`, optional `request_id`, optional `session_id`, `status = "received"`; session acks also advertise `capabilities`). Malformed/invalid input returns `error` instead. |
+| Server -> Client | `ack` | Receipt acknowledgement when a parsed, validated client input is read (`message_type`, optional `request_id`, optional `session_id`, `status = "received"`; session acks also advertise `capabilities` and, once bound, the `stream` and its `stream_seq`, plus `resumed` when a resume was asked). Malformed/invalid input returns `error` instead. |
 | Server -> Client | `assistant` | AI response text (`content`) |
 | Server -> Client | `thinking` | Extended thinking (`content`, if the model supports it) |
 | Server -> Client | `tool_use` | Tool being called (`tool`, `tool_id`, `server`, `params`) |
@@ -241,6 +241,9 @@ process's credentials, filesystem access, and configured tools.
 | Server -> Client | `skill` | Skill lifecycle event (`action` = activate/use/forget, `name`, optional `trigger`) |
 | Server -> Client | `evolution` | Grounded behavior lifecycle event (`action`, `id`, `name`, `kind`, `state`, `scope`) |
 | Server -> Client | `injected` | Inbox input being added to the conversation (`source_kind` = schedule/monitor/background_agent/background_job/tap_run/skill/skill_validator/inject/webhook/guardrail_hook/guardrail_validator, `source_label`, `content`); emitted just before the AI responds so the UI can show what triggered it |
+
+Every frame a session produces also carries `stream_seq` (1, 2, 3 … per stream), so a dashboard that reconnects can
+bind with `resume` and render only what it missed.
 
 For exhaustive fields, see the [WebSocket reference](../integration/01-websocket-server.md).
 

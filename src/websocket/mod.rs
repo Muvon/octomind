@@ -17,6 +17,7 @@
 pub mod protocol;
 pub(crate) mod run_events;
 pub mod server;
+pub(crate) mod stream;
 
 // Re-export main types
 pub use protocol::{

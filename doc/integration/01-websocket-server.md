@@ -158,6 +158,14 @@ role. The tag is resolved (and its MCP servers started) for this session only, a
 it. A resumed session keeps the role it already runs under whatever the bind says; switch it with the `role` command.
 A role that fails to resolve returns an `error` and creates nothing.
 
+`resume` is optional: `{"stream": "<id>", "after": <stream_seq>}` from a client that was reading this session's output
+and lost its connection. See [Stream position and resume](#stream-position-and-resume).
+
+A bind with `resume` takes the session's output over: from then on every frame the session produces goes to this
+connection, including the rest of a turn another connection started. A bind without `resume` takes it only when no live
+connection owns it (the owner disconnected); otherwise output stays where it is until this connection sends a `message`
+or `command`, whose turn it then reads.
+
 **Cancel** — stop the session's running turn:
 
 ```json
@@ -284,12 +292,19 @@ The busy error echoes the rejected frame's `request_id` (omitted when the frame 
 Wait for completion before sending the next request. AI turns normally end with `cost`; commands end with a `status`
 containing `data`, or an `error`. `done` with arguments sends its command status before the follow-up AI turn, so also
 wait for that turn's `cost`. Errors can end requests without a cost frame. Use separate connections for concurrent work
-on different sessions, and avoid creating/resuming the same session while it is busy.
+on different sessions.
+
+A turn does not depend on the connection that started it. If that client disconnects, the turn keeps running and its
+frames are held for the session's next bind (see [Stream position and resume](#stream-position-and-resume)); until it
+ends, other frames for the session get the busy error. One connection owns a session's output at a time: the one whose
+`message` or `command` started the current turn, unless a later bind took it over (see `resume` above). Background turns
+(schedules, delegated results) stream to that owner.
 
 ### Server to Client
 
 For each JSON text input that passes decoding and protocol validation, the server sends an acknowledgement before
-dispatching it. This confirms receipt, not successful execution:
+dispatching it — except a `session` bind, which is acknowledged once the session is bound (or the bind failed), so its
+ack can report the session's stream position. This confirms receipt, not successful execution:
 
 ```json
 {
@@ -312,6 +327,36 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
 - `session_control_v1` — the server accepts `cancel` and `close` frames and a bind `role`, and echoes a request's
   `request_id` on the cost frame that closes its turn.
 - `run_events_v1` — delegated `tap` runs have their own live event stream and `run_log` replay.
+- `stream_resume_v1` — session output carries `stream_seq`, and a bind may `resume` (below).
+
+#### Stream position and resume
+
+A session loaded in the server process owns one output **stream**, identified by an opaque hex id that changes when the
+process restarts or the session is closed and loaded again. Every frame the session produces — `assistant`, `thinking`,
+`tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `evolution`, `injected`, `retry` —
+carries a top-level `stream_seq`: 1, 2, 3 … per stream, with no gaps, including frames produced while no connection is
+bound. Frames that answer one client frame on that connection only carry none: `ack`, `run_log`, the bind's own
+`status`, the `close` reply, and errors that refuse a frame before its turn starts (busy, `Session not found`, a bad
+attachment, `Internal error`, malformed or invalid input).
+`run_event` keeps its own per-run `seq`.
+
+```json
+{"type":"assistant","content":"The auth module validates credentials.","session_id":"my-session","stream_seq":7}
+```
+
+A successful bind's ack reports the stream and the highest `stream_seq` assigned so far (0 if none):
+
+```json
+{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
+```
+
+A failed bind's ack carries no `stream` or `stream_seq`. The server holds the frames of the running turn and of the turn
+before it, bounded (4096 frames or 8 MiB per stream, oldest dropped first). A client that lost its connection binds again
+with `"resume": {"stream": "<id>", "after": <last stream_seq it received>}`. When the stream matches and every frame
+after that point is still held, the ack carries `"resumed": true` and those frames follow it at once, in order and
+byte-identical to the first sending, before the bind's `status` and any new frame; then the stream continues live,
+including the rest of a turn that was running. Otherwise the ack carries `"resumed": false`, nothing is replayed, and the
+client reloads its state from its own store. `resumed` is present only when the bind asked to resume.
 
 A successful AI turn arrives as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and
 `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
@@ -681,6 +726,7 @@ Use an authenticated TLS proxy for remote deployment and a process boundary per 
 - Command `args` is optional
 - `session.cwd`, when present, must be an absolute path to an existing directory
 - `session.role`, when present, must be non-empty
+- `session.resume`, when present, needs a non-empty `stream` and a numeric `after`
 - `cancel.session_id`, `close.session_id`, and `run_log.session_id` must be non-empty
 - `run_log.run_id` must be a generated tap run ID
 

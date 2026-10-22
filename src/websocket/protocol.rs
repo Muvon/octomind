@@ -23,6 +23,9 @@ pub const MESSAGE_ATTACHMENTS_CAPABILITY: &str = "message_attachments_v1";
 /// echoes a request's `request_id` on the cost frame that closes its turn.
 pub const SESSION_CONTROL_CAPABILITY: &str = "session_control_v1";
 pub const RUN_EVENTS_CAPABILITY: &str = "run_events_v1";
+/// Session output frames carry `stream_seq`, the bind ack reports the stream
+/// position, and a bind may `resume` a stream it was reading.
+pub const STREAM_RESUME_CAPABILITY: &str = "stream_resume_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -56,6 +59,22 @@ pub struct SessionMessage {
 	/// client may send the same bind every time without ever re-resolving.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub role: Option<String>,
+
+	/// Continue reading a stream this client already read up to `after`: the
+	/// frames it missed follow the ack when the server still holds them all
+	/// (the ack says `resumed`). Either way the bind takes the session's output
+	/// over — a bind without `resume` only takes output nobody live owns.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub resume: Option<StreamResume>,
+}
+
+/// Where a client stopped reading a session's output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StreamResume {
+	/// The `stream` id of the bind ack the client read under.
+	pub stream: String,
+	/// The last `stream_seq` the client received.
+	pub after: u64,
 }
 
 /// Send user input to an existing session and receive an AI response.
@@ -327,6 +346,9 @@ impl ClientMessage {
 				if m.role.as_deref().is_some_and(|role| role.trim().is_empty()) {
 					return Err("role cannot be empty when provided".to_string());
 				}
+				if m.resume.as_ref().is_some_and(|resume| resume.stream.trim().is_empty()) {
+					return Err("resume.stream cannot be empty".to_string());
+				}
 				Ok(())
 			}
 
@@ -500,6 +522,9 @@ pub struct ErrorPayload {
 	pub request_id: Option<String>,
 }
 
+/// Acknowledges a valid client frame. Sent at once for every frame but a
+/// `session` bind, whose ack is sent once the session is bound — so it can say
+/// where the session's output stands — or once the bind failed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AckPayload {
 	/// Echo of the client-supplied request_id, when present.
@@ -514,6 +539,18 @@ pub struct AckPayload {
 	/// Protocol features supported for this bind.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub capabilities: Vec<String>,
+	/// The bound session's output stream (successful binds only). Changes when
+	/// the session is loaded anew — a restart, or a `close` and a later bind.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub stream: Option<String>,
+	/// Highest `stream_seq` the stream has assigned, 0 if none (successful
+	/// binds only).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub stream_seq: Option<u64>,
+	/// Whether the bind's `resume` is honoured: true means every frame after
+	/// `resume.after` follows this ack. Present only when resume was requested.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub resumed: Option<bool>,
 }
 
 /// Skill lifecycle event (activate via auto-activation, explicit use, or forget).
@@ -636,6 +673,34 @@ pub enum ServerMessage {
 	Retry(RetryPayload),
 }
 
+impl AckPayload {
+	/// The ack of a `session` bind, before the server adds the stream position.
+	pub fn bind(msg: &SessionMessage) -> Self {
+		Self {
+			capabilities: vec![
+				MESSAGE_ATTACHMENTS_CAPABILITY.to_string(),
+				SESSION_CONTROL_CAPABILITY.to_string(),
+				RUN_EVENTS_CAPABILITY.to_string(),
+				STREAM_RESUME_CAPABILITY.to_string(),
+			],
+			..Self::received(msg.request_id.clone(), "session", msg.session_id.clone())
+		}
+	}
+
+	fn received(request_id: Option<String>, message_type: &str, session_id: Option<String>) -> Self {
+		Self {
+			request_id,
+			message_type: message_type.to_string(),
+			session_id,
+			status: "received".to_string(),
+			capabilities: Vec::new(),
+			stream: None,
+			stream_seq: None,
+			resumed: None,
+		}
+	}
+}
+
 impl ServerMessage {
 	pub fn error(message: String) -> Self {
 		ServerMessage::Error(ErrorPayload {
@@ -649,19 +714,13 @@ impl ServerMessage {
 	}
 
 	pub fn ack(client_msg: &ClientMessage) -> Self {
-		ServerMessage::Ack(AckPayload {
-			request_id: client_msg.request_id().map(ToOwned::to_owned),
-			message_type: client_msg.message_type().to_string(),
-			session_id: client_msg.session_id().map(ToOwned::to_owned),
-			status: "received".to_string(),
-			capabilities: match client_msg {
-				ClientMessage::Session(_) => vec![
-					MESSAGE_ATTACHMENTS_CAPABILITY.to_string(),
-					SESSION_CONTROL_CAPABILITY.to_string(),
-					RUN_EVENTS_CAPABILITY.to_string(),
-				],
-				_ => Vec::new(),
-			},
+		ServerMessage::Ack(match client_msg {
+			ClientMessage::Session(bind) => AckPayload::bind(bind),
+			other => AckPayload::received(
+				other.request_id().map(ToOwned::to_owned),
+				other.message_type(),
+				other.session_id().map(ToOwned::to_owned),
+			),
 		})
 	}
 

@@ -48,11 +48,13 @@ fn test_session_roundtrip() {
 		session_id: Some("my-session".to_string()),
 		cwd: None,
 		role: None,
+		resume: None,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"session\""));
 	assert!(json.contains("my-session"));
 	assert!(!json.contains("cwd"), "an absent cwd must not appear on the wire");
+	assert!(!json.contains("resume"), "an absent resume must not appear on the wire");
 }
 
 #[test]
@@ -312,7 +314,45 @@ fn test_session_ack_advertises_message_attachments() {
 	let json = serde_json::to_value(&ack).unwrap();
 	assert_eq!(
 		json["capabilities"],
-		serde_json::json!(["message_attachments_v1", "session_control_v1", "run_events_v1"])
+		serde_json::json!([
+			"message_attachments_v1",
+			"session_control_v1",
+			"run_events_v1",
+			"stream_resume_v1"
+		])
+	);
+	for field in ["stream", "stream_seq", "resumed"] {
+		assert!(
+			json.get(field).is_none(),
+			"{field} is filled in by the server once the session is bound: {json}"
+		);
+	}
+}
+
+#[test]
+fn session_bind_parses_and_validates_a_resume_point() {
+	let msg: ClientMessage = serde_json::from_str(
+		r#"{"type":"session","session_id":"sess_123","resume":{"stream":"9f2c4e1a7b3d5f60","after":41}}"#,
+	)
+	.unwrap();
+	let ClientMessage::Session(bind) = &msg else {
+		panic!("expected a session bind, got {msg:?}");
+	};
+	assert_eq!(
+		bind.resume,
+		Some(StreamResume {
+			stream: "9f2c4e1a7b3d5f60".to_string(),
+			after: 41,
+		})
+	);
+	assert!(msg.validate().is_ok());
+
+	let blank: ClientMessage = serde_json::from_str(r#"{"type":"session","resume":{"stream":" ","after":0}}"#).unwrap();
+	assert_eq!(blank.validate().unwrap_err(), "resume.stream cannot be empty");
+
+	assert!(
+		serde_json::from_str::<ClientMessage>(r#"{"type":"session","resume":{"stream":"ab"}}"#).is_err(),
+		"a resume names the point it resumes after"
 	);
 }
 

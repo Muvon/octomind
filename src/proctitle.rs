@@ -36,10 +36,10 @@ use std::sync::OnceLock;
 struct ArgvSpan {
 	start: *mut libc::c_char,
 	capacity: usize,
-	/// NUL bytes that must remain inside the span after the title, so a
-	/// reader walking the argv strings stops before the environment that
-	/// directly follows them in memory (see [`fill_argv_area`]).
-	terminators: usize,
+	/// Strings a reader takes from the span before it stops, so the title is
+	/// followed by enough of them to keep it out of the environment that
+	/// directly follows argv in memory (see [`fill_argv_area`]).
+	strings: usize,
 }
 
 // Safety: the argv block lives in process-static memory for the lifetime of
@@ -83,12 +83,12 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 	let last_len = libc::strlen(last);
 	let end = last.add(last_len + 1);
 	let capacity = end.offset_from(first) as usize;
-	// `ps` (via KERN_PROCARGS2) prints `argc` NUL-terminated strings starting
-	// at argv[0]; the environment strings follow argv[argc-1] directly.
+	// `ps` and `pgrep` (via KERN_PROCARGS2) print `argc` strings starting at
+	// argv[0]; the environment strings follow argv[argc-1] directly.
 	Some(ArgvSpan {
 		start: first,
 		capacity,
-		terminators: argc as usize,
+		strings: argc as usize,
 	})
 }
 
@@ -108,11 +108,11 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 		.unwrap_or_else(|_| libc::strlen(arg0));
 	// /proc/PID/cmdline reads arg_start..arg_end and continues into the
 	// environment only when the last byte of that area is not NUL (the
-	// setproctitle convention) — one trailing NUL keeps it inside argv.
+	// setproctitle convention) — the title's own NUL keeps it inside argv.
 	Some(ArgvSpan {
 		start: arg0,
 		capacity,
-		terminators: 1,
+		strings: 1,
 	})
 }
 
@@ -140,23 +140,32 @@ pub fn set_process_title(title: &str) {
 		// Safety: the span is the process's own argv block, captured once at
 		// first use and never freed; it is only ever written from here.
 		let area = unsafe { std::slice::from_raw_parts_mut(span.start as *mut u8, span.capacity) };
-		fill_argv_area(area, title.as_bytes(), span.terminators);
+		fill_argv_area(area, title.as_bytes(), span.strings);
 	}
 }
 
-/// Write `title` at the start of the argv `area` and NUL-fill the rest,
-/// truncating the title so at least `terminators` NULs stay inside the area.
+/// Write `title` at the start of the argv `area`, followed by `strings - 1`
+/// one-space strings, and NUL-fill the rest. The title is truncated so all of
+/// them fit inside the area.
 ///
-/// The environment strings sit directly after argv in memory. A reader that
-/// walks a fixed number of NUL-terminated strings (macOS `ps` walks `argc` of
-/// them) runs past the end of argv when the area holds fewer NULs than that,
-/// and prints environment strings — API keys included — after the title.
-/// Leftover argv text is cleared too, so it never shows up after the title.
+/// The environment strings sit directly after argv in memory, and macOS
+/// readers walk a fixed number of strings (`argc`): `ps` counts empty ones,
+/// `pgrep` skips them. With fewer non-empty strings than that inside the area,
+/// `pgrep -fl` runs past argv and prints environment strings — API keys
+/// included — after the title. Leftover argv text is cleared too, so it never
+/// shows up after the title.
 #[cfg(unix)]
-fn fill_argv_area(area: &mut [u8], title: &[u8], terminators: usize) {
-	let copy_len = title.len().min(area.len().saturating_sub(terminators));
+fn fill_argv_area(area: &mut [u8], title: &[u8], strings: usize) {
+	let padding = strings.saturating_sub(1);
+	// Title NUL, then a space and its NUL per padding string.
+	let copy_len = title.len().min(area.len().saturating_sub(1 + 2 * padding));
 	area[..copy_len].copy_from_slice(&title[..copy_len]);
 	area[copy_len..].fill(0);
+	if let Some(rest) = area.get_mut(copy_len + 1..) {
+		for string in rest.as_chunks_mut::<2>().0.iter_mut().take(padding) {
+			string[0] = b' ';
+		}
+	}
 }
 
 #[cfg(not(unix))]

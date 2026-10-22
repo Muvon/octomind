@@ -29,17 +29,20 @@ fn set_process_title_does_not_panic() {
 	set_process_title("a-very-long-title-that-exceeds-argv-capacity-to-test-padding-behavior");
 }
 
-/// Bytes `ps` shows as the command line, read from `KERN_PROCARGS2` the way
-/// macOS `ps`/`pgrep` do: skip `argc` and the exec path, skip the NULs that
-/// pad it, then take `argc` NUL-terminated strings. Returns the byte range of
-/// those strings inside `procargs`.
+/// Byte range of the command line a macOS reader shows, read from
+/// `KERN_PROCARGS2`: skip `argc` and the exec path, skip the NULs that pad it,
+/// then take `argc` NUL-terminated strings. `ps` counts empty strings;
+/// `pgrep` (`skip_empty`) skips them, so it reads further when argv holds any.
 #[cfg(target_os = "macos")]
-fn ps_command_line(procargs: &[u8]) -> std::ops::Range<usize> {
+fn command_line(procargs: &[u8], skip_empty: bool) -> std::ops::Range<usize> {
 	let argc = i32::from_ne_bytes(procargs[..4].try_into().unwrap()) as usize;
 	let exec_path_end = 4 + procargs[4..].iter().position(|&b| b == 0).unwrap();
 	let start = exec_path_end + procargs[exec_path_end..].iter().position(|&b| b != 0).unwrap();
 	let mut end = start;
 	for _ in 0..argc {
+		if skip_empty {
+			end += procargs[end..].iter().position(|&b| b != 0).unwrap();
+		}
 		end += procargs[end..].iter().position(|&b| b == 0).unwrap() + 1;
 	}
 	start..end
@@ -74,19 +77,26 @@ fn title_longer_than_argv_keeps_ps_out_of_the_environment() {
 		.as_ref()
 		.expect("argv span");
 	// A title that outgrows argv is truncated; whatever survives must leave
-	// `ps` enough NULs to stop before the environment that follows argv.
+	// `ps` and `pgrep` enough strings to stop before the environment that
+	// follows argv.
 	set_process_title(&"t".repeat(span.capacity * 2));
 
 	let procargs = own_procargs();
-	let shown = ps_command_line(&procargs);
-	// Report sizes only: the bytes past argv are this process's environment.
-	assert!(
-		shown.len() <= span.capacity,
-		"ps reads {} bytes past the {}-byte argv area into the environment",
-		shown.len() - span.capacity,
-		span.capacity
-	);
-	assert!(procargs[shown].starts_with(b"ttt"), "ps does not show the title first");
+	for (reader, skip_empty) in [("ps", false), ("pgrep", true)] {
+		let shown = command_line(&procargs, skip_empty);
+		// Report sizes only: the bytes past argv are this process's environment.
+		assert!(
+			shown.len() <= span.capacity,
+			"{} reads {} bytes past the {}-byte argv area into the environment",
+			reader,
+			shown.len() - span.capacity,
+			span.capacity
+		);
+		assert!(
+			procargs[shown].starts_with(b"ttt"),
+			"{reader} does not show the title first"
+		);
+	}
 }
 
 #[cfg(target_os = "linux")]

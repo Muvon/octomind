@@ -17,35 +17,14 @@
 //! same path `session_socket_path` derives.
 
 use super::*;
+#[cfg(unix)]
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 #[cfg(unix)]
 use serial_test::serial;
 
 #[cfg(unix)]
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop.
-#[cfg(unix)]
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-#[cfg(unix)]
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-#[cfg(unix)]
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 #[derive(clap::Parser)]
 struct Cli {

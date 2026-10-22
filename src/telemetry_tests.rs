@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 
 #[test]
 fn builtin_tools_pass_through_and_mcp_tools_collapse_to_a_category() {
@@ -153,23 +154,6 @@ fn transport_errors_classify_by_downcast() {
 fn install_source_detects_a_cargo_test_binary() {
 	// The test harness runs from a target build dir (target/debug, or llvm-cov-target/debug under cargo llvm-cov) → "source"
 	assert_eq!(install_source(), "source");
-}
-
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
 }
 
 fn template_config() -> crate::config::Config {

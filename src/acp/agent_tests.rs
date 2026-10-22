@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use crate::websocket::{
 	AssistantPayload, CostPayload, McpNotificationPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
@@ -473,27 +474,6 @@ async fn authenticate_rejects_an_unknown_method() {
 		err.code
 	);
 }
-
-/// Snapshot env vars and restore them on drop.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
-
 /// Signed out against the hosted gateway: the session still opens (octoweb drives
 /// `/login` from inside one) and slash commands run, but a model-bound prompt
 /// answers `auth_required` so editors offer the sign-in method.

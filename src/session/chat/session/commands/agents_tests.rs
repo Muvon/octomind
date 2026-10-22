@@ -17,6 +17,7 @@
 //! used by `/info`.
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use crate::session::tap_runs::{TapJob, TapJobStatus, TapLiveState, TapLiveUsage};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
@@ -200,26 +201,6 @@ fn elapsed_secs_saturates_on_future_clock() {
 // ---------------------------------------------------------------------------
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
 	let dir = std::env::temp_dir().join(format!("octomind-agents-{tag}-{}", std::process::id()));

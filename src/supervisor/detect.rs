@@ -513,6 +513,9 @@ const FAILED_COMMANDS_CAP: usize = 64;
 pub struct Detectors {
 	/// Recent result hashes (loop detection), newest at back.
 	loop_window: VecDeque<u64>,
+	/// Tool rounds in a row that repeated the previous round's calls and results,
+	/// the first of them included — what `supervisor.max_identical_rounds` caps.
+	identical_rounds: usize,
 	/// Recent novelty flags (no-progress detection), newest at back.
 	novelty_window: VecDeque<bool>,
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
@@ -681,6 +684,10 @@ impl Detectors {
 			h.finish()
 		};
 
+		// Hard-stop count: the previous round again, with nothing new in it.
+		let repeated = !round_novel && self.loop_window.back() == Some(&round_hash);
+		self.identical_rounds = if repeated { self.identical_rounds + 1 } else { 1 };
+
 		// Loop window: identical ROUND repeated.
 		self.loop_window.push_back(round_hash);
 		while self.loop_window.len() > loop_threshold.max(1) {
@@ -709,6 +716,11 @@ impl Detectors {
 		} else {
 			DetectorSignal::None
 		}
+	}
+
+	/// Tool rounds in a row with the same calls and results, the first included.
+	pub fn identical_rounds(&self) -> usize {
+		self.identical_rounds
 	}
 
 	/// Record the artifact paths a successful mutation-shaped call touched —
@@ -878,6 +890,7 @@ impl Detectors {
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
+		self.identical_rounds = 0;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
@@ -951,6 +964,38 @@ pub fn steer_note(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Recovery => "<pay-attention>\nAdvisory: several command executions returned errors without a later success for those exact calls. These may be expected probes, obsolete attempts or failures unrelated to verification. Judge their relevance from the actual outputs and the user's task. Only an observed, relevant failure warrants recovery work; this hint does not require rerunning a command, changing code or reporting blocked. Honor all execution restrictions.\n</pay-attention>",
 		DetectorSignal::None => "",
 	}
+}
+
+/// Characters of each repeated call and its result quoted in the stop notice:
+/// enough to recognise the loop, short enough for a parent agent's handback.
+const LOOP_STOP_PREVIEW_CHARS: usize = 300;
+
+/// The turn's final answer once `supervisor.max_identical_rounds` is reached.
+/// Deterministic and self-contained: a parent agent receiving it as the
+/// handback, or the user reading it later, sees what repeated without the log.
+pub fn loop_stop_note(
+	rounds: usize,
+	calls: &[crate::mcp::McpToolCall],
+	results: &[crate::mcp::McpToolResult],
+) -> String {
+	let mut note = format!(
+		"Stopped by the supervisor: the last {rounds} tool rounds repeated the same calls and got the same results, so this turn ended instead of spending more requests on it."
+	);
+	for call in calls {
+		let result = results
+			.iter()
+			.find(|r| r.tool_id == call.tool_id)
+			.map(|r| r.extract_content())
+			.unwrap_or_default();
+		note.push_str(&format!(
+			"\nRepeated: `{}` {}\nResult: {}",
+			call.tool_name,
+			crate::utils::text::truncate(&call.parameters.to_string(), LOOP_STOP_PREVIEW_CHARS),
+			crate::utils::text::truncate(&result, LOOP_STOP_PREVIEW_CHARS)
+		));
+	}
+	note.push_str("\nRepeating it will not change the result; continuing needs a different approach.");
+	note
 }
 
 /// Order-independent hash of a round's tool calls, keyed on each call's CHOSEN identity

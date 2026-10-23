@@ -159,9 +159,27 @@ fn plan() -> MigrationPlan {
 				to: 23,
 				apply: add_v23_commit_attribution,
 			},
+			VersionMigration {
+				from: 23,
+				to: 24,
+				apply: add_v24_loop_stop,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required `supervisor.max_identical_rounds` loop hard stop; an existing
+/// value (including `0` = off) is kept.
+fn add_v24_loop_stop(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	merge_missing(supervisor, template_supervisor, "max_identical_rounds")
 }
 
 /// Add the required root `commit_attribution` trailer; an existing value is kept.

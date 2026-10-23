@@ -147,7 +147,7 @@ fn later_config_override_wins() {
 fn config_overrides_do_not_write_or_migrate_an_existing_config() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let path = tmp.path().join("config.toml");
-	let contents = template_toml().replace("version = 23", "version = 22");
+	let contents = template_toml().replace("version = 24", "version = 23");
 	write_file(tmp.path(), "config.toml", &contents);
 	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
 	let loaded = Config::load_with_overrides(&["supervisor.enabled=false".to_string()]);
@@ -155,7 +155,7 @@ fn config_overrides_do_not_write_or_migrate_an_existing_config() {
 
 	let config = loaded.expect("override load");
 	assert!(!config.supervisor.enabled);
-	assert_eq!(config.version, 22, "automatic migration must not run");
+	assert_eq!(config.version, 23, "automatic migration must not run");
 	assert_eq!(
 		std::fs::read_to_string(path).expect("read config"),
 		contents,

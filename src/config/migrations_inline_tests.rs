@@ -1015,7 +1015,10 @@ fn v22_rejects_malformed_values_and_conflicting_tables() {
 
 #[test]
 fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
-	let migration = plan().migrate("version = 22\n", DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let migration = plan()
+		.migrate("version = 22\n", DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 22);
 	assert_eq!(
@@ -1029,4 +1032,26 @@ fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(value["commit_attribution"].as_str(), Some(""));
+}
+
+#[test]
+fn v24_adds_the_loop_stop_and_keeps_existing_supervisor_values() {
+	let migration = plan()
+		.migrate("version = 23\n[supervisor]\nenabled = false\n", DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(migration.from_version, 23);
+	assert_eq!(value["supervisor"]["enabled"].as_bool(), Some(false));
+	assert_eq!(value["supervisor"]["max_identical_rounds"].as_integer(), Some(10));
+
+	let migration = plan()
+		.migrate(
+			"version = 23\n[supervisor]\nenabled = true\nmax_identical_rounds = 0\n",
+			DEFAULT_CONFIG_TEMPLATE,
+		)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(value["supervisor"]["max_identical_rounds"].as_integer(), Some(0));
 }

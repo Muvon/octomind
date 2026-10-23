@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 23
+version = 24
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -723,6 +723,12 @@ supervisor = false
 [supervisor]
 # Master switch for the whole control plane
 enabled = true
+
+# Hard stop for runaway tool loops: when this many tool rounds in a row repeat
+# the same calls and get the same results, the turn ends with a notice instead
+# of another model request. Detector hints below this limit stay advisory.
+# Needs `enabled`. 0 = off.
+max_identical_rounds = 10
 
 # One shared profile for gate, resolve, plan, condense, and learning.
 [supervisor.model]

@@ -295,11 +295,12 @@ inside a session with:
 /run reduce
 ```
 
-### In-Session Workflows Removed
+### Workflow Configuration Migration
 
 `[[workflows]]` in the main config and role `workflow` fields are not the current workflow schema.
-`/workflow` is unsupported by shared session dispatch. Port the workflow to a standalone file using
-[Workflows](../usage/09-workflows.md). Once you have saved that file as `workflow.toml` in your project:
+Port legacy workflow definitions to standalone files using [Workflows](../usage/09-workflows.md).
+You can run a file from the shell with `octomind workflow <file.toml>` or use `/workflow <name> <input>`
+inside a session for tap workflows. Once you have saved a standalone file as `workflow.toml` in your project:
 
 ```bash
 octomind workflow workflow.toml --dry-run

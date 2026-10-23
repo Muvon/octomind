@@ -8,8 +8,9 @@ covers sequential steps and a bounded review loop for users writing local workfl
 Use the external `octomind workflow <file.toml>` CLI to chain multiple independent `octomind run` invocations. Each step
 is its own session with its own role, model, and tools. Outputs flow between steps via `{{step_name}}` substitution.
 
-Run workflows from the shell with the `workflow` subcommand; the shared session command dispatcher does not implement
-`/workflow`. Install and authenticate Octomind before running the examples:
+Run standalone workflow files from the shell with the `workflow` subcommand. Inside a session,
+`/workflow <name> <input>` runs a tap workflow. See [Workflows](../usage/09-workflows.md) for both entry points.
+Install and authenticate Octomind before running the examples:
 
 ```bash
 octomind login

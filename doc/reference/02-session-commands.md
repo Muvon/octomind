@@ -496,7 +496,7 @@ whether to continue; a declined check, exceeded request limit, or check error pr
 /run reduce Summarize the current implementation decisions
 ```
 
-> **Multi-step workflows** are no longer a session command. Use the external CLI instead: `octomind workflow <file.toml>` — see [Workflows](../usage/09-workflows.md).
+> **Multi-step workflows** are available both from the shell with `octomind workflow <file.toml>` and inside a session with `/workflow <name> <input>` for tap workflows. See [Workflows](../usage/09-workflows.md) for both entry points.
 
 ### `/prompt [NAME]`
 

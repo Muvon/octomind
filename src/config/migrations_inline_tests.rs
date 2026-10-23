@@ -933,7 +933,7 @@ fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 		let original = format!("version = 21\n# custom decision settings\n[supervisor.evaluate]\n# custom decision model\nmodel = \"typesafe:jev-latest\" # preserve me\nrecall = true\nskills = true\ncapabilities = true\ncompression = true\n{flags}");
 		let migration = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(value["version"].as_integer(), Some(22));
+		assert_eq!(value["version"].as_integer(), Some(i64::from(CURRENT_CONFIG_VERSION)));
 		assert!(value
 			.get("supervisor")
 			.and_then(|supervisor| supervisor.get("evaluate"))
@@ -1011,4 +1011,22 @@ fn v22_rejects_malformed_values_and_conflicting_tables() {
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
 	assert_eq!(value["decision"]["supervisor"].as_bool(), Some(true));
+}
+
+#[test]
+fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
+	let migration = plan().migrate("version = 22\n", DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(migration.from_version, 22);
+	assert_eq!(
+		value["commit_attribution"].as_str(),
+		Some("Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>")
+	);
+
+	let migration = plan()
+		.migrate("version = 22\ncommit_attribution = \"\"\n", DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(value["commit_attribution"].as_str(), Some(""));
 }

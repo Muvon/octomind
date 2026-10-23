@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 22
+version = 23
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -39,6 +39,11 @@ sandbox = false
 # Also switchable per-run with OCTOMIND_TELEMETRY=0, and DO_NOT_TRACK=1 is
 # honoured before either.
 telemetry = true
+
+# Git trailer the agent appends to commits it writes on its own. The user's
+# instructions about attribution always win. Empty = no trailer and no
+# instruction in the system prompt.
+commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERFORMANCE & LIMITS

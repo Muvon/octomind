@@ -74,7 +74,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 22;
+pub const CURRENT_CONFIG_VERSION: u32 = 23;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -416,6 +416,10 @@ pub struct Config {
 	// never had the key; DO_NOT_TRACK=1 and OCTOMIND_TELEMETRY=0 override it.
 	#[serde(default = "default_telemetry")]
 	pub telemetry: bool,
+
+	// Git trailer the agent appends to commits it writes on its own initiative.
+	// Empty disables it and drops the instruction from the system prompt.
+	pub commit_attribution: String,
 
 	// Capability provider overrides (capability_name → provider_name)
 	// Empty by default — uses "default" provider for each capability.

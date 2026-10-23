@@ -71,15 +71,17 @@ octomind config --validate
 | `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
+| `commit_attribution` | string | `"Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"` | Git trailer the agent appends to commits it writes, unless the user says otherwise about attribution. `""` = no trailer and no system-prompt instruction. |
 
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 22
+version = 23
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
 telemetry = true
+commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 ```
 
 ## Performance & Limits

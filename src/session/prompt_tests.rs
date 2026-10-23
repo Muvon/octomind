@@ -69,3 +69,23 @@ fn compression_hint_replaces_stacked_legacy_blocks() {
 	add_compression_hints_to_prompt(&mut expected, &stats);
 	assert_eq!(prompt, expected);
 }
+
+fn template_config() -> crate::config::Config {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+	config.build_role_map();
+	config
+}
+
+#[tokio::test]
+async fn commit_attribution_is_appended_only_when_configured() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let mut config = template_config();
+	// `task_refiner` has no servers, so no MCP lookup runs.
+	let prompt = create_system_prompt(dir.path(), &config, "task_refiner").await;
+	assert!(prompt.contains(&format!("{}\n</commit-attribution>", config.commit_attribution)));
+
+	config.commit_attribution = "  ".to_string();
+	let prompt = create_system_prompt(dir.path(), &config, "task_refiner").await;
+	assert!(!prompt.contains("<commit-attribution>"));
+}

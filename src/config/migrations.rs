@@ -154,9 +154,19 @@ fn plan() -> MigrationPlan {
 				to: 22,
 				apply: move_v22_decision,
 			},
+			VersionMigration {
+				from: 22,
+				to: 23,
+				apply: add_v23_commit_attribution,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required root `commit_attribution` trailer; an existing value is kept.
+fn add_v23_commit_attribution(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	merge_missing(document.as_table_mut(), template.as_table(), "commit_attribution")
 }
 
 /// Move calibrated routing without losing legacy switches or accepting conflicts.

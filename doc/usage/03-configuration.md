@@ -58,11 +58,12 @@ The shipped root settings begin with the following. Edit these existing keys bef
 them beneath `[model]`. Leave `version` to the migration system.
 
 ```toml
-version = 22
+version = 23
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
 telemetry = true
+commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 
 mcp_response_tokens_threshold = 20000
 max_session_tokens_threshold = 200000

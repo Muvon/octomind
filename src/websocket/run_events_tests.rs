@@ -126,7 +126,7 @@ fn live_summary_returns_only_latest_usage_even_after_truncation() {
 	let request = request();
 	let summary = RunLogMessage {
 		summary: true,
-		..request()
+		..request.clone()
 	};
 	let mut events = RunEvents::default();
 	events

@@ -67,8 +67,8 @@ impl<'a> CommandCompleter<'a> {
 		Self { commands, config, role }
 	}
 
-	/// Get available context filters for /context command
-	fn get_context_filters() -> Vec<&'static str> {
+	/// Get available context filters for /context command — also the set `handle_context` accepts
+	pub(crate) fn get_context_filters() -> Vec<&'static str> {
 		vec!["all", "assistant", "user", "tool", "large"]
 	}
 

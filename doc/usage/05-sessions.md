@@ -410,10 +410,9 @@ As sessions grow, manage context to control costs:
 | `/context assistant` | Show only assistant messages |
 | `/context user` | Show only user messages |
 | `/context tool` | Show only tool messages |
-| `/context system` | Show only system messages |
 | `/context large` | Show messages whose content exceeds 1000 UTF-8 bytes |
 
-An unrecognized filter silently falls back to showing all messages.
+An unrecognized filter returns an error that lists the valid filters.
 
 Automatic compression also runs as sessions grow. See [Compression](08-compression.md).
 

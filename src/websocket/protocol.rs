@@ -213,6 +213,10 @@ pub struct RunLogMessage {
 	pub run_id: String,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub request_id: Option<String>,
+	/// Reply with status and only the run's latest `usage` event instead of the whole log.
+	/// Older servers ignore the field and send the full log.
+	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
+	pub summary: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

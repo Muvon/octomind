@@ -245,6 +245,7 @@ async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
 		session_id: parent.clone(),
 		run_id: id.into(),
 		request_id: None,
+		summary: false,
 	};
 	let emitter = tokio::spawn(crate::session::context::with_session_id(parent.clone(), async move {
 		for _ in 0..256 {
@@ -292,6 +293,7 @@ async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence()
 			session_id: parent.clone(),
 			run_id: id.into(),
 			request_id: None,
+			summary: false,
 		};
 		for (turn, terminal) in [TapJobStatus::Done, TapJobStatus::Failed, TapJobStatus::Cancelled]
 			.into_iter()
@@ -395,6 +397,7 @@ async fn concurrent_same_id_resume_claims_exactly_one_run() {
 			session_id: parent.clone(),
 			run_id: id.into(),
 			request_id: None,
+			summary: false,
 		};
 		let snapshot = snapshot_run_log(&request).unwrap();
 		assert_eq!(snapshot.seq, 1, "only the winner may begin the stream");

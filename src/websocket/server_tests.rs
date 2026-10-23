@@ -4489,6 +4489,7 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 			session_id: parent.clone(),
 			run_id: run_id.into(),
 			request_id: None,
+			summary: false,
 		};
 		let snapshot = tap_runs::snapshot_run_log(&request).unwrap();
 		assert_eq!(snapshot.source, "live");
@@ -4532,6 +4533,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 		session_id: "disk-parent".into(),
 		run_id: run_id.into(),
 		request_id: Some("disk-request".into()),
+		summary: false,
 	};
 	handle_run_log(request.clone(), &sender).await.unwrap();
 	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();

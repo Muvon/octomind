@@ -28,10 +28,15 @@ struct EventBuffer {
 	events: VecDeque<RunEvent>,
 	bytes: usize,
 	truncated: bool,
+	/// Latest `Usage`, kept apart from `events` so truncation never drops it.
+	usage: Option<RunEvent>,
 }
 
 impl EventBuffer {
 	fn push(&mut self, event: RunEvent) {
+		if matches!(event, RunEvent::Usage { .. }) {
+			self.usage = Some(event.clone());
+		}
 		self.bytes += content_size(&event);
 		match (self.events.back_mut(), &event) {
 			(Some(RunEvent::Assistant { content }), RunEvent::Assistant { content: chunk })
@@ -139,8 +144,12 @@ impl RunEvents {
 			status: "running".to_string(),
 			source: "live".to_string(),
 			seq: run.seq,
-			truncated: buffer.truncated,
-			events: buffer.events.iter().cloned().collect(),
+			truncated: buffer.truncated && !request.summary,
+			events: if request.summary {
+				buffer.usage.iter().cloned().collect()
+			} else {
+				buffer.events.iter().cloned().collect()
+			},
 			error: None,
 			request_id: request.request_id.clone(),
 		})
@@ -181,7 +190,16 @@ fn replay_disk(
 			continue;
 		}
 		snapshot = current;
-		snapshot.events = events?;
+		let mut events = events?;
+		if request.summary {
+			// disk_events appends the session totals last, when known.
+			events = events
+				.into_iter()
+				.rfind(|event| matches!(event, RunEvent::Usage { .. }))
+				.into_iter()
+				.collect();
+		}
+		snapshot.events = events;
 		return Ok(snapshot);
 	}
 }
@@ -234,6 +252,18 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
 			}),
 			_ => {}
 		}
+	}
+	// Same totals the live stream's `octomind.usage` carries: total_cost includes the
+	// external spend (the run's own sub-delegations, supervisor) folded in before the
+	// last STATS/SUMMARY write. All-zero totals mean nothing was recorded, and a $0
+	// usage event would claim a cost that is not known.
+	let info = &session.info;
+	if info.total_cost > 0.0 || info.input_tokens > 0 || info.output_tokens > 0 {
+		events.push(RunEvent::Usage {
+			cost: info.total_cost,
+			input_tokens: info.input_tokens,
+			output_tokens: info.output_tokens,
+		});
 	}
 	Ok(events)
 }

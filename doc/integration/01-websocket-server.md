@@ -443,7 +443,11 @@ are skipped. Disk replay reflects the loader's restored conversation (including 
 Persisted tool messages currently have no success field, so disk `tool_result` events omit `success`; clients must not
 interpret absence as success. `truncated` is `false`. Status comes from the parent's registry when known, otherwise
 `unknown`; `role` is omitted when unknown. `seq` is the last observed sequence for a retained run record, or 0 without
-one. `request_id` is echoed when supplied.
+one. `request_id` is echoed when supplied. When the session recorded usage, a final `usage` event carries its totals
+(cost includes the run's own sub-delegations); a session with no recorded usage emits none.
+
+With `"summary":true`, the reply has the same fields but `events` holds only the latest `usage` event (empty when
+none is known) and `truncated` is `false`. Servers that predate the field ignore it and send the full log.
 
 Run IDs must match the generated `tap-<role-slug>-<6 lowercase hex digits>` form. Validation and replay failures use a
 `run_log` reply with an `error` field, never a turn-level `error` frame. Invalid IDs are rejected without an `ack`;

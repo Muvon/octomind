@@ -20,6 +20,7 @@ fn request() -> RunLogMessage {
 		session_id: "parent".into(),
 		run_id: "tap-developer-cto-abcdef".into(),
 		request_id: Some("replay".into()),
+		summary: false,
 	}
 }
 
@@ -112,6 +113,103 @@ fn buffer_caps_content_and_drops_oldest_even_for_one_oversized_chunk() {
 	assert_eq!(buffer.bytes, 6);
 }
 
+fn usage(cost: f64, input_tokens: u64, output_tokens: u64) -> RunEvent {
+	RunEvent::Usage {
+		cost,
+		input_tokens,
+		output_tokens,
+	}
+}
+
+#[test]
+fn live_summary_returns_only_latest_usage_even_after_truncation() {
+	let request = request();
+	let summary = RunLogMessage {
+		summary: true,
+		..request()
+	};
+	let mut events = RunEvents::default();
+	events
+		.begin(&request.session_id, &request.run_id, "developer:cto")
+		.unwrap();
+	let reply = events.snapshot(&summary).unwrap();
+	assert!(reply.events.is_empty(), "no usage reported yet");
+	for event in [
+		usage(0.1, 10, 2),
+		RunEvent::Assistant { content: "a".into() },
+		usage(0.2, 20, 4),
+		RunEvent::Assistant {
+			content: "b".repeat(MAX_RUN_CONTENT),
+		},
+	] {
+		events.emit(&request.session_id, &request.run_id, event).unwrap();
+	}
+	let full = events.snapshot(&request).unwrap();
+	assert!(full.truncated);
+	assert!(!full.events.iter().any(|event| matches!(event, RunEvent::Usage { .. })));
+	let reply = events.snapshot(&summary).unwrap();
+	assert_eq!(
+		(reply.status.as_str(), reply.source.as_str(), reply.seq),
+		("running", "live", 5)
+	);
+	assert_eq!(reply.role.as_deref(), Some("developer:cto"));
+	assert_eq!(reply.request_id.as_deref(), Some("replay"));
+	assert!(!reply.truncated);
+	assert_eq!(reply.events, vec![usage(0.2, 20, 4)]);
+}
+
+#[test]
+fn run_log_summary_is_optional_on_the_wire() {
+	let request: RunLogMessage =
+		serde_json::from_value(json!({"session_id":"parent", "run_id":"tap-developer-cto-abcdef"})).unwrap();
+	assert!(!request.summary);
+	assert!(serde_json::to_value(&request).unwrap().get("summary").is_none());
+	let request: RunLogMessage =
+		serde_json::from_value(json!({"session_id":"parent", "run_id":"tap-developer-cto-abcdef", "summary":true}))
+			.unwrap();
+	assert!(request.summary);
+}
+
+/// Records totals the way a real run does: SUMMARY on save, then a later STATS checkpoint.
+fn record_stats(path: &Path, session: &mut crate::session::Session) {
+	session.info.total_cost = 0.5;
+	session.info.input_tokens = 100;
+	session.info.output_tokens = 20;
+	session.save().unwrap();
+	// STATS older than the last SUMMARY are ignored on load; a far-future one always applies.
+	crate::session::append_to_session_file(
+		&path.to_path_buf(),
+		&json!({"type":"STATS", "timestamp": 4_000_000_000u64, "total_cost":0.75, "input_tokens":150, "output_tokens":30})
+			.to_string(),
+	)
+	.unwrap();
+}
+
+#[test]
+fn disk_replay_appends_recorded_session_totals_as_final_usage() {
+	let dir = tempfile::tempdir().unwrap();
+	let id = "tap-developer-cto-abcdef";
+	let path = dir.path().join(format!("{id}.jsonl.zst"));
+	let mut session = crate::session::Session::new(id.into(), "ollama:fake-model".into());
+	session.session_file = Some(path.clone());
+	session.save().unwrap();
+	crate::session::append_to_session_file(
+		&path,
+		&serde_json::to_string(&crate::session::Message {
+			role: "user".into(),
+			content: "task".into(),
+			..Default::default()
+		})
+		.unwrap(),
+	)
+	.unwrap();
+	record_stats(&path, &mut session);
+	assert_eq!(
+		disk_events(dir.path(), id).unwrap(),
+		vec![RunEvent::Prompt { content: "task".into() }, usage(0.75, 150, 30)]
+	);
+}
+
 #[test]
 fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 	let dir = tempfile::tempdir().unwrap();
@@ -158,6 +256,7 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 		crate::session::append_to_session_file(&path, &serde_json::to_string(&message).unwrap()).unwrap();
 	}
 	let events = disk_events(dir.path(), id).unwrap();
+	// The session never recorded stats (all-zero totals), so no usage event is claimed.
 	assert_eq!(
 		serde_json::to_value(events).unwrap(),
 		json!([
@@ -347,6 +446,53 @@ async fn disk_replay_retries_when_resumed_turn_finishes_during_read() {
 				RunEvent::Prompt {
 					content: "resumed task".into()
 				},
+			]
+		);
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
+}
+
+#[tokio::test]
+async fn disk_summary_returns_only_session_totals_with_status_intact() {
+	let request = RunLogMessage {
+		session_id: "replay-disk-summary".into(),
+		summary: true,
+		..request()
+	};
+	let dir = tempfile::tempdir().unwrap();
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		let path = prepare_finished_replay_run(&request, dir.path());
+		let captured = tap_runs::snapshot_run_log(&request).unwrap();
+		let empty = replay_disk(&request, captured.clone(), || disk_events(dir.path(), &request.run_id)).unwrap();
+		assert!(empty.events.is_empty(), "no recorded stats, no usage");
+		let mut session = crate::session::Session::new(request.run_id.clone(), "ollama:fake-model".into());
+		session.session_file = Some(path.clone());
+		record_stats(&path, &mut session);
+		let reply = replay_disk(&request, captured, || disk_events(dir.path(), &request.run_id)).unwrap();
+		assert_eq!(
+			(reply.status.as_str(), reply.source.as_str(), reply.seq),
+			("done", "disk", 0)
+		);
+		assert_eq!(reply.role.as_deref(), Some("developer:cto"));
+		assert!(!reply.truncated);
+		assert_eq!(reply.events, vec![usage(0.75, 150, 30)]);
+		let full = replay_disk(
+			&RunLogMessage {
+				summary: false,
+				..request.clone()
+			},
+			reply,
+			|| disk_events(dir.path(), &request.run_id),
+		)
+		.unwrap();
+		assert_eq!(
+			full.events,
+			vec![
+				RunEvent::Prompt {
+					content: "old task".into()
+				},
+				usage(0.75, 150, 30)
 			]
 		);
 	})

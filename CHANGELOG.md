@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.60.1] - 2026-10-23
+
+### 📋 Release Summary
+
+Telemetry now classifies Cargo target builds correctly.
+
+### 🐛 Bug Fixes & Stability
+
+- **telemetry**: classify cargo target builds correctly `71568825`
+
 ## [0.60.0] - 2026-10-22
 
 ### 📋 Release Summary

@@ -84,6 +84,14 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		</output-rules>",
 	);
 
+	prompt.push_str(
+		"\n<commit-attribution>\n\
+		When you create a git commit and the user has not specified its message, trailers, or attribution, end the commit message with a blank line followed by this trailer:\n\
+		Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>\n\
+		When the user does specify any of them, follow their instructions instead.\n\
+		</commit-attribution>",
+	);
+
 	prompt.push_str("\n</important>");
 
 	prompt

@@ -848,16 +848,30 @@ async fn test_gate_silent_when_supervisor_master_switch_off() {
 /// into the loop. The script has a spare entry that only such a re-run (or a
 /// verifier call) would consume.
 #[tokio::test]
+#[cfg(unix)]
 async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
+	use std::os::unix::fs::PermissionsExt;
 	let _guard = ENV_LOCK.lock().await;
+	// A read-only local tool: a write tool's repeat counts as progress, never as a loop.
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let tools = tmp.path().join(".agents/tools");
+	std::fs::create_dir_all(&tools).expect("create tools dir");
+	let script = tools.join("probe");
+	std::fs::write(
+		&script,
+		"#!/bin/sh\n# @description Print a fixed line.\nprintf 'False\\n'\n",
+	)
+	.expect("write tool script");
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod tool script");
+
 	let sid = "api-exec-loop-stop".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::init_session_services("assistant");
-		let list = serde_json::json!({"command": "list"});
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		let url = spawn_stub(vec![
-			tool_call_response("schedule", list.clone()),
-			tool_call_response("schedule", list.clone()),
-			tool_call_response("schedule", list),
+			tool_call_response("probe", serde_json::json!({})),
+			tool_call_response("probe", serde_json::json!({})),
+			tool_call_response("probe", serde_json::json!({})),
 			progressing_response("never requested"),
 		])
 		.await;
@@ -865,10 +879,15 @@ async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
 
 		let mut config = supervised_config();
 		config.supervisor.max_identical_rounds = 3;
-		crate::mcp::tool_map::initialize_tool_map(&config)
-			.await
-			.expect("init tool map");
-		let mut session = fake_session("list my schedules");
+		// The tool loop needs at least one configured MCP server.
+		config.mcp.servers.push(crate::config::McpServerConfig::Builtin {
+			name: "core".to_string(),
+			timeout_seconds: 300,
+			tools: vec![],
+			auto_bind: None,
+		});
+		let mut session = fake_session("check the library");
+		session.session.info.name = sid.clone();
 		session.completion_gate_eligible = true;
 
 		run_turn(&mut session, &config).await.expect("loop stop ends the turn");

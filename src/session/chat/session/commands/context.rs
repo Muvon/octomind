@@ -26,6 +26,15 @@ pub fn handle_context(session: &ChatSession, params: &[&str]) -> Result<CommandR
 		params[0].to_lowercase()
 	};
 
+	// Same list completion offers, so an accepted filter is always one the CLI can render.
+	let filters = crate::session::chat_helper::CommandCompleter::get_context_filters();
+	if !filters.contains(&filter.as_str()) {
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Unknown /context filter '{}'", filter),
+			context: Some(serde_json::json!({ "valid": filters })),
+		})));
+	}
+
 	// Build JSON output with actual messages
 	let filtered_messages: Vec<serde_json::Value> = session
 		.session
@@ -36,9 +45,8 @@ pub fn handle_context(session: &ChatSession, params: &[&str]) -> Result<CommandR
 			"assistant" => msg.role == "assistant",
 			"user" => msg.role == "user",
 			"tool" => msg.role == "tool",
-			"system" => msg.role == "system",
 			"large" => msg.content.len() > 1000,
-			_ => true,
+			_ => false,
 		})
 		.map(|msg| {
 			serde_json::json!({

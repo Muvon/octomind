@@ -347,10 +347,9 @@ View session context (message history). Filters:
 - `assistant` — Only assistant messages
 - `user` — Only user messages
 - `tool` — Only messages with role `tool`; assistant tool-call messages require `assistant` or `all`
-- `system` — Only system messages
 - `large` — Only messages whose content exceeds 1000 bytes
 
-An unrecognized filter value silently falls back to `all`.
+An unrecognized filter value returns an error that lists the valid filters.
 
 ```text
 /context

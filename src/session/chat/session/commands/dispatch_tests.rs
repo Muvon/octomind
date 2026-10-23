@@ -246,6 +246,49 @@ async fn test_effort_same_level_is_a_noop() {
 }
 
 #[tokio::test]
+async fn test_context_rejects_unknown_filters() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	session.add_user_message("first question").expect("user");
+
+	// `system` was accepted here but never offered by completion or rendered by the CLI.
+	for input in ["/context foo", "/context system"] {
+		let result = dispatch(&mut session, &mut config, input)
+			.await
+			.expect("context dispatches");
+		let CommandResult::HandledWithOutput(output) = result else {
+			panic!("expected typed output for {input}");
+		};
+		let CommandOutput::Error { error, context } = *output else {
+			panic!("expected an error for {input}");
+		};
+		assert!(error.contains("Unknown /context filter"), "{error}");
+		assert_eq!(
+			context.expect("context")["valid"],
+			serde_json::json!(["all", "assistant", "user", "tool", "large"])
+		);
+	}
+
+	// A known filter still returns the messages, case-insensitively.
+	let result = dispatch(&mut session, &mut config, "/context USER")
+		.await
+		.expect("context dispatches");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed output");
+	};
+	let CommandOutput::Context {
+		filter,
+		filtered_messages,
+		..
+	} = *output
+	else {
+		panic!("expected Context output");
+	};
+	assert_eq!(filter, "user");
+	assert_eq!(filtered_messages.len(), 1);
+}
+
+#[tokio::test]
 async fn test_display_commands_run_without_panicking() {
 	// Populate the session so info/context/report have real content to render
 	let mut session = ChatSession::for_tests(Vec::new());

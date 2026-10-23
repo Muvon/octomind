@@ -76,7 +76,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 23
+version = 24
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
@@ -632,11 +632,13 @@ guide](../usage/14-supervisor.md) for how the mechanics fit together. **Strict:*
 required keys must be present — a missing section or key is a hard parse error, not a silent default.
 
 When the supervisor is active, deterministic detectors, goal recitation, and check-after-mutation pre-gates use fixed
-internal thresholds. The `enabled` switches below control their respective model-driven mechanics.
+internal thresholds. The `enabled` switches below control their respective model-driven mechanics. Detector hints are
+advisory; `max_identical_rounds` is the one hard stop.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
+| `max_identical_rounds` | usize | `10` | End the turn when this many tool rounds in a row repeat the same calls and get the same results. The turn's final answer becomes a notice naming the repeated call and its result, with no further model request and no verify-gate re-run. `0` = off. Needs `enabled` |
 
 ### `[supervisor.model]`
 
@@ -749,6 +751,7 @@ model-authored summaries. Full originals are spilled to session files first when
 ```toml
 [supervisor]
 enabled = true
+max_identical_rounds = 10
 
 [supervisor.model]
 name = "octohub:auto"

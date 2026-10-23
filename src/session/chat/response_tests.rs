@@ -657,6 +657,110 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 
 #[tokio::test]
 #[cfg(unix)]
+async fn test_process_response_loop_stop_ends_the_turn_without_another_request() {
+	let _guard = ENV_LOCK.lock().await;
+	// The 2026-10-23 runaway shape: the model re-issues one call that keeps
+	// returning the same short receipt. Round 1 comes from params, rounds 2-3
+	// from the stub; with the limit at 3 the turn must end on round 3, so the
+	// queued final answer is never requested.
+	let url = spawn_stub(vec![
+		tool_call_response("loopdump", json!({})),
+		tool_call_response("loopdump", json!({})),
+		final_response("never requested"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		"loopdump",
+		"#!/bin/sh\n# @description Print a fixed line.\nprintf 'False\\n'\n",
+	);
+
+	let mut config = config_with_core_server(fake_provider_config());
+	config.supervisor.enabled = true;
+	config.supervisor.plan.enabled = false;
+	config.supervisor.max_identical_rounds = 3;
+
+	let session_id = "resp-loop-stop-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = fake_session("keep checking");
+		session.session.info.name = session_id.clone();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let sink = recording_sink();
+
+		let params = ResponseProcessingParams {
+			content: String::new(),
+			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+			tool_calls: Some(vec![crate::mcp::McpToolCall {
+				tool_name: "loopdump".to_string(),
+				parameters: json!({}),
+				tool_id: "c1".to_string(),
+			}]),
+			thinking: None,
+			finish_reason: Some("tool_calls".to_string()),
+			response_id: None,
+			chat_session: &mut session,
+			config: &config,
+			role: "assistant",
+			operation_cancelled: rx,
+			sink: sink.clone(),
+			mode: OutputMode::Jsonl,
+		};
+
+		process_response(params).await.expect("loop stop ends the turn cleanly");
+
+		let roles: Vec<&str> = session.session.messages.iter().map(|m| m.role.as_str()).collect();
+		assert_eq!(
+			roles,
+			vec![
+				"user",
+				"assistant",
+				"tool",
+				"assistant",
+				"tool",
+				"assistant",
+				"tool",
+				"assistant"
+			],
+			"every tool call is answered and the stop notice is the final answer"
+		);
+		let last = session.session.messages.last().expect("final message");
+		assert!(last
+			.content
+			.starts_with("Stopped by the supervisor: the last 3 tool rounds"));
+		assert!(last.content.contains("Repeated: `loopdump`"));
+		assert!(last.content.contains("Result: False"));
+		assert!(last.tool_calls.is_none());
+		assert!(!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content == "never requested" || m.content.starts_with("<pay-attention>")));
+		assert!(session.steer_pending.is_none(), "no hint is carried into the next turn");
+		assert_eq!(session.turn_answers, vec![last.content.clone()]);
+
+		let messages = sink.0.lock().expect("sink lock");
+		assert!(messages
+			.iter()
+			.any(|m| matches!(m, ServerMessage::Assistant(a) if a.content.starts_with("Stopped by the supervisor"))));
+		assert!(
+			matches!(messages.last(), Some(ServerMessage::Cost(_))),
+			"the turn closes with its cost frame like any other"
+		);
+		drop(messages);
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+#[cfg(unix)]
 async fn test_process_response_supervisor_no_progress_fires_on_reworded_calls() {
 	let _guard = ENV_LOCK.lock().await;
 	// The 2026-10-06 CI brief runaway shape: every round widens one argument

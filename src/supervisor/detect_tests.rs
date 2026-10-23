@@ -400,6 +400,67 @@ fn loop_window_resets_on_a_new_result() {
 }
 
 #[test]
+fn identical_rounds_counts_unchanged_repeats_and_resets_on_anything_new() {
+	let mut d = Detectors::default();
+	let a = d
+		.note_call("shell", &json!({"command": "check"}), "False", false, false)
+		.0;
+	let b = d
+		.note_call("shell", &json!({"command": "other"}), "False", false, false)
+		.0;
+	assert_eq!(d.identical_rounds(), 0);
+	d.record_round_signals(&[a], true, 3, 9);
+	assert_eq!(d.identical_rounds(), 1, "the first occurrence counts");
+	d.record_round_signals(&[a], false, 3, 9);
+	d.record_round_signals(&[a], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 3);
+	// Same round but something in it was new: not an unchanged repeat.
+	d.record_round_signals(&[a], true, 3, 9);
+	assert_eq!(d.identical_rounds(), 1);
+	// A different call restarts the count.
+	d.record_round_signals(&[b], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 1);
+	d.record_round_signals(&[b], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 2);
+	// A new user turn starts from nothing.
+	d.reset_streak();
+	assert_eq!(d.identical_rounds(), 0);
+	d.record_round_signals(&[b], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 1);
+}
+
+#[test]
+fn loop_stop_note_names_the_repeated_call_and_its_result() {
+	let call = crate::mcp::McpToolCall {
+		tool_name: "shell".to_string(),
+		parameters: json!({"command": "test -e compat/lib.so"}),
+		tool_id: "c1".to_string(),
+	};
+	let result = crate::mcp::McpToolResult::success("shell".to_string(), "c1".to_string(), "False".to_string());
+	let note = loop_stop_note(10, &[call], &[result]);
+	assert!(note.starts_with("Stopped by the supervisor: the last 10 tool rounds"));
+	assert!(note.contains("Repeated: `shell` {\"command\":\"test -e compat/lib.so\"}"));
+	assert!(note.contains("Result: False"));
+	assert!(note.ends_with("continuing needs a different approach."));
+
+	let long = crate::mcp::McpToolCall {
+		tool_name: "shell".to_string(),
+		parameters: json!({"command": "x".repeat(1000)}),
+		tool_id: "c2".to_string(),
+	};
+	let note = loop_stop_note(10, &[long], &[]);
+	let repeated = note
+		.lines()
+		.find(|line| line.starts_with("Repeated:"))
+		.expect("call line");
+	assert!(
+		repeated.chars().count() < 400,
+		"call preview is capped: {}",
+		repeated.len()
+	);
+}
+
+#[test]
 fn zero_thresholds_disable_their_signals() {
 	let mut d = Detectors::default();
 	// loop_threshold 0: identical novel rounds never fire Loop.

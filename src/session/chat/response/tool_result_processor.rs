@@ -68,53 +68,12 @@ pub async fn process_tool_results(
 	// 🔍 PERFORMANCE DEBUG: Track where time is spent during tool result processing
 	let processing_start = std::time::Instant::now();
 
-	// IMPROVED APPROACH: Add tool results as proper "tool" role messages
-	// This follows the standard OpenAI/Anthropic format and avoids double-serialization
 	// CRITICAL FIX: Check cache threshold after EACH tool result, not after all
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let supports_caching = crate::session::model_supports_caching(&chat_session.model);
 
 	let mut cache_check_time = 0u128;
-
-	for tool_result in &tool_results {
-		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper.
-		// Deduplication already ran upstream in execute_tools_parallel (before display),
-		// where a duplicate was converted into an error result carrying the placeholder.
-		// Here we just extract and pass the body through.
-		let tool_content = extract_tool_content(tool_result);
-
-		// (Resource links a tool advertised — detached background jobs — are
-		// registered as pending in the MCP client the moment the tool returns,
-		// before the job can complete; see `mcp::client::call_tool`.)
-
-		// Apply global MCP response token truncation before adding to session
-		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
-			&tool_content,
-			config.mcp_response_tokens_threshold,
-			&tool_result.tool_name,
-		);
-		// Truncation marker is rendered inline on each tool's close line in
-		// `display_tool_success` (e.g. `╰ ✓ view 55ms · 6.9K tokens · truncated
-		// to 4K tokens`). Re-printing a separate `⚠️ … truncated …` line here
-		// would duplicate the warning and break the framed block.
-		let _ = was_truncated;
-
-		// Use the new add_tool_message method which handles token tracking properly
-		// NOTE: Compression intentionally does NOT run mid-loop here. Compressing while
-		// we are still adding tool_results for the current assistant's tool_calls would
-		// orphan the tool_use blocks (drain the parent assistant message) and leave
-		// subsequent tool_results with no matching tool_use — the API would then reject
-		// the follow-up request. Compression is safely handled after the full batch is
-		// added (see check_and_compress_conversation call below) and before the next
-		// API request (see api_prep.rs).
-		chat_session.add_tool_message(
-			&tool_content,
-			&tool_result.tool_id,
-			&tool_result.tool_name,
-			config,
-			tool_result.extract_images(),
-		)?;
-	}
+	add_tool_results(&tool_results, chat_session, config)?;
 
 	// External plan manager: a sparse hidden signal rides with the specialist's
 	// normal action batch. Reconcile only after results exist, then inject the
@@ -375,6 +334,58 @@ pub async fn process_tool_results(
 			Err(e)
 		}
 	}
+}
+
+/// Append one round's tool results to the session as `tool` messages, each capped
+/// by `mcp_response_tokens_threshold`. Every tool call in the transcript must be
+/// answered, including on a round that ends the turn without a follow-up call.
+pub fn add_tool_results(
+	tool_results: &[crate::mcp::McpToolResult],
+	chat_session: &mut ChatSession,
+	config: &Config,
+) -> Result<()> {
+	// IMPROVED APPROACH: Add tool results as proper "tool" role messages
+	// This follows the standard OpenAI/Anthropic format and avoids double-serialization
+	for tool_result in tool_results {
+		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper.
+		// Deduplication already ran upstream in execute_tools_parallel (before display),
+		// where a duplicate was converted into an error result carrying the placeholder.
+		// Here we just extract and pass the body through.
+		let tool_content = extract_tool_content(tool_result);
+
+		// (Resource links a tool advertised — detached background jobs — are
+		// registered as pending in the MCP client the moment the tool returns,
+		// before the job can complete; see `mcp::client::call_tool`.)
+
+		// Apply global MCP response token truncation before adding to session
+		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
+			&tool_content,
+			config.mcp_response_tokens_threshold,
+			&tool_result.tool_name,
+		);
+		// Truncation marker is rendered inline on each tool's close line in
+		// `display_tool_success` (e.g. `╰ ✓ view 55ms · 6.9K tokens · truncated
+		// to 4K tokens`). Re-printing a separate `⚠️ … truncated …` line here
+		// would duplicate the warning and break the framed block.
+		let _ = was_truncated;
+
+		// Use the new add_tool_message method which handles token tracking properly
+		// NOTE: Compression intentionally does NOT run mid-loop here. Compressing while
+		// we are still adding tool_results for the current assistant's tool_calls would
+		// orphan the tool_use blocks (drain the parent assistant message) and leave
+		// subsequent tool_results with no matching tool_use — the API would then reject
+		// the follow-up request. Compression is safely handled after the full batch is
+		// added (see check_and_compress_conversation call below) and before the next
+		// API request (see api_prep.rs).
+		chat_session.add_tool_message(
+			&tool_content,
+			&tool_result.tool_id,
+			&tool_result.tool_name,
+			config,
+			tool_result.extract_images(),
+		)?;
+	}
+	Ok(())
 }
 
 // Extract tool content from tool result

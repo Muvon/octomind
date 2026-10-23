@@ -842,6 +842,58 @@ async fn test_gate_silent_when_supervisor_master_switch_off() {
 	.await;
 }
 
+/// The loop hard stop is the turn's last word: the same call returning the same
+/// result `max_identical_rounds` times ends the turn on the stop notice, and
+/// neither the unfinished-hand-back pre-gate nor the verify-gate re-runs it back
+/// into the loop. The script has a spare entry that only such a re-run (or a
+/// verifier call) would consume.
+#[tokio::test]
+async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-loop-stop".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let list = serde_json::json!({"command": "list"});
+		let url = spawn_stub(vec![
+			tool_call_response("schedule", list.clone()),
+			tool_call_response("schedule", list.clone()),
+			tool_call_response("schedule", list),
+			progressing_response("never requested"),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = supervised_config();
+		config.supervisor.max_identical_rounds = 3;
+		crate::mcp::tool_map::initialize_tool_map(&config)
+			.await
+			.expect("init tool map");
+		let mut session = fake_session("list my schedules");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config).await.expect("loop stop ends the turn");
+
+		assert_eq!(session.session.info.total_api_calls, 3, "no request after the stop");
+		let last = session.session.messages.last().expect("final assistant message");
+		assert_eq!(last.role, "assistant");
+		assert!(last
+			.content
+			.starts_with("Stopped by the supervisor: the last 3 tool rounds"));
+		assert!(!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("never requested")));
+		assert_eq!(session.gate_iterations, crate::supervisor::gate::MAX_ITERATIONS);
+		assert_eq!(session.nudge_iterations, crate::supervisor::gate::MAX_ITERATIONS);
+		assert!(session.gate_failed, "a stopped loop is never a verified trajectory");
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
 /// A `done` claim the verifier accepts: gate state resets and exactly one agent
 /// exchange was billed. Nothing was changed or checked, so the pass rests on
 /// the verifier's reading alone and learning labels the trajectory Unknown.

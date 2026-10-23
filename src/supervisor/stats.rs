@@ -92,6 +92,8 @@ struct Stats {
 	steer_loop: u64,
 	steer_no_progress: u64,
 	steer_recovery: u64,
+	/// Turns ended by the `max_identical_rounds` loop hard stop.
+	loop_stops: u64,
 	pregate_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
@@ -211,6 +213,10 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 		}
 	});
 }
+/// The loop hard stop ended a turn (`supervisor.max_identical_rounds`).
+pub fn loop_stop() {
+	with(|s| s.loop_stops += 1);
+}
 /// The deterministic pre-gate refused a `done` (code changed, no check ran).
 pub fn pregate_block() {
 	with(|s| s.pregate_blocks += 1);
@@ -329,6 +335,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	let idle = s.calls == 0
 		&& s.gate_runs == 0
 		&& s.steers == 0
+		&& s.loop_stops == 0
 		&& s.pregate_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
@@ -426,6 +433,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"gate_stall": s.gate_stall,
 		"steers": s.steers,
 		"steer_signals": steer_signals,
+		"loop_stops": s.loop_stops,
 		"pregate_blocks": s.pregate_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,

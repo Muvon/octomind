@@ -592,6 +592,10 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 					params.emit(tool_msg);
 				}
 
+				// Set when this round reaches `supervisor.max_identical_rounds`: the turn
+				// ends on this notice after the results are recorded.
+				let mut loop_stop: Option<String> = None;
+
 				// Supervisor detectors (deterministic, free): record each tool action
 				// to maintain loop / no-progress state. Consumers — verify-gate (P2)
 				// and steer (P3) — are not wired yet; for now this keeps detector state
@@ -811,6 +815,35 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						params.chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 						params.chat_session.last_steered_calls = None;
 					}
+
+					// The one hard limit: the same round, unchanged, `max_identical_rounds`
+					// times in a row ends the turn. Every hint below it stays advisory.
+					let max_identical = params.config.supervisor.max_identical_rounds;
+					let identical = params.chat_session.detectors.identical_rounds();
+					if max_identical > 0 && identical >= max_identical {
+						// The turn ends here, so a queued hint would only land on the next one.
+						params.chat_session.steer_pending = None;
+						// The stop is final for this turn: spend the verify-gate's and the
+						// unfinished-hand-back nudge's re-entry budgets so neither re-runs the
+						// turn straight back into the loop, and label the trajectory failed as
+						// an exhausted gate does. A genuine user turn resets both budgets.
+						params.chat_session.gate_iterations = crate::supervisor::gate::MAX_ITERATIONS;
+						params.chat_session.nudge_iterations = crate::supervisor::gate::MAX_ITERATIONS;
+						params.chat_session.gate_failed = true;
+						params.chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
+						crate::supervisor::stats::loop_stop();
+						crate::supervisor::notify(&format!("stopped — {} identical tool rounds in a row", identical));
+						log_info!(
+							"Supervisor loop stop: {} identical tool rounds (limit {})",
+							identical,
+							max_identical
+						);
+						loop_stop = Some(crate::supervisor::detect::loop_stop_note(
+							identical,
+							&current_tool_calls,
+							&tool_results,
+						));
+					}
 				}
 
 				// Check for cancellation BEFORE adding assistant message
@@ -834,6 +867,17 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 					params.config,
 					params.role,
 				)?;
+
+				// Loop stop: answer this round's tool calls, then finish the turn on the
+				// notice instead of asking the model again.
+				if let Some(note) = loop_stop {
+					params.chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
+					tool_result_processor::add_tool_results(&tool_results, params.chat_session, params.config)?;
+					current_content = note;
+					current_response_id = None;
+					current_thinking = None;
+					break;
+				}
 
 				// Process tool results if any exist
 				if !tool_results.is_empty() {

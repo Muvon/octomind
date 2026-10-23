@@ -266,6 +266,12 @@ never escalate into mandatory strategy changes or blocked handbacks; repeated hi
 `need_input` are left alone, and no-progress hints are also suppressed while `exploring`. The main model judges relevance
 from the actual outputs and user request; a counter does not establish non-compliance.
 
+One limit is not advisory. When `supervisor.max_identical_rounds` tool rounds in a row (default 10) repeat the same
+calls and get the same results, the turn ends: this round's results are recorded, and the turn's final answer is a
+notice naming the repeated call and its result. No further model request is made, and neither the verify-gate nor the
+unfinished-hand-back check re-runs the turn. The trajectory is labelled failed for learning. A parent agent receives the
+notice as the specialist's reply; the next genuine user turn starts the count again. Set `0` to turn the stop off.
+
 ## Verify-gate
 
 With supervision and the gate enabled, every stop of a user-owned turn — a `done` claim, a hand-back, or a turn that ends

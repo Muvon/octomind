@@ -4306,12 +4306,15 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 			release_rx.await.unwrap();
 			Ok(())
 		};
+		let ctx = ConnCtx {
+			server: state,
+			closed: CancellationToken::new(),
+		};
 		read_while_processing(
 			processing,
-			Some(parent),
 			&mut reader,
 			&sender,
-			&state,
+			&ctx,
 			&mut VecDeque::new(),
 			&mut false,
 			peer,

@@ -155,6 +155,31 @@ fn install_source_detects_a_cargo_test_binary() {
 	assert_eq!(install_source(), "source");
 }
 
+#[test]
+fn install_source_of_classifies_each_install_path() {
+	assert_eq!(
+		install_source_of("/opt/homebrew/Cellar/octomind/0.60.0/bin/octomind"),
+		"brew"
+	);
+	assert_eq!(install_source_of("/Users/a/.cargo/bin/octomind"), "cargo");
+	assert_eq!(install_source_of("/src/octomind/target/release/octomind"), "source");
+	assert_eq!(
+		install_source_of("/src/octomind/target/debug/deps/octomind-1a2b"),
+		"source"
+	);
+	// A shared CARGO_TARGET_DIR under ~/.cargo is still a source build, not `cargo install`.
+	assert_eq!(
+		install_source_of("/Users/a/.cargo/shared-target/debug/deps/octomind-1a2b"),
+		"source"
+	);
+	assert_eq!(
+		install_source_of("/src/octomind/target/llvm-cov-target/debug/deps/octomind-1a2b"),
+		"source"
+	);
+	assert_eq!(install_source_of("/usr/local/bin/octomind"), "binary");
+	assert_eq!(install_source_of("/home/a/Downloads/release/octomind"), "binary");
+}
+
 struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
 impl EnvGuard {
 	fn new(keys: &[&'static str]) -> Self {

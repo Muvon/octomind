@@ -484,6 +484,8 @@ fn verifier_guidance_is_domain_agnostic() {
 
 fn run_git(args: &[&str]) {
 	let out = std::process::Command::new("git")
+		// Hermetic: the developer's global commit signing must not decide the result.
+		.args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
 		.args(args)
 		.output()
 		.expect("git is available on the test host");

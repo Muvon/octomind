@@ -191,6 +191,8 @@ fn git_in(root: &std::path::Path, args: &[&str]) {
 	let out = std::process::Command::new("git")
 		.arg("-C")
 		.arg(root)
+		// Hermetic: the developer's global commit signing must not decide the result.
+		.args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
 		.args(args)
 		.output()
 		.expect("git spawns");

@@ -533,14 +533,15 @@ fn split_model(full: &str) -> (String, String) {
 }
 
 /// True for executables running from a cargo target-dir build profile —
-/// `/target/debug/`, `/target/release/`, or an alternate target dir such as
-/// `/target/llvm-cov-target/debug/` used by `cargo llvm-cov`.
+/// `<target>/debug/` or `<target>/release/`, where the target dir is any
+/// directory named `target` or ending in it: `target/`, a shared
+/// `~/.cargo/shared-target/` (CARGO_TARGET_DIR), or `target/llvm-cov-target/`
+/// used by `cargo llvm-cov`.
 fn is_cargo_target_build(path: &str) -> bool {
-	let Some(idx) = path.find("/target/") else {
-		return false;
-	};
-	let rest = &path[idx..];
-	rest.contains("/debug/") || rest.contains("/release/")
+	path.split('/')
+		.collect::<Vec<_>>()
+		.windows(2)
+		.any(|pair| pair[0].ends_with("target") && (pair[1] == "debug" || pair[1] == "release"))
 }
 
 fn install_source() -> &'static str {
@@ -550,12 +551,18 @@ fn install_source() -> &'static str {
 	let Ok(exe) = std::env::current_exe() else {
 		return "unknown";
 	};
-	let path = exe.to_string_lossy().replace('\\', "/");
+	install_source_of(&exe.to_string_lossy().replace('\\', "/"))
+}
+
+/// How the executable at `path` was installed. `cargo install` puts binaries in
+/// `~/.cargo/bin/` only — a build in a target dir that happens to live under
+/// `~/.cargo/` (a shared CARGO_TARGET_DIR) is a source build.
+fn install_source_of(path: &str) -> &'static str {
 	if path.contains("/Cellar/") || path.contains("/homebrew/") {
 		"brew"
-	} else if path.contains("/.cargo/") {
+	} else if path.contains("/.cargo/bin/") {
 		"cargo"
-	} else if is_cargo_target_build(&path) {
+	} else if is_cargo_target_build(path) {
 		"source"
 	} else {
 		"binary"

@@ -441,7 +441,7 @@ impl OctomindAgent {
 						if !sessions.borrow().contains_key(&session_id) {
 							break;
 						}
-						let batch = crate::session::inbox::drain_inbox_batch();
+						let mut batch = crate::session::inbox::drain_inbox_batch();
 						if batch.is_empty() {
 							break;
 						}
@@ -477,6 +477,22 @@ impl OctomindAgent {
 							.entry(session_id.clone())
 							.or_default()
 							.new_operation();
+
+						if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
+							&mut batch,
+							&chat_session,
+							&config_for_role,
+							op_rx.clone(),
+						)
+						.await
+						{
+							log_error!("ACP monitor: failed to shape inbox message: {}", e);
+							sessions
+								.borrow_mut()
+								.insert(session_id.clone(), (chat_session, session_cwd));
+							idle_notify.notify_waiters();
+							continue;
+						}
 
 						// Tell the client what's about to drive the AI, before we kick off
 						// the API call. Rendered as a user-side chunk so the client UI shows
@@ -1026,9 +1042,26 @@ impl OctomindAgent {
 			{
 				crate::mcp::orchestration::flush_due_to_inbox();
 				loop {
-					let batch = crate::session::inbox::drain_inbox_batch();
+					let mut batch = crate::session::inbox::drain_inbox_batch();
 					if batch.is_empty() {
 						break;
+					}
+					let op_rx = self
+						.cancellations
+						.borrow_mut()
+						.entry(session_id.to_string())
+						.or_default()
+						.new_operation();
+					if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
+						&mut batch,
+						&chat_session,
+						&config_for_role,
+						op_rx.clone(),
+					)
+					.await
+					{
+						log_error!("ACP: failed to shape inbox message: {}", e);
+						continue;
 					}
 					for inbox_msg in &batch {
 						log_debug!("ACP pre-user: processing inbox message from {:?}", inbox_msg.source);
@@ -1049,12 +1082,6 @@ impl OctomindAgent {
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
 					}
-					let op_rx = self
-						.cancellations
-						.borrow_mut()
-						.entry(session_id.to_string())
-						.or_default()
-						.new_operation();
 					// Per-request spending boundary (see websocket/server.rs handle_user_message).
 					chat_session.start_request_spending_tracking();
 					if let Err(e) = prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await {

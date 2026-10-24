@@ -871,6 +871,51 @@ async fn condense_main_results(
 	.await;
 }
 
+/// A background job's result, delivered when its MCP notification arrives, is
+/// the deferred output of the tool call that launched it, so it gets what an
+/// on-time result gets: the hard per-tool cap, then the supervisor condense.
+/// Only the MCP output inside the delivery is shaped; status snapshots and
+/// every other inbox message pass through untouched. Every inbox drain runs
+/// this before its messages reach the transcript.
+pub(crate) async fn shape_background_deliveries(
+	batch: &mut [crate::session::inbox::InboxMessage],
+	chat_session: &ChatSession,
+	config: &Config,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+	use crate::session::shell_jobs::{delivery_message, split_delivery, DELIVERY_ERROR_ATTR};
+
+	let mut framings = Vec::new();
+	let mut results = Vec::new();
+	for (index, msg) in batch.iter().enumerate() {
+		let crate::session::inbox::InboxSource::BackgroundJob { id } = &msg.source else {
+			continue;
+		};
+		let Some((open_tag, output)) = split_delivery(&msg.content) else {
+			continue;
+		};
+		let tool_name = msg.source.display_kind().to_string();
+		results.push(if open_tag.contains(DELIVERY_ERROR_ATTR) {
+			crate::mcp::McpToolResult::error(tool_name, id.clone(), output.to_string())
+		} else {
+			crate::mcp::McpToolResult::success(tool_name, id.clone(), output.to_string())
+		});
+		framings.push((index, open_tag.to_string()));
+	}
+	if results.is_empty() {
+		return Ok(());
+	}
+
+	let mut results = handle_large_tool_results(results, config, config.output_mode()).await?;
+	// No launching call or round intent travels with a delivery: the output is
+	// judged against the live task alone.
+	condense_main_results(&mut results, &[], chat_session, config, "", operation_cancelled).await;
+	for ((index, open_tag), result) in framings.into_iter().zip(results) {
+		batch[index].content = delivery_message(&open_tag, &result.extract_content());
+	}
+	Ok(())
+}
+
 /// Error body for a tool that hit the consecutive-failure threshold. The
 /// wording steers the model away from retry loops — keep it stable.
 fn loop_error_message(tool_name: &str, max_errors: usize, last_error: &str) -> String {

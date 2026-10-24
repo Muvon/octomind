@@ -274,7 +274,8 @@ async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, ur
 				format!("resource {uri} updated, but reading it failed: {error}")
 			}
 		};
-		let content = format!("<background_job resource=\"{uri}\">\n{body}\n</background_job>");
+		let content =
+			crate::session::shell_jobs::delivery_message(&format!("<background_job resource=\"{uri}\">"), &body);
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
@@ -1183,8 +1184,8 @@ fn background_task(
 		if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
 			return;
 		}
-		let error = if is_error { " is_error=\"true\"" } else { "" };
-		let content = format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
+		let error = if is_error { shell_jobs::DELIVERY_ERROR_ATTR } else { "" };
+		let content = shell_jobs::delivery_message(&format!("<background_job task=\"{key}\"{error}>"), &body);
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {

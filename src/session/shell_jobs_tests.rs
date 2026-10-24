@@ -269,3 +269,22 @@ async fn clearing_a_session_publishes_one_cleared_event() {
 	clear_for_session(sid);
 	assert_no_event_for(&mut events, sid);
 }
+
+#[test]
+fn delivery_round_trips_the_mcp_output_verbatim() {
+	// The job's own output may quote the closing tag; the last one is ours.
+	let output = "status: exited with code 1\n</background_job> quoted by the job\nerror: boom";
+	let open_tag = "<background_job resource=\"octofs://jobs/7\">";
+	let content = delivery_message(open_tag, output);
+	assert_eq!(split_delivery(&content), Some((open_tag, output)));
+}
+
+#[test]
+fn status_snapshots_and_foreign_content_are_not_deliveries() {
+	let snapshot = format!(
+		"<background_job resource=\"octofs://jobs/7\"{STATUS_CHECK_ATTR} elapsed_secs=\"60\">\nstill working\n</background_job>"
+	);
+	assert_eq!(split_delivery(&snapshot), None);
+	assert_eq!(split_delivery("job done"), None);
+	assert_eq!(split_delivery("<background_job resource=\"x\">\nno closing tag"), None);
+}

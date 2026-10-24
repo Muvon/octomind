@@ -28,6 +28,7 @@ use super::setup::setup_and_initialize_session;
 use crate::config::Config;
 use crate::session::cache_keepalive::KeepaliveHandle;
 use crate::session::cancellation::SessionCancellation;
+use crate::session::chat::response::tool_execution::shape_background_deliveries;
 use crate::session::output::{JsonlSink, OutputMode, SilentSink};
 use crate::{log_debug, log_info};
 use anyhow::Result;
@@ -608,9 +609,16 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					// turn's animation legitimately starts.
 					crate::session::chat::get_animation_manager().suspend().await;
 
-					let input_result = if let Some(inbox_msg) = pending_msg {
+					let input_result = if let Some(mut inbox_msg) = pending_msg {
 						// An inbox message is ready — inject it without waiting for user input.
 						log_debug!("Processing inbox message from {:?}", inbox_msg.source);
+						shape_background_deliveries(
+							std::slice::from_mut(&mut inbox_msg),
+							&chat_session,
+							&current_config,
+							operation_rx.clone(),
+						)
+						.await?;
 						crate::session::inbox::display_injected_input(&inbox_msg);
 						InputResult::Text(inbox_msg.content, Vec::new())
 					} else {
@@ -886,8 +894,15 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						// message arrived while they were at the prompt.
 						crate::mcp::orchestration::flush_due_to_inbox();
 						if crate::session::inbox::has_inbox_messages() {
-							if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
+							if let Some(mut msg) = crate::session::inbox::try_pop_inbox_message() {
 								log_debug!("Processing inbox message from {:?}", msg.source);
+								shape_background_deliveries(
+									std::slice::from_mut(&mut msg),
+									&chat_session,
+									&current_config,
+									operation_rx.clone(),
+								)
+								.await?;
 								crate::session::inbox::display_injected_input(&msg);
 								injected_source = Some(msg.source.clone());
 								input = msg.content;
@@ -1786,10 +1801,11 @@ pub async fn run_interactive_session_with_input(
 			// model can answer in one turn, so results that piled up while it worked cost
 			// one call between them, not one turn each.
 			loop {
-				let batch = crate::session::inbox::drain_inbox_batch();
+				let mut batch = crate::session::inbox::drain_inbox_batch();
 				if batch.is_empty() {
 					break;
 				}
+				shape_background_deliveries(&mut batch, &chat_session, &current_config, operation_rx.clone()).await?;
 				for inbox_msg in &batch {
 					log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
 
@@ -2176,8 +2192,11 @@ fn background_job_status_message(
 	} else {
 		String::new()
 	};
+	// The status-check state keeps this snapshot out of result shaping: it is not
+	// the job's result (see `shell_jobs::split_delivery`).
+	let status_check = crate::session::shell_jobs::STATUS_CHECK_ATTR;
 	format!(
-		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
+		"<background_job resource=\"{uri}\"{status_check} elapsed_secs=\"{elapsed_secs}\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
 		 using the method the tool provided when it started.\n\

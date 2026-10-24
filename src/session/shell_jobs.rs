@@ -115,6 +115,34 @@ pub fn subscribe_events() -> tokio::sync::broadcast::Receiver<WatchEvent> {
 	WATCH_EVENTS.subscribe()
 }
 
+/// Closing tag of a background job's result delivery. The text between the
+/// opening tag's line and this tag is exactly the MCP output, so a consumer can
+/// shape it like any other tool result (see `split_delivery`).
+const DELIVERY_CLOSE: &str = "\n</background_job>";
+
+/// Opening-tag attribute marking a delivery whose output is a failure.
+pub const DELIVERY_ERROR_ATTR: &str = " is_error=\"true\"";
+
+/// Opening-tag attribute of the status snapshot octomind reads on its own while
+/// a job runs. The snapshot is not the job's result, so it is never shaped.
+pub const STATUS_CHECK_ATTR: &str = " state=\"status_check\"";
+
+/// A background job's result delivery: the opening tag on its own line, the
+/// MCP output, then the closing tag.
+pub fn delivery_message(open_tag: &str, output: &str) -> String {
+	format!("{open_tag}\n{output}{DELIVERY_CLOSE}")
+}
+
+/// Split a result delivery into its opening tag and MCP output; `None` for
+/// anything `delivery_message` did not build, a status snapshot included.
+pub fn split_delivery(content: &str) -> Option<(&str, &str)> {
+	let (open_tag, rest) = content.split_once('\n')?;
+	if !open_tag.starts_with("<background_job") || open_tag.contains(STATUS_CHECK_ATTR) {
+		return None;
+	}
+	Some((open_tag, rest.strip_suffix(DELIVERY_CLOSE)?))
+}
+
 /// Every resource link (URI, label) a tool result advertised. The label is the
 /// link's name (octofs sets it to the launching command); falls back to the URI.
 pub fn resource_links_in(result: &CallToolResult) -> Vec<(String, String)> {

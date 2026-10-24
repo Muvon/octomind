@@ -699,3 +699,49 @@ async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
 		.unwrap();
 	assert_eq!(serde_json::to_value(processed).unwrap(), original);
 }
+
+/// A background job's result, delivered from its MCP notification, reaches the
+/// transcript under the same hard cap as an on-time tool result, tags intact.
+/// A status snapshot and every other inbox message pass through untouched.
+#[tokio::test]
+async fn background_job_results_get_the_tool_result_hard_cap() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+	use crate::session::shell_jobs::{delivery_message, split_delivery, STATUS_CHECK_ATTR};
+
+	let mut config = template_config();
+	config.mcp_response_tokens_threshold = 50;
+	let session = ChatSession::for_tests(Vec::new());
+	let big = "line of output\n".repeat(500);
+	let job = InboxSource::BackgroundJob {
+		id: "octofs://jobs/1".to_string(),
+	};
+	let open_tag = "<background_job resource=\"octofs://jobs/1\">";
+	let status =
+		format!("<background_job resource=\"octofs://jobs/1\"{STATUS_CHECK_ATTR} elapsed_secs=\"60\">\n{big}</background_job>");
+	let mut batch = vec![
+		InboxMessage {
+			source: job.clone(),
+			content: delivery_message(open_tag, &big),
+		},
+		InboxMessage {
+			source: job,
+			content: status.clone(),
+		},
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: big.clone(),
+		},
+	];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	shape_background_deliveries(&mut batch, &session, &config, rx)
+		.await
+		.expect("shaping never fails");
+
+	let (shaped_tag, output) = split_delivery(&batch[0].content).expect("the delivery keeps its tags");
+	assert_eq!(shaped_tag, open_tag);
+	assert!(output.len() < big.len());
+	assert!(output.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
+	assert_eq!(batch[1].content, status, "a status snapshot is not the job's result");
+	assert_eq!(batch[2].content, big, "only background job results are shaped");
+}

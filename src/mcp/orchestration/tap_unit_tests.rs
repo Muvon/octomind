@@ -518,3 +518,51 @@ async fn workflow_name_without_input_shows_definition_and_runs_nothing() {
 	assert!(missing.is_error());
 	assert!(missing.extract_content().contains("nope"));
 }
+
+#[tokio::test]
+#[serial]
+async fn repeated_delegation_to_failed_role_is_stopped() {
+	let session_id = "__tapunit_failed_retry".to_string();
+	let out = crate::session::context::with_session_id(session_id.clone(), async {
+		tap_runs::init_for_session();
+		let (cancel_tx, _cancel_rx) = watch::channel(false);
+		let status = Arc::new(RwLock::new(TapJobStatus::Running));
+		tap_runs::register_job(TapJob {
+			id: "tap-unit-fail-1".to_string(),
+			role: "developer:plan".to_string(),
+			workdir: "/tmp".to_string(),
+			started_at: SystemTime::UNIX_EPOCH,
+			status: Arc::clone(&status),
+			cancel_tx,
+			live: Arc::new(RwLock::new(TapLiveState::default())),
+		});
+		tap_runs::finish_run(
+			"tap-unit-fail-1",
+			&status,
+			TapJobStatus::Failed,
+			Some("Timed out waiting for ACP response id=1 after 30s".to_string()),
+		)
+		.expect("finish_run");
+
+		execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"role": "developer:plan",
+				"prompt": "please plan the changes",
+				"workdir": "/tmp",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch")
+	})
+	.await;
+	tap_runs::clear_for_session(&session_id);
+
+	assert!(out.is_error());
+	let content = out.extract_content();
+	assert!(content.contains("Repeated delegation stopped"));
+	assert!(content.contains("developer:plan"));
+	assert!(content.contains("Timed out waiting for ACP response"));
+	assert!(content.contains("Use available tools (shell, filesystem) directly"));
+}

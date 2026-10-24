@@ -605,6 +605,24 @@ fn hash2(a: &str, b: &str) -> u64 {
 	h.finish()
 }
 
+pub(crate) fn canonical_loop_result<'a>(tool: &str, result: &'a str) -> std::borrow::Cow<'a, str> {
+	if tool == "tap" && result.contains("\"id\":") && result.contains("\"tap-") {
+		if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(result) {
+			if let Some(obj) = val.as_object_mut() {
+				if let Some(id_val) = obj.get_mut("id") {
+					if let Some(id_str) = id_val.as_str() {
+						if id_str.starts_with("tap-") {
+							*id_val = serde_json::Value::String("tap-[id]".to_string());
+							return std::borrow::Cow::Owned(val.to_string());
+						}
+					}
+				}
+			}
+		}
+	}
+	std::borrow::Cow::Borrowed(result)
+}
+
 impl Detectors {
 	/// Fold ONE call's result into per-call state and return `(result_hash, novel)`
 	/// for the caller to aggregate into the round. Updates only genuinely per-result
@@ -619,12 +637,14 @@ impl Detectors {
 		is_error: bool,
 		is_mutation: bool,
 	) -> (u64, bool) {
+		let loop_result = canonical_loop_result(tool, result);
+
 		// Loop identity: the whole call. Equal output from a different request is
 		// not the same call repeated.
 		let mut h = DefaultHasher::new();
 		tool.hash(&mut h);
 		parameters.to_string().hash(&mut h);
-		result.hash(&mut h);
+		loop_result.hash(&mut h);
 		is_error.hash(&mut h);
 		let rhash = h.finish();
 
@@ -638,7 +658,7 @@ impl Detectors {
 		let mut h = DefaultHasher::new();
 		tool.hash(&mut h);
 		param_paths(parameters).hash(&mut h);
-		result.hash(&mut h);
+		loop_result.hash(&mut h);
 		is_error.hash(&mut h);
 		let nhash = h.finish();
 		let fresh = self.seen.insert(nhash);

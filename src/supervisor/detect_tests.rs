@@ -430,6 +430,37 @@ fn identical_rounds_counts_unchanged_repeats_and_resets_on_anything_new() {
 }
 
 #[test]
+fn identical_tap_delegations_with_different_run_ids_count_as_repeated_rounds() {
+	let mut d = Detectors::default();
+	let params = json!({"action": "run", "role": "developer:plan", "prompt": "plan something"});
+	let res1 = json!({
+		"id": "tap-developer-plan-111111",
+		"role": "developer:plan",
+		"workdir": "/tmp",
+		"message": "Tap-run started. Reply will be injected as a user message when ready."
+	})
+	.to_string();
+	let res2 = json!({
+		"id": "tap-developer-plan-222222",
+		"role": "developer:plan",
+		"workdir": "/tmp",
+		"message": "Tap-run started. Reply will be injected as a user message when ready."
+	})
+	.to_string();
+
+	let (h1, novel1) = d.note_call("tap", &params, &res1, false, false);
+	let (h2, novel2) = d.note_call("tap", &params, &res2, false, false);
+	assert_eq!(h1, h2, "canonical loop result masks ephemeral tap id");
+	assert!(novel1);
+	assert!(!novel2, "second identical delegation is not novel");
+
+	d.record_round_signals(&[h1], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 1);
+	d.record_round_signals(&[h2], false, 3, 9);
+	assert_eq!(d.identical_rounds(), 2, "second run with new id still counts as identical round");
+}
+
+#[test]
 fn loop_stop_note_names_the_repeated_call_and_its_result() {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "shell".to_string(),

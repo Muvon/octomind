@@ -41,8 +41,11 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 	if has_tap_tool {
 		prompt.push_str(
 			"\n<delegation>\n\
+		Always use your available tools (read files, search code, run shell commands) directly before considering delegation. \
+		Do not delegate routine tasks, code inspection, or planning that can be performed with your available tools. \
 		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it. \
-		Task outside your role → tap(action=\"run\", role=\"…\", …) to hand off.\n\
+		Task outside your role that cannot be completed with your tools → tap(action=\"run\", role=\"…\", …) to hand off. \
+		If delegation fails or times out, do NOT retry the delegation: complete the task directly using available tools, or report the blocker.\n\
 		</delegation>",
 		);
 	}

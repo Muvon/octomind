@@ -105,9 +105,17 @@ pub struct TapJobInfo {
 	pub live: TapLiveState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedTapRun {
+	pub role: String,
+	pub id: String,
+	pub error: String,
+}
+
 struct Registry {
 	jobs: HashMap<SessionId, Vec<TapJob>>,
 	websocket: HashMap<SessionId, Option<crate::websocket::run_events::RunEvents>>,
+	failed_runs: HashMap<SessionId, Vec<FailedTapRun>>,
 }
 
 static REGISTRY: RwLock<Option<Registry>> = RwLock::new(None);
@@ -120,6 +128,7 @@ where
 	let reg = guard.get_or_insert_with(|| Registry {
 		jobs: HashMap::new(),
 		websocket: HashMap::new(),
+		failed_runs: HashMap::new(),
 	});
 	Some(f(reg))
 }
@@ -132,6 +141,7 @@ pub fn init_for_session() {
 	};
 	let _ = with_registry(|r| {
 		r.websocket.entry(session_id.clone()).or_default();
+		r.failed_runs.entry(session_id.clone()).or_default();
 		r.jobs.entry(session_id).or_default();
 	});
 }
@@ -147,6 +157,7 @@ pub fn clear_for_session(session_id: &SessionId) {
 		match guard.as_mut() {
 			Some(reg) => {
 				reg.websocket.remove(session_id);
+				reg.failed_runs.remove(session_id);
 				reg.jobs.remove(session_id)
 			}
 			None => None,
@@ -373,6 +384,19 @@ pub(crate) fn finish_run(
 		*status = terminal;
 	}
 	if let Some(parent) = crate::session::context::current_session_id() {
+		if terminal == TapJobStatus::Failed {
+			if let Some(reg) = guard.as_mut() {
+				if let Some(jobs) = reg.jobs.get(&parent) {
+					if let Some(job) = jobs.iter().find(|j| j.id == id) {
+						reg.failed_runs.entry(parent.clone()).or_default().push(FailedTapRun {
+							role: job.role.clone(),
+							id: id.to_string(),
+							error: error.clone().unwrap_or_else(|| "unknown failure".to_string()),
+						});
+					}
+				}
+			}
+		}
 		if let Some(events) = guard
 			.as_mut()
 			.and_then(|reg| reg.websocket.get_mut(&parent))
@@ -386,6 +410,27 @@ pub(crate) fn finish_run(
 		}
 	}
 	Ok(())
+}
+
+/// Returns the list of failed tap runs for the current session.
+pub fn get_failed_runs() -> Vec<FailedTapRun> {
+	let session_id = match crate::session::context::current_session_id() {
+		Some(id) => id,
+		None => return Vec::new(),
+	};
+	let guard = match REGISTRY.read() {
+		Ok(g) => g,
+		Err(_) => return Vec::new(),
+	};
+	let Some(reg) = guard.as_ref() else {
+		return Vec::new();
+	};
+	reg.failed_runs.get(&session_id).cloned().unwrap_or_default()
+}
+
+/// Returns the last failure for a specific role in the current session, if any.
+pub fn last_failure_for_role(role: &str) -> Option<FailedTapRun> {
+	get_failed_runs().into_iter().rev().find(|f| f.role == role)
 }
 
 pub(crate) fn snapshot_run_log(

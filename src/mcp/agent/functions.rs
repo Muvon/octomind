@@ -247,7 +247,9 @@ async fn execute_config_agent(
 				let output =
 					match run_acp_command(program, &args, &task_owned, &workdir_owned, cancel_rx, None, true).await {
 						Ok(text) => text,
-						Err(e) => format!("ERROR: {e:#}"),
+						Err(e) => format!(
+							"ERROR: {e:#}\n\nNotice: Repeating this delegation will fail. Use available tools (shell, filesystem) directly to complete the task, or report the blocker if unable to proceed."
+						),
 					};
 				mgr.release_registered(
 					&completion_job_id,
@@ -296,7 +298,7 @@ async fn execute_config_agent(
 		Err(e) => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Agent execution failed: {e:#}"),
+			format!("Agent execution failed: {e:#}. Do not retry this delegation. Use available tools (shell, filesystem) directly to complete the task, or report the blocker if unable to proceed."),
 		)),
 	}
 }

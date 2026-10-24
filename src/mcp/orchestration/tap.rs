@@ -59,6 +59,10 @@ When to use:
 - You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn.
 - You want to keep a focused dialog with one specialist across multiple turns — keep the returned `session` id and pass it back on subsequent `run` calls.
 
+Do not use:
+- For planning, reading files, searching code, or executing shell commands that you can perform directly with your available tools. Inspect the workspace first with direct tools before delegating.
+- If a delegation to a role has failed or timed out: do not repeat the delegation. Use available direct tools or report the blocker.
+
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
 
 Discovery flow:
@@ -527,6 +531,16 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				));
 			}
 		};
+		if let Some(failed) = tap_runs::get_failed_runs().into_iter().find(|f| f.id == sid) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Tap-run '{sid}' ({}) previously failed: {}. Repeated delegation stopped. Use available tools (shell, filesystem) directly to complete the task, or report the blocker if unable to proceed.",
+					claim.role, failed.error
+				),
+			));
+		}
 		(sid, claim.role, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
 		let role = match role_param {
@@ -539,6 +553,16 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				));
 			}
 		};
+		if let Some(failed) = tap_runs::last_failure_for_role(&role) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Delegation to '{role}' previously failed: {}. Repeated delegation stopped. Use available tools (shell, filesystem) directly to complete the task, or report the blocker if unable to proceed.",
+					failed.error
+				),
+			));
+		}
 		let workdir = workdir_param.unwrap_or(cwd_default);
 		let id = tap_runs::generate_id(&role);
 		let status = Arc::new(RwLock::new(TapJobStatus::Running));
@@ -620,7 +644,9 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				),
 				Err(e) => (
 					TapJobStatus::Failed,
-					format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
+					format!(
+						"[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}\n\nNotice: Repeating this delegation will fail. Use available tools (shell, filesystem) directly to complete the task, or report the blocker if unable to proceed."
+					),
 				),
 			};
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {

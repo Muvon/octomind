@@ -426,3 +426,36 @@ async fn concurrent_same_id_resume_claims_exactly_one_run() {
 	.await;
 	clear_for_session(&parent);
 }
+
+#[tokio::test]
+async fn failed_run_records_and_is_retrievable_by_role() {
+	let sid = "tap-failed-run-test".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		init_for_session();
+		let (job, _) = test_job("tap-dev-plan-001", "developer:plan", UNIX_EPOCH, TapJobStatus::Running);
+		let status = job.status.clone();
+		register_job(job);
+
+		finish_run(
+			"tap-dev-plan-001",
+			&status,
+			TapJobStatus::Failed,
+			Some("Timed out waiting for ACP response id=1 after 30s".to_string()),
+		)
+		.expect("finish_run");
+
+		let failed = get_failed_runs();
+		assert_eq!(failed.len(), 1);
+		assert_eq!(failed[0].role, "developer:plan");
+		assert_eq!(failed[0].id, "tap-dev-plan-001");
+		assert!(failed[0].error.contains("Timed out waiting for ACP response"));
+
+		let last = last_failure_for_role("developer:plan");
+		assert!(last.is_some());
+		assert_eq!(last.unwrap().id, "tap-dev-plan-001");
+
+		assert!(last_failure_for_role("developer:general").is_none());
+	})
+	.await;
+	clear_for_session(&sid);
+}

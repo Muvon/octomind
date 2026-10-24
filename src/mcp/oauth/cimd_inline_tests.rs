@@ -22,7 +22,7 @@ fn test_build_client_metadata() {
 	);
 	assert_eq!(metadata.client_name, "Octomind");
 	assert_eq!(metadata.redirect_uris, vec!["http://localhost:34567/oauth/callback"]);
-	assert_eq!(metadata.grant_types, vec!["authorization_code"]);
+	assert_eq!(metadata.grant_types, vec!["authorization_code", "refresh_token"]);
 	assert_eq!(metadata.token_endpoint_auth_method, "none");
 	assert_eq!(metadata.scope, Some("read write".to_string()));
 }

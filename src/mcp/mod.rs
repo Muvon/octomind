@@ -141,12 +141,31 @@ impl McpToolResult {
 				return format!(
 					"{}\n\n[Metadata: {}]",
 					main_content,
-					serde_json::to_string_pretty(metadata).unwrap_or_default()
+					serde_json::to_string_pretty(&self.without_image_payloads(metadata)).unwrap_or_default()
 				);
 			}
 		}
 
 		main_content
+	}
+
+	/// Servers often mirror their content in structured_content, base64 images included.
+	/// Images reach the model through `extract_images`, so their copies become a marker
+	/// instead of tens of thousands of tokens of base64 text.
+	fn without_image_payloads(&self, metadata: &serde_json::Value) -> serde_json::Value {
+		let payloads: Vec<&str> = self
+			.result
+			.content
+			.iter()
+			.filter_map(|block| match block {
+				rmcp::model::ContentBlock::Image(image) => Some(image.data.as_str()),
+				_ => None,
+			})
+			.collect();
+		if payloads.is_empty() {
+			return metadata.clone();
+		}
+		replace_image_payloads(metadata, &payloads)
 	}
 
 	/// Extract MCP image blocks separately so text truncation cannot discard their payloads.
@@ -166,6 +185,22 @@ impl McpToolResult {
 				_ => None,
 			})
 			.collect()
+	}
+}
+
+const IMAGE_PAYLOAD_MARKER: &str = "[image data omitted: attached as an image]";
+
+fn replace_image_payloads(value: &serde_json::Value, payloads: &[&str]) -> serde_json::Value {
+	use serde_json::Value;
+	match value {
+		Value::String(s) if payloads.contains(&s.as_str()) => Value::String(IMAGE_PAYLOAD_MARKER.to_string()),
+		Value::Array(items) => Value::Array(items.iter().map(|v| replace_image_payloads(v, payloads)).collect()),
+		Value::Object(map) => Value::Object(
+			map.iter()
+				.map(|(k, v)| (k.clone(), replace_image_payloads(v, payloads)))
+				.collect(),
+		),
+		other => other.clone(),
 	}
 }
 

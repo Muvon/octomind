@@ -19,8 +19,10 @@
 //! 2. DCR: Register the client via the authorization server's registration_endpoint
 //! 3. If neither is available, discovery fails with a clear error
 //!
-//! CIMD is preferred when the authorization server advertises
-//! `client_id_metadata_document_supported: true` in its metadata.
+//! The CIMD document is served from this machine, so its `http://localhost` URL is only
+//! reachable by an authorization server on loopback; remote servers require an HTTPS
+//! client_id URL they can fetch. CIMD is therefore used when the server is on loopback
+//! or offers no DCR, and remote servers that offer DCR register through DCR.
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -88,7 +90,8 @@ fn build_client_metadata(callback_url: &str, scopes: &[String]) -> ClientMetadat
 	ClientMetadataDocument {
 		client_name: "Octomind".to_string(),
 		redirect_uris: vec![callback_url.to_string()],
-		grant_types: vec!["authorization_code".to_string()],
+		// Stored tokens are refreshed, and RFC 7591 asks clients to register every grant they use.
+		grant_types: vec!["authorization_code".to_string(), "refresh_token".to_string()],
 		token_endpoint_auth_method: "none".to_string(),
 		scope: if scopes.is_empty() {
 			None
@@ -266,12 +269,26 @@ async fn register_via_dcr(
 	Ok(dcr_response)
 }
 
+/// Whether the authorization server runs on this machine and can fetch a localhost CIMD URL.
+fn is_loopback_issuer(issuer: &str) -> bool {
+	match url::Url::parse(issuer)
+		.ok()
+		.and_then(|u| u.host().map(|h| h.to_owned()))
+	{
+		Some(url::Host::Domain(domain)) => domain == "localhost",
+		Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+		Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+		None => false,
+	}
+}
+
 /// Resolve the client_id for an OAuth configuration using CIMD or DCR.
 ///
 /// # Strategy (per MCP Authorization spec):
-/// 1. If auth server supports CIMD (`client_id_metadata_document_supported: true`),
-///    start a local CIMD server and use its URL as the client_id
-/// 2. If auth server provides a `registration_endpoint`, use DCR (RFC 7591)
+/// 1. CIMD (`client_id_metadata_document_supported: true`) when the auth server is on
+///    loopback or has no `registration_endpoint`: start a local CIMD server and use its
+///    URL as the client_id
+/// 2. DCR (RFC 7591) via `registration_endpoint`
 /// 3. If neither is available, return an error — no fallback to hardcoded IDs
 ///
 /// # Arguments
@@ -282,8 +299,11 @@ async fn register_via_dcr(
 /// * `Ok(OAuthConfig)` - Config with resolved client_id
 /// * `Err` - If neither CIMD nor DCR is available
 pub async fn resolve_client_id(oauth_config: OAuthConfig, auth_metadata: &AuthServerMetadata) -> Result<OAuthConfig> {
-	// Strategy 1: CIMD — if auth server supports it, use metadata document URL as client_id
-	if auth_metadata.client_id_metadata_document_supported.unwrap_or(false) {
+	let cimd_supported = auth_metadata.client_id_metadata_document_supported.unwrap_or(false);
+	let cimd_reachable = is_loopback_issuer(&auth_metadata.issuer) || auth_metadata.registration_endpoint.is_none();
+
+	// Strategy 1: CIMD — the metadata document URL becomes the client_id
+	if cimd_supported && cimd_reachable {
 		crate::log_debug!("Auth server supports CIMD, starting local metadata server...");
 
 		match start_cimd_server(&oauth_config.callback_url, &oauth_config.scopes).await {

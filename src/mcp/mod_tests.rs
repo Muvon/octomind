@@ -107,6 +107,27 @@ fn extract_content_joins_text_blocks_and_skips_null_metadata() {
 	assert_eq!(result.extract_content(), "one\ntwo");
 }
 
+#[test]
+fn extract_content_replaces_mirrored_image_payloads_in_metadata() {
+	let data = "aW1hZ2UtYnl0ZXM=".repeat(1000);
+	let mut call_result =
+		rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::image(data.clone(), "image/png")]);
+	call_result.structured_content = Some(json!({
+		"content": [{"type": "image", "data": data, "mimeType": "image/png"}],
+		"width": 600
+	}));
+	let result = McpToolResult {
+		tool_name: "read_media_file".to_string(),
+		tool_id: "id-1".to_string(),
+		result: call_result,
+	};
+	let content = result.extract_content();
+	assert!(!content.contains(&data), "base64 payload must not reach the text");
+	assert!(content.contains(super::IMAGE_PAYLOAD_MARKER), "{content}");
+	assert!(content.contains("\"width\": 600"), "{content}");
+	assert_eq!(result.extract_images().len(), 1);
+}
+
 // ------------------------------------------------------------------
 // Tool pattern filtering
 // ------------------------------------------------------------------

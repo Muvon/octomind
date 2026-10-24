@@ -149,7 +149,10 @@ async fn cimd_server_serves_metadata_document_over_http() {
 		doc.redirect_uris,
 		vec!["http://127.0.0.1:34567/oauth/callback".to_string()]
 	);
-	assert_eq!(doc.grant_types, vec!["authorization_code".to_string()]);
+	assert_eq!(
+		doc.grant_types,
+		vec!["authorization_code".to_string(), "refresh_token".to_string()]
+	);
 	assert_eq!(doc.token_endpoint_auth_method, "none");
 	assert_eq!(doc.scope.as_deref(), Some("mcp:read"));
 
@@ -229,6 +232,43 @@ async fn resolve_client_id_registers_via_dcr_when_cimd_unsupported() {
 		.expect("DCR resolution must succeed");
 	assert_eq!(config.client_id, "dcr-client-1");
 	assert_eq!(config.client_secret, "dcr-secret");
+}
+
+// A remote auth server can't fetch a localhost CIMD URL, so when it also offers DCR
+// (e.g. Luma's MCP server) the client registers through DCR.
+#[tokio::test]
+async fn resolve_client_id_uses_dcr_for_remote_server_offering_both() {
+	let endpoint = spawn_http_stub("200 OK", r#"{"client_id":"dcr-client-2"}"#).await;
+	let metadata = auth_metadata(Some(true), Some(endpoint));
+	let config = resolve_client_id(oauth_config(), &metadata)
+		.await
+		.expect("DCR resolution must succeed");
+	assert_eq!(config.client_id, "dcr-client-2");
+}
+
+#[serial]
+#[tokio::test]
+async fn resolve_client_id_keeps_cimd_for_loopback_server_offering_both() {
+	let mut metadata = auth_metadata(Some(true), Some("http://127.0.0.1:9/register".to_string()));
+	metadata.issuer = "http://127.0.0.1:8123".to_string();
+	let config = resolve_client_id(oauth_config(), &metadata)
+		.await
+		.expect("CIMD resolution must succeed");
+	assert!(
+		config.client_id.ends_with("/.well-known/oauth-client.json"),
+		"{}",
+		config.client_id
+	);
+	stop_cimd_server().await;
+}
+
+#[test]
+fn is_loopback_issuer_recognises_local_hosts_only() {
+	assert!(is_loopback_issuer("http://localhost:8080"));
+	assert!(is_loopback_issuer("http://127.0.0.1:8123"));
+	assert!(is_loopback_issuer("http://[::1]:9000"));
+	assert!(!is_loopback_issuer("https://agents.lumalabs.ai"));
+	assert!(!is_loopback_issuer("not a url"));
 }
 
 #[tokio::test]

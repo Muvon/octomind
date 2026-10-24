@@ -48,6 +48,9 @@ pub enum InboxSource {
 	/// A detached octofs shell job (a build, a test suite) that finished; its
 	/// output is delivered so the model can act on the result.
 	BackgroundJob { id: String },
+	/// A status snapshot octomind read on its own while a job runs. It is not the
+	/// job's result, so it is never shaped like one; shown as the job otherwise.
+	BackgroundJobStatus { id: String },
 	/// A background tap-run launched via the `tap` core tool.
 	TapRun { id: String, role: String },
 	/// A `skill(use)` activation that needs its content injected.
@@ -82,7 +85,7 @@ impl InboxSource {
 				format!("monitor {id} ({description})")
 			}
 			InboxSource::BackgroundAgent { name } => format!("agent {name}"),
-			InboxSource::BackgroundJob { id } => format!("job {id}"),
+			InboxSource::BackgroundJob { id } | InboxSource::BackgroundJobStatus { id } => format!("job {id}"),
 			InboxSource::TapRun { id, role } => format!("tap-run {id} ({role})"),
 			InboxSource::Skill { name } => format!("skill {name}"),
 			InboxSource::SkillValidator { name } => format!("skill-validator {name}"),
@@ -100,7 +103,7 @@ impl InboxSource {
 			InboxSource::Schedule { .. } => "schedule",
 			InboxSource::Monitor { .. } => "monitor",
 			InboxSource::BackgroundAgent { .. } => "background_agent",
-			InboxSource::BackgroundJob { .. } => "background_job",
+			InboxSource::BackgroundJob { .. } | InboxSource::BackgroundJobStatus { .. } => "background_job",
 			InboxSource::TapRun { .. } => "tap_run",
 			InboxSource::Skill { .. } => "skill",
 			InboxSource::SkillValidator { .. } => "skill_validator",
@@ -117,7 +120,7 @@ impl InboxSource {
 			InboxSource::Schedule { .. } => "⏰",
 			InboxSource::Monitor { .. } => "📡",
 			InboxSource::BackgroundAgent { .. } => "🤖",
-			InboxSource::BackgroundJob { .. } => "🏗️",
+			InboxSource::BackgroundJob { .. } | InboxSource::BackgroundJobStatus { .. } => "🏗️",
 			InboxSource::TapRun { .. } => "🚰",
 			InboxSource::Skill { .. } => "🧩",
 			InboxSource::SkillValidator { .. } => "⚠️",
@@ -135,6 +138,7 @@ impl InboxSource {
 				| InboxSource::Monitor { .. }
 				| InboxSource::BackgroundAgent { .. }
 				| InboxSource::BackgroundJob { .. }
+				| InboxSource::BackgroundJobStatus { .. }
 				| InboxSource::TapRun { .. }
 				| InboxSource::Skill { .. }
 				| InboxSource::SkillValidator { .. }
@@ -434,7 +438,7 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		InboxSource::BackgroundAgent { name } => {
 			return Some(format!("background agent '{name}'"));
 		}
-		InboxSource::BackgroundJob { id } => {
+		InboxSource::BackgroundJob { id } | InboxSource::BackgroundJobStatus { id } => {
 			return Some(format!("background job {id}"));
 		}
 		InboxSource::TapRun { id, role } => {

@@ -584,13 +584,13 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					// (only if no taps / background jobs are still running).
 					crate::mcp::orchestration::flush_idle_to_inbox();
 
-					// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
-					// If one is ready, skip user input entirely and process it immediately.
-					let pending_msg = crate::session::inbox::try_pop_inbox_message();
-					let mut injected_source = pending_msg.as_ref().map(|msg| msg.source.clone());
-
 					// Get a new operation token for this iteration
 					let operation_rx = cancellation.new_operation();
+
+					// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
+					// If one is ready, skip user input entirely and process it immediately.
+					let pending_msg = pop_inbox_message(&chat_session, &current_config, operation_rx.clone()).await?;
+					let mut injected_source = pending_msg.as_ref().map(|msg| msg.source.clone());
 
 					// Calculate current context tokens for display
 					let current_context_tokens = calculate_current_context_tokens(
@@ -609,16 +609,9 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					// turn's animation legitimately starts.
 					crate::session::chat::get_animation_manager().suspend().await;
 
-					let input_result = if let Some(mut inbox_msg) = pending_msg {
+					let input_result = if let Some(inbox_msg) = pending_msg {
 						// An inbox message is ready — inject it without waiting for user input.
 						log_debug!("Processing inbox message from {:?}", inbox_msg.source);
-						shape_background_deliveries(
-							std::slice::from_mut(&mut inbox_msg),
-							&chat_session,
-							&current_config,
-							operation_rx.clone(),
-						)
-						.await?;
 						crate::session::inbox::display_injected_input(&inbox_msg);
 						InputResult::Text(inbox_msg.content, Vec::new())
 					} else {
@@ -894,15 +887,10 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						// message arrived while they were at the prompt.
 						crate::mcp::orchestration::flush_due_to_inbox();
 						if crate::session::inbox::has_inbox_messages() {
-							if let Some(mut msg) = crate::session::inbox::try_pop_inbox_message() {
+							if let Some(msg) =
+								pop_inbox_message(&chat_session, &current_config, operation_rx.clone()).await?
+							{
 								log_debug!("Processing inbox message from {:?}", msg.source);
-								shape_background_deliveries(
-									std::slice::from_mut(&mut msg),
-									&chat_session,
-									&current_config,
-									operation_rx.clone(),
-								)
-								.await?;
 								crate::session::inbox::display_injected_input(&msg);
 								injected_source = Some(msg.source.clone());
 								input = msg.content;
@@ -1801,11 +1789,10 @@ pub async fn run_interactive_session_with_input(
 			// model can answer in one turn, so results that piled up while it worked cost
 			// one call between them, not one turn each.
 			loop {
-				let mut batch = crate::session::inbox::drain_inbox_batch();
+				let batch = crate::session::inbox::drain_inbox_batch();
 				if batch.is_empty() {
 					break;
 				}
-				shape_background_deliveries(&mut batch, &chat_session, &current_config, operation_rx.clone()).await?;
 				for inbox_msg in &batch {
 					log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
 
@@ -1832,7 +1819,9 @@ pub async fn run_interactive_session_with_input(
 				// session log's cost ordering correct.
 				drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, false).await;
 
-				chat_session.add_inbox_batch(&batch)?;
+				chat_session
+					.add_inbox_batch(batch, &current_config, operation_rx.clone())
+					.await?;
 				prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
 				let is_jsonl = current_config.runtime_output_mode.as_deref() == Some("jsonl");
@@ -2069,6 +2058,28 @@ fn emit_cost_frame(chat_session: &mut ChatSession, config: &Config) {
 	}
 }
 
+/// Pop the next inbox message for the interactive loop, which runs it as typed
+/// input. Pipes and @file expansion rewrite that input before it reaches the
+/// transcript, so a background job result is shaped here, while its delivery
+/// is still intact, rather than in `ChatSession::add_inbox_batch`.
+async fn pop_inbox_message(
+	chat_session: &ChatSession,
+	config: &Config,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
+) -> Result<Option<crate::session::inbox::InboxMessage>> {
+	let Some(mut msg) = crate::session::inbox::try_pop_inbox_message() else {
+		return Ok(None);
+	};
+	shape_background_deliveries(
+		std::slice::from_mut(&mut msg),
+		chat_session,
+		config,
+		operation_cancelled,
+	)
+	.await?;
+	Ok(Some(msg))
+}
+
 /// Re-read every still-pending background job from its resource — the authority
 /// for live status — and hand the model what it says.
 ///
@@ -2135,7 +2146,7 @@ async fn reconcile_pending_background_jobs(
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob { id: job.uri.clone() },
+				source: crate::session::inbox::InboxSource::BackgroundJobStatus { id: job.uri.clone() },
 				content,
 			},
 		);
@@ -2192,11 +2203,8 @@ fn background_job_status_message(
 	} else {
 		String::new()
 	};
-	// The status-check state keeps this snapshot out of result shaping: it is not
-	// the job's result (see `shell_jobs::split_delivery`).
-	let status_check = crate::session::shell_jobs::STATUS_CHECK_ATTR;
 	format!(
-		"<background_job resource=\"{uri}\"{status_check} elapsed_secs=\"{elapsed_secs}\">\n\
+		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
 		 using the method the tool provided when it started.\n\

@@ -235,15 +235,8 @@ pub async fn process_tool_results(
 	// results and before the next call, the result reaches the model on the very
 	// next round. Human-shaped injections stay queued for the turn boundary, where
 	// they get real user-turn semantics.
-	let mut delivered: Vec<_> = std::iter::from_fn(crate::session::inbox::try_pop_system_managed_message).collect();
-	super::tool_execution::shape_background_deliveries(
-		&mut delivered,
-		chat_session,
-		config,
-		operation_cancelled.clone(),
-	)
-	.await?;
-	for msg in delivered {
+	let delivered: Vec<_> = std::iter::from_fn(crate::session::inbox::try_pop_system_managed_message).collect();
+	for msg in &delivered {
 		crate::log_debug!("Inbox delivered mid-turn from {:?}", msg.source);
 		// `--format jsonl` is structured too: its notification sender prints the
 		// event as a JSON line, where the human rendering would corrupt stdout.
@@ -258,10 +251,12 @@ pub async fn process_tool_results(
 			});
 			crate::mcp::process::send_notification_message(injected);
 		} else {
-			crate::session::inbox::display_injected_input(&msg);
+			crate::session::inbox::display_injected_input(msg);
 		}
-		chat_session.add_system_managed_user_message(&msg.content)?;
 	}
+	chat_session
+		.add_mid_turn_inbox(delivered, config, operation_cancelled.clone())
+		.await?;
 
 	// Make follow-up API call
 	let follow_up_result = make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;

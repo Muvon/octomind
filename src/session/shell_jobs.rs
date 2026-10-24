@@ -123,10 +123,6 @@ const DELIVERY_CLOSE: &str = "\n</background_job>";
 /// Opening-tag attribute marking a delivery whose output is a failure.
 pub const DELIVERY_ERROR_ATTR: &str = " is_error=\"true\"";
 
-/// Opening-tag attribute of the status snapshot octomind reads on its own while
-/// a job runs. The snapshot is not the job's result, so it is never shaped.
-pub const STATUS_CHECK_ATTR: &str = " state=\"status_check\"";
-
 /// A background job's result delivery: the opening tag on its own line, the
 /// MCP output, then the closing tag.
 pub fn delivery_message(open_tag: &str, output: &str) -> String {
@@ -134,10 +130,10 @@ pub fn delivery_message(open_tag: &str, output: &str) -> String {
 }
 
 /// Split a result delivery into its opening tag and MCP output; `None` for
-/// anything `delivery_message` did not build, a status snapshot included.
+/// anything `delivery_message` did not build.
 pub fn split_delivery(content: &str) -> Option<(&str, &str)> {
 	let (open_tag, rest) = content.split_once('\n')?;
-	if !open_tag.starts_with("<background_job") || open_tag.contains(STATUS_CHECK_ATTR) {
+	if !open_tag.starts_with("<background_job") {
 		return None;
 	}
 	Some((open_tag, rest.strip_suffix(DELIVERY_CLOSE)?))

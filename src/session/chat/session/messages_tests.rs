@@ -187,8 +187,8 @@ fn assistant_message_tracks_usage_and_cost_from_exchange() {
 	assert_eq!(session.turn_answers, vec!["answer".to_string()]);
 }
 
-#[test]
-fn inbox_batch_takes_turn_semantics_once_from_its_head() {
+#[tokio::test]
+async fn inbox_batch_takes_turn_semantics_once_from_its_head() {
 	use crate::session::inbox::{InboxMessage, InboxSource};
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -209,7 +209,9 @@ fn inbox_batch_takes_turn_semantics_once_from_its_head() {
 		},
 	];
 
-	session.add_inbox_batch(&batch).unwrap();
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	session.add_inbox_batch(batch, &config, rx).await.unwrap();
 
 	assert_eq!(session.session.messages.len(), 2);
 	assert!(session.session.messages[0].content.contains("job a finished"));
@@ -220,8 +222,8 @@ fn inbox_batch_takes_turn_semantics_once_from_its_head() {
 	assert!(!session.gate_deferred);
 }
 
-#[test]
-fn inbox_batch_headed_by_a_user_message_owns_the_turn() {
+#[tokio::test]
+async fn inbox_batch_headed_by_a_user_message_owns_the_turn() {
 	use crate::session::inbox::{InboxMessage, InboxSource};
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -231,7 +233,9 @@ fn inbox_batch_headed_by_a_user_message_owns_the_turn() {
 		content: "a new request".to_string(),
 	}];
 
-	session.add_inbox_batch(&batch).unwrap();
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	session.add_inbox_batch(batch, &config, rx).await.unwrap();
 
 	assert_eq!(session.session.messages.len(), 1);
 	assert_eq!(session.session.messages[0].role, "user");
@@ -239,13 +243,53 @@ fn inbox_batch_headed_by_a_user_message_owns_the_turn() {
 	assert!(session.completion_gate_eligible);
 }
 
-#[test]
-fn empty_inbox_batch_changes_nothing() {
+#[tokio::test]
+async fn empty_inbox_batch_changes_nothing() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.completion_gate_eligible = false;
-	session.add_inbox_batch(&[]).unwrap();
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	session.add_inbox_batch(Vec::new(), &config, rx).await.unwrap();
 	assert!(session.session.messages.is_empty());
 	assert!(!session.completion_gate_eligible);
+}
+
+/// Both inbox sinks shape a background job's result like a tool result before
+/// it reaches the transcript.
+#[tokio::test]
+async fn inbox_sinks_shape_background_job_results() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.mcp_response_tokens_threshold = 50;
+	let result = || InboxMessage {
+		source: InboxSource::BackgroundJob {
+			id: "octofs://jobs/1".to_string(),
+		},
+		content: crate::session::shell_jobs::delivery_message(
+			"<background_job resource=\"octofs://jobs/1\">",
+			&"line of output\n".repeat(500),
+		),
+	};
+	let mut session = ChatSession::for_tests(Vec::new());
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	session
+		.add_inbox_batch(vec![result()], &config, rx.clone())
+		.await
+		.unwrap();
+	session.add_mid_turn_inbox(vec![result()], &config, rx).await.unwrap();
+
+	assert_eq!(session.session.messages.len(), 2);
+	for message in &session.session.messages {
+		assert!(
+			message
+				.content
+				.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG),
+			"{}",
+			message.content
+		);
+	}
 }
 
 #[test]

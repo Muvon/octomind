@@ -844,7 +844,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						Err(_) => return false,
 					};
 
-					let mut batch = crate::session::inbox::drain_inbox_batch();
+					let batch = crate::session::inbox::drain_inbox_batch();
 					if batch.is_empty() {
 						break;
 					}
@@ -884,23 +884,6 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					let cancel_probe = op_rx.clone();
 					let _turn = TurnGuard::register(&ctx.server.turns, &session_id, &cancellation);
 
-					if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
-						&mut batch,
-						&chat_session,
-						&config_for_role,
-						op_rx.clone(),
-					)
-					.await
-					{
-						log_error!("WS monitor: failed to shape inbox message: {}", e);
-						ctx.server
-							.sessions
-							.lock()
-							.await
-							.insert(session_id.clone(), chat_session);
-						continue;
-					}
-
 					// Notify the client what's about to drive the AI, before we kick off
 					// the API call. Mirrors `display_injected_input` in CLI mode.
 					for inbox_msg in &batch {
@@ -912,7 +895,10 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						}));
 					}
 
-					if let Err(e) = chat_session.add_inbox_batch(&batch) {
+					if let Err(e) = chat_session
+						.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+						.await
+					{
 						log_error!("WS monitor: failed to add inbox message: {}", e);
 						ctx.server
 							.sessions
@@ -1693,25 +1679,9 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		crate::mcp::orchestration::flush_due_to_inbox();
 		crate::mcp::orchestration::flush_idle_to_inbox();
 		loop {
-			let mut batch = crate::session::inbox::drain_inbox_batch();
+			let batch = crate::session::inbox::drain_inbox_batch();
 			if batch.is_empty() {
 				break;
-			}
-			let op_rx = cancellation.new_operation();
-			if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
-				&mut batch,
-				&chat_session,
-				&config_for_role,
-				op_rx.clone(),
-			)
-			.await
-			{
-				log_error!("WebSocket pre-user: failed to shape inbox message: {}", e);
-				stream.emit(&ServerMessage::error(format!(
-					"Error processing injected message: {}",
-					e
-				)))?;
-				continue;
 			}
 			for inbox_msg in &batch {
 				log_debug!(
@@ -1726,7 +1696,11 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 					session_id: session_id.clone(),
 				}))?;
 			}
-			if let Err(e) = chat_session.add_inbox_batch(&batch) {
+			let op_rx = cancellation.new_operation();
+			if let Err(e) = chat_session
+				.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+				.await
+			{
 				log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
 				stream.emit(&ServerMessage::error(format!(
 					"Error processing injected message: {}",

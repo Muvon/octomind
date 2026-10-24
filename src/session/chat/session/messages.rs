@@ -16,6 +16,8 @@
 
 use super::core::{ChatSession, SpendingStop};
 use crate::config::Config;
+use crate::session::chat::response::tool_execution::shape_background_deliveries;
+use crate::session::inbox::InboxMessage;
 use crate::session::ProviderExchange;
 use crate::{log_debug, log_info};
 use anyhow::Result;
@@ -381,7 +383,14 @@ impl ChatSession {
 	/// Append a drained inbox batch as ONE externally-triggered turn: the head
 	/// carries the turn semantics, the rest ride along so the model answers
 	/// everything that was ready in a single call instead of one turn each.
-	pub fn add_inbox_batch(&mut self, batch: &[crate::session::inbox::InboxMessage]) -> Result<()> {
+	/// Background job results are shaped first, like any tool result.
+	pub async fn add_inbox_batch(
+		&mut self,
+		mut batch: Vec<InboxMessage>,
+		config: &Config,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
+	) -> Result<()> {
+		shape_background_deliveries(&mut batch, self, config, operation_cancelled).await?;
 		let Some((head, rest)) = batch.split_first() else {
 			return Ok(());
 		};
@@ -391,6 +400,22 @@ impl ChatSession {
 			self.add_user_message(&head.content)?;
 		}
 		for msg in rest {
+			self.add_system_managed_user_message(&msg.content)?;
+		}
+		Ok(())
+	}
+
+	/// Append inbox messages that arrived while a turn runs, inside that turn:
+	/// they carry no turn semantics of their own. Background job results are
+	/// shaped first, like any tool result.
+	pub async fn add_mid_turn_inbox(
+		&mut self,
+		mut batch: Vec<InboxMessage>,
+		config: &Config,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
+	) -> Result<()> {
+		shape_background_deliveries(&mut batch, self, config, operation_cancelled).await?;
+		for msg in &batch {
 			self.add_system_managed_user_message(&msg.content)?;
 		}
 		Ok(())

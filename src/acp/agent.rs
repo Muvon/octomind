@@ -441,7 +441,7 @@ impl OctomindAgent {
 						if !sessions.borrow().contains_key(&session_id) {
 							break;
 						}
-						let mut batch = crate::session::inbox::drain_inbox_batch();
+						let batch = crate::session::inbox::drain_inbox_batch();
 						if batch.is_empty() {
 							break;
 						}
@@ -478,22 +478,6 @@ impl OctomindAgent {
 							.or_default()
 							.new_operation();
 
-						if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
-							&mut batch,
-							&chat_session,
-							&config_for_role,
-							op_rx.clone(),
-						)
-						.await
-						{
-							log_error!("ACP monitor: failed to shape inbox message: {}", e);
-							sessions
-								.borrow_mut()
-								.insert(session_id.clone(), (chat_session, session_cwd));
-							idle_notify.notify_waiters();
-							continue;
-						}
-
 						// Tell the client what's about to drive the AI, before we kick off
 						// the API call. Rendered as a user-side chunk so the client UI shows
 						// the injected message in the conversation, prefixed with its source.
@@ -510,7 +494,10 @@ impl OctomindAgent {
 							}
 						}
 
-						if let Err(e) = chat_session.add_inbox_batch(&batch) {
+						if let Err(e) = chat_session
+							.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+							.await
+						{
 							log_error!("ACP monitor: failed to add inbox message: {}", e);
 							sessions
 								.borrow_mut()
@@ -1042,26 +1029,9 @@ impl OctomindAgent {
 			{
 				crate::mcp::orchestration::flush_due_to_inbox();
 				loop {
-					let mut batch = crate::session::inbox::drain_inbox_batch();
+					let batch = crate::session::inbox::drain_inbox_batch();
 					if batch.is_empty() {
 						break;
-					}
-					let op_rx = self
-						.cancellations
-						.borrow_mut()
-						.entry(session_id.to_string())
-						.or_default()
-						.new_operation();
-					if let Err(e) = crate::session::chat::response::tool_execution::shape_background_deliveries(
-						&mut batch,
-						&chat_session,
-						&config_for_role,
-						op_rx.clone(),
-					)
-					.await
-					{
-						log_error!("ACP: failed to shape inbox message: {}", e);
-						continue;
 					}
 					for inbox_msg in &batch {
 						log_debug!("ACP pre-user: processing inbox message from {:?}", inbox_msg.source);
@@ -1078,7 +1048,16 @@ impl OctomindAgent {
 							}
 						}
 					}
-					if let Err(e) = chat_session.add_inbox_batch(&batch) {
+					let op_rx = self
+						.cancellations
+						.borrow_mut()
+						.entry(session_id.to_string())
+						.or_default()
+						.new_operation();
+					if let Err(e) = chat_session
+						.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+						.await
+					{
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
 					}

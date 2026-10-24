@@ -12,20 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! MCP Authorization Discovery (RFC 9728)
+//! MCP Authorization Discovery (MCP Authorization spec 2025-11-25)
 //!
 //! Implements automatic OAuth configuration discovery for MCP servers following:
 //! - RFC 9728: OAuth 2.0 Protected Resource Metadata
-//! - RFC 8414: OAuth 2.0 Authorization Server Metadata Discovery
+//! - RFC 8414 and OpenID Connect Discovery 1.0: Authorization Server Metadata
 //!
 //! Flow:
-//! 1. Try pre-discovery: GET {server_url}/.well-known/oauth-protected-resource
-//! 2. If no pre-discovery, make request to MCP server → expect 401 Unauthorized
-//! 3. Parse WWW-Authenticate header for resource_metadata URL
-//! 4. Fetch Protected Resource Metadata document
-//! 5. Extract authorization_servers[0] (primary auth server)
-//! 6. Fetch Authorization Server Metadata from {issuer}/.well-known/oauth-authorization-server
-//! 7. Build OAuthConfig from discovered endpoints (client_id from CIMD/DCR)
+//! 1. Unauthenticated request to the MCP server; a 401 Bearer challenge may carry the
+//!    `resource_metadata` URL and the `scope` the request needs
+//! 2. Fetch Protected Resource Metadata from the challenge URL, or else from the
+//!    well-known URLs (path-specific, then root)
+//! 3. Extract authorization_servers[0] (primary auth server)
+//! 4. Fetch Authorization Server Metadata (OAuth well-known, then OpenID Connect)
+//! 5. Require PKCE S256 support
+//! 6. Build OAuthConfig from discovered endpoints (client_id from CIMD/DCR)
 
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
@@ -96,36 +97,46 @@ pub struct AuthServerMetadata {
 	pub client_id_metadata_document_supported: Option<bool>,
 }
 
-/// Parse WWW-Authenticate header to extract resource_metadata URL
-///
-/// Expected format: `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"`
-///
-/// # Arguments
-/// * `header_value` - The WWW-Authenticate header value
-///
-/// # Returns
-/// * `Ok(String)` - The resource_metadata URL
-/// * `Err` - If header format is invalid or URL not found
-pub fn parse_www_authenticate_header(header_value: &str) -> Result<String> {
-	// Pattern: resource_metadata="<URL>"
-	let re =
-		Regex::new(r#"resource_metadata="([^"]+)""#).context("Failed to compile regex for WWW-Authenticate parsing")?;
+/// Parameters of a Bearer challenge in a `WWW-Authenticate` header (RFC 6750, RFC 9728)
+#[derive(Debug, Default, PartialEq)]
+pub struct BearerChallenge {
+	/// Protected Resource Metadata URL (RFC 9728 section 5.1)
+	pub resource_metadata: Option<String>,
 
-	let captures = re.captures(header_value).ok_or_else(|| {
-		anyhow!(
-			"WWW-Authenticate header does not contain resource_metadata URL. Header: {}",
-			header_value
-		)
-	})?;
+	/// Scopes the request needs (RFC 6750 section 3); authoritative for the authorization request
+	pub scopes: Vec<String>,
+}
 
-	let url = captures
-		.get(1)
-		.ok_or_else(|| anyhow!("Failed to extract resource_metadata URL from captures"))?
-		.as_str()
-		.to_string();
+/// Parse a Bearer challenge, e.g.
+/// `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource", scope="files:read"`
+pub fn parse_bearer_challenge(header_value: &str) -> BearerChallenge {
+	let param = |name: &str| {
+		Regex::new(&format!(r#"(?:^|[\s,]){name}="([^"]*)""#))
+			.ok()
+			.and_then(|re| re.captures(header_value))
+			.map(|c| c[1].to_string())
+	};
+	BearerChallenge {
+		resource_metadata: param("resource_metadata").filter(|url| !url.is_empty()),
+		scopes: param("scope")
+			.map(|scope| scope.split_whitespace().map(str::to_string).collect())
+			.unwrap_or_default(),
+	}
+}
 
-	crate::log_debug!("Extracted resource_metadata URL: {}", url);
-	Ok(url)
+/// Well-known Protected Resource Metadata URLs for an MCP server without a challenge URL,
+/// in the MCP spec's order: path-specific, then root (RFC 9728 section 3.1).
+fn protected_resource_metadata_urls(server_url: &str) -> Vec<String> {
+	let Ok(url) = url::Url::parse(server_url) else {
+		return Vec::new();
+	};
+	let root = format!("{}/.well-known/oauth-protected-resource", url.origin().ascii_serialization());
+	let path = url.path().trim_end_matches('/');
+	if path.is_empty() {
+		vec![root]
+	} else {
+		vec![format!("{root}{path}"), root]
+	}
 }
 
 /// Fetch Protected Resource Metadata from the given URL
@@ -170,56 +181,82 @@ pub async fn fetch_protected_resource_metadata(metadata_url: &str) -> Result<Pro
 	Ok(metadata)
 }
 
-/// Fetch Authorization Server Metadata via RFC 8414 discovery
-///
-/// GET {issuer}/.well-known/oauth-authorization-server
+/// Authorization Server Metadata URLs in the MCP spec's priority order: RFC 8414 OAuth
+/// metadata, then OpenID Connect Discovery, with path insertion for issuers that have a path.
+fn auth_server_metadata_urls(issuer: &str) -> Vec<String> {
+	let issuer = issuer.trim_end_matches('/');
+	let Ok(url) = url::Url::parse(issuer) else {
+		return vec![format!("{issuer}/.well-known/oauth-authorization-server")];
+	};
+	let origin = url.origin().ascii_serialization();
+	let path = url.path().trim_end_matches('/');
+	if path.is_empty() {
+		vec![
+			format!("{origin}/.well-known/oauth-authorization-server"),
+			format!("{origin}/.well-known/openid-configuration"),
+		]
+	} else {
+		vec![
+			format!("{origin}/.well-known/oauth-authorization-server{path}"),
+			format!("{origin}/.well-known/openid-configuration{path}"),
+			format!("{issuer}/.well-known/openid-configuration"),
+		]
+	}
+}
+
+/// Fetch Authorization Server Metadata, trying each discovery URL in priority order
 ///
 /// # Arguments
 /// * `issuer` - The authorization server issuer URL
 ///
 /// # Returns
-/// * `Ok(AuthServerMetadata)` - Discovered metadata
-/// * `Err` - If RFC 8414 discovery fails
+/// * `Ok(AuthServerMetadata)` - Metadata from the first URL that answers with a valid document
+/// * `Err` - If no discovery URL does
 pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetadata> {
-	let issuer_trimmed = issuer.trim_end_matches('/');
-
-	// RFC 8414: Authorization server metadata is at
-	// {issuer}/.well-known/oauth-authorization-server
-	let metadata_url = format!("{}/.well-known/oauth-authorization-server", issuer_trimmed);
-
-	crate::log_debug!("Fetching Authorization Server Metadata from: {}", metadata_url);
-
 	let client = reqwest::Client::builder()
 		.timeout(Duration::from_secs(10))
 		.build()
 		.context("Failed to create HTTP client")?;
 
-	let response = client.get(&metadata_url).send().await.context(format!(
-		"Failed to fetch Authorization Server Metadata from {}",
-		metadata_url
-	))?;
-
-	if !response.status().is_success() {
-		return Err(anyhow!(
-			"Authorization Server Metadata request failed with status: {} (RFC 8414 discovery at {})",
-			response.status(),
-			metadata_url
-		));
+	let mut attempts = Vec::new();
+	for metadata_url in auth_server_metadata_urls(issuer) {
+		crate::log_debug!("Fetching Authorization Server Metadata from: {}", metadata_url);
+		let outcome = match client.get(&metadata_url).send().await {
+			Ok(response) if response.status().is_success() => match response.json::<AuthServerMetadata>().await {
+				Ok(metadata) => {
+					crate::log_debug!(
+						"Authorization Server Metadata: issuer={}, auth_endpoint={}, token_endpoint={}",
+						metadata.issuer,
+						metadata.authorization_endpoint,
+						metadata.token_endpoint
+					);
+					return Ok(metadata);
+				}
+				Err(e) => format!("invalid metadata JSON: {e}"),
+			},
+			Ok(response) => format!("status {}", response.status()),
+			Err(e) => e.to_string(),
+		};
+		attempts.push(format!("{metadata_url} ({outcome})"));
 	}
 
-	let metadata: AuthServerMetadata = response
-		.json()
-		.await
-		.context("Failed to parse Authorization Server Metadata JSON")?;
+	Err(anyhow!(
+		"Authorization Server Metadata not found (RFC 8414 / OpenID Connect Discovery); tried: {}",
+		attempts.join(", ")
+	))
+}
 
-	crate::log_debug!(
-		"Authorization Server Metadata: issuer={}, auth_endpoint={}, token_endpoint={}",
-		metadata.issuer,
-		metadata.authorization_endpoint,
-		metadata.token_endpoint
-	);
-
-	Ok(metadata)
+/// MCP requires PKCE with S256; a server that doesn't advertise it is refused.
+fn ensure_pkce_s256(auth_metadata: &AuthServerMetadata) -> Result<()> {
+	let methods = auth_metadata.code_challenge_methods_supported.as_deref().unwrap_or_default();
+	if methods.iter().any(|method| method == "S256") {
+		return Ok(());
+	}
+	Err(anyhow!(
+		"Authorization server '{}' does not advertise PKCE S256 in code_challenge_methods_supported; \
+		 MCP authorization requires it",
+		auth_metadata.issuer
+	))
 }
 
 /// Build OAuthConfig from discovered metadata
@@ -227,6 +264,7 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
 /// # Arguments
 /// * `auth_metadata` - Authorization Server Metadata
 /// * `resource_metadata` - Protected Resource Metadata
+/// * `challenge_scopes` - Scopes from the 401 Bearer challenge, if any
 ///
 /// # Returns
 /// * `OAuthConfig` - Ready-to-use OAuth configuration
@@ -236,14 +274,21 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
 pub fn build_oauth_config_from_metadata(
 	auth_metadata: &AuthServerMetadata,
 	resource_metadata: &ProtectedResourceMetadata,
+	challenge_scopes: &[String],
 ) -> OAuthConfig {
-	// Combine scopes from both metadata documents
-	let scopes = resource_metadata
-		.scopes_supported
-		.as_ref()
-		.or(auth_metadata.scopes_supported.as_ref())
-		.cloned()
-		.unwrap_or_default();
+	// MCP scope selection: the challenge's scopes, then the resource's scopes_supported. The
+	// authorization server's list comes last: some servers (Ory Hydra) issue refresh tokens only
+	// for a scope such as offline_access that only that list names.
+	let scopes = if challenge_scopes.is_empty() {
+		resource_metadata
+			.scopes_supported
+			.as_ref()
+			.or(auth_metadata.scopes_supported.as_ref())
+			.cloned()
+			.unwrap_or_default()
+	} else {
+		challenge_scopes.to_vec()
+	};
 
 	crate::log_debug!("Building OAuthConfig: scopes={:?}", scopes);
 
@@ -267,14 +312,12 @@ pub fn build_oauth_config_from_metadata(
 ///
 /// # Flow
 /// 1. Check cache for previously discovered config
-/// 2. Try pre-discovery: GET {server_url}/.well-known/oauth-protected-resource
-/// 3. If no pre-discovery, make request to MCP server → expect 401
-/// 4. Parse WWW-Authenticate header for resource_metadata URL
-/// 5. Fetch Protected Resource Metadata
-/// 6. Extract primary authorization server
-/// 7. Fetch Authorization Server Metadata via RFC 8414
-/// 8. Build OAuthConfig from discovered endpoints
-/// 9. Cache the result for future use
+/// 2. Unauthenticated request to the MCP server; parse a 401 Bearer challenge
+/// 3. Fetch Protected Resource Metadata (challenge URL, else well-known URLs)
+/// 4. Extract primary authorization server
+/// 5. Fetch Authorization Server Metadata (OAuth, then OpenID Connect) and require PKCE S256
+/// 6. Build OAuthConfig from discovered endpoints, resolve client_id via CIMD/DCR
+/// 7. Cache the result for future use
 ///
 /// # Arguments
 /// * `server_url` - The MCP server URL (e.g., "https://api.githubcopilot.com/mcp/")
@@ -308,84 +351,63 @@ pub async fn discover_oauth_from_mcp_server(server_url: &str, server_name: &str)
 		.build()
 		.context("Failed to create HTTP client for MCP discovery")?;
 
-	// Step 1: Try pre-discovery via .well-known endpoint
-	// RFC 9728: Protected resource metadata may be available without auth
-	let server_url_trimmed = server_url.trim_end_matches('/');
-	let pre_discovery_url = format!("{}/.well-known/oauth-protected-resource", server_url_trimmed);
-
-	crate::log_debug!("Trying pre-discovery at: {}", pre_discovery_url);
-
-	let resource_metadata = match fetch_protected_resource_metadata(&pre_discovery_url).await {
-		Ok(metadata) => {
-			crate::log_debug!("Pre-discovery successful for server '{}'", server_name);
-			Some(metadata)
-		}
-		Err(e) => {
-			crate::log_debug!(
-				"Pre-discovery failed for server '{}': {}, falling back to 401 flow",
-				server_name,
-				e
-			);
-			None
-		}
+	// Step 1: Unauthenticated request; a 401 Bearer challenge may name the metadata URL and scopes
+	let jsonrpc_request = serde_json::json!({
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list",
+		"params": {}
+	});
+	let response = client
+		.post(server_url)
+		.header("Content-Type", "application/json")
+		.json(&jsonrpc_request)
+		.send()
+		.await
+		.context(format!("Failed to connect to MCP server at {}", server_url))?;
+	let status = response.status();
+	let challenge = if status == reqwest::StatusCode::UNAUTHORIZED {
+		let header = response
+			.headers()
+			.get(reqwest::header::WWW_AUTHENTICATE)
+			.and_then(|value| value.to_str().ok())
+			.unwrap_or_default();
+		crate::log_debug!("401 challenge: {}", header);
+		Some(parse_bearer_challenge(header))
+	} else {
+		None
 	};
 
-	// Step 2: If pre-discovery failed, make initial request expecting 401
-	let resource_metadata = match resource_metadata {
-		Some(m) => m,
+	// Step 2: Protected Resource Metadata — the challenge URL, else the well-known URLs
+	let resource_metadata = match challenge.as_ref().and_then(|c| c.resource_metadata.as_deref()) {
+		Some(metadata_url) => fetch_protected_resource_metadata(metadata_url)
+			.await
+			.context("Failed to fetch Protected Resource Metadata")?,
 		None => {
-			crate::log_debug!("Making initial JSON-RPC request to MCP server (expecting 401)...");
-
-			// Create a tools/list JSON-RPC request (same as health check)
-			let jsonrpc_request = serde_json::json!({
-				"jsonrpc": "2.0",
-				"id": 1,
-				"method": "tools/list",
-				"params": {}
-			});
-
-			let response = client
-				.post(server_url)
-				.header("Content-Type", "application/json")
-				.json(&jsonrpc_request)
-				.send()
-				.await
-				.context(format!("Failed to connect to MCP server at {}", server_url))?;
-
-			// Check for 401 Unauthorized
-			if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-				return Err(anyhow!(
-					"MCP Authorization discovery requires 401 Unauthorized response, got: {}. \
-                    Server may not support MCP Authorization (RFC 9728).",
-					response.status()
-				));
+			let urls = protected_resource_metadata_urls(server_url);
+			let mut found = None;
+			for url in &urls {
+				match fetch_protected_resource_metadata(url).await {
+					Ok(metadata) => {
+						found = Some(metadata);
+						break;
+					}
+					Err(e) => crate::log_debug!("No Protected Resource Metadata at {}: {}", url, e),
+				}
 			}
-
-			crate::log_debug!("Received 401 Unauthorized, proceeding with discovery...");
-
-			// Extract WWW-Authenticate header
-			let www_auth_header = response
-				.headers()
-				.get("WWW-Authenticate")
-				.ok_or_else(|| {
-					anyhow!(
-						"MCP server returned 401 but missing WWW-Authenticate header. \
-                        Server does not support MCP Authorization (RFC 9728)."
-					)
-				})?
-				.to_str()
-				.context("WWW-Authenticate header contains invalid UTF-8")?;
-
-			crate::log_debug!("WWW-Authenticate header: {}", www_auth_header);
-
-			// Parse resource_metadata URL
-			let resource_metadata_url =
-				parse_www_authenticate_header(www_auth_header).context("Failed to parse WWW-Authenticate header")?;
-
-			// Fetch Protected Resource Metadata
-			fetch_protected_resource_metadata(&resource_metadata_url)
-				.await
-				.context("Failed to fetch Protected Resource Metadata")?
+			found.ok_or_else(|| match challenge {
+				Some(_) => anyhow!(
+					"MCP server returned 401 without a resource_metadata WWW-Authenticate challenge, \
+					 and no Protected Resource Metadata was found at {}",
+					urls.join(", ")
+				),
+				None => anyhow!(
+					"MCP Authorization discovery requires a 401 Unauthorized response or Protected Resource \
+					 Metadata (RFC 9728); got {} and none at {}",
+					status,
+					urls.join(", ")
+				),
+			})?
 		}
 	};
 
@@ -397,13 +419,15 @@ pub async fn discover_oauth_from_mcp_server(server_url: &str, server_name: &str)
 
 	crate::log_debug!("Using authorization server: {}", auth_server_issuer);
 
-	// Step 4: Fetch Authorization Server Metadata via RFC 8414
+	// Step 4: Fetch Authorization Server Metadata
 	let auth_metadata = fetch_auth_server_metadata(auth_server_issuer)
 		.await
-		.context("Failed to fetch Authorization Server Metadata via RFC 8414")?;
+		.context("Failed to fetch Authorization Server Metadata")?;
+	ensure_pkce_s256(&auth_metadata)?;
 
 	// Step 5: Build OAuthConfig from discovered metadata (client_id is placeholder)
-	let oauth_config = build_oauth_config_from_metadata(&auth_metadata, &resource_metadata);
+	let challenge_scopes = challenge.map(|c| c.scopes).unwrap_or_default();
+	let oauth_config = build_oauth_config_from_metadata(&auth_metadata, &resource_metadata, &challenge_scopes);
 
 	// Step 6: Resolve client_id via CIMD or DCR
 	let oauth_config = resolve_client_id(oauth_config, &auth_metadata)

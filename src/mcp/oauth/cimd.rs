@@ -12,39 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Client ID Metadata Documents (CIMD) and Dynamic Client Registration (DCR)
-//!
-//! Implements client_id resolution per the MCP Authorization specification:
-//! 1. CIMD: Host a local HTTP endpoint serving client metadata, use its URL as client_id
-//! 2. DCR: Register the client via the authorization server's registration_endpoint
-//! 3. If neither is available, discovery fails with a clear error
-//!
-//! The CIMD document is served from this machine, so its `http://localhost` URL is only
-//! reachable by an authorization server on loopback; remote servers require an HTTPS
-//! client_id URL they can fetch. CIMD is therefore used when the server is on loopback
-//! or offers no DCR, and remote servers that offer DCR register through DCR.
+//! Client registration per the MCP Authorization specification, in its priority order:
+//! 1. Client ID Metadata Document (CIMD): when the authorization server advertises
+//!    `client_id_metadata_document_supported`, the client_id is the HTTPS URL of Octomind's
+//!    published metadata document; the server fetches it and validates the redirect URI
+//! 2. Dynamic Client Registration (RFC 7591) through the server's `registration_endpoint`
+//! 3. Neither available: discovery fails with a clear error
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use super::discovery::AuthServerMetadata;
 use super::OAuthConfig;
 
-/// Client metadata document served at `/.well-known/oauth-client.json`
-///
-/// This is the CIMD document that describes our OAuth client capabilities.
-/// The URL where this document is hosted becomes the `client_id` value.
+/// Octomind's published client metadata document, served by octomind.run. Its URL is the
+/// client_id under CIMD, so it must never change: authorization servers key consent and
+/// tokens to it. The document lists the loopback callback (`http://localhost:34567/oauth/callback`)
+/// as its redirect URI, the public-client auth method `none`, and the
+/// `authorization_code` + `refresh_token` grants.
+pub const CLIENT_METADATA_URL: &str = "https://octomind.run/oauth/client-metadata.json";
+
+/// Client metadata sent in a DCR registration request (RFC 7591 section 2)
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ClientMetadataDocument {
+pub struct DcrClientMetadata {
 	/// Client name displayed to the user during authorization
 	pub client_name: String,
 
 	/// Redirect URIs where the auth server can send the user after authorization
 	pub redirect_uris: Vec<String>,
 
-	/// OAuth grant types this client supports
+	/// OAuth grant types this client uses
 	pub grant_types: Vec<String>,
 
 	/// Token endpoint authentication method (none = public client with PKCE)
@@ -74,20 +71,9 @@ pub struct DcrRegistrationResponse {
 	pub client_secret_expires_at: Option<u64>,
 }
 
-// Global state for the CIMD server
-lazy_static::lazy_static! {
-	static ref CIMD_SERVER: Arc<Mutex<Option<CimdServerState>>> = Arc::new(Mutex::new(None));
-}
-
-#[allow(dead_code)]
-struct CimdServerState {
-	/// Shutdown signal
-	shutdown: Arc<tokio::sync::Notify>,
-}
-
-/// Build the client metadata document for this Octomind instance
-fn build_client_metadata(callback_url: &str, scopes: &[String]) -> ClientMetadataDocument {
-	ClientMetadataDocument {
+/// Build the DCR client metadata for this Octomind instance
+fn build_client_metadata(callback_url: &str, scopes: &[String]) -> DcrClientMetadata {
+	DcrClientMetadata {
 		client_name: "Octomind".to_string(),
 		redirect_uris: vec![callback_url.to_string()],
 		// Stored tokens are refreshed, and RFC 7591 asks clients to register every grant they use.
@@ -99,130 +85,6 @@ fn build_client_metadata(callback_url: &str, scopes: &[String]) -> ClientMetadat
 			Some(scopes.join(" "))
 		},
 	}
-}
-
-/// Start the CIMD server on a local port, serving `/.well-known/oauth-client.json`
-///
-/// Returns the URL of the metadata document, which becomes the `client_id`.
-///
-/// # Arguments
-/// * `callback_url` - The OAuth callback URL (used in redirect_uris)
-/// * `scopes` - OAuth scopes to advertise
-async fn start_cimd_server(callback_url: &str, scopes: &[String]) -> Result<String> {
-	let metadata = build_client_metadata(callback_url, scopes);
-
-	// Find a free port for the CIMD server
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-	let cimd_port = listener.local_addr().context("Failed to get CIMD server port")?.port();
-
-	let client_id_url = format!("http://localhost:{}/.well-known/oauth-client.json", cimd_port);
-
-	crate::log_debug!("Starting CIMD server at {} (client_id URL)", client_id_url);
-
-	let shutdown = Arc::new(tokio::sync::Notify::new());
-	let shutdown_clone = shutdown.clone();
-	let metadata_clone = metadata.clone();
-
-	// Spawn the CIMD HTTP server
-	tokio::spawn(async move {
-		run_cimd_server(&listener, &metadata_clone, shutdown_clone).await;
-	});
-
-	// Store server state for cleanup
-	let mut state = CIMD_SERVER.lock().await;
-	*state = Some(CimdServerState { shutdown });
-
-	Ok(client_id_url)
-}
-
-/// Stop the CIMD server if running
-pub async fn stop_cimd_server() {
-	let mut state = CIMD_SERVER.lock().await;
-	if let Some(s) = state.take() {
-		s.shutdown.notify_one();
-		crate::log_debug!("CIMD server stopped");
-	}
-}
-
-/// Run the CIMD HTTP server, serving the client metadata document
-async fn run_cimd_server(
-	listener: &tokio::net::TcpListener,
-	metadata: &ClientMetadataDocument,
-	shutdown: Arc<tokio::sync::Notify>,
-) {
-	let metadata_json = serde_json::to_string(metadata).unwrap_or_default();
-
-	loop {
-		tokio::select! {
-			result = listener.accept() => {
-				match result {
-					Ok((stream, _addr)) => {
-						let json = metadata_json.clone();
-						tokio::spawn(async move {
-							if let Err(e) = handle_cimd_request(stream, &json).await {
-								crate::log_debug!("CIMD request error: {}", e);
-							}
-						});
-					}
-					Err(e) => {
-						crate::log_debug!("CIMD accept error: {}", e);
-					}
-				}
-			}
-			_ = shutdown.notified() => {
-				crate::log_debug!("CIMD server shutting down");
-				break;
-			}
-		}
-	}
-}
-
-/// Handle a single CIMD HTTP request
-async fn handle_cimd_request(mut stream: tokio::net::TcpStream, metadata_json: &str) -> Result<()> {
-	use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-	let mut buf = [0u8; 4096];
-	let bytes_read = stream.read(&mut buf).await?;
-	if bytes_read == 0 {
-		return Ok(());
-	}
-
-	let request = String::from_utf8_lossy(&buf[..bytes_read]);
-	let request_line = match request.lines().next() {
-		Some(line) => line.trim(),
-		None => return Ok(()),
-	};
-
-	// CORS headers for cross-origin metadata document access
-	let cors_headers = "Access-Control-Allow-Origin: *\r\n\
-	                    Access-Control-Allow-Methods: GET, OPTIONS\r\n\
-	                    Access-Control-Allow-Headers: Content-Type\r\n";
-
-	if request_line.starts_with("OPTIONS") {
-		let response = format!("HTTP/1.1 204 No Content\r\n{}\r\n", cors_headers);
-		stream.write_all(response.as_bytes()).await?;
-	} else if request_line.starts_with("GET /.well-known/oauth-client.json") {
-		let response = format!(
-			"HTTP/1.1 200 OK\r\n\
-			 Content-Type: application/json\r\n\
-			 Content-Length: {}\r\n\
-			 {}\r\n{}",
-			metadata_json.len(),
-			cors_headers,
-			metadata_json
-		);
-		stream.write_all(response.as_bytes()).await?;
-	} else {
-		let body = "404 Not Found";
-		let response = format!(
-			"HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\n\r\n{}",
-			body.len(),
-			body
-		);
-		stream.write_all(response.as_bytes()).await?;
-	}
-
-	Ok(())
 }
 
 /// Register the client via Dynamic Client Registration (RFC 7591)
@@ -269,25 +131,10 @@ async fn register_via_dcr(
 	Ok(dcr_response)
 }
 
-/// Whether the authorization server runs on this machine and can fetch a localhost CIMD URL.
-fn is_loopback_issuer(issuer: &str) -> bool {
-	match url::Url::parse(issuer)
-		.ok()
-		.and_then(|u| u.host().map(|h| h.to_owned()))
-	{
-		Some(url::Host::Domain(domain)) => domain == "localhost",
-		Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-		Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-		None => false,
-	}
-}
-
 /// Resolve the client_id for an OAuth configuration using CIMD or DCR.
 ///
-/// # Strategy (per MCP Authorization spec):
-/// 1. CIMD (`client_id_metadata_document_supported: true`) when the auth server is on
-///    loopback or has no `registration_endpoint`: start a local CIMD server and use its
-///    URL as the client_id
+/// # Strategy (MCP Authorization spec priority order)
+/// 1. CIMD (`client_id_metadata_document_supported: true`): `CLIENT_METADATA_URL`
 /// 2. DCR (RFC 7591) via `registration_endpoint`
 /// 3. If neither is available, return an error — no fallback to hardcoded IDs
 ///
@@ -299,26 +146,13 @@ fn is_loopback_issuer(issuer: &str) -> bool {
 /// * `Ok(OAuthConfig)` - Config with resolved client_id
 /// * `Err` - If neither CIMD nor DCR is available
 pub async fn resolve_client_id(oauth_config: OAuthConfig, auth_metadata: &AuthServerMetadata) -> Result<OAuthConfig> {
-	let cimd_supported = auth_metadata.client_id_metadata_document_supported.unwrap_or(false);
-	let cimd_reachable = is_loopback_issuer(&auth_metadata.issuer) || auth_metadata.registration_endpoint.is_none();
-
-	// Strategy 1: CIMD — the metadata document URL becomes the client_id
-	if cimd_supported && cimd_reachable {
-		crate::log_debug!("Auth server supports CIMD, starting local metadata server...");
-
-		match start_cimd_server(&oauth_config.callback_url, &oauth_config.scopes).await {
-			Ok(client_id_url) => {
-				crate::log_debug!("CIMD server started, using client_id: {}", client_id_url);
-				return Ok(OAuthConfig {
-					client_id: client_id_url,
-					..oauth_config
-				});
-			}
-			Err(e) => {
-				crate::log_debug!("CIMD server failed: {}, falling back to DCR if available", e);
-				// Fall through to DCR
-			}
-		}
+	// Strategy 1: CIMD — the published metadata document URL is the client_id
+	if auth_metadata.client_id_metadata_document_supported.unwrap_or(false) {
+		crate::log_debug!("Auth server supports CIMD, using client_id: {}", CLIENT_METADATA_URL);
+		return Ok(OAuthConfig {
+			client_id: CLIENT_METADATA_URL.to_string(),
+			..oauth_config
+		});
 	}
 
 	// Strategy 2: DCR — register client via registration_endpoint

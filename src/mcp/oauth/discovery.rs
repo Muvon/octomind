@@ -130,7 +130,10 @@ fn protected_resource_metadata_urls(server_url: &str) -> Vec<String> {
 	let Ok(url) = url::Url::parse(server_url) else {
 		return Vec::new();
 	};
-	let root = format!("{}/.well-known/oauth-protected-resource", url.origin().ascii_serialization());
+	let root = format!(
+		"{}/.well-known/oauth-protected-resource",
+		url.origin().ascii_serialization()
+	);
 	let path = url.path().trim_end_matches('/');
 	if path.is_empty() {
 		vec![root]
@@ -248,7 +251,10 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
 
 /// MCP requires PKCE with S256; a server that doesn't advertise it is refused.
 fn ensure_pkce_s256(auth_metadata: &AuthServerMetadata) -> Result<()> {
-	let methods = auth_metadata.code_challenge_methods_supported.as_deref().unwrap_or_default();
+	let methods = auth_metadata
+		.code_challenge_methods_supported
+		.as_deref()
+		.unwrap_or_default();
 	if methods.iter().any(|method| method == "S256") {
 		return Ok(());
 	}

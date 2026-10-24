@@ -227,9 +227,8 @@ class Handler(BaseHTTPRequestHandler):
             if MODE != "oauth":
                 self._send_json(404, {"error": "not found"})
                 return
-            # Discovery probes {mcp_url}/.well-known/... (pre-discovery
-            # derives the path from the MCP URL), so serve the documents
-            # under both the root and the /mcp prefix.
+            # Discovery probes the well-known URLs with and without the
+            # MCP path (path-specific, then root), so match by suffix.
             if self.path.endswith("/.well-known/oauth-protected-resource"):
                 self._send_json(200, {"resource": base, "authorization_servers": [base]})
             elif self.path.endswith("/.well-known/oauth-authorization-server"):

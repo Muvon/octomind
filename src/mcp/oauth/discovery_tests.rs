@@ -15,17 +15,35 @@
 use super::*;
 
 #[test]
-fn test_parse_www_authenticate_header() {
+fn test_parse_bearer_challenge() {
 	let header = r#"Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource""#;
-	let result = parse_www_authenticate_header(header).unwrap();
-	assert_eq!(result, "https://api.example.com/.well-known/oauth-protected-resource");
+	let challenge = parse_bearer_challenge(header);
+	assert_eq!(
+		challenge.resource_metadata.as_deref(),
+		Some("https://api.example.com/.well-known/oauth-protected-resource")
+	);
+	assert!(challenge.scopes.is_empty());
 }
 
 #[test]
-fn test_parse_www_authenticate_header_invalid() {
-	let header = "Bearer realm=\"example\"";
-	let result = parse_www_authenticate_header(header);
-	assert!(result.is_err());
+fn test_parse_bearer_challenge_without_params() {
+	assert_eq!(
+		parse_bearer_challenge("Bearer realm=\"example\""),
+		BearerChallenge::default()
+	);
+}
+
+#[test]
+fn test_parse_bearer_challenge_scopes() {
+	let header = r#"Bearer resource_metadata="https://mcp.example.com/prm", scope="files:read files:write""#;
+	let challenge = parse_bearer_challenge(header);
+	assert_eq!(
+		challenge.scopes,
+		vec!["files:read".to_string(), "files:write".to_string()]
+	);
+	// An error code naming a scope is not a scope parameter
+	let header = r#"Bearer error="insufficient_scope", resource_metadata="https://mcp.example.com/prm""#;
+	assert!(parse_bearer_challenge(header).scopes.is_empty());
 }
 
 #[test]
@@ -46,7 +64,7 @@ fn test_build_oauth_config() {
 		scopes_supported: None,
 	};
 
-	let config = build_oauth_config_from_metadata(&auth_metadata, &resource_metadata);
+	let config = build_oauth_config_from_metadata(&auth_metadata, &resource_metadata, &[]);
 
 	// client_id is empty placeholder — resolved by CIMD/DCR
 	assert!(config.client_id.is_empty());
@@ -63,25 +81,72 @@ fn test_build_oauth_config() {
 
 #[test]
 fn test_parse_header_edge_cases() {
+	let resource_metadata = |header: &str| parse_bearer_challenge(header).resource_metadata;
 	// Empty header
-	assert!(parse_www_authenticate_header("").is_err());
+	assert!(resource_metadata("").is_none());
 	// Multiple params — resource_metadata still extracted
 	let header =
 		"Bearer realm=\"example\", resource_metadata=\"https://auth.example.com/.well-known/oauth-protected-resource\"";
 	assert_eq!(
-		parse_www_authenticate_header(header).unwrap(),
-		"https://auth.example.com/.well-known/oauth-protected-resource"
+		resource_metadata(header).as_deref(),
+		Some("https://auth.example.com/.well-known/oauth-protected-resource")
 	);
 	// Unquoted value does not match the RFC 9728 format
-	assert!(parse_www_authenticate_header("Bearer resource_metadata=https://example.com/prm").is_err());
+	assert!(resource_metadata("Bearer resource_metadata=https://example.com/prm").is_none());
 	// Empty quoted value does not match
-	assert!(parse_www_authenticate_header("Bearer resource_metadata=\"\"").is_err());
+	assert!(resource_metadata("Bearer resource_metadata=\"\"").is_none());
 	// URL with query string survives intact
 	let header = "Bearer resource_metadata=\"https://example.com/prm?foo=bar&baz=1\"";
 	assert_eq!(
-		parse_www_authenticate_header(header).unwrap(),
-		"https://example.com/prm?foo=bar&baz=1"
+		resource_metadata(header).as_deref(),
+		Some("https://example.com/prm?foo=bar&baz=1")
 	);
+}
+
+#[test]
+fn test_protected_resource_metadata_urls_follow_spec_order() {
+	assert_eq!(
+		protected_resource_metadata_urls("https://example.com/public/mcp/"),
+		vec![
+			"https://example.com/.well-known/oauth-protected-resource/public/mcp".to_string(),
+			"https://example.com/.well-known/oauth-protected-resource".to_string(),
+		]
+	);
+	assert_eq!(
+		protected_resource_metadata_urls("https://example.com"),
+		vec!["https://example.com/.well-known/oauth-protected-resource".to_string()]
+	);
+}
+
+#[test]
+fn test_auth_server_metadata_urls_follow_spec_order() {
+	assert_eq!(
+		auth_server_metadata_urls("https://auth.example.com/tenant1"),
+		vec![
+			"https://auth.example.com/.well-known/oauth-authorization-server/tenant1".to_string(),
+			"https://auth.example.com/.well-known/openid-configuration/tenant1".to_string(),
+			"https://auth.example.com/tenant1/.well-known/openid-configuration".to_string(),
+		]
+	);
+	assert_eq!(
+		auth_server_metadata_urls("https://auth.example.com/"),
+		vec![
+			"https://auth.example.com/.well-known/oauth-authorization-server".to_string(),
+			"https://auth.example.com/.well-known/openid-configuration".to_string(),
+		]
+	);
+}
+
+#[test]
+fn test_ensure_pkce_s256() {
+	let with = |methods: Option<Vec<&str>>| AuthServerMetadata {
+		code_challenge_methods_supported: methods.map(|m| m.into_iter().map(str::to_string).collect()),
+		..auth_metadata_fixture(None, None, None)
+	};
+	assert!(ensure_pkce_s256(&with(Some(vec!["plain", "S256"]))).is_ok());
+	let err = ensure_pkce_s256(&with(None)).unwrap_err();
+	assert!(err.to_string().contains("PKCE S256"), "{err}");
+	assert!(ensure_pkce_s256(&with(Some(vec!["plain"]))).is_err());
 }
 
 // ------------------------------------------------------------------
@@ -178,25 +243,30 @@ fn resource_metadata_fixture(scopes: Option<Vec<String>>) -> ProtectedResourceMe
 fn test_build_oauth_config_scope_precedence() {
 	let auth = auth_metadata_fixture(Some(vec!["read".to_string()]), None, None);
 
+	let resource = resource_metadata_fixture(Some(vec!["mcp:read".to_string()]));
+
+	// Challenge scopes are authoritative
+	let config = build_oauth_config_from_metadata(&auth, &resource, &["files:write".to_string()]);
+	assert_eq!(config.scopes, vec!["files:write".to_string()]);
+
 	// Resource scopes win over auth server scopes
-	let config =
-		build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(Some(vec!["mcp:read".to_string()])));
+	let config = build_oauth_config_from_metadata(&auth, &resource, &[]);
 	assert_eq!(config.scopes, vec!["mcp:read".to_string()]);
 
 	// Falls back to auth server scopes when the resource lists none
-	let config = build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(None));
+	let config = build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(None), &[]);
 	assert_eq!(config.scopes, vec!["read".to_string()]);
 
 	// Empty when neither document lists scopes
 	let auth_no_scopes = auth_metadata_fixture(None, None, None);
-	let config = build_oauth_config_from_metadata(&auth_no_scopes, &resource_metadata_fixture(None));
+	let config = build_oauth_config_from_metadata(&auth_no_scopes, &resource_metadata_fixture(None), &[]);
 	assert!(config.scopes.is_empty());
 }
 
 #[test]
 fn test_build_oauth_config_defaults() {
 	let auth = auth_metadata_fixture(None, Some("https://auth.example.com/register".to_string()), Some(true));
-	let config = build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(None));
+	let config = build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(None), &[]);
 
 	// client_id is a placeholder resolved later by CIMD/DCR
 	assert!(config.client_id.is_empty());
@@ -336,13 +406,13 @@ async fn test_fetch_auth_server_metadata_builds_rfc8414_url() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn test_discover_pre_discovery_with_cimd_caches_result() {
+async fn test_discover_well_known_metadata_with_cimd_caches_result() {
 	let base = spawn_http_stub(move |method, path, host| {
 			let prm = format!(
 				"{{\"resource\":\"http://{host}/mcp\",\"authorization_servers\":[\"http://{host}\"],\"scopes_supported\":[\"mcp:read\"]}}"
 			);
 			let asm = format!(
-				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\",\"scopes_supported\":[\"read\"],\"client_id_metadata_document_supported\":true}}"
+				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\",\"scopes_supported\":[\"read\"],\"code_challenge_methods_supported\":[\"S256\"],\"client_id_metadata_document_supported\":true}}"
 			);
 			if method == "GET" && path.ends_with("/.well-known/oauth-protected-resource") {
 				(200, vec![], prm)
@@ -360,12 +430,8 @@ async fn test_discover_pre_discovery_with_cimd_caches_result() {
 		.await
 		.unwrap();
 
-	// client_id is the local CIMD metadata document URL
-	assert!(
-		config.client_id.starts_with("http://127.0.0.1") || config.client_id.starts_with("http://localhost"),
-		"unexpected client_id: {}",
-		config.client_id
-	);
+	// client_id is Octomind's published CIMD document URL
+	assert_eq!(config.client_id, super::super::cimd::CLIENT_METADATA_URL);
 	assert_eq!(config.authorization_url, format!("{base}/oauth/authorize"));
 	assert_eq!(config.token_url, format!("{base}/oauth/token"));
 	// Resource scopes take precedence over auth server scopes
@@ -380,9 +446,6 @@ async fn test_discover_pre_discovery_with_cimd_caches_result() {
 
 	clear_discovered_oauth_cache(&name);
 	assert!(cached_discovery(&name).is_none());
-
-	// Stop the local CIMD server so its port does not leak into other tests
-	super::super::cimd::stop_cimd_server().await;
 }
 
 #[tokio::test]
@@ -393,7 +456,7 @@ async fn test_discover_401_flow_with_dcr() {
 				"{{\"resource\":\"http://{host}/mcp\",\"authorization_servers\":[\"http://{host}\"]}}"
 			);
 			let asm = format!(
-				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\",\"registration_endpoint\":\"http://{host}/register\"}}"
+				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\",\"code_challenge_methods_supported\":[\"S256\"],\"registration_endpoint\":\"http://{host}/register\"}}"
 			);
 			if method == "POST" && path.starts_with("/mcp") {
 				(
@@ -438,7 +501,7 @@ async fn test_discover_401_flow_with_dcr() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_discover_errors_without_401() {
-	// Pre-discovery 404 + POST returns 200 — not an RFC 9728 server
+	// No 401 and no Protected Resource Metadata — not an RFC 9728 server
 	let base = spawn_http_stub(move |_m, _p, _h| (200, vec![], String::new())).await;
 	let name = unique_server_name("no401");
 	clear_discovered_oauth_cache(&name);
@@ -502,7 +565,7 @@ async fn test_discover_errors_without_cimd_or_dcr() {
 				"{{\"resource\":\"http://{host}/mcp\",\"authorization_servers\":[\"http://{host}\"]}}"
 			);
 			let asm = format!(
-				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\"}}"
+				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/oauth/authorize\",\"token_endpoint\":\"http://{host}/oauth/token\",\"code_challenge_methods_supported\":[\"S256\"]}}"
 			);
 			if method == "GET" && path.ends_with("/.well-known/oauth-protected-resource") {
 				(200, vec![], prm)
@@ -520,5 +583,74 @@ async fn test_discover_errors_without_cimd_or_dcr() {
 		.await
 		.unwrap_err();
 	assert!(err.to_string().contains("client_id"), "{err}");
+	assert!(cached_discovery(&name).is_none(), "failures must not be cached");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_discover_uses_challenge_scopes_and_openid_configuration() {
+	let base = spawn_http_stub(move |method, path, host| {
+			let prm = format!(
+				"{{\"resource\":\"http://{host}/mcp\",\"authorization_servers\":[\"http://{host}/tenant\"],\"scopes_supported\":[\"mcp:read\"]}}"
+			);
+			// Served only through OpenID Connect Discovery with path insertion
+			let oidc = format!(
+				"{{\"issuer\":\"http://{host}/tenant\",\"authorization_endpoint\":\"http://{host}/authorize\",\"token_endpoint\":\"http://{host}/token\",\"code_challenge_methods_supported\":[\"S256\"],\"client_id_metadata_document_supported\":true}}"
+			);
+			if method == "POST" && path.starts_with("/mcp") {
+				(
+					401,
+					vec![(
+						"WWW-Authenticate".to_string(),
+						format!("Bearer resource_metadata=\"http://{host}/prm\", scope=\"files:read\""),
+					)],
+					String::new(),
+				)
+			} else if method == "GET" && path == "/prm" {
+				(200, vec![], prm)
+			} else if method == "GET" && path == "/.well-known/openid-configuration/tenant" {
+				(200, vec![], oidc)
+			} else {
+				(404, vec![], String::new())
+			}
+		})
+		.await;
+	let name = unique_server_name("oidc");
+	clear_discovered_oauth_cache(&name);
+
+	let config = discover_oauth_from_mcp_server(&format!("{base}/mcp/"), &name)
+		.await
+		.unwrap();
+	assert_eq!(config.scopes, vec!["files:read".to_string()]);
+	assert_eq!(config.token_url, format!("{base}/token"));
+	clear_discovered_oauth_cache(&name);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_discover_refuses_server_without_pkce() {
+	let base = spawn_http_stub(move |method, path, host| {
+			let prm = format!(
+				"{{\"resource\":\"http://{host}/mcp\",\"authorization_servers\":[\"http://{host}\"]}}"
+			);
+			let asm = format!(
+				"{{\"issuer\":\"http://{host}\",\"authorization_endpoint\":\"http://{host}/authorize\",\"token_endpoint\":\"http://{host}/token\",\"client_id_metadata_document_supported\":true}}"
+			);
+			if method == "GET" && path.ends_with("/.well-known/oauth-protected-resource") {
+				(200, vec![], prm)
+			} else if method == "GET" && path == "/.well-known/oauth-authorization-server" {
+				(200, vec![], asm)
+			} else {
+				(404, vec![], String::new())
+			}
+		})
+		.await;
+	let name = unique_server_name("nopkce");
+	clear_discovered_oauth_cache(&name);
+
+	let err = discover_oauth_from_mcp_server(&format!("{base}/mcp/"), &name)
+		.await
+		.unwrap_err();
+	assert!(err.to_string().contains("PKCE S256"), "{err}");
 	assert!(cached_discovery(&name).is_none(), "failures must not be cached");
 }

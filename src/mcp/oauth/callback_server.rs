@@ -33,7 +33,7 @@ struct CallbackServerState {
 	config: OAuthConfig,
 	/// MCP config server name — the token-store key. Tokens are looked up by
 	/// server name (get_valid_token), so they MUST be saved under it too; the
-	/// client_id is ephemeral (CIMD URL / DCR-assigned) and never matches.
+	/// client_id (the shared CIMD URL or a DCR-assigned id) doesn't identify the server.
 	server_name: String,
 	code_verifier: String,
 	redirect_uri: String,

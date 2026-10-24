@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! External unit tests for CIMD/DCR client-id resolution: the local CIMD
-//! metadata HTTP server (GET/OPTIONS/404), `resolve_client_id` strategy
-//! selection, and DCR registration against a loopback stub. Complements the
-//! inline `mod tests` (which covers `build_client_metadata` only).
+//! External unit tests for CIMD/DCR client-id resolution: `resolve_client_id`
+//! strategy selection and DCR registration against a loopback stub.
+//! Complements the inline `mod tests` (which covers `build_client_metadata` only).
 
 use super::*;
-use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // ------------------------------------------------------------------
@@ -90,7 +88,7 @@ async fn closed_port_url(path: &str) -> String {
 // ------------------------------------------------------------------
 
 #[test]
-fn client_metadata_document_omits_scope_when_empty() {
+fn dcr_client_metadata_omits_scope_when_empty() {
 	let metadata = build_client_metadata("http://127.0.0.1:34567/oauth/callback", &[]);
 	let json = serde_json::to_string(&metadata).unwrap();
 	assert!(!json.contains("\"scope\""), "{json}");
@@ -119,108 +117,35 @@ fn dcr_registration_response_requires_client_id() {
 }
 
 // ------------------------------------------------------------------
-// CIMD HTTP server (global CIMD_SERVER state → serial)
-// ------------------------------------------------------------------
-
-#[serial]
-#[tokio::test]
-async fn cimd_server_serves_metadata_document_over_http() {
-	let client_id_url = start_cimd_server("http://127.0.0.1:34567/oauth/callback", &["mcp:read".to_string()])
-		.await
-		.expect("CIMD server should start");
-	assert!(client_id_url.starts_with("http://localhost:"), "{client_id_url}");
-	assert!(client_id_url.ends_with("/.well-known/oauth-client.json"));
-
-	// The listener binds 127.0.0.1; swap the advertised host for the fetch.
-	let fetch_url = client_id_url.replacen("localhost", "127.0.0.1", 1);
-	let response = reqwest::get(&fetch_url).await.expect("fetch metadata document");
-	assert_eq!(response.status(), 200);
-	assert_eq!(
-		response
-			.headers()
-			.get("access-control-allow-origin")
-			.and_then(|v| v.to_str().ok()),
-		Some("*"),
-		"CIMD responses must carry permissive CORS headers"
-	);
-	let doc: ClientMetadataDocument = response.json().await.expect("parse metadata document");
-	assert_eq!(doc.client_name, "Octomind");
-	assert_eq!(
-		doc.redirect_uris,
-		vec!["http://127.0.0.1:34567/oauth/callback".to_string()]
-	);
-	assert_eq!(
-		doc.grant_types,
-		vec!["authorization_code".to_string(), "refresh_token".to_string()]
-	);
-	assert_eq!(doc.token_endpoint_auth_method, "none");
-	assert_eq!(doc.scope.as_deref(), Some("mcp:read"));
-
-	stop_cimd_server().await;
-}
-
-#[serial]
-#[tokio::test]
-async fn cimd_server_answers_preflight_and_rejects_unknown_paths() {
-	let client_id_url = start_cimd_server("http://127.0.0.1:34567/oauth/callback", &[])
-		.await
-		.unwrap();
-	let fetch_url = client_id_url.replacen("localhost", "127.0.0.1", 1);
-	let parsed = url::Url::parse(&fetch_url).unwrap();
-	let addr = format!("{}:{}", parsed.host_str().unwrap(), parsed.port().unwrap());
-
-	// OPTIONS preflight → 204 with CORS headers.
-	let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
-	stream
-		.write_all(b"OPTIONS / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		.await
-		.unwrap();
-	let mut buf = vec![0u8; 2048];
-	let n = stream.read(&mut buf).await.unwrap();
-	let response = String::from_utf8_lossy(&buf[..n]).to_string();
-	assert!(response.starts_with("HTTP/1.1 204"), "{response}");
-	assert!(
-		response.to_lowercase().contains("access-control-allow-origin: *"),
-		"{response}"
-	);
-
-	// Unknown path → 404.
-	let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
-	stream
-		.write_all(b"GET /other HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		.await
-		.unwrap();
-	let n = stream.read(&mut buf).await.unwrap();
-	let response = String::from_utf8_lossy(&buf[..n]).to_string();
-	assert!(response.starts_with("HTTP/1.1 404"), "{response}");
-
-	stop_cimd_server().await;
-}
-
-#[tokio::test]
-async fn stop_cimd_server_without_running_instance_is_noop() {
-	stop_cimd_server().await;
-	stop_cimd_server().await;
-}
-
-// ------------------------------------------------------------------
 // resolve_client_id — strategy selection
 // ------------------------------------------------------------------
 
-#[serial]
 #[tokio::test]
-async fn resolve_client_id_prefers_cimd_when_supported() {
+async fn resolve_client_id_uses_published_document_when_cimd_supported() {
 	let metadata = auth_metadata(Some(true), None);
 	let config = resolve_client_id(oauth_config(), &metadata)
 		.await
 		.expect("CIMD resolution must succeed");
-	assert!(
-		config.client_id.starts_with("http://localhost:"),
-		"{}",
-		config.client_id
-	);
-	assert!(config.client_id.ends_with("/.well-known/oauth-client.json"));
-	stop_cimd_server().await;
+	assert_eq!(config.client_id, CLIENT_METADATA_URL);
+	assert!(config.client_secret.is_empty(), "CIMD clients are public");
+}
+
+// MCP priority order: CIMD before DCR. The closed port proves no registration is attempted.
+#[tokio::test]
+async fn resolve_client_id_prefers_cimd_over_dcr() {
+	let metadata = auth_metadata(Some(true), Some(closed_port_url("register").await));
+	let config = resolve_client_id(oauth_config(), &metadata)
+		.await
+		.expect("CIMD resolution must succeed");
+	assert_eq!(config.client_id, CLIENT_METADATA_URL);
+}
+
+#[test]
+fn client_metadata_url_is_a_valid_cimd_client_id() {
+	// CIMD client_ids must use https and carry a path
+	let url = url::Url::parse(CLIENT_METADATA_URL).expect("valid URL");
+	assert_eq!(url.scheme(), "https");
+	assert!(url.path().len() > 1, "{CLIENT_METADATA_URL}");
 }
 
 #[tokio::test]
@@ -232,43 +157,6 @@ async fn resolve_client_id_registers_via_dcr_when_cimd_unsupported() {
 		.expect("DCR resolution must succeed");
 	assert_eq!(config.client_id, "dcr-client-1");
 	assert_eq!(config.client_secret, "dcr-secret");
-}
-
-// A remote auth server can't fetch a localhost CIMD URL, so when it also offers DCR
-// (e.g. Luma's MCP server) the client registers through DCR.
-#[tokio::test]
-async fn resolve_client_id_uses_dcr_for_remote_server_offering_both() {
-	let endpoint = spawn_http_stub("200 OK", r#"{"client_id":"dcr-client-2"}"#).await;
-	let metadata = auth_metadata(Some(true), Some(endpoint));
-	let config = resolve_client_id(oauth_config(), &metadata)
-		.await
-		.expect("DCR resolution must succeed");
-	assert_eq!(config.client_id, "dcr-client-2");
-}
-
-#[serial]
-#[tokio::test]
-async fn resolve_client_id_keeps_cimd_for_loopback_server_offering_both() {
-	let mut metadata = auth_metadata(Some(true), Some("http://127.0.0.1:9/register".to_string()));
-	metadata.issuer = "http://127.0.0.1:8123".to_string();
-	let config = resolve_client_id(oauth_config(), &metadata)
-		.await
-		.expect("CIMD resolution must succeed");
-	assert!(
-		config.client_id.ends_with("/.well-known/oauth-client.json"),
-		"{}",
-		config.client_id
-	);
-	stop_cimd_server().await;
-}
-
-#[test]
-fn is_loopback_issuer_recognises_local_hosts_only() {
-	assert!(is_loopback_issuer("http://localhost:8080"));
-	assert!(is_loopback_issuer("http://127.0.0.1:8123"));
-	assert!(is_loopback_issuer("http://[::1]:9000"));
-	assert!(!is_loopback_issuer("https://agents.lumalabs.ai"));
-	assert!(!is_loopback_issuer("not a url"));
 }
 
 #[tokio::test]

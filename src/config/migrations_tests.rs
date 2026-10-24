@@ -41,6 +41,30 @@ fn template_document() -> toml_edit::DocumentMut {
 }
 
 #[test]
+fn v24_acp_resource_limit_migration_adds_default_and_preserves_explicit_limits() {
+	let template: crate::config::Config = toml::from_str(DEFAULT_CONFIG_TEMPLATE).expect("default config");
+	for limit in [None, Some(0), Some(4096)] {
+		let mut document = template_document();
+		document["version"] = toml_edit::value(24);
+		document.remove("acp_resource_max_bytes");
+		if let Some(limit) = limit {
+			document["acp_resource_max_bytes"] = toml_edit::value(limit);
+		}
+		let migrated = migrate_once(&document.to_string());
+		let config: crate::config::Config = toml::from_str(&migrated).expect("migrated config");
+		assert_eq!(
+			config.acp_resource_max_bytes,
+			limit.map(|n| n as usize).unwrap_or(template.acp_resource_max_bytes)
+		);
+		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+		assert!(plan()
+			.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+			.expect("idempotent migration")
+			.is_none());
+	}
+}
+
+#[test]
 fn v12_authorizer_migration_defaults_off_and_preserves_explicit_choice() {
 	for choice in [None, Some(true), Some(false)] {
 		let mut document = template_document();

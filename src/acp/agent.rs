@@ -16,7 +16,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agent_client_protocol::schema::v1::{
@@ -30,6 +30,7 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
+use tokio::io::AsyncReadExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::task::TaskTracker;
@@ -48,6 +49,118 @@ use crate::{log_debug, log_error, log_info};
 /// The one auth method we advertise: the `octomind login` device flow, driven
 /// from `authenticate` because stdout carries JSON-RPC, not a terminal.
 const LOGIN_AUTH_METHOD: &str = "octomind-login";
+
+struct PromptInput {
+	text: String,
+	images: Vec<crate::session::image::ImageAttachment>,
+	videos: Vec<crate::session::video::VideoAttachment>,
+}
+
+/// Resource text shares one budget, so many small resources cannot bypass the limit.
+fn inline_resource(uri: &str, text: &str, remaining: &mut usize, truncated: bool) -> String {
+	let mut end = text.len().min(*remaining);
+	while !text.is_char_boundary(end) {
+		end -= 1;
+	}
+	*remaining -= end;
+	let text_prefix = &text[..end];
+	// A resource can itself contain Markdown fences. Keep its contents inside ours.
+	let fence = "`".repeat(text_prefix.split(|c| c != '`').map(str::len).max().unwrap_or(0).max(2) + 1);
+	let notice = if truncated || end < text.len() {
+		"\n[ACP resource text truncated: acp_resource_max_bytes limit reached]"
+	} else {
+		""
+	};
+	format!("Resource: {uri}\n{fence}\n{text_prefix}\n{fence}{notice}")
+}
+
+async fn read_resource_link(uri: &str, cwd: &Path, remaining: &mut usize) -> String {
+	let result: anyhow::Result<String> = async {
+		let url = url::Url::parse(uri)?;
+		anyhow::ensure!(
+			url.scheme() == "file"
+				&& url.host_str().is_none_or(|host| host == "localhost")
+				&& url.query().is_none()
+				&& url.fragment().is_none(),
+			"only local file:// links are supported"
+		);
+		let path = url.to_file_path().map_err(|_| anyhow::anyhow!("invalid file URI"))?;
+		let root = tokio::fs::canonicalize(cwd).await?;
+		let path = tokio::fs::canonicalize(path).await?;
+		anyhow::ensure!(path.starts_with(root), "outside the session working directory");
+		anyhow::ensure!(tokio::fs::metadata(&path).await?.is_file(), "not a regular file");
+		if *remaining == 0 {
+			return Ok(inline_resource(uri, "", remaining, true));
+		}
+		let file = tokio::fs::File::open(path).await?;
+		let mut bytes = Vec::new();
+		file.take(remaining.saturating_add(1) as u64)
+			.read_to_end(&mut bytes)
+			.await?;
+		let truncated = bytes.len() > *remaining;
+		// The bounded read may end partway through a UTF-8 character. Drop only
+		// that incomplete suffix; malformed text within the prefix is rejected.
+		let text = match std::str::from_utf8(&bytes) {
+			Ok(text) => text,
+			Err(error) if truncated && error.error_len().is_none() => {
+				std::str::from_utf8(&bytes[..error.valid_up_to()])?
+			}
+			Err(error) => return Err(error.into()),
+		};
+		Ok(inline_resource(uri, text, remaining, truncated))
+	}
+	.await;
+	match result {
+		Ok(text) => text,
+		Err(error) => format!("[ACP resource {uri} not included: {error}]"),
+	}
+}
+
+async fn map_prompt_content(blocks: &[ContentBlock], cwd: &Path, max_bytes: usize) -> PromptInput {
+	let mut text_parts = Vec::new();
+	let mut images = Vec::new();
+	let mut videos = Vec::new();
+	let mut remaining = max_bytes;
+	for block in blocks {
+		match block {
+			ContentBlock::Text(text) => text_parts.push(text.text.clone()),
+			ContentBlock::Image(image) => images.push(crate::session::image::ImageAttachment {
+				data: crate::session::image::ImageData::Base64(image.data.clone()),
+				media_type: image.mime_type.clone(),
+				source_type: crate::session::image::SourceType::Url,
+				dimensions: None,
+				size_bytes: None,
+			}),
+			ContentBlock::Resource(resource) => match &resource.resource {
+				EmbeddedResourceResource::TextResourceContents(text) => {
+					text_parts.push(inline_resource(&text.uri, &text.text, &mut remaining, false));
+				}
+				EmbeddedResourceResource::BlobResourceContents(BlobResourceContents {
+					blob,
+					mime_type: Some(mime),
+					..
+				}) if mime.starts_with("video/") => videos.push(crate::session::video::VideoAttachment {
+					data: crate::session::video::VideoData::Base64(blob.clone()),
+					media_type: mime.clone(),
+					source_type: crate::session::video::SourceType::Url,
+					dimensions: None,
+					size_bytes: None,
+					duration_secs: None,
+				}),
+				_ => {}
+			},
+			ContentBlock::ResourceLink(link) => {
+				text_parts.push(read_resource_link(&link.uri, cwd, &mut remaining).await);
+			}
+			_ => {} // Audio and non-video blobs remain unsupported.
+		}
+	}
+	PromptInput {
+		text: text_parts.join("\n"),
+		images,
+		videos,
+	}
+}
 
 /// ACP agent implementation wrapping Octomind's session infrastructure.
 ///
@@ -762,48 +875,18 @@ impl OctomindAgent {
 	async fn prompt(&self, args: PromptRequest) -> agent_client_protocol::Result<PromptResponse> {
 		let session_id = args.session_id.to_string();
 
-		// Extract text, images, and videos from prompt content blocks
-		let mut text_parts = Vec::new();
-		let mut images = Vec::new();
-		let mut videos = Vec::new();
-		for block in &args.prompt {
-			match block {
-				ContentBlock::Text(t) => text_parts.push(t.text.as_str()),
-				ContentBlock::Image(img) => {
-					images.push(crate::session::image::ImageAttachment {
-						data: crate::session::image::ImageData::Base64(img.data.clone()),
-						media_type: img.mime_type.clone(),
-						source_type: crate::session::image::SourceType::Url, // ACP images are inline data, closest match
-						dimensions: None,
-						size_bytes: None,
-					});
+		if !args.prompt.iter().any(|block| match block {
+			ContentBlock::Text(text) => !text.text.trim().is_empty(),
+			ContentBlock::Image(_) | ContentBlock::ResourceLink(_) => true,
+			ContentBlock::Resource(resource) => match &resource.resource {
+				EmbeddedResourceResource::TextResourceContents(_) => true,
+				EmbeddedResourceResource::BlobResourceContents(blob) => {
+					blob.mime_type.as_ref().is_some_and(|mime| mime.starts_with("video/"))
 				}
-				ContentBlock::Resource(res) => {
-					// Extract video from embedded blob resources (ACP has no native video block)
-					if let EmbeddedResourceResource::BlobResourceContents(BlobResourceContents {
-						blob,
-						mime_type: Some(mime),
-						..
-					}) = &res.resource
-					{
-						if mime.starts_with("video/") {
-							videos.push(crate::session::video::VideoAttachment {
-								data: crate::session::video::VideoData::Base64(blob.clone()),
-								media_type: mime.clone(),
-								source_type: crate::session::video::SourceType::Url,
-								dimensions: None,
-								size_bytes: None,
-								duration_secs: None,
-							});
-						}
-					}
-				}
-				_ => {} // Skip audio, resource links, etc.
-			}
-		}
-		let mut input: String = text_parts.join("\n");
-
-		if input.trim().is_empty() && images.is_empty() && videos.is_empty() {
+				_ => false,
+			},
+			_ => false,
+		}) {
 			return Ok(PromptResponse::new(StopReason::EndTurn));
 		}
 
@@ -819,6 +902,22 @@ impl OctomindAgent {
 			// surfaces as a disconnect).
 			let lock = self.session_lock(&session_id);
 			let _guard = lock.lock().await;
+			// Read the cwd only after taking the lock: an inbox turn temporarily
+			// removes this session from the map while it runs.
+			let cwd = self
+				.sessions
+				.borrow()
+				.get(&session_id)
+				.map(|(_, cwd)| cwd.clone())
+				.ok_or_else(|| {
+					agent_client_protocol::Error::invalid_params().data(format!("session not found: {session_id}"))
+				})?;
+			let max_bytes = self.config.borrow().acp_resource_max_bytes;
+			let PromptInput {
+				text: mut input,
+				images,
+				videos,
+			} = map_prompt_content(&args.prompt, &cwd, max_bytes).await;
 
 			// /done <instructions>: compress then process instructions as a user message.
 			// Must be intercepted before the slash-command block because we need to
@@ -1141,16 +1240,12 @@ impl OctomindAgent {
 				}
 			};
 
-			// Attach ACP images/videos as pending so add_user_message picks them up
-			if let Some(first_image) = images.into_iter().next() {
-				chat_session.pending_image = Some(first_image);
-			}
-			if let Some(first_video) = videos.into_iter().next() {
-				chat_session.pending_video = Some(first_video);
-			}
-
-			// Add user message
-			if let Err(e) = chat_session.add_user_message(&processed_input) {
+			// Include interactive /image and /video attachments alongside every ACP attachment.
+			let mut images = images;
+			let mut videos = videos;
+			images.extend(chat_session.take_pending_image());
+			videos.extend(chat_session.take_pending_video());
+			if let Err(e) = chat_session.add_user_message_with_attachments(&processed_input, images, videos) {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd));

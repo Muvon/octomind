@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 24
+version = 25
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -56,6 +56,10 @@ mcp_response_tokens_threshold = 20000
 
 # Maximum tokens per session before truncation kicks in (0 = disabled, >0 = enabled)
 max_session_tokens_threshold = 200000
+
+# Maximum combined UTF-8 text bytes in ACP embedded resources and file links per
+# prompt. Text is truncated with a notice at this limit; 0 omits resource text.
+acp_resource_max_bytes = 262144
 
 # Keep the prompt cache warm with periodic pings while the session idles.
 # When you walk away after the AI replies, Octomind sends a minimal request

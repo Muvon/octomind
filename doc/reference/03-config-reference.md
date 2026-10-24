@@ -66,7 +66,7 @@ octomind config --validate
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `version` | u32 | `22` | Config version. Do not modify. Used for automatic upgrades. |
+| `version` | u32 | `25` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
@@ -76,7 +76,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 24
+version = 25
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
@@ -90,12 +90,14 @@ commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.no
 |-------|------|---------|-------------|
 | `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
 | `max_session_tokens_threshold` | usize | `200000` | Full-context safety limit, capped further by model window minus output reservation. `0` removes this configured limit, not the model ceiling. Maximum `2,000,000`; unrecoverable overflow errors before a provider request. |
+| `acp_resource_max_bytes` | usize | `262144` | Combined UTF-8 text budget for embedded ACP resources and local file links per prompt. Truncates with a notice; `0` omits resource text. |
 | `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while the session idles. Provider-aware: currently **only Anthropic** is pinged, and the ping interval comes from the provider's cache TTL (1h), not from this config. |
 | `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. Validation fails if `> 86400` (24h). |
 
 ```toml
 mcp_response_tokens_threshold = 20000
 max_session_tokens_threshold = 200000
+acp_resource_max_bytes = 262144
 cache_keepalive_enabled = false
 cache_keepalive_max_idle_seconds = 1800
 ```

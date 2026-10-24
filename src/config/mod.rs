@@ -74,7 +74,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 24;
+pub const CURRENT_CONFIG_VERSION: u32 = 25;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -192,6 +192,18 @@ pub struct CompressionConfig {
 
 fn default_knowledge_retention() -> usize {
 	25
+}
+
+// Runtime config overrides intentionally skip migrations. Read the default from
+// the template so older files still work without being rewritten.
+fn default_acp_resource_max_bytes() -> usize {
+	#[derive(Deserialize)]
+	struct Defaults {
+		acp_resource_max_bytes: usize,
+	}
+	toml::from_str::<Defaults>(include_str!("../../config-templates/default.toml"))
+		.expect("embedded ACP resource limit must be valid")
+		.acp_resource_max_bytes
 }
 
 fn default_telemetry() -> bool {
@@ -338,6 +350,9 @@ pub struct Config {
 	// System-wide configuration settings (not role-specific)
 	pub mcp_response_tokens_threshold: usize,
 	pub max_session_tokens_threshold: usize,
+	/// Combined text budget for ACP embedded resources and local file links per prompt.
+	#[serde(default = "default_acp_resource_max_bytes")]
+	pub acp_resource_max_bytes: usize,
 
 	// Keep the provider's prompt cache warm while the session idles between
 	// turns. Off by default — opt in only when the cost of periodic refresh

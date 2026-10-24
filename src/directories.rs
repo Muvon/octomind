@@ -31,8 +31,9 @@ use std::path::{Path, PathBuf};
 /// - Windows: %LOCALAPPDATA%/octomind
 pub fn get_octomind_data_dir() -> Result<PathBuf> {
 	let data_dir = match std::env::var_os("OCTOMIND_DATA_DIR") {
-		Some(dir) => PathBuf::from(dir),
-		None => match dirs::home_dir() {
+		// An empty value is treated as unset, like `XDG_RUNTIME_DIR` below.
+		Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+		_ => match dirs::home_dir() {
 			Some(home) => {
 				#[cfg(target_os = "windows")]
 				let path = {

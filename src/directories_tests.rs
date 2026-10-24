@@ -27,6 +27,25 @@ fn test_get_octomind_data_dir() {
 }
 
 #[test]
+#[serial_test::serial]
+fn test_empty_octomind_data_dir_falls_back_to_default() {
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::remove_var("OCTOMIND_DATA_DIR");
+	let default = get_octomind_data_dir();
+	std::env::set_var("OCTOMIND_DATA_DIR", "");
+	let empty = get_octomind_data_dir();
+	match previous {
+		Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+
+	// An empty value used to resolve to the relative path "", i.e. the current directory.
+	let empty = empty.unwrap();
+	assert!(empty.is_absolute(), "got {}", empty.display());
+	assert_eq!(empty, default.unwrap());
+}
+
+#[test]
 fn test_subdirectories() {
 	// Test that all subdirectory functions work
 	assert!(get_config_dir().is_ok());

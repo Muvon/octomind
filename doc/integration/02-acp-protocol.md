@@ -227,10 +227,18 @@ bootstrap, so those values do not start webhook listeners.
 
 `session/prompt` content blocks are mapped as follows:
 
-- **Text** blocks are joined with newlines into the prompt.
-- **Image** blocks are attached as inline base64 image attachments (using the block's `mimeType`).
+- **Text** blocks and resource text are joined with newlines in their original order.
+- **Embedded text resources** (including editor @-mentioned files) become fenced blocks labelled with their URI.
+- **Resource links** with local `file://` URIs are read as UTF-8 text only when their canonical path is inside the
+  session's working directory. Traversal and symlinks outside that directory are rejected. Unsupported URIs, missing
+  files, directories, and invalid UTF-8 produce a short note in the prompt instead of being silently dropped.
+- **Image** blocks are all attached as inline base64 image attachments (using each block's `mimeType`).
 - **Resource** blocks carrying a blob resource with a `video/*` MIME type are attached as video (ACP has no native video
-  block). Audio and resource-link blocks are ignored.
+  block). All videos are retained, in order. Audio and other blob resources are ignored.
+
+Embedded and linked text share a per-prompt `acp_resource_max_bytes` budget (root setting, default `262144` bytes).
+Text is truncated at a UTF-8 boundary with a notice when the budget is exhausted; `0` omits resource text. File reads
+are bounded by the remaining budget. Ordinary text blocks and media attachments are not truncated by this setting.
 
 To attach an actual local image or video, indent this code inside the Python client's `try` block, before `finally`
 (choose a model supporting the modality):
@@ -259,7 +267,8 @@ print(request(7, "session/prompt", {
 }))
 ```
 
-If the prompt has no text, image, or video content, the agent immediately returns `StopReason::EndTurn`.
+Resource-only prompts are processed normally. If the prompt has no supported content, the agent immediately returns
+`StopReason::EndTurn`.
 
 ## Use Cases
 
@@ -414,7 +423,7 @@ The `initialize` response advertises:
 - **Session management**: `loadSession: true` — both `session/new` and `session/load` (resume by session id) are
   supported.
 
-- **Prompt**: `image: true` (inline base64 images) and `embeddedContext: true` (embedded resources, used to carry video
+- **Prompt**: `image: true` (inline base64 images) and `embeddedContext: true` (embedded text resources and video
   — see [Prompt Content](#prompt-content)).
 
 - **MCP**: `http: true` — HTTP transport is advertised so clients offer HTTP MCP servers. SSE is **not** supported and

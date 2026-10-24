@@ -18,6 +18,7 @@ use crate::websocket::{
 };
 use agent_client_protocol::schema::v1::{
 	AudioContent, EmbeddedResource, ImageContent, McpServerHttp, McpServerSse, McpServerStdio, ResourceLink,
+	TextResourceContents,
 };
 
 fn progress(tool_id: Option<&str>) -> ServerMessage {
@@ -411,7 +412,7 @@ async fn prompt_with_image_only_content_still_routes_to_the_session_lookup() {
 }
 
 #[tokio::test]
-async fn prompt_extracts_video_resources_and_skips_audio_and_links() {
+async fn prompt_with_mixed_content_for_an_unknown_session_is_invalid_params() {
 	let agent = agent_with(Default::default());
 	let video = ContentBlock::Resource(EmbeddedResource::new(EmbeddedResourceResource::BlobResourceContents(
 		BlobResourceContents::new("ZmFrZQ==", "file://clip.mp4").mime_type("video/mp4"),
@@ -428,6 +429,170 @@ async fn prompt_extracts_video_resources_and_skips_audio_and_links() {
 		.expect_err("mixed content proceeds to the session pipeline");
 	let detail = err.data.as_ref().and_then(|d| d.as_str()).unwrap_or_default();
 	assert!(detail.contains("session not found"), "got: {detail}");
+}
+
+fn text_resource(uri: &str, text: &str) -> ContentBlock {
+	ContentBlock::Resource(EmbeddedResource::new(EmbeddedResourceResource::TextResourceContents(
+		TextResourceContents::new(text, uri),
+	)))
+}
+
+fn video_resource(data: &str) -> ContentBlock {
+	ContentBlock::Resource(EmbeddedResource::new(EmbeddedResourceResource::BlobResourceContents(
+		BlobResourceContents::new(data, "file:///clip.mp4").mime_type("video/mp4"),
+	)))
+}
+
+#[tokio::test]
+async fn prompt_mapping_keeps_text_resources_in_order_and_all_media() {
+	let blocks = vec![
+		"before".into(),
+		ContentBlock::Image(ImageContent::new("aW1hZ2Ux", "image/png")),
+		text_resource("file:///src/main.rs", "fn main() {}"),
+		video_resource("dmlkZW8x"),
+		ContentBlock::Audio(AudioContent::new("YXVkaW8=", "audio/wav")),
+		ContentBlock::Resource(EmbeddedResource::new(EmbeddedResourceResource::BlobResourceContents(
+			BlobResourceContents::new("YmluYXJ5", "file:///data.bin").mime_type("application/octet-stream"),
+		))),
+		ContentBlock::Image(ImageContent::new("aW1hZ2Uy", "image/jpeg")),
+		video_resource("dmlkZW8y"),
+		"after".into(),
+	];
+	let input = map_prompt_content(&blocks, Path::new("."), 1024).await;
+	assert_eq!(
+		input.text,
+		"before\nResource: file:///src/main.rs\n```\nfn main() {}\n```\nafter"
+	);
+	assert_eq!(input.images.len(), 2);
+	assert_eq!(input.images[1].media_type, "image/jpeg");
+	assert!(matches!(&input.images[1].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2Uy"));
+	assert_eq!(input.videos.len(), 2);
+	assert!(matches!(&input.videos[1].data, crate::session::video::VideoData::Base64(data) if data == "dmlkZW8y"));
+}
+
+#[tokio::test]
+async fn prompt_resource_budget_is_shared_and_truncates_at_utf8_boundaries() {
+	let input = map_prompt_content(
+		&[
+			text_resource("first", "```"),
+			text_resource("second", "é🙂tail"),
+			"ordinary prompt text is not truncated".into(),
+		],
+		Path::new("."),
+		6,
+	)
+	.await;
+	assert!(input.text.contains("Resource: first\n````\n```\n````"));
+	assert!(input.text.contains("Resource: second\n```\né\n```"));
+	assert!(!input.text.contains("🙂"));
+	assert!(input.text.contains("truncated"));
+	assert!(input.text.ends_with("ordinary prompt text is not truncated"));
+	let disabled = map_prompt_content(&[text_resource("disabled", "secret")], Path::new("."), 0).await;
+	assert!(!disabled.text.contains("secret"));
+	assert!(disabled.text.contains("truncated"));
+}
+
+#[tokio::test]
+async fn prompt_file_links_are_decoded_and_confined_to_the_session_cwd() {
+	let temp = tempfile::tempdir().expect("temp directory");
+	let root = temp.path().join("project");
+	std::fs::create_dir(&root).expect("create project");
+	let file = root.join("hello 世界.txt");
+	std::fs::write(&file, "linked contents").expect("write resource");
+	let outside = temp.path().join("outside.txt");
+	std::fs::write(&outside, "MUST-NOT-APPEAR").expect("write outside resource");
+	let inside_uri = url::Url::from_file_path(&file).expect("file URI").to_string();
+	let outside_uri = url::Url::from_file_path(&outside).expect("outside URI").to_string();
+	let traversal = format!(
+		"{}../outside.txt",
+		url::Url::from_directory_path(&root).expect("root URI")
+	);
+	let blocks = vec![
+		ContentBlock::ResourceLink(ResourceLink::new("inside", inside_uri.clone())),
+		ContentBlock::ResourceLink(ResourceLink::new("outside", outside_uri)),
+		ContentBlock::ResourceLink(ResourceLink::new("traversal", traversal)),
+	];
+	let input = map_prompt_content(&blocks, &root, 1024).await;
+	assert!(input
+		.text
+		.contains(&format!("Resource: {inside_uri}\n```\nlinked contents\n```")));
+	assert_eq!(input.text.matches("outside the session working directory").count(), 2);
+	assert!(!input.text.contains("MUST-NOT-APPEAR"));
+}
+
+#[tokio::test]
+async fn prompt_file_links_bound_reads_and_share_the_embedded_text_budget() {
+	let root = tempfile::tempdir().expect("temp directory");
+	let file = root.path().join("large.txt");
+	std::fs::write(&file, "é🙂rest".repeat(1024)).expect("write resource");
+	let uri = url::Url::from_file_path(&file).expect("file URI").to_string();
+	let input = map_prompt_content(
+		&[
+			text_resource("first", "abc"),
+			ContentBlock::ResourceLink(ResourceLink::new("large", uri)),
+		],
+		root.path(),
+		6,
+	)
+	.await;
+	assert!(input.text.contains("\n```\né\n```"));
+	assert!(!input.text.contains("🙂"));
+	assert!(!input.text.contains("rest"));
+	assert!(input.text.contains("truncated"));
+}
+
+#[tokio::test]
+async fn prompt_file_link_errors_produce_notes_instead_of_silent_drops() {
+	let root = tempfile::tempdir().expect("temp directory");
+	let binary = root.path().join("binary");
+	std::fs::write(&binary, [0xff, 0xfe]).expect("write binary");
+	for uri in [
+		"https://example.com/never-fetched".to_string(),
+		"file://remote-host/share/file.txt".to_string(),
+		"not a URI".to_string(),
+		url::Url::from_file_path(&binary).expect("binary URI").to_string(),
+		url::Url::from_file_path(root.path().join("missing"))
+			.expect("missing URI")
+			.to_string(),
+		url::Url::from_directory_path(root.path())
+			.expect("directory URI")
+			.to_string(),
+	] {
+		let input = map_prompt_content(
+			&[ContentBlock::ResourceLink(ResourceLink::new("resource", uri.clone()))],
+			root.path(),
+			1024,
+		)
+		.await;
+		assert!(input.text.contains(&uri), "missing URI in {}", input.text);
+		assert!(
+			input.text.contains("not included"),
+			"missing error note in {}",
+			input.text
+		);
+	}
+}
+
+// Unix symlinks do not need the elevated privileges required on Windows.
+#[cfg(unix)]
+#[tokio::test]
+async fn prompt_file_link_symlinks_cannot_escape_the_session_cwd() {
+	let temp = tempfile::tempdir().expect("temp directory");
+	let root = temp.path().join("project");
+	std::fs::create_dir(&root).expect("create project");
+	let outside = temp.path().join("outside");
+	std::fs::write(&outside, "MUST-NOT-APPEAR").expect("write outside");
+	let link = root.join("link");
+	std::os::unix::fs::symlink(&outside, &link).expect("create symlink");
+	let uri = url::Url::from_file_path(&link).expect("link URI").to_string();
+	let input = map_prompt_content(
+		&[ContentBlock::ResourceLink(ResourceLink::new("link", uri))],
+		&root,
+		1024,
+	)
+	.await;
+	assert!(input.text.contains("outside the session working directory"));
+	assert!(!input.text.contains("MUST-NOT-APPEAR"));
 }
 
 #[tokio::test]
@@ -955,6 +1120,39 @@ async fn prompt_runs_a_full_turn_against_the_scripted_provider() {
 			context::cleanup_session(&session_id);
 		})
 		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_stores_every_acp_image_and_video_on_the_user_message() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("MEDIA-OK")]).await;
+	let agent = acp_agent();
+	let mut session = ChatSession::for_tests(vec![msg("system", "You are a helpful assistant.")]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	let local = tokio::task::LocalSet::new();
+	local.run_until(async {
+		install_session(&agent, "all-media", session).await;
+		let blocks = vec![
+			"describe these attachments".into(),
+			ContentBlock::Image(ImageContent::new("aW1hZ2Ux", "image/png")),
+			video_resource("dmlkZW8x"),
+			ContentBlock::Image(ImageContent::new("aW1hZ2Uy", "image/jpeg")),
+			video_resource("dmlkZW8y"),
+		];
+		// Even a provider that cannot process video must receive a complete user
+		// message in session history; transport handling must not drop attachments.
+		let _response = agent.prompt(PromptRequest::new("all-media", blocks)).await;
+		let sessions = agent.sessions.borrow();
+		let user = sessions["all-media"].0.session.messages.iter().find(|m| m.role == "user").expect("user message");
+		assert_eq!(user.images.as_ref().expect("images").len(), 2);
+		assert_eq!(user.videos.as_ref().expect("videos").len(), 2);
+		assert!(matches!(&user.images.as_ref().unwrap()[1].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2Uy"));
+		assert!(matches!(&user.videos.as_ref().unwrap()[1].data, crate::session::video::VideoData::Base64(data) if data == "dmlkZW8y"));
+		drop(sessions);
+		context::cleanup_session(&"all-media".to_string());
+	}).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

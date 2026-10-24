@@ -164,9 +164,19 @@ fn plan() -> MigrationPlan {
 				to: 24,
 				apply: add_v24_loop_stop,
 			},
+			VersionMigration {
+				from: 24,
+				to: 25,
+				apply: add_v25_acp_resource_limit,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the ACP resource budget without changing an existing explicit limit.
+fn add_v25_acp_resource_limit(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	merge_missing(document.as_table_mut(), template.as_table(), "acp_resource_max_bytes")
 }
 
 /// Add the required `supervisor.max_identical_rounds` loop hard stop; an existing

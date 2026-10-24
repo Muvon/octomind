@@ -42,7 +42,8 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		prompt.push_str(
 			"\n<delegation>\n\
 		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it (no handoff). \
-		Task outside your role → tap(action=\"run\", role=\"…\", …) to hand off.\n\
+		Task outside your role → tap(action=\"run\", role=\"…\", …) to hand off. \
+		A failed handoff → do not relaunch it unchanged: complete the task with the tools you have, or report the blocker.\n\
 		</delegation>",
 		);
 	}

@@ -642,6 +642,24 @@ fn hash2(a: &str, b: &str) -> u64 {
 	h.finish()
 }
 
+/// A tap launch answers with a fresh run id every time; masking it lets the loop
+/// detector recognise a relaunch of the same delegation as the same call.
+fn canonical_loop_result<'a>(tool: &str, result: &'a str) -> std::borrow::Cow<'a, str> {
+	if tool != "tap" {
+		return std::borrow::Cow::Borrowed(result);
+	}
+	let Ok(mut value) = serde_json::from_str::<serde_json::Value>(result) else {
+		return std::borrow::Cow::Borrowed(result);
+	};
+	match value.get_mut("id") {
+		Some(id) if id.as_str().is_some_and(|id| id.starts_with("tap-")) => {
+			*id = serde_json::Value::String("tap-[id]".to_string());
+			std::borrow::Cow::Owned(value.to_string())
+		}
+		_ => std::borrow::Cow::Borrowed(result),
+	}
+}
+
 impl Detectors {
 	/// Fold ONE call's result into per-call state and return `(result_hash, novel)`
 	/// for the caller to aggregate into the round. Updates only genuinely per-result
@@ -656,12 +674,14 @@ impl Detectors {
 		is_error: bool,
 		is_mutation: bool,
 	) -> (u64, bool) {
+		let loop_result = canonical_loop_result(tool, result);
+
 		// Loop identity: the whole call. Equal output from a different request is
 		// not the same call repeated.
 		let mut h = DefaultHasher::new();
 		tool.hash(&mut h);
 		parameters.to_string().hash(&mut h);
-		result.hash(&mut h);
+		loop_result.hash(&mut h);
 		is_error.hash(&mut h);
 		let rhash = h.finish();
 
@@ -675,7 +695,7 @@ impl Detectors {
 		let mut h = DefaultHasher::new();
 		tool.hash(&mut h);
 		param_paths(parameters).hash(&mut h);
-		result.hash(&mut h);
+		loop_result.hash(&mut h);
 		is_error.hash(&mut h);
 		let nhash = h.finish();
 		let fresh = self.seen.insert(nhash);

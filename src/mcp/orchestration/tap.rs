@@ -622,7 +622,9 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				),
 				Err(e) => (
 					TapJobStatus::Failed,
-					format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
+					format!(
+						"[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}\n\nDo not relaunch this delegation unchanged: complete the task with the tools you have, or report the blocker."
+					),
 				),
 			};
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {

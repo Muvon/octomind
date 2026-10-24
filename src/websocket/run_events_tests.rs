@@ -205,7 +205,7 @@ fn disk_replay_appends_recorded_session_totals_as_final_usage() {
 	.unwrap();
 	record_stats(&path, &mut session);
 	assert_eq!(
-		disk_events(dir.path(), id).unwrap(),
+		disk_events(dir.path(), id).unwrap().unwrap(),
 		vec![RunEvent::Prompt { content: "task".into() }, usage(0.75, 150, 30)]
 	);
 }
@@ -255,7 +255,7 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 	for message in messages {
 		crate::session::append_to_session_file(&path, &serde_json::to_string(&message).unwrap()).unwrap();
 	}
-	let events = disk_events(dir.path(), id).unwrap();
+	let events = disk_events(dir.path(), id).unwrap().unwrap();
 	// The session never recorded stats (all-zero totals), so no usage event is claimed.
 	assert_eq!(
 		serde_json::to_value(events).unwrap(),
@@ -267,10 +267,7 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 			{"kind":"tool_result", "tool_id":"call-1", "content":"file content"}
 		])
 	);
-	assert_eq!(
-		disk_events(dir.path(), "tap-missing-000000").unwrap_err().to_string(),
-		"run not found: tap-missing-000000"
-	);
+	assert!(disk_events(dir.path(), "tap-missing-000000").unwrap().is_none());
 }
 
 #[test]
@@ -332,6 +329,7 @@ fn prepare_finished_replay_run(request: &RunLogMessage, dir: &Path) -> std::path
 		workdir: dir.to_string_lossy().into_owned(),
 		started_at: std::time::SystemTime::now(),
 		status: Arc::new(RwLock::new(TapJobStatus::Done)),
+		error: None,
 		cancel_tx,
 		live: Arc::new(RwLock::new(TapLiveState::default())),
 	});
@@ -350,6 +348,104 @@ fn prepare_finished_replay_run(request: &RunLogMessage, dir: &Path) -> std::path
 	)
 	.unwrap();
 	path
+}
+
+#[tokio::test]
+async fn disk_replay_without_log_preserves_known_terminal_status_and_error() {
+	use crate::session::tap_runs::{TapJob, TapLiveState};
+	use std::sync::{Arc, RwLock};
+	let request = RunLogMessage {
+		session_id: "replay-missing-terminal".into(),
+		..request()
+	};
+	let dir = tempfile::tempdir().unwrap();
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		tap_runs::init_for_session();
+		tap_runs::enable_run_events(None).unwrap();
+		let (cancel_tx, _) = tokio::sync::watch::channel(false);
+		let status = Arc::new(RwLock::new(TapJobStatus::Running));
+		tap_runs::register_job(TapJob {
+			id: request.run_id.clone(),
+			role: "developer:cto".into(),
+			workdir: dir.path().to_string_lossy().into_owned(),
+			started_at: std::time::SystemTime::now(),
+			status: status.clone(),
+			error: None,
+			cancel_tx,
+			live: Arc::new(RwLock::new(TapLiveState::default())),
+		});
+		tap_runs::with_run_events(|events, parent| events.begin(parent, &request.run_id, "developer:cto"))
+			.unwrap()
+			.unwrap();
+		for terminal in [TapJobStatus::Failed, TapJobStatus::Cancelled, TapJobStatus::Done] {
+			if terminal != TapJobStatus::Failed {
+				tap_runs::resume_run(&request.run_id).unwrap();
+			}
+			let error = (terminal == TapJobStatus::Failed).then(|| "child failed before saving".to_string());
+			tap_runs::finish_run(&request.run_id, &status, terminal, error.clone()).unwrap();
+			for summary in [false, true] {
+				let request = RunLogMessage {
+					summary,
+					..request.clone()
+				};
+				let captured = tap_runs::snapshot_run_log(&request).unwrap();
+				let reply = replay_disk(&request, captured, || disk_events(dir.path(), &request.run_id)).unwrap();
+				assert_eq!(reply.status, terminal.as_str());
+				assert_eq!(reply.source, "disk");
+				assert_eq!(reply.role.as_deref(), Some("developer:cto"));
+				assert_eq!(reply.request_id, request.request_id);
+				assert!(reply.error.is_none());
+				assert_eq!(
+					reply.events,
+					vec![RunEvent::Status {
+						status: terminal,
+						error: error.clone()
+					}]
+				);
+			}
+		}
+		let captured = tap_runs::snapshot_run_log(&request).unwrap();
+		let error = replay_disk(&request, captured, || anyhow::bail!("disk read failed")).unwrap_err();
+		assert_eq!(error.to_string(), "disk read failed");
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
+
+	let captured = tap_runs::snapshot_run_log(&request).unwrap();
+	let error = replay_disk(&request, captured, || disk_events(dir.path(), &request.run_id)).unwrap_err();
+	assert_eq!(error.to_string(), format!("run not found: {}", request.run_id));
+}
+
+#[tokio::test]
+async fn disk_replay_with_log_keeps_events_for_failed_run() {
+	let request = RunLogMessage {
+		session_id: "replay-failed-with-log".into(),
+		..request()
+	};
+	let dir = tempfile::tempdir().unwrap();
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		prepare_finished_replay_run(&request, dir.path());
+		let claim = tap_runs::resume_run(&request.run_id).unwrap();
+		tap_runs::finish_run(
+			&request.run_id,
+			&claim.status,
+			TapJobStatus::Failed,
+			Some("failure".into()),
+		)
+		.unwrap();
+		let captured = tap_runs::snapshot_run_log(&request).unwrap();
+		let reply = replay_disk(&request, captured, || disk_events(dir.path(), &request.run_id)).unwrap();
+		assert_eq!(reply.status, "failed");
+		assert!(reply.error.is_none());
+		assert_eq!(
+			reply.events,
+			vec![RunEvent::Prompt {
+				content: "old task".into()
+			}]
+		);
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
 }
 
 #[tokio::test]

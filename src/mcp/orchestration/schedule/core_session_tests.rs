@@ -83,6 +83,7 @@ fn register_running_tap_job(id: &str, running: bool) {
 		role: "developer:general".to_string(),
 		workdir: "/tmp".to_string(),
 		started_at: std::time::SystemTime::UNIX_EPOCH,
+		error: None,
 		status: Arc::new(std::sync::RwLock::new(if running {
 			crate::session::tap_runs::TapJobStatus::Running
 		} else {

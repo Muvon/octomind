@@ -101,6 +101,7 @@ async fn streams_live_updates_into_tap_registry() {
 				workdir: ".".to_string(),
 				started_at: SystemTime::now(),
 				status: Arc::new(RwLock::new(TapJobStatus::Running)),
+				error: None,
 				cancel_tx,
 				live: Arc::new(RwLock::new(TapLiveState::default())),
 			});

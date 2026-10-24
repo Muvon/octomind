@@ -58,6 +58,7 @@ fn job(id: &str, status: TapJobStatus, live: TapLiveState) -> TapJob {
 		workdir: "/tmp/project".to_string(),
 		started_at: SystemTime::now(),
 		status: Arc::new(RwLock::new(status)),
+		error: None,
 		cancel_tx,
 		live: Arc::new(RwLock::new(live)),
 	}

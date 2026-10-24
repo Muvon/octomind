@@ -2281,6 +2281,7 @@ async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 		workdir: String::new(),
 		started_at: std::time::SystemTime::now(),
 		status: Arc::clone(&status),
+		error: None,
 		cancel_tx,
 		live: Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapLiveState::default())),
 	};
@@ -4227,6 +4228,7 @@ fn register_streaming_tap(id: &str) {
 		workdir: ".".to_string(),
 		started_at: std::time::SystemTime::now(),
 		status: Arc::new(std::sync::RwLock::new(TapJobStatus::Running)),
+		error: None,
 		cancel_tx,
 		live: Arc::new(std::sync::RwLock::new(TapLiveState::default())),
 	});
@@ -4547,7 +4549,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 	handle_run_log(
 		RunLogMessage {
 			run_id: "tap-missing-000000".into(),
-			..request
+			..request.clone()
 		},
 		&sender,
 	)
@@ -4562,4 +4564,56 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 			"error":"run not found: tap-missing-000000","request_id":"disk-request"
 		})
 	);
+	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		tap_runs::init_for_session();
+		tap_runs::enable_run_events(Some(sender.clone())).unwrap();
+		let failed_id = "tap-missing-000000";
+		let status = Arc::new(std::sync::RwLock::new(TapJobStatus::Running));
+		let (cancel_tx, _) = tokio::sync::watch::channel(false);
+		tap_runs::register_job(TapJob {
+			id: failed_id.into(),
+			role: "developer:cto".into(),
+			workdir: ".".into(),
+			started_at: std::time::SystemTime::now(),
+			status: status.clone(),
+			error: None,
+			cancel_tx,
+			live: Arc::new(std::sync::RwLock::new(TapLiveState::default())),
+		});
+		tap_runs::with_run_events(|events, parent| events.begin(parent, failed_id, "developer:cto"))
+			.unwrap()
+			.unwrap();
+		receiver.try_recv().unwrap();
+		tap_runs::finish_run(
+			failed_id,
+			&status,
+			TapJobStatus::Failed,
+			Some("child failed to start".into()),
+		)
+		.unwrap();
+		let live: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		handle_run_log(
+			RunLogMessage {
+				run_id: failed_id.into(),
+				..request.clone()
+			},
+			&sender,
+		)
+		.await
+		.unwrap();
+		let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		assert_eq!(
+			reply,
+			serde_json::json!({
+				"type":"run_log","session_id":"disk-parent","run_id":failed_id,"role":"developer:cto",
+				"status":"failed","source":"disk","seq":2,"truncated":false,
+				"events":[{"kind":"status","status":"failed","error":"child failed to start"}],
+				"request_id":"disk-request"
+			})
+		);
+		assert_eq!(reply["events"][0], live["event"]);
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
 }

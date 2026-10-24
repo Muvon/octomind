@@ -177,7 +177,7 @@ pub(crate) async fn replay(request: RunLogMessage) -> Result<RunLogPayload> {
 fn replay_disk(
 	request: &RunLogMessage,
 	mut snapshot: RunLogPayload,
-	mut read: impl FnMut() -> Result<Vec<RunEvent>>,
+	mut read: impl FnMut() -> Result<Option<Vec<RunEvent>>>,
 ) -> Result<RunLogPayload> {
 	loop {
 		let events = read();
@@ -190,7 +190,10 @@ fn replay_disk(
 			continue;
 		}
 		snapshot = current;
-		let mut events = events?;
+		let Some(mut events) = events? else {
+			anyhow::ensure!(snapshot.role.is_some(), "run not found: {}", request.run_id);
+			return Ok(snapshot);
+		};
 		if request.summary {
 			// disk_events appends the session totals last, when known.
 			events = events
@@ -204,11 +207,11 @@ fn replay_disk(
 	}
 }
 
-pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
+pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Option<Vec<RunEvent>>> {
 	tap_runs::validate_run_id(run_id).map_err(anyhow::Error::msg)?;
 	let path = dir.join(format!("{run_id}.jsonl.zst"));
 	if !path.try_exists()? {
-		anyhow::bail!("run not found: {run_id}");
+		return Ok(None);
 	}
 	let session = crate::session::load_session(&path)?;
 	let mut events = Vec::new();
@@ -265,7 +268,7 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
 			output_tokens: info.output_tokens,
 		});
 	}
-	Ok(events)
+	Ok(Some(events))
 }
 
 fn required_string(value: &Value, key: &str) -> Result<String> {

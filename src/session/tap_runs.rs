@@ -90,6 +90,7 @@ pub struct TapJob {
 	pub workdir: String,
 	pub started_at: SystemTime,
 	pub status: Arc<RwLock<TapJobStatus>>,
+	pub error: Option<String>,
 	pub cancel_tx: watch::Sender<bool>,
 	pub live: Arc<RwLock<TapLiveState>>,
 }
@@ -102,6 +103,7 @@ pub struct TapJobInfo {
 	pub workdir: String,
 	pub started_at: SystemTime,
 	pub status: TapJobStatus,
+	pub error: Option<String>,
 	pub live: TapLiveState,
 }
 
@@ -190,6 +192,7 @@ pub fn find_job(id: &str) -> Option<TapJobInfo> {
 		workdir: job.workdir.clone(),
 		started_at: job.started_at,
 		status,
+		error: job.error.clone(),
 		live,
 	})
 }
@@ -253,6 +256,7 @@ pub fn list_jobs() -> Vec<TapJobInfo> {
 				workdir: j.workdir.clone(),
 				started_at: j.started_at,
 				status,
+				error: j.error.clone(),
 				live,
 			})
 		})
@@ -350,6 +354,7 @@ pub(crate) fn resume_run(id: &str) -> Result<TapRunClaim> {
 		events.begin(&session_id, id, &job.role)?;
 	}
 	*status = TapJobStatus::Running;
+	job.error = None;
 	let (cancel_tx, cancel_rx) = watch::channel(false);
 	job.cancel_tx = cancel_tx;
 	Ok(TapRunClaim {
@@ -373,16 +378,21 @@ pub(crate) fn finish_run(
 		*status = terminal;
 	}
 	if let Some(parent) = crate::session::context::current_session_id() {
-		if let Some(events) = guard
-			.as_mut()
-			.and_then(|reg| reg.websocket.get_mut(&parent))
-			.and_then(Option::as_mut)
-		{
-			events.emit(
-				&parent,
-				id,
-				crate::websocket::protocol::RunEvent::Status { status: *status, error },
-			)?;
+		if let Some(reg) = guard.as_mut() {
+			if let Some(job) = reg
+				.jobs
+				.get_mut(&parent)
+				.and_then(|jobs| jobs.iter_mut().find(|job| job.id == id))
+			{
+				job.error = error.clone();
+			}
+			if let Some(events) = reg.websocket.get_mut(&parent).and_then(Option::as_mut) {
+				events.emit(
+					&parent,
+					id,
+					crate::websocket::protocol::RunEvent::Status { status: *status, error },
+				)?;
+			}
 		}
 	}
 	Ok(())
@@ -391,7 +401,7 @@ pub(crate) fn finish_run(
 pub(crate) fn snapshot_run_log(
 	request: &crate::websocket::protocol::RunLogMessage,
 ) -> Result<crate::websocket::protocol::RunLogPayload> {
-	use crate::websocket::protocol::RunLogPayload;
+	use crate::websocket::protocol::{RunEvent, RunLogPayload};
 	let guard = REGISTRY.read().map_err(|_| anyhow::anyhow!("tap registry poisoned"))?;
 	let reg = guard.as_ref();
 	let job = reg
@@ -421,7 +431,13 @@ pub(crate) fn snapshot_run_log(
 		source: "disk".to_string(),
 		seq: events.map_or(0, |events| events.last_seq(&request.run_id)),
 		truncated: false,
-		events: Vec::new(),
+		events: status
+			.map(|status| RunEvent::Status {
+				status,
+				error: job.and_then(|job| job.error.clone()),
+			})
+			.into_iter()
+			.collect(),
 		error: None,
 		request_id: request.request_id.clone(),
 	})

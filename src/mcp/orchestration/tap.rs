@@ -225,6 +225,7 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 		workdir: workdir.clone(),
 		started_at: SystemTime::now(),
 		status: Arc::clone(&status),
+		error: None,
 		cancel_tx,
 		live: Arc::new(RwLock::new(TapLiveState::default())),
 	});
@@ -549,6 +550,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			workdir: workdir.clone(),
 			started_at: SystemTime::now(),
 			status: Arc::clone(&status),
+			error: None,
 			cancel_tx,
 			live: Arc::new(RwLock::new(TapLiveState::default())),
 		});
@@ -563,18 +565,15 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	let exe = match std::env::current_exe() {
 		Ok(p) => p.to_string_lossy().to_string(),
 		Err(e) => {
-			if let Err(error) = tap_runs::finish_run(
-				&id,
-				&status,
-				TapJobStatus::Failed,
-				Some(format!("Failed to locate octomind binary: {e:#}")),
-			) {
+			let error = format!("Failed to locate octomind binary: {e:#}");
+			crate::log_error!("Tap run {} ({}) failed: {}", id, role, error);
+			if let Err(error) = tap_runs::finish_run(&id, &status, TapJobStatus::Failed, Some(error.clone())) {
 				crate::log_error!("Tap run {}: failed to publish terminal status: {}", id, error);
 			}
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Failed to locate octomind binary: {e:#}"),
+				error,
 			));
 		}
 	};
@@ -606,6 +605,9 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				.err()
 				.filter(|e| !crate::session::cancellation::is_cancelled(e))
 				.map(|e| format!("{e:#}"));
+			if let Some(error) = &error {
+				crate::log_error!("Tap run {} ({}) failed: {}", id_owned, role_owned, error);
+			}
 			let (terminal, content) = match outcome {
 				Ok(text) => (
 					TapJobStatus::Done,
@@ -665,13 +667,17 @@ fn format_job_info(j: &TapJobInfo) -> serde_json::Value {
 		.duration_since(std::time::UNIX_EPOCH)
 		.map(|d| d.as_secs())
 		.unwrap_or(0);
-	json!({
+	let mut info = json!({
 		"id": j.id,
 		"role": j.role,
 		"workdir": j.workdir,
 		"status": j.status.as_str(),
 		"started_at": started_secs,
-	})
+	});
+	if let Some(error) = &j.error {
+		info["error"] = json!(error);
+	}
+	info
 }
 
 #[cfg(test)]

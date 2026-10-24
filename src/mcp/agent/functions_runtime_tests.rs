@@ -482,6 +482,7 @@ async fn record_tap_live_ignores_messages_without_tool_or_usage_updates() {
 			workdir: ".".to_string(),
 			started_at: std::time::SystemTime::now(),
 			status: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running)),
+			error: None,
 			cancel_tx,
 			live: std::sync::Arc::new(std::sync::RwLock::new(Default::default())),
 		});

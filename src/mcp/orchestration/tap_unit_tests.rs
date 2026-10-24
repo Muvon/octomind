@@ -99,6 +99,7 @@ fn register_unit_job(id: &str, role: &str, status: TapJobStatus) {
 		workdir: "/tmp".to_string(),
 		started_at: SystemTime::UNIX_EPOCH,
 		status: Arc::new(RwLock::new(status)),
+		error: None,
 		cancel_tx,
 		live: Arc::new(RwLock::new(TapLiveState::default())),
 	});
@@ -277,6 +278,7 @@ fn format_job_info_maps_remaining_status_variants() {
 			workdir: "/tmp/unit".to_string(),
 			started_at: SystemTime::UNIX_EPOCH,
 			status,
+			error: None,
 			live: TapLiveState::default(),
 		};
 		assert_eq!(

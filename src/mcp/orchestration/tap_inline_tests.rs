@@ -110,6 +110,7 @@ fn register_test_job(id: &str, role: &str, status: TapJobStatus, started_at: Sys
 		workdir: "/tmp".to_string(),
 		started_at,
 		status: Arc::new(RwLock::new(status)),
+		error: None,
 		cancel_tx,
 		live: Arc::new(RwLock::new(TapLiveState::default())),
 	});
@@ -367,6 +368,7 @@ fn format_job_info_contains_all_fields() {
 		workdir: "/tmp/proj".to_string(),
 		started_at: SystemTime::UNIX_EPOCH,
 		status: TapJobStatus::Done,
+		error: None,
 		live: TapLiveState::default(),
 	};
 	let v = format_job_info(&info);

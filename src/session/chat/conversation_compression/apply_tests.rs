@@ -981,6 +981,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 			workdir: ".".to_string(),
 			started_at: std::time::SystemTime::now(),
 			status: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running)),
+			error: None,
 			cancel_tx,
 			live: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapLiveState::default())),
 		});

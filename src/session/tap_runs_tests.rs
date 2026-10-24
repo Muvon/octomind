@@ -25,6 +25,7 @@ fn test_job(id: &str, role: &str, started_at: SystemTime, status: TapJobStatus) 
 			workdir: "/tmp".to_string(),
 			started_at,
 			status: Arc::new(RwLock::new(status)),
+			error: None,
 			cancel_tx,
 			live: Arc::new(RwLock::new(TapLiveState::default())),
 		},
@@ -178,6 +179,46 @@ async fn find_job_and_live_updates_return_a_snapshot() {
 }
 
 #[tokio::test]
+async fn finish_run_keeps_error_in_snapshots_and_tap_list_until_resume() {
+	use crate::mcp::{orchestration::execute_tap_command, McpToolCall};
+	use serde_json::json;
+	let parent = "tap-runs-terminal-error".to_string();
+	let id = "tap-developer-general-abcdef";
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		let (job, _) = test_job(id, "developer:general", UNIX_EPOCH, TapJobStatus::Running);
+		let status = job.status.clone();
+		register_job(job);
+		finish_run(id, &status, TapJobStatus::Failed, Some("child failed to start".into())).unwrap();
+		let found = find_job(id).unwrap();
+		assert_eq!(found.status, TapJobStatus::Failed);
+		assert_eq!(found.error.as_deref(), Some("child failed to start"));
+		assert_eq!(list_jobs()[0].error, found.error);
+
+		let config = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		let call = McpToolCall {
+			tool_name: "tap".into(),
+			tool_id: "list-errors".into(),
+			parameters: json!({"action": "list"}),
+		};
+		let result = execute_tap_command(&call, &config).await.unwrap();
+		assert!(!result.is_error());
+		let listed: serde_json::Value = serde_json::from_str(&result.extract_content()).unwrap();
+		assert_eq!(listed["runs"][0]["status"], "failed");
+		assert_eq!(listed["runs"][0]["error"], "child failed to start");
+
+		let claim = resume_run(id).unwrap();
+		assert_eq!(find_job(id).unwrap().error, None);
+		finish_run(id, &claim.status, TapJobStatus::Done, None).unwrap();
+		let result = execute_tap_command(&call, &config).await.unwrap();
+		let listed: serde_json::Value = serde_json::from_str(&result.extract_content()).unwrap();
+		assert!(listed["runs"][0].get("error").is_none());
+	})
+	.await;
+	clear_for_session(&parent);
+}
+
+#[tokio::test]
 #[serial]
 async fn resume_run_replaces_the_latched_receiver() {
 	let session_id = "tap-runs-reset-cancel".to_string();
@@ -327,7 +368,13 @@ async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence()
 			assert_eq!(disk.source, "disk");
 			assert_eq!(disk.status, terminal.as_str());
 			assert_eq!(disk.seq, live.seq + 1);
-			assert!(disk.events.is_empty());
+			assert_eq!(
+				disk.events,
+				vec![RunEvent::Status {
+					status: terminal,
+					error: (terminal == TapJobStatus::Failed).then(|| "failure".into()),
+				}]
+			);
 			assert!(with_run_events(|events, _| Ok(events.snapshot(&request)))
 				.unwrap()
 				.unwrap()

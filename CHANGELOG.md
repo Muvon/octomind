@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.62.0] - 2026-10-24
+
+### 📋 Release Summary
+
+OAuth now supports challenge-based discovery and handles missing PKCE method metadata. MCP metadata no longer includes duplicated image payloads.
+
+### ✨ New Features & Enhancements
+
+- **oauth**: support challenge-based OAuth discovery `436a5625`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.45.2 `3a63dcb9`
+- **dependencies**: update getrandom dependency to 0.4.3 `4ade80a8`
+
+### 🐛 Bug Fixes & Stability
+
+- **oauth**: handle missing PKCE method metadata `bbaff954`
+- **mcp**: omit duplicated image payloads from metadata `0e89e5a8`
+
 ## [0.61.0] - 2026-10-24
 
 ### 📋 Release Summary

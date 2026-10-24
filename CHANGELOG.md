@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.61.0] - 2026-10-24
+
+### 📋 Release Summary
+
+Supervision now stops repeated identical tool rounds, commit attribution is configurable and required for unspecified commits, and websocket run logs can be summarized. Background-job result deliveries are normalized, tap run errors are preserved across replay, empty data directories are treated as unset, and unknown /context filters are rejected.
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: stop repeated identical tool rounds `b82db3d9`
+- **supervisor**: stop repeated identical tool rounds `e0b83c9c`
+- **config**: make commit attribution configurable `3cd75f04`
+- **session**: require attribution for unspecified commits `976abee7`
+- **websocket**: support summarized websocket run logs `e9e681de`
+
+### 🔧 Improvements & Optimizations
+
+- **inbox**: centralize inbox delivery processing `efce5374`
+- **dependencies**: update smallvec to 1.16.4 `cd42a857`
+- **supervisor**: isolate scratch git repositories in tests `18d0d604`
+- **session**: exercise loop stop with a read-only tool `fb8327d8`
+
+### 🐛 Bug Fixes & Stability
+
+- **background-jobs**: normalize background-job result deliveries `98902fc7`
+- **tap-runs**: preserve tap run errors across replay `5017188a`
+- **directories**: treat empty data dir as unset `ae821418`
+- **session**: reject unknown /context filters `6ce0ded1`
+
+### 📚 Documentation & Examples
+
+- **workflow**: clarify workflow entry points `d98eab8e`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.60.1] - 2026-10-23
 
 ### 📋 Release Summary

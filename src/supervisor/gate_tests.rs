@@ -56,7 +56,7 @@ fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
 				.iter()
 				.map(|byte| format!("{byte:02x}"))
 				.collect::<String>(),
-			"b3a211769753df20e1c4eb9533c6bdc805e7bf01f71d8f63082ee1bd7358c6a9"
+			"6bd446fbf9f01ba808cc40a88c776604cd18602d49f04dd2bd2022333e0923cd"
 		);
 	}
 }
@@ -1074,7 +1074,7 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 		);
 		assert_eq!(
 			properties["sources"],
-			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. Null when no output-visibility exemption is claimed."})
+			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: output:N for the recorded action whose output demonstrates it. Null when none applies."})
 		);
 	}
 	// The only branch admitting unmatched requires a string from this enum;
@@ -1654,7 +1654,7 @@ mod verify_round_trip {
 	}
 
 	#[tokio::test]
-	async fn an_unknown_condition_is_reported_without_blocking_a_pass() {
+	async fn an_unknown_condition_is_requested_once_then_reported_without_blocking() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
 			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">the log is not retained</condition><verdict>PASS</verdict>"#
@@ -1667,16 +1667,31 @@ mod verify_round_trip {
 			report.reported_findings(&HashSet::new()),
 			vec!["condition 1 unsettled: the log is not retained"]
 		);
-		let url = spawn_stub(vec![final_response(&answer)]).await;
+		let url = spawn_stub(vec![final_response(&answer), final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let conditions = vec!["the log shows the fix".to_string()];
-		let (_tx, rx) = rx();
-		let verdict = verify(&gate_config(), input(&[], &conditions), rx).await;
+		let (_tx, rx1) = rx();
+		let first = verify(&gate_config(), input(&[], &conditions), rx1).await;
+		let prior = vec!["an earlier finding".to_string()];
+		let (_tx2, rx2) = rx();
+		let again = verify(
+			&gate_config(),
+			GateInput {
+				prior_gaps: &prior,
+				..input(&[], &conditions)
+			},
+			rx2,
+		)
+		.await;
 		std::env::remove_var("OLLAMA_API_URL");
+		assert!(
+			matches!(&first, GateVerdict::Gaps(gaps) if gaps.len() == 1 && gaps[0].starts_with("Condition 1 is not demonstrated")),
+			"the first pass asks the agent once for the observation: {first:?}"
+		);
 		assert_eq!(
-			verdict,
+			again,
 			GateVerdict::Pass,
-			"an unsettled condition is a limit of the input, never a defect in the work"
+			"after that, an unsettled condition is a limit of the input, never a defect in the work"
 		);
 	}
 }

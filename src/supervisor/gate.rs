@@ -2427,7 +2427,7 @@ fn with_evidence_requests(
 		// Charged now, so no longer a finding the runtime could not act on.
 		if condition.status == "unknown" {
 			let finding = format!("condition {n} unsettled: {}", condition.observation);
-			reported.retain(|reported| reported != &finding);
+			reported.retain(|existing| existing != &finding);
 		}
 		requests.push(format!(
 			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: a recorded check whose output exercises this exact condition, cited by what it showed, or report the condition as unsatisfied",

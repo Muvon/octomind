@@ -25,16 +25,12 @@
 //!     is present and correctly typed.
 //!   - YES/NO gate becomes a `should_compress: bool` field — no first-line
 //!     parsing, no "AI said YES but summary is empty" failure mode.
-//!   - `file_context` line numbers validated at schema level (1..=10000).
+//!   - `file_context` line numbers validated at schema level (1-based).
 //!   - System prompt shrinks ~65% (no more long format spec embedded in it),
 //!     which is cached and amortised across every compression call.
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-
-/// Maximum allowed value for `start_line` / `end_line` in `file_context`.
-/// Mirrors the JSON schema bound so JSON and XML paths validate identically.
-const FILE_CONTEXT_LINE_MAX: usize = 10_000;
 
 /// Why the decision model declined to fold — the one thing a bare `false`
 /// cannot carry.
@@ -453,13 +449,11 @@ pub fn build_compression_schema(no_veto: bool, pact: bool) -> serde_json::Value 
 						},
 						"start_line": {
 							"type": "integer",
-							"minimum": 1,
-							"maximum": 10000
+							"minimum": 1
 						},
 						"end_line": {
 							"type": "integer",
-							"minimum": 1,
-							"maximum": 10000
+							"minimum": 1
 						}
 					},
 					"required": ["filepath", "start_line", "end_line"]
@@ -723,7 +717,9 @@ fn extract_items(body: &str, container: &str, item: &str) -> Vec<String> {
 ///
 /// Validation rules (mirror the JSON schema):
 ///   - `filepath` non-empty after trimming
-///   - `start_line` and `end_line` in `1..=FILE_CONTEXT_LINE_MAX`
+///   - `start_line` and `end_line` 1-based, with no upper bound: files run past
+///     any fixed line number, and the span a range may load is bounded where
+///     it is read ([`crate::utils::file_parser::LineRange`])
 ///   - `start_line <= end_line`
 ///
 /// An invalid entry fails the whole parse — same strictness as the JSON
@@ -748,9 +744,9 @@ fn extract_file_context(body: &str) -> Result<Vec<FileContextEntry>> {
 		let end_line: usize = caps[3]
 			.parse()
 			.map_err(|e| anyhow!("compression XML: invalid end_line: {e}"))?;
-		if !(1..=FILE_CONTEXT_LINE_MAX).contains(&start_line) || !(1..=FILE_CONTEXT_LINE_MAX).contains(&end_line) {
+		if start_line == 0 || end_line == 0 {
 			return Err(anyhow!(
-				"compression XML: line numbers out of range (1..={FILE_CONTEXT_LINE_MAX}) for {filepath}: {start_line}-{end_line}"
+				"compression XML: line numbers out of range (lines start at 1) for {filepath}: {start_line}-{end_line}"
 			));
 		}
 		if start_line > end_line {

@@ -115,6 +115,15 @@ fn rejects_out_of_range_line() {
 }
 
 #[test]
+fn accepts_lines_deep_in_a_large_file() {
+	let xml = r#"<should_compress>true</should_compress>
+<file_context><range filepath="big.spec.ts" start_line="12040" end_line="12090"/></file_context>"#;
+	let s = parse_xml_summary(xml).unwrap();
+	assert_eq!(s.file_context[0].start_line, 12040);
+	assert_eq!(s.file_context[0].end_line, 12090);
+}
+
+#[test]
 fn rejects_empty_filepath() {
 	let xml = r#"<should_compress>true</should_compress>
 <file_context><range filepath="" start_line="1" end_line="10"/></file_context>"#;

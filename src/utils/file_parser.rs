@@ -54,6 +54,11 @@ pub fn has_context_blocks(text: &str) -> bool {
 	CONTEXT_BLOCK_REGEX.is_match(text)
 }
 
+/// Most lines one range may span. Bounds what a single reference can pull into
+/// context; where the range sits is not limited — files run past any fixed
+/// line number.
+pub const LINE_RANGE_SPAN_MAX: usize = 10_000;
+
 /// Represents a line range in a file (1-indexed, inclusive)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineRange {
@@ -63,7 +68,7 @@ pub struct LineRange {
 
 impl LineRange {
 	pub fn new(start: usize, end: usize) -> Option<Self> {
-		if start > 0 && end >= start && end <= 10000 {
+		if start > 0 && end >= start && end - start < LINE_RANGE_SPAN_MAX {
 			Some(Self { start, end })
 		} else {
 			None

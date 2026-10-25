@@ -292,6 +292,14 @@ fn test_line_range_boundaries() {
 	assert_eq!(LineRange::new(1, 10000), Some(LineRange { start: 1, end: 10000 }));
 	assert!(LineRange::new(1, 10001).is_none());
 	assert!(LineRange::new(10000, 10000).is_some());
+	assert!(
+		LineRange::new(12_000, 12_050).is_some(),
+		"a range deep in a large file is valid"
+	);
+	assert!(
+		LineRange::new(20_000, 20_000 + LINE_RANGE_SPAN_MAX).is_none(),
+		"the span bound holds anywhere in the file"
+	);
 }
 
 #[test]

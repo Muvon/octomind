@@ -20,7 +20,9 @@
 //! - Handling multiple line ranges per file
 //! - Configurable rendering options
 
-use crate::utils::file_parser::{parse_file_references, read_multiple_files, FileContent, LineRange};
+use crate::utils::file_parser::{
+	parse_file_references, read_multiple_files, FileContent, LineRange, LINE_RANGE_SPAN_MAX,
+};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -99,9 +101,9 @@ pub fn expand_at_file_refs(text: &str) -> String {
 			continue;
 		};
 
-		// LineRange enforces a 10000-line ceiling; clamp oversized files to it.
-		let line_count = content.lines().count().clamp(1, 10000);
-		let range = LineRange::new(1, line_count).expect("range within ceiling");
+		// LineRange bounds a range's span; clamp oversized files to it.
+		let line_count = content.lines().count().clamp(1, LINE_RANGE_SPAN_MAX);
+		let range = LineRange::new(1, line_count).expect("range within the span bound");
 		let lines = content
 			.lines()
 			.take(line_count)

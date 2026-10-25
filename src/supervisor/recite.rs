@@ -319,12 +319,18 @@ fn is_quoted_material(trimmed: &str) -> bool {
 /// `next_steps` snapshot, which only refreshes at compaction and is stale
 /// between. With an active plan it recites even before the first compaction —
 /// that is exactly when goal drift on a long task is most expensive.
+/// `conditions` recite the turn's resolved fulfillment checklist (see
+/// [`crate::supervisor::resolve::ResolvedTask::evidence_conditions`]) — the whole
+/// request in checkable lines, and the same conditions the verify-gate checks.
 /// `constraints` (see [`extract_constraints`]) recite the request's explicit
-/// prohibitions verbatim — the instructions models abandon first as attention
-/// decays — and fire from turn one: a constraint is most violated exactly
-/// while the raw request is still in context but no longer attended to.
+/// directives verbatim and stand in only when the turn has no checklist: keyword
+/// excerpts can only ever be a subset of a request that states its requirements
+/// as imperatives or plain statements, and a subset recited as the anchor pulls
+/// the work toward itself while the requirements it misses go unmet. Both fire
+/// from turn one: a requirement is most violated exactly while the raw request
+/// is still in context but no longer attended to.
 /// `session_rules` recite the standing rules the user set on earlier turns,
-/// which the latest-request `constraints` never carry and a summary may drop.
+/// which the latest-request lines never carry and a summary may drop.
 /// `verification_policy` is a read-only projection of runtime state; it is
 /// explicitly labeled as an execution boundary so it cannot replace the task.
 /// Wrapped in `<pay-attention>` so
@@ -333,6 +339,7 @@ fn is_quoted_material(trimmed: &str) -> bool {
 pub fn recite_note(
 	anchor: &Anchor,
 	plan_checklist: Option<&str>,
+	conditions: &[String],
 	constraints: &[String],
 	session_rules: &[String],
 	current_task_sig: Option<u64>,
@@ -364,6 +371,7 @@ pub fn recite_note(
 	if intent.is_empty()
 		&& next_steps.is_empty()
 		&& plan_checklist.is_none()
+		&& conditions.is_empty()
 		&& constraints.is_empty()
 		&& session_rules.is_empty()
 		&& verification_policy == VerificationPolicy::Unspecified
@@ -400,14 +408,23 @@ pub fn recite_note(
 			s.push('\n');
 		}
 	}
-	// The turn that sets a rule also yields it as a request excerpt; one copy.
-	let constraints: Vec<&String> = constraints.iter().filter(|c| !session_rules.contains(c)).collect();
-	if !constraints.is_empty() {
-		s.push_str("Selected request excerpts — context reminders, not additional requirements. Interpret them in the full current request; quoted examples and superseded rules are not instructions:\n");
-		for c in constraints {
+	if !conditions.is_empty() {
+		s.push_str("Request checklist — each item is derived from the current request, which governs where they differ; the work is complete only when every item holds:\n");
+		for condition in conditions {
 			s.push_str("- ");
-			s.push_str(&xml_text(c));
+			s.push_str(&xml_text(condition));
 			s.push('\n');
+		}
+	} else {
+		// The turn that sets a rule also yields it as a request excerpt; one copy.
+		let constraints: Vec<&String> = constraints.iter().filter(|c| !session_rules.contains(c)).collect();
+		if !constraints.is_empty() {
+			s.push_str("Selected request excerpts — context reminders, not additional requirements. Interpret them in the full current request; quoted examples and superseded rules are not instructions:\n");
+			for c in constraints {
+				s.push_str("- ");
+				s.push_str(&xml_text(c));
+				s.push('\n');
+			}
 		}
 	}
 	match verification_policy {

@@ -268,11 +268,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let plan_checklist = crate::mcp::core::plan::render_plan_checklist_with_staleness(
 			crate::session::latest_task_timestamp(&chat_session.session.messages),
 		);
-		// The live request. Its prohibitions are recited verbatim (models abandon
-		// those first as attention decays), and its signature decides whether the
-		// anchor's goal is still the one being worked on — the user may have asked
-		// for something else since the last compaction wrote that goal.
+		// The live request. Its resolved checklist is recited whole — or, for a turn
+		// without one, its explicit directives verbatim (models abandon those first as
+		// attention decays) — and its signature decides whether the anchor's goal is
+		// still the one being worked on: the user may have asked for something else
+		// since the last compaction wrote that goal.
 		let live_task = crate::session::latest_real_user_task_content(&chat_session.session.messages);
+		let conditions = chat_session
+			.gate_task
+			.as_ref()
+			.map(|task| task.evidence_conditions.as_slice())
+			.unwrap_or_default();
 		let constraints = crate::supervisor::recite::active_constraints(
 			&chat_session.session.messages,
 			chat_session.gate_task.as_ref(),
@@ -280,6 +286,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		if let Some(note) = crate::supervisor::recite::recite_note(
 			&chat_session.session.info.anchor,
 			plan_checklist.as_deref(),
+			conditions,
 			&constraints,
 			&chat_session.session.info.session_rules,
 			live_task.map(crate::session::anchor::task_sig),

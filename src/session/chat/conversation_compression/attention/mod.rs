@@ -492,7 +492,15 @@ fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<
 			source: None,
 		})
 		.collect();
-	for text in crate::supervisor::recite::active_constraints(&session.session.messages, session.gate_task.as_ref()) {
+	// The same request lines the tail recitation carries (see
+	// [`crate::supervisor::recite::recite_note`]): the turn's resolved checklist
+	// whole, else its verbatim directives — never a keyword subset of a checklisted
+	// request, which would steer the folded session toward the lines it kept.
+	let request_lines = match session.gate_task.as_ref().map(|task| &task.evidence_conditions) {
+		Some(conditions) if !conditions.is_empty() => conditions.clone(),
+		_ => crate::supervisor::recite::active_constraints(&session.session.messages, session.gate_task.as_ref()),
+	};
+	for text in request_lines {
 		if items.iter().any(|item| item.text == text) {
 			continue;
 		}

@@ -903,7 +903,7 @@ async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
 			.messages
 			.iter()
 			.any(|m| m.content.contains("never requested")));
-		assert_eq!(session.gate_iterations, crate::supervisor::gate::MAX_ITERATIONS);
+		assert_eq!(session.gate_iterations, crate::supervisor::gate::MAX_GATE_ITERATIONS);
 		assert_eq!(session.nudge_iterations, crate::supervisor::gate::MAX_ITERATIONS);
 		assert!(session.gate_failed, "a stopped loop is never a verified trajectory");
 
@@ -1040,6 +1040,46 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 			.expect("gap advisory injected");
 		assert!(advisory.content.contains("the counter is unverified"));
 		assert_eq!(session.session.info.total_api_calls, 2);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// The first pass's re-run also carries the once-per-turn evidence requests, so a
+/// violation the re-verify then observes still gets a re-run of its own instead
+/// of ending the turn on a completion the recorded evidence contradicts.
+#[tokio::test]
+async fn test_verify_gate_second_finding_gets_its_own_rerun() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-gate-second-finding".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			done_response("Trust me, it is complete."),
+			verifier_gap(),
+			final_response("no finding was refuted"),
+			final_response("The counter is verified now."),
+			final_response(&format!(
+				"{CLEAN_SHAPES}\n<gap settles=\"a passing run of the suite\">the suite run after the fix failed</gap>"
+			)),
+			final_response("no finding was refuted"),
+			final_response("Fixed the failing suite."),
+			verifier_pass(),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("verify the counter");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config).await.expect("second re-run completes");
+
+		assert!(!session.gate_failed, "the third pass verified the fix");
+		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
+		assert_eq!(session.session.info.total_api_calls, 3, "one answer and two re-runs");
 
 		std::env::remove_var("OLLAMA_API_URL");
 		crate::session::context::cleanup_session(&sid);

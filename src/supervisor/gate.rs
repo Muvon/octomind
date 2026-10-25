@@ -782,10 +782,16 @@ impl EvidenceLedger {
 	}
 }
 
-/// Max gate re-entry iterations before giving up (bounds the self-verification
-/// dilemma). Shared budget across the free deterministic pre-gate nudges and
-/// the LLM verify-gate.
+/// Max re-entry iterations before giving up (bounds the self-verification
+/// dilemma) for the free deterministic pre-gate nudges, and for a verifier that
+/// returned no verdict — re-running the agent cannot repair the verifier.
 pub const MAX_ITERATIONS: u8 = 2;
+/// Max verify-gate passes per turn. The first pass spends its re-run on the
+/// once-per-turn evidence requests as well as its own findings (see
+/// [`with_evidence_requests`]); the extra pass keeps a re-run for what the
+/// re-verify then observes in the new evidence — without it, a check the agent
+/// recorded failing after its first answer was handed back as done.
+pub const MAX_GATE_ITERATIONS: u8 = 3;
 
 /// Cap on the git diff inside the ground-truth block.
 const GT_DIFF_MAX: usize = 10_000;

@@ -827,7 +827,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						// unfinished-hand-back nudge's re-entry budgets so neither re-runs the
 						// turn straight back into the loop, and label the trajectory failed as
 						// an exhausted gate does. A genuine user turn resets both budgets.
-						params.chat_session.gate_iterations = crate::supervisor::gate::MAX_ITERATIONS;
+						params.chat_session.gate_iterations = crate::supervisor::gate::MAX_GATE_ITERATIONS;
 						params.chat_session.nudge_iterations = crate::supervisor::gate::MAX_ITERATIONS;
 						params.chat_session.gate_failed = true;
 						params.chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;

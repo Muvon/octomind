@@ -543,7 +543,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={} pending_async={}",
 			chat_session.last_self_report,
 			chat_session.gate_iterations,
-			crate::supervisor::gate::MAX_ITERATIONS,
+			crate::supervisor::gate::MAX_GATE_ITERATIONS,
 			chat_session.nudge_iterations,
 			chat_session
 				.detectors
@@ -565,7 +565,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&& config.supervisor.gate.enabled
 		&& !pending_async
 		&& chat_session.completion_gate_eligible
-		&& chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS
+		&& chat_session.gate_iterations < crate::supervisor::gate::MAX_GATE_ITERATIONS
 	{
 		// Task content via the continuation-aware helper: after a compaction drains
 		// the raw user turns, the live request survives only inside the
@@ -792,7 +792,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					gaps.len(),
 					chat_session.gate_iterations
 				);
-				if chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS {
+				if chat_session.gate_iterations < crate::supervisor::gate::MAX_GATE_ITERATIONS {
 					let mut msg = format!("verification found {} gap(s) — re-running", gaps.len());
 					for g in &gaps {
 						msg.push_str("\n- ");

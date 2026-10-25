@@ -1342,6 +1342,30 @@ fn is_diagnostic_line(line: &str) -> bool {
 	]
 	.iter()
 	.any(|needle| lower.contains(needle))
+		|| is_test_failure_marker(line)
+}
+
+/// Test-runner failure lines whose wording carries none of the needles above:
+/// JavaScript runners mark a failing test with a glyph (vitest `×`/`✗`, jest
+/// `✕`/`✖`), head a failing file or test with an uppercase `FAIL`, and mocha
+/// counts failures as "N failing". Anchored to the line start, so the glyph or
+/// word inside ordinary prose or code does not match.
+fn is_test_failure_marker(line: &str) -> bool {
+	let trimmed = line.trim_start();
+	if ["×", "✗", "✕", "✖"]
+		.iter()
+		.any(|glyph| trimmed.strip_prefix(glyph).is_some_and(|rest| rest.starts_with(' ')))
+	{
+		return true;
+	}
+	if trimmed.starts_with("FAIL ") {
+		return true;
+	}
+	let mut words = trimmed.split_whitespace();
+	matches!(
+		(words.next(), words.next()),
+		(Some(count), Some("failing")) if count.chars().all(|c| c.is_ascii_digit())
+	)
 }
 
 /// Lines of the truncation notice a candidate may already carry (the hard cap

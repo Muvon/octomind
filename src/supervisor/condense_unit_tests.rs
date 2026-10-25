@@ -345,6 +345,46 @@ fn diagnostic_context_clamps_at_edges_and_merges_nearby_windows() {
 }
 
 #[test]
+fn test_runner_failure_markers_are_diagnostics() {
+	// Failing-test lines from runners whose wording carries no "failed"/"error:":
+	// a GOLD run's condenser dropped 112 such vitest lines from one test output.
+	for failing in [
+		"   × custom element with children 12ms",
+		"   ✗ keeps the leaving element until leave completes",
+		"  ✕ reopens the slot before the sibling entered (5 ms)",
+		"  ✖ hydrates appear content",
+		" FAIL  |unit-jsdom| packages/runtime-vapor/__tests__/vdomInterop.spec.ts > vdomInterop > VDOM Transition",
+		"FAIL src/select.test.ts",
+		"  3 failing",
+	] {
+		assert!(is_diagnostic_line(failing), "{failing:?} must be protected");
+	}
+	// Passing lines, and the same glyphs or words inside prose and code, are not.
+	for ordinary in [
+		"   ✓ keeps the leaving element 3ms",
+		"Test Files  12 passed (12)",
+		"const area = width × height;",
+		"fail fast on invalid input",
+		"FAILSAFE mode enabled",
+		"  12 passing (3s)",
+	] {
+		assert!(!is_diagnostic_line(ordinary), "{ordinary:?} must not be protected");
+	}
+	// A vitest summary keeps every failing test line among the passing ones.
+	let lines = [
+		"✓ a 1ms",
+		"✓ b 1ms",
+		"✓ c 1ms",
+		"× d 2ms",
+		"✓ e 1ms",
+		"✓ f 1ms",
+		"✓ g 1ms",
+		"✓ h 1ms",
+	];
+	assert_eq!(diagnostic_ranges(&lines), vec![(2, 6)]);
+}
+
+#[test]
 fn focus_terms_keep_paths_intact_and_drop_stopwords_short_and_duplicates() {
 	assert!(focus_terms("").is_empty());
 	assert_eq!(

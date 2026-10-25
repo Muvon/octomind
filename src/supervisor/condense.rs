@@ -143,12 +143,12 @@ For very large outputs, numbered_output is a query/diagnostic-aware view sampled
 Per result, choose exactly one verdict:
 - "extract" — the expected verdict for a large output: give the line ranges that bear on the task, and the rest goes.
 - "keep" — preserved in full. Use it only when you can name the property that makes nearly every line load-bearing for THIS task: a failure report, a small dense config or table, a result the task queries end to end. "It is source code", "it looks related to the project", and "I am not sure" are not that property.
-- "replace" — nothing in it advances the task (wrong target, irrelevant listing, pure noise). Never use this for status=error or when the numbered view is partial. Do not provide a message; the system creates a factual notice.
+- "replace" — nothing in it advances the task (wrong target, irrelevant listing, pure noise). Never use this for status=error, for an output that reports any failure (a call can succeed while the run it reports failed, e.g. a test run piped through another command), or when the numbered view is partial. Do not provide a message; the system creates a factual notice.
 
 Selection rules for "extract":
-- ALWAYS keep: error messages and stack traces; the exact data the tool call's arguments were querying for; explicit negative results (not found/zero matches); counts, totals, exit codes; the paths, line numbers and signatures the agent needs to locate what it must act on.
+- ALWAYS keep: every failure the output reports — each failing test, check or assertion, each error message, panic and stack trace — with the name and location that identify it, even when many failures share one format: each is a distinct fact, never a repeat; the exact data the tool call's arguments were querying for; explicit negative results (not found/zero matches); counts, totals, exit codes; the paths, line numbers and signatures the agent needs to locate what it must act on.
 - A file read is NOT automatically "all needed". Keep the regions the task concerns — the symbols, blocks and lines the task and the arguments point at — plus what makes them safe to act on: the enclosing signature, an import or type a kept block depends on, the header above a kept table. Drop unrelated functions, unrelated tests, licence and copyright headers, and long stretches the task never touches. That parts of a file interact is a reason to keep the interacting parts, not the whole file.
-- DROP: repeated boilerplate (keep one representative instance), progress/log noise, decorative separators, unrelated matches in overly-broad searches, verbose success chatter.
+- DROP: repeated boilerplate that carries no distinct fact (keep one representative instance; never a failure, error or warning entry), progress/log noise, decorative separators, unrelated matches in overly-broad searches, verbose success chatter.
 - Uncertainty applies per span, not to the whole output: keep the spans you are unsure about, drop the spans you are sure are irrelevant. Several small precise ranges beat one range that swallows the result.
 - A status=error result's failing lines and their context are the payload — never let an error lose its error text.
 
@@ -926,7 +926,15 @@ fn apply_verdict(entry: &Entry, r: &McpToolResult, original: &str, view: &Number
 			if view.partial {
 				return None;
 			}
-			omission_notice(r, original)
+			// A successful call can still report a failure (a test run piped
+			// through `tail` exits 0): its diagnostics survive "none of it matters".
+			let lines: Vec<&str> = original.lines().collect();
+			let protected = protect_ranges(Vec::new(), &lines);
+			if protected.is_empty() {
+				omission_notice(r, original)
+			} else {
+				extract_content(r, original, &lines, &protected)
+			}
 		}
 		_ => None, // "keep" or unknown — untouched
 	}

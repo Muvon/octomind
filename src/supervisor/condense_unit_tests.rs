@@ -526,6 +526,36 @@ async fn replace_on_a_full_success_view_writes_the_factual_notice() {
 	.await;
 }
 
+/// A successful call can still report a failure (a test run piped through
+/// `tail` exits 0): "replace" on it keeps the failure lines and their context
+/// instead of omitting the whole result.
+#[tokio::test]
+async fn replace_on_a_success_that_reports_a_failure_keeps_the_failure() {
+	crate::session::context::with_session_id("condense-unit-replace-failure".to_string(), async {
+		let body = (1..=20)
+			.map(|n| {
+				if n == 12 {
+					"test parser::rejects_empty ... FAILED".to_string()
+				} else {
+					format!("test case_{n} ... ok")
+				}
+			})
+			.collect::<Vec<_>>()
+			.join("\n");
+		let ok = McpToolResult::success("shell".into(), "t1".into(), body);
+		let original = ok.extract_content();
+		let out = apply_verdict(&entry("replace", &[]), &ok, &original, &full_view(20)).expect("replace applies");
+		assert!(out.contains("test parser::rejects_empty ... FAILED"), "got: {out}");
+		assert!(out.contains("test case_10 ... ok"), "the failure keeps its context");
+		assert!(
+			!out.contains("test case_1 ... ok\n"),
+			"lines far from the failure still go"
+		);
+		assert!(out.contains("kept 5 of 20 original lines"));
+	})
+	.await;
+}
+
 // ---------------------------------------------------------------------------
 // build_request
 // ---------------------------------------------------------------------------

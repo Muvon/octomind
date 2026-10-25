@@ -305,11 +305,12 @@ condition at a time, in isolation, before forming any overall impression: a gree
 does not match a condition unless its recorded output demonstrably exercised THAT condition.
 Every condition gets exactly one of three statuses:
 - matched — ONLY with a citable observation: the recorded action or ground-truth artifact whose
-  OBSERVED OUTPUT demonstrates it. Say which action and what its output showed: name it as
-  output:N in the condition's sources, or quote the decisive excerpt verbatim, in quotes, from
-  the ground truth or a readback output. The runtime confirms every citation; a matched
-  condition it cannot trace to a successful recorded action or a verbatim excerpt counts as
-  unknown.
+  OBSERVED OUTPUT demonstrates it. Quote the decisive excerpt verbatim, in quotes — the test
+  name, output line, or diff line that shows THIS condition — from the ground truth or a
+  readback output, and name its action as output:N in the condition's sources. The runtime
+  checks every quote against the recorded evidence; a matched condition without a verbatim
+  excerpt it finds counts as unknown — naming a green action alone does not show what its
+  output exercised.
 - unmatched — ONLY on an observation of the violation, and you must name what that observation
   is as the condition's basis. The runtime charges an unmatched condition by its basis, not by
   its wording:
@@ -343,10 +344,10 @@ const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_condit
    absent_action | inference).
 "#;
 
-const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the basis attribute only on an unmatched line; on a matched line, sources names the recorded action whose output demonstrates it unless the observation quotes its excerpt verbatim. Only when an <evidence_conditions> block was given; write no condition line otherwise.
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from. Only when an <evidence_conditions> block was given; write no condition line otherwise.
 "#;
 
-const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "sources" names the recorded action whose output demonstrates it (output:N) unless the observation quotes its excerpt verbatim. Empty array when no <evidence_conditions> block was given.
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N). Empty array when no <evidence_conditions> block was given.
 "#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
@@ -1226,8 +1227,8 @@ output:N for an observed output or ERROR outcome, omitted:N for an unseen portio
 action #N, ground_truth for supplied ground truth, absent_action for a required action not run.
 Use comma-separated references in a sources attribute (tags) or sources string field (JSON).
 Otherwise omit sources in tags or use null in JSON. These references apply to gaps, yes shapes,
-and unmatched checklist entries; a matched checklist entry cites output:N for the recorded output
-that demonstrates it. Cite the visible observation in the finding's text.
+and unmatched checklist entries; a matched checklist entry names the output:N its quoted
+excerpt came from. Cite the visible observation in the finding's text.
 A claim supported only by omitted output is a verification limit, not a task failure. The runtime
 makes it advisory only when EVERY source is omitted:N and NONE of #N's output is visible in this pass.
 Any visible portion, including a partial readback, keeps the finding actionable.
@@ -1308,7 +1309,7 @@ async fn ask_verifier(
 /// present exactly once, the condition numbering) stays where it already was:
 /// [`VerifierReport::verdict`] checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
-	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: output:N for the recorded action whose output demonstrates it. Null when none applies." });
+	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from. Null when none applies." });
 	serde_json::json!({
 		"type": "object",
 		"additionalProperties": false,
@@ -2089,13 +2090,9 @@ const CITATION_QUOTE_MIN_CHARS: usize = 12;
 /// condition with nothing to demonstrate, so it needs no citation.
 const VOID_CONDITION: &str = "void:";
 
-/// What a matched condition may cite, gathered from the runtime's own records:
+/// What a matched condition may quote, gathered from the runtime's own records:
 /// a verifier's matched status counts only as far as these confirm it.
 struct CitationEvidence {
-	/// `#N` of recorded actions that succeeded. Only a ledger line carries an
-	/// outcome: an output retained after its line was dropped proves nothing about
-	/// how that call ended.
-	succeeded: HashSet<u64>,
 	/// Runtime-recorded text a verbatim quote may come from, whitespace-collapsed,
 	/// one source per line so a quote cannot straddle two of them.
 	corpus: String,
@@ -2109,7 +2106,9 @@ impl CitationEvidence {
 			.iter()
 			.filter(|_| input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp)
 			.flat_map(|turn| &turn.entries);
-		let succeeded = input
+		// Only a ledger line carries an outcome: output retained after its line was
+		// dropped, or output of a call that failed, demonstrates nothing.
+		let succeeded: HashSet<u64> = input
 			.ledger
 			.entries
 			.iter()
@@ -2118,7 +2117,13 @@ impl CitationEvidence {
 			.map(|entry| entry.last_sequence)
 			.collect();
 		let mut sources = vec![input.ground_truth.text.as_str()];
-		sources.extend(input.grounds.iter().map(|(_, output)| output.as_str()));
+		sources.extend(
+			input
+				.grounds
+				.iter()
+				.filter(|(sequence, _)| succeeded.contains(sequence))
+				.map(|(_, output)| output.as_str()),
+		);
 		// A turn with no successful state-changing call delivered its answer:
 		// quoting the answer is then quoting the artifact. After a change, the
 		// answer is narrative — so a mixed "change it and explain" turn proves its
@@ -2131,12 +2136,14 @@ impl CitationEvidence {
 			.map(|text| collapse_whitespace(text))
 			.collect::<Vec<_>>()
 			.join("\n");
-		Self { succeeded, corpus }
+		Self { corpus }
 	}
 
-	/// True when the condition names a successful recorded action (`output:N` in
-	/// its sources or `#N` in its text) or quotes an excerpt found verbatim in the
-	/// runtime evidence — the citation the condition checklist demands.
+	/// True when the condition quotes an excerpt found verbatim in the runtime
+	/// evidence — the test name, output line, or diff line that shows it. Naming
+	/// an action is not enough: "#N passed" says the call succeeded, not that its
+	/// output exercised THIS condition, and one green suite cited for every
+	/// condition is exactly how uncovered behaviour passes the checklist.
 	fn cites(&self, condition: &ReportedCondition) -> bool {
 		if condition
 			.observation
@@ -2146,22 +2153,11 @@ impl CitationEvidence {
 		{
 			return true;
 		}
-		action_references(&condition.sources)
-			.chain(action_references(&condition.observation))
-			.any(|sequence| self.succeeded.contains(&sequence))
-			|| quoted_spans(&condition.observation).iter().any(|quote| {
-				let quote = collapse_whitespace(&unescape_xml(quote));
-				quote.chars().count() >= CITATION_QUOTE_MIN_CHARS && self.corpus.contains(&quote)
-			})
+		quoted_spans(&condition.observation).iter().any(|quote| {
+			let quote = collapse_whitespace(&unescape_xml(quote));
+			quote.chars().count() >= CITATION_QUOTE_MIN_CHARS && self.corpus.contains(&quote)
+		})
 	}
-}
-
-/// `output:N` and `#N` references in free text. `omitted:N` is not among them:
-/// output the verifier never saw demonstrates nothing.
-fn action_references(text: &str) -> impl Iterator<Item = u64> + '_ {
-	text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#' || c == ':'))
-		.filter_map(|token| token.strip_prefix("output:").or_else(|| token.strip_prefix('#')))
-		.filter_map(|number| number.trim_start_matches('#').parse().ok())
 }
 
 /// Spans the verifier quoted: between backticks, straight or curly double

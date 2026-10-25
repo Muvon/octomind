@@ -1916,12 +1916,12 @@ mod evidence_requests {
 	}
 
 	#[test]
-	fn a_matched_condition_counts_only_with_a_citation_the_runtime_confirms() {
+	fn a_matched_condition_counts_only_with_an_excerpt_the_runtime_finds() {
 		let report = report(
 			r#"<condition n="1" status="matched">The implementation ensures fallbacks transition correctly.</condition>
-<condition n="2" status="matched" sources="output:1">the fallback suite ran the out-in switches green</condition>
-<condition n="3" status="matched">#2 shows the hydration suite covering it</condition>
-<condition n="4" status="matched">the diff adds `if (fallbackActive) leave(fallbackRoot)`</condition>"#,
+<condition n="2" status="matched" sources="output:1">the fallback suite ran green</condition>
+<condition n="3" status="matched" sources="output:2">the run shows "hydrated fallback keeps enter hooks"</condition>
+<condition n="4" status="matched" sources="output:1">the run shows "fallback switches respect out-in ordering"</condition>"#,
 		);
 		assert_eq!(
 			report.verdict(4, &HashSet::new()),
@@ -1929,24 +1929,34 @@ mod evidence_requests {
 			"the verifier's own ruling is a pass"
 		);
 		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(4));
+		let grounds = vec![
+			(1, "✓ fallback switches respect out-in ordering 3ms".to_string()),
+			(
+				2,
+				"✓ hydrated fallback keeps enter hooks 2ms\n× hydrated fallback appear 5ms".to_string(),
+			),
+		];
 		let verdict = with_evidence_requests(
 			GateVerdict::Pass,
 			&report,
-			&input(&ledger, &truth, &conditions),
+			&GateInput {
+				grounds: &grounds,
+				..input(&ledger, &truth, &conditions)
+			},
 			&mut Vec::new(),
 		);
 		assert_eq!(
 			requested(&verdict),
-			vec![1, 3],
-			"a restatement and an ERROR outcome cite nothing; a successful output and a verbatim diff excerpt do"
+			vec![1, 2, 3],
+			"a restatement, a bare green action, and a quote from a failed run cite nothing; an excerpt of a successful output does"
 		);
 		let GateVerdict::Gaps(gaps) = verdict else {
 			unreachable!()
 		};
 		assert!(
-			gaps[1].contains(CONDITIONS[2]),
+			gaps[2].contains(CONDITIONS[2]),
 			"the request names the condition: {}",
-			gaps[1]
+			gaps[2]
 		);
 	}
 
@@ -2053,8 +2063,9 @@ mod evidence_requests {
 			"the failed call's ledger line was dropped"
 		);
 		let grounds = vec![(failed, "Tests: 1 failed, 95 passed".to_string())];
-		let report =
-			report(r#"<condition n="1" status="matched" sources="output:0">the suite run shows it</condition>"#);
+		let report = report(
+			r#"<condition n="1" status="matched" sources="output:0">the suite printed "Tests: 1 failed, 95 passed"</condition>"#,
+		);
 		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
 		assert_eq!(
 			requested(&with_evidence_requests(
@@ -2161,7 +2172,7 @@ mod evidence_requests {
 	}
 
 	#[test]
-	fn quotes_and_action_references_are_read_from_free_text() {
+	fn quotes_are_read_from_free_text() {
 		assert_eq!(
 			quoted_spans("the agent's test 'keeps the leaving root' passed"),
 			vec!["keeps the leaving root"]
@@ -2170,10 +2181,6 @@ mod evidence_requests {
 		assert_eq!(
 			quoted_spans("the answer says ‘customer’s invoice was saved’ twice"),
 			vec!["customer’s invoice was saved"]
-		);
-		assert_eq!(
-			action_references("output:3, (#7) and omitted:9").collect::<Vec<_>>(),
-			vec![3, 7]
 		);
 	}
 }

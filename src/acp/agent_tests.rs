@@ -297,6 +297,7 @@ fn new_session_args_consume_one_shot_overrides_once() {
 		resume_recent: true,
 		model: Some("openai:gpt-5".to_string()),
 		hooks: vec!["hook-a".to_string()],
+		startup_error: None,
 	});
 
 	let first = agent.build_new_session_args();
@@ -625,6 +626,40 @@ async fn run_actor_dispatches_initialize_cancel_and_idle() {
 	tokio::time::timeout(std::time::Duration::from_secs(5), local)
 		.await
 		.expect("actor loop must stop after its sender is dropped");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_role_that_failed_to_start_still_initializes_and_refuses_sessions_with_the_reason() {
+	let agent = agent_with(crate::acp::AcpRunOptions {
+		startup_error: Some("Agent 'content:distributor' cannot start: Missing required values A, B".to_string()),
+		..Default::default()
+	});
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			agent
+				.initialize(InitializeRequest::new(ProtocolVersion::LATEST))
+				.await
+				.expect("initialize must succeed so the client can read the reason");
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd.clone()))
+				.await
+				.expect_err("a role that failed to start cannot open a session");
+			let load = agent
+				.load_session(LoadSessionRequest::new("any".to_string(), cwd))
+				.await
+				.expect_err("nor resume one");
+			for err in [new, load] {
+				let detail = err.data.as_ref().and_then(|d| d.as_str()).unwrap_or_default();
+				assert_eq!(
+					detail,
+					"Agent 'content:distributor' cannot start: Missing required values A, B"
+				);
+			}
+		})
+		.await;
 }
 
 // ---- full session lifecycle against the scripted provider ----

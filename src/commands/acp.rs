@@ -53,13 +53,25 @@ pub struct AcpArgs {
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
 pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
-	let (resolved_config, role) = super::common::startup(args.tag.as_deref(), config, false).await?;
+	// stdout is the protocol stream, so a role that cannot start (a missing
+	// INPUT/ENV value, an unknown tag) is reported over ACP rather than by
+	// exiting: a parent agent would otherwise only see the pipe close.
+	let (resolved_config, role, startup_error) = match super::common::startup(args.tag.as_deref(), config, false).await
+	{
+		Ok((resolved_config, role)) => (resolved_config, role, None),
+		Err(e) => {
+			let tag = args.tag.clone().unwrap_or_else(|| config.default.clone());
+			let message = format!("Agent '{tag}' cannot start: {e:#}");
+			(config.clone(), tag, Some(message))
+		}
+	};
 	let options = AcpRunOptions {
 		name: args.name.clone(),
 		resume: args.resume.clone(),
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
 		hooks: args.hooks.clone(),
+		startup_error,
 	};
 	octomind::acp::run(resolved_config, role, options).await
 }

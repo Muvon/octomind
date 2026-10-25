@@ -1246,7 +1246,16 @@ where
 			};
 			if msg.get("id").and_then(|i| i.as_u64()) == Some(id) {
 				if let Some(err) = msg.get("error") {
-					return Err(anyhow::anyhow!("ACP error: {err}"));
+					// `data` carries the agent's own explanation (e.g. which keys a
+					// specialist is missing); `message` is only the JSON-RPC category.
+					let detail = err
+						.get("data")
+						.and_then(Value::as_str)
+						.or_else(|| err.get("message").and_then(Value::as_str));
+					return Err(match detail {
+						Some(detail) => anyhow::anyhow!("ACP error: {detail}"),
+						None => anyhow::anyhow!("ACP error: {err}"),
+					});
 				}
 				return Ok(msg);
 			}

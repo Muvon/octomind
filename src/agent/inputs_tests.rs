@@ -179,6 +179,44 @@ async fn resolve_env_vars_missing_key_fails_closed_when_non_interactive() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn resolve_env_vars_names_every_missing_key_when_non_interactive() {
+	let (set, a, b) = (
+		"OCTOMIND_INPUTS_TEST_ENV_SET",
+		"OCTOMIND_INPUTS_TEST_ENV_MISSING_A",
+		"OCTOMIND_INPUTS_TEST_ENV_MISSING_B",
+	);
+	std::env::set_var(set, "1");
+	std::env::remove_var(a);
+	std::env::remove_var(b);
+	let raw = format!("{{{{ENV:{a}}}}} {{{{ENV:{set}}}}} {{{{ENV:{b}}}}}");
+	let err = with_non_interactive(async { resolve_env_vars(&raw).await })
+		.await
+		.unwrap_err();
+	std::env::remove_var(set);
+	// One failed run must name all of them, so the caller can ask once.
+	assert!(
+		err.to_string()
+			.starts_with(&format!("Missing required values {a}, {b} ")),
+		"{err}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn resolve_inputs_names_every_missing_key_when_non_interactive() {
+	let _data = DataDirGuard::new();
+	let err = with_non_interactive(async { resolve_inputs("{{INPUT:FIRST}} {{INPUT:SECOND}}").await })
+		.await
+		.unwrap_err();
+	assert!(
+		err.to_string().starts_with("Missing required values FIRST, SECOND "),
+		"{err}"
+	);
+	assert!(err.to_string().contains("inputs.toml"), "{err}");
+}
+
+#[tokio::test]
 async fn resolve_env_vars_without_placeholders_is_passthrough() {
 	let resolved = resolve_env_vars("plain text, nothing to resolve").await.unwrap();
 	assert_eq!(resolved, "plain text, nothing to resolve");

@@ -43,6 +43,11 @@ pub struct AcpRunOptions {
 	pub resume_recent: bool,
 	pub model: Option<String>,
 	pub hooks: Vec<String>,
+	/// Why the role could not start (tap resolution, a missing INPUT/ENV value,
+	/// MCP init). When set, the agent still answers `initialize` and fails every
+	/// session request with this text, so the client learns the cause instead
+	/// of seeing the pipe close.
+	pub startup_error: Option<String>,
 }
 
 /// Run the ACP agent over stdio until the client disconnects.

@@ -177,6 +177,12 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 	}
 
 	let mut stored = load_inputs()?;
+	refuse_missing_when_non_interactive(
+		keys.iter().filter(|key| !stored.contains_key(*key)),
+		"Pre-populate them once by running the role interactively \
+		 (`octomind run <role>`) or store them directly in \
+		 `~/.local/share/octomind/inputs.toml`, then retry.",
+	)?;
 
 	for key in &keys {
 		let value = if let Some(v) = stored.get(key) {
@@ -197,6 +203,23 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 	}
 
 	Ok(restore_escaped_braces(&result))
+}
+
+/// Fail with every missing key at once when nobody can answer a prompt, so the
+/// caller — often a parent agent reading this as a tool result — can ask for all
+/// of them in one go instead of discovering them one failed run at a time.
+fn refuse_missing_when_non_interactive<'a>(missing: impl Iterator<Item = &'a String>, remedy: &str) -> Result<()> {
+	if !is_non_interactive() {
+		return Ok(());
+	}
+	let missing: Vec<&str> = missing.map(String::as_str).collect();
+	if missing.is_empty() {
+		return Ok(());
+	}
+	anyhow::bail!(
+		"Missing required values {} and this run is non-interactive. {remedy}",
+		missing.join(", ")
+	);
 }
 
 /// Protect escaped `{{{{...}}}}` sequences before substitution by replacing them
@@ -261,6 +284,11 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 	if keys.is_empty() {
 		return Ok(restore_escaped_braces(&result));
 	}
+	refuse_missing_when_non_interactive(
+		keys.iter().filter(|key| std::env::var_os(key).is_none()),
+		"They are read from the environment: set them where this process starts \
+		 (or in `./.env`), then retry.",
+	)?;
 
 	for key in &keys {
 		// `Ok(v)` covers any value the user has explicitly set — including

@@ -353,6 +353,24 @@ async fn acp_session_new_eof_after_initialize_fails_the_run() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn acp_session_new_error_surfaces_the_agent_explanation() {
+	// A specialist that cannot start answers initialize, then refuses
+	// session/new with its reason in `data` (see `octomind acp` startup).
+	let err = run_script(concat!(
+		"echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n",
+		"echo '{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32603,\"message\":\"Internal error\",\"data\":\"Agent x:y cannot start: Missing required values A, B\"}}'\n",
+		"cat >/dev/null"
+	))
+	.await
+	.expect_err("a refused session must fail the run");
+	assert_eq!(
+		err.to_string(),
+		"ACP error: Agent x:y cannot start: Missing required values A, B"
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn acp_eof_before_prompt_response_skips_blank_and_garbage_lines() {
 	// Handshake completes, then only blank/non-JSON noise precedes EOF — the
 	// failure must be the no-partial-output variant.

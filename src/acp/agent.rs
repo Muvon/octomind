@@ -83,6 +83,8 @@ pub struct OctomindAgent {
 	model: Option<String>,
 	/// Webhook hooks activated for every session (new and loaded).
 	hooks: Vec<String>,
+	/// Set when the role failed to start; every session request answers with it.
+	startup_error: Option<String>,
 }
 
 impl OctomindAgent {
@@ -100,6 +102,7 @@ impl OctomindAgent {
 			pending_resume_recent: RefCell::new(options.resume_recent),
 			model: options.model,
 			hooks: options.hooks,
+			startup_error: options.startup_error,
 		}
 	}
 
@@ -186,6 +189,14 @@ impl OctomindAgent {
 			.entry(session_id.to_string())
 			.or_default()
 			.clone()
+	}
+
+	/// The role's startup failure as a protocol error, if it failed.
+	fn startup_failure(&self) -> agent_client_protocol::Result<()> {
+		match &self.startup_error {
+			Some(message) => Err(agent_client_protocol::Error::internal_error().data(message.clone())),
+			None => Ok(()),
+		}
 	}
 
 	/// Build session args for a new ACP session, consuming the one-shot CLI overrides.
@@ -669,6 +680,7 @@ impl OctomindAgent {
 	}
 
 	async fn new_session(&self, args: NewSessionRequest) -> agent_client_protocol::Result<NewSessionResponse> {
+		self.startup_failure()?;
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
@@ -1379,6 +1391,7 @@ impl OctomindAgent {
 	}
 
 	async fn load_session(&self, args: LoadSessionRequest) -> agent_client_protocol::Result<LoadSessionResponse> {
+		self.startup_failure()?;
 		let session_id = args.session_id.to_string();
 		log_debug!("ACP: load_session requested: {}", session_id);
 

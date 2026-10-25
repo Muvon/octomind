@@ -133,13 +133,20 @@ fn logical_lines(task: &str) -> Vec<String> {
 /// Split a line into sentence-ish units. A `.` between digits is a decimal point,
 /// not a terminator: splitting "below 8.2 must stay as it is" mid-version left the
 /// requirement recited as a subjectless "must stay as it is" — an unanchored
-/// directive in the slot the agent trusts most.
+/// directive in the slot the agent trusts most. A terminator inside an inline code
+/// span belongs to the code: splitting at the `.` in `0.1.2-pre.0` recited a rule
+/// as "excludes `0.1.2-pre." and dropped the clause after it.
 fn sentence_units(line: &str) -> Vec<&str> {
 	let bytes = line.as_bytes();
 	let mut units = Vec::new();
 	let mut start = 0;
+	let mut in_code = false;
 	for (idx, ch) in line.char_indices() {
-		if !matches!(ch, '.' | '!' | ';') {
+		if ch == '`' {
+			in_code = !in_code;
+			continue;
+		}
+		if in_code || !matches!(ch, '.' | '!' | ';') {
 			continue;
 		}
 		if ch == '.' {

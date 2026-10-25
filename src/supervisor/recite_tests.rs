@@ -397,6 +397,17 @@ fn a_decimal_inside_a_requirement_is_not_a_sentence_end() {
 }
 
 #[test]
+fn a_terminator_inside_inline_code_does_not_end_the_sentence() {
+	// Real gold-case sentence. Splitting at the `.` in `0.1.2-pre.0` recited
+	// "… excludes `0.1.2-pre." and dropped the excluded-upper-bound half of the rule.
+	let task = concat!(
+		"The flag must not select an unrequested prerelease or relax numeric version bounds: ",
+		"a requirement starting at `0.1.2` excludes `0.1.2-pre.0`, and an excluded upper bound stays excluded.\n"
+	);
+	assert_eq!(extract_constraints(task), vec![task.trim_end()]);
+}
+
+#[test]
 fn a_mid_sentence_fragment_is_dropped_rather_than_recited() {
 	// Even when a split does land inside a sentence, the surviving clause must not
 	// be presented as a binding requirement — silence is the safe failure.

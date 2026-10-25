@@ -80,6 +80,7 @@ fn visibility_input<'a>(ledger: &'a EvidenceLedger, grounds: &'a [(u64, String)]
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
+		first_verification: true,
 	}
 }
 
@@ -1395,6 +1396,7 @@ fn a_follow_up_without_context_sources_names_them_unspecified() {
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
+		first_verification: true,
 	});
 	assert!(
 		rendered.contains(r#"sources="unspecified""#),
@@ -1443,6 +1445,7 @@ mod verify_round_trip {
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: conditions,
+			first_verification: true,
 		}
 	}
 
@@ -1672,12 +1675,11 @@ mod verify_round_trip {
 		let conditions = vec!["the log shows the fix".to_string()];
 		let (_tx, rx1) = rx();
 		let first = verify(&gate_config(), input(&[], &conditions), rx1).await;
-		let prior = vec!["an earlier finding".to_string()];
 		let (_tx2, rx2) = rx();
 		let again = verify(
 			&gate_config(),
 			GateInput {
-				prior_gaps: &prior,
+				first_verification: false,
 				..input(&[], &conditions)
 			},
 			rx2,
@@ -1804,6 +1806,7 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: &[],
+			first_verification: true,
 		});
 		assert!(!rendered.contains("<recorded_actions>"));
 		if scope == FollowUp {
@@ -1894,6 +1897,7 @@ mod evidence_requests {
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: conditions,
+			first_verification: true,
 		}
 	}
 
@@ -1968,7 +1972,7 @@ mod evidence_requests {
 	}
 
 	#[test]
-	fn the_answer_is_citable_only_when_the_turn_changed_nothing() {
+	fn the_answer_is_citable_only_when_no_call_changed_state() {
 		let report =
 			report(r#"<condition n="1" status="matched">the answer states "all 96 parity tests passed"</condition>"#);
 		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
@@ -1982,6 +1986,28 @@ mod evidence_requests {
 			)),
 			vec![1],
 			"after a change the answer is narrative, not evidence"
+		);
+		let mut shell_edit = EvidenceLedger::default();
+		shell_edit.record(
+			"shell",
+			&serde_json::json!({ "command": "sed -i s/enter/leave/ src/fallback.ts" }),
+			true,
+			false,
+			0,
+		);
+		assert!(
+			shell_edit.mutated_paths().is_empty(),
+			"a shell edit names no path parameter"
+		);
+		assert_eq!(
+			requested(&with_evidence_requests(
+				GateVerdict::Pass,
+				&report,
+				&input(&shell_edit, &truth, &conditions),
+				&mut Vec::new()
+			)),
+			vec![1],
+			"a state change through the shell makes the answer narrative too"
 		);
 		let mut read_only = EvidenceLedger::default();
 		read_only.record(
@@ -2000,6 +2026,48 @@ mod evidence_requests {
 			),
 			GateVerdict::Pass,
 			"with nothing changed the answer is the deliverable"
+		);
+	}
+
+	#[test]
+	fn an_output_outliving_its_failed_ledger_line_cites_nothing() {
+		let mut ledger = EvidenceLedger::default();
+		let failed = ledger.record(
+			"shell",
+			&serde_json::json!({ "command": "pnpm test" }),
+			false,
+			true,
+			300,
+		);
+		for i in 0..LEDGER_CAP {
+			ledger.record(
+				"view",
+				&serde_json::json!({ "path": format!("src/{i}.ts") }),
+				false,
+				false,
+				1,
+			);
+		}
+		assert!(
+			ledger.entries.iter().all(|entry| entry.last_sequence != failed),
+			"the failed call's ledger line was dropped"
+		);
+		let grounds = vec![(failed, "Tests: 1 failed, 95 passed".to_string())];
+		let report =
+			report(r#"<condition n="1" status="matched" sources="output:0">the suite run shows it</condition>"#);
+		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
+		assert_eq!(
+			requested(&with_evidence_requests(
+				GateVerdict::Pass,
+				&report,
+				&GateInput {
+					grounds: &grounds,
+					..input(&ledger, &truth, &conditions)
+				},
+				&mut Vec::new()
+			)),
+			vec![1],
+			"a retained output carries no outcome once its ledger line is gone"
 		);
 	}
 
@@ -2026,13 +2094,12 @@ mod evidence_requests {
 			"a charged unknown is no longer an unactioned finding"
 		);
 
-		let prior = vec!["Condition 1 is not demonstrated by any cited observation".to_string()];
 		let mut reported = report.reported_findings(&HashSet::new());
 		let verdict = with_evidence_requests(
 			GateVerdict::Pass,
 			&report,
 			&GateInput {
-				prior_gaps: &prior,
+				first_verification: false,
 				..input(&ledger, &truth, &conditions)
 			},
 			&mut reported,
@@ -2100,6 +2167,10 @@ mod evidence_requests {
 			vec!["keeps the leaving root"]
 		);
 		assert_eq!(quoted_spans("`a()` then “b c” and \"d\""), vec!["a()", "d", "b c"]);
+		assert_eq!(
+			quoted_spans("the answer says ‘customer’s invoice was saved’ twice"),
+			vec!["customer’s invoice was saved"]
+		);
 		assert_eq!(
 			action_references("output:3, (#7) and omitted:9").collect::<Vec<_>>(),
 			vec![3, 7]

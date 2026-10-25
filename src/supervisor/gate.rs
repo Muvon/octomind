@@ -1045,6 +1045,10 @@ pub struct GateInput<'a> {
 	/// Request-derived fulfillment checklist (see
 	/// [`crate::supervisor::resolve::ResolvedTask::evidence_conditions`]).
 	pub evidence_conditions: &'a [String],
+	/// The turn's first verification: a re-run and a re-verify remain in the gate
+	/// budget, so it is the one pass that may request evidence (see
+	/// [`with_evidence_requests`]).
+	pub first_verification: bool,
 }
 
 /// Verify a self-reported completion against [`GateInput`]. Infrastructure and
@@ -2088,7 +2092,9 @@ const VOID_CONDITION: &str = "void:";
 /// What a matched condition may cite, gathered from the runtime's own records:
 /// a verifier's matched status counts only as far as these confirm it.
 struct CitationEvidence {
-	/// `#N` of recorded actions that succeeded, and of retained outputs.
+	/// `#N` of recorded actions that succeeded. Only a ledger line carries an
+	/// outcome: an output retained after its line was dropped proves nothing about
+	/// how that call ended.
 	succeeded: HashSet<u64>,
 	/// Runtime-recorded text a verbatim quote may come from, whitespace-collapsed,
 	/// one source per line so a quote cannot straddle two of them.
@@ -2103,29 +2109,21 @@ impl CitationEvidence {
 			.iter()
 			.filter(|_| input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp)
 			.flat_map(|turn| &turn.entries);
-		let mut succeeded = HashSet::new();
-		let mut failed = HashSet::new();
-		for entry in input.ledger.entries.iter().chain(historical) {
-			if entry.error {
-				failed.insert(entry.last_sequence);
-			} else {
-				succeeded.insert(entry.last_sequence);
-			}
-		}
-		// Retained outputs outlive the ledger lines that named them (the ledger
-		// drops its oldest first). An ERROR outcome demonstrates nothing either way.
-		succeeded.extend(
-			input
-				.grounds
-				.iter()
-				.map(|(sequence, _)| *sequence)
-				.filter(|sequence| !failed.contains(sequence)),
-		);
+		let succeeded = input
+			.ledger
+			.entries
+			.iter()
+			.chain(historical)
+			.filter(|entry| !entry.error)
+			.map(|entry| entry.last_sequence)
+			.collect();
 		let mut sources = vec![input.ground_truth.text.as_str()];
 		sources.extend(input.grounds.iter().map(|(_, output)| output.as_str()));
-		// A turn that changed no state delivered its answer: quoting the answer is
-		// then quoting the artifact. After a change, the answer is narrative.
-		if input.ledger.mutated_paths().is_empty() {
+		// A turn with no successful state-changing call delivered its answer:
+		// quoting the answer is then quoting the artifact. After a change, the
+		// answer is narrative — so a mixed "change it and explain" turn proves its
+		// explanation conditions in the one evidence round, a bounded cost.
+		if !input.ledger.entries.iter().any(|entry| entry.mutation && !entry.error) {
 			sources.push(input.result);
 		}
 		let corpus = sources
@@ -2167,9 +2165,10 @@ fn action_references(text: &str) -> impl Iterator<Item = u64> + '_ {
 }
 
 /// Spans the verifier quoted: between backticks, straight or curly double
-/// quotes, curly single quotes, or straight single quotes that open after a
-/// non-word character and close before one — so an apostrophe ("agent's")
-/// neither opens nor closes a quote.
+/// quotes, or single quotes. A straight single quote opens only after a
+/// non-word character, and a single closing quote, straight or curly, closes
+/// only before one — so an apostrophe ("agent's", "customer’s") neither opens
+/// nor closes a quote.
 fn quoted_spans(text: &str) -> Vec<String> {
 	const PAIRS: [(char, char); 5] = [('`', '`'), ('"', '"'), ('“', '”'), ('‘', '’'), ('\'', '\'')];
 	let chars: Vec<char> = text.chars().collect();
@@ -2180,7 +2179,9 @@ fn quoted_spans(text: &str) -> Vec<String> {
 			match start {
 				None if c == open && (open != '\'' || i == 0 || !chars[i - 1].is_alphanumeric()) => start = Some(i + 1),
 				Some(from)
-					if c == close && (close != '\'' || chars.get(i + 1).is_none_or(|next| !next.is_alphanumeric())) =>
+					if c == close
+						&& (!matches!(close, '\'' | '’')
+							|| chars.get(i + 1).is_none_or(|next| !next.is_alphanumeric())) =>
 				{
 					spans.push(chars[from..i].iter().collect());
 					start = None;
@@ -2379,8 +2380,9 @@ impl VerifierReport {
 
 /// Charge the conditions the verifier could not settle (see
 /// [`VerifierReport::unsettled_conditions`]) as evidence requests — once per
-/// turn, on its first pass, so the agent demonstrates each one or reports it
-/// unsatisfied. Never on a hand-back: a condition waiting on the user's answer
+/// turn, on its first verification while a re-run and a re-verify remain, so
+/// the agent demonstrates each one or reports it unsatisfied. Never on a
+/// hand-back: a condition waiting on the user's answer
 /// is not the agent's to demonstrate. After that first request they stay what an
 /// unknown always was, a limit reported to the user, so a condition no available
 /// check can demonstrate costs one round, never a loop. Joined after
@@ -2406,7 +2408,7 @@ fn with_evidence_requests(
 		input.stop,
 		Some(crate::supervisor::detect::SelfReport::Blocked | crate::supervisor::detect::SelfReport::NeedInput)
 	);
-	if hand_back || !input.prior_gaps.is_empty() {
+	if hand_back || !input.first_verification {
 		reported.extend(
 			unsettled
 				.iter()
@@ -2430,7 +2432,7 @@ fn with_evidence_requests(
 			reported.retain(|existing| existing != &finding);
 		}
 		requests.push(format!(
-			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: a recorded check whose output exercises this exact condition, cited by what it showed, or report the condition as unsatisfied",
+			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: the recorded action, output, or artifact that already shows it, cited by what it showed; else a new observation of this exact condition (never repeat an action with external effects, such as sending, posting, or purchasing, only to demonstrate it); or report the condition as unsatisfied",
 			input.evidence_conditions[n - 1]
 		));
 	}

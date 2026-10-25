@@ -71,6 +71,7 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
+		first_verification: true,
 	}
 }
 

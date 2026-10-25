@@ -679,6 +679,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				prior_gaps: &prior_gaps,
 				role_context: &crate::supervisor::role_context(&chat_session.session.messages),
 				evidence_conditions: &resolved_task.evidence_conditions,
+				first_verification: chat_session.gate_iterations == 0,
 			},
 			operation_rx.clone(),
 		)

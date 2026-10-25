@@ -1801,3 +1801,293 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 		}
 	}
 }
+
+/// A matched condition counts only with a citation the runtime confirms; what
+/// the verifier could not settle goes back to the agent once per turn.
+mod evidence_requests {
+	use super::*;
+	use crate::supervisor::detect::SelfReport;
+
+	const CONDITIONS: [&str; 4] = [
+		"An active fallback enters and leaves when content disappears or returns",
+		"Fallback switches respect out-in ordering",
+		"Hydrated fallbacks keep their enter hooks",
+		"A fallback that switches its own root leaves before the new root enters",
+	];
+
+	fn conditions(count: usize) -> Vec<String> {
+		CONDITIONS[..count]
+			.iter()
+			.map(|condition| condition.to_string())
+			.collect()
+	}
+
+	/// #0 edits a file, #1 runs a suite that succeeds, #2 one that fails.
+	fn edited_ledger() -> EvidenceLedger {
+		let mut ledger = EvidenceLedger::default();
+		ledger.record(
+			"text_editor",
+			&serde_json::json!({ "path": "src/fallback.ts" }),
+			true,
+			false,
+			40,
+		);
+		ledger.record(
+			"shell",
+			&serde_json::json!({ "command": "pnpm test fallback" }),
+			false,
+			false,
+			900,
+		);
+		ledger.record(
+			"shell",
+			&serde_json::json!({ "command": "pnpm test hydration" }),
+			false,
+			true,
+			300,
+		);
+		ledger
+	}
+
+	fn ground_truth() -> RenderedEvidence {
+		RenderedEvidence {
+			text: "diff --git a/src/fallback.ts b/src/fallback.ts\n+  if (fallbackActive) leave(fallbackRoot)\n+  return h(Transition, { mode: 'out-in' })\n+  <Transition mode=\"out-in\">\n".into(),
+			..Default::default()
+		}
+	}
+
+	fn input<'a>(
+		ledger: &'a EvidenceLedger,
+		ground_truth: &'a RenderedEvidence,
+		conditions: &'a [String],
+	) -> GateInput<'a> {
+		GateInput {
+			ledger,
+			original_task: "make slot fallbacks transition",
+			task: "make slot fallbacks transition",
+			task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
+			context_sources: &[],
+			resolution_evidence: &[],
+			result: "Fallbacks now transition; all 96 parity tests passed.",
+			claim: None,
+			stop: Some(SelfReport::Done),
+			actions: "",
+			historical_actions: "",
+			grounds: &[],
+			plan: "",
+			ground_truth,
+			prior_gaps: &[],
+			role_context: "",
+			evidence_conditions: conditions,
+		}
+	}
+
+	fn report(conditions: &str) -> VerifierReport {
+		text_report(&format!("{conditions}\n{CLEAN_SHAPES}\n<verdict>PASS</verdict>"))
+	}
+
+	fn requested(verdict: &GateVerdict) -> Vec<usize> {
+		let GateVerdict::Gaps(gaps) = verdict else {
+			return Vec::new();
+		};
+		gaps.iter()
+			.filter_map(|gap| gap.strip_prefix("Condition "))
+			.filter_map(|rest| rest.split(' ').next()?.parse().ok())
+			.collect()
+	}
+
+	#[test]
+	fn a_matched_condition_counts_only_with_a_citation_the_runtime_confirms() {
+		let report = report(
+			r#"<condition n="1" status="matched">The implementation ensures fallbacks transition correctly.</condition>
+<condition n="2" status="matched" sources="output:1">the fallback suite ran the out-in switches green</condition>
+<condition n="3" status="matched">#2 shows the hydration suite covering it</condition>
+<condition n="4" status="matched">the diff adds `if (fallbackActive) leave(fallbackRoot)`</condition>"#,
+		);
+		assert_eq!(
+			report.verdict(4, &HashSet::new()),
+			GateVerdict::Pass,
+			"the verifier's own ruling is a pass"
+		);
+		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(4));
+		let verdict = with_evidence_requests(
+			GateVerdict::Pass,
+			&report,
+			&input(&ledger, &truth, &conditions),
+			&mut Vec::new(),
+		);
+		assert_eq!(
+			requested(&verdict),
+			vec![1, 3],
+			"a restatement and an ERROR outcome cite nothing; a successful output and a verbatim diff excerpt do"
+		);
+		let GateVerdict::Gaps(gaps) = verdict else {
+			unreachable!()
+		};
+		assert!(
+			gaps[1].contains(CONDITIONS[2]),
+			"the request names the condition: {}",
+			gaps[1]
+		);
+	}
+
+	#[test]
+	fn a_quote_cites_only_runtime_text_long_enough_to_locate_something() {
+		let report = report(
+			r#"<condition n="1" status="matched">the diff adds "if (fallbackActive) enter(fallbackRoot)"</condition>
+<condition n="2" status="matched">the diff calls "leave("</condition>
+<condition n="3" status="matched">the template renders `&lt;Transition mode="out-in"&gt;`</condition>"#,
+		);
+		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(3));
+		let verdict = with_evidence_requests(
+			GateVerdict::Pass,
+			&report,
+			&input(&ledger, &truth, &conditions),
+			&mut Vec::new(),
+		);
+		assert_eq!(
+			requested(&verdict),
+			vec![1, 2],
+			"an invented excerpt and a too-short one cite nothing; an escaped copy of the diff does"
+		);
+	}
+
+	#[test]
+	fn the_answer_is_citable_only_when_the_turn_changed_nothing() {
+		let report =
+			report(r#"<condition n="1" status="matched">the answer states "all 96 parity tests passed"</condition>"#);
+		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
+		let edited = edited_ledger();
+		assert_eq!(
+			requested(&with_evidence_requests(
+				GateVerdict::Pass,
+				&report,
+				&input(&edited, &truth, &conditions),
+				&mut Vec::new()
+			)),
+			vec![1],
+			"after a change the answer is narrative, not evidence"
+		);
+		let mut read_only = EvidenceLedger::default();
+		read_only.record(
+			"view",
+			&serde_json::json!({ "path": "src/fallback.ts" }),
+			false,
+			false,
+			900,
+		);
+		assert_eq!(
+			with_evidence_requests(
+				GateVerdict::Pass,
+				&report,
+				&input(&read_only, &truth, &conditions),
+				&mut Vec::new()
+			),
+			GateVerdict::Pass,
+			"with nothing changed the answer is the deliverable"
+		);
+	}
+
+	#[test]
+	fn unsettled_conditions_are_requested_once_and_never_on_a_hand_back() {
+		let report = report(
+			r#"<condition n="1" status="matched">fallbacks are handled</condition>
+<condition n="2" status="unknown">the hydration run's output is not retained</condition>"#,
+		);
+		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(2));
+		let unknown = "condition 2 unsettled: the hydration run's output is not retained".to_string();
+
+		let mut reported = report.reported_findings(&HashSet::new());
+		assert_eq!(reported, vec![unknown.clone()]);
+		let verdict = with_evidence_requests(
+			GateVerdict::Pass,
+			&report,
+			&input(&ledger, &truth, &conditions),
+			&mut reported,
+		);
+		assert_eq!(requested(&verdict), vec![1, 2], "the first pass asks for both");
+		assert!(
+			reported.is_empty(),
+			"a charged unknown is no longer an unactioned finding"
+		);
+
+		let prior = vec!["Condition 1 is not demonstrated by any cited observation".to_string()];
+		let mut reported = report.reported_findings(&HashSet::new());
+		let verdict = with_evidence_requests(
+			GateVerdict::Pass,
+			&report,
+			&GateInput {
+				prior_gaps: &prior,
+				..input(&ledger, &truth, &conditions)
+			},
+			&mut reported,
+		);
+		assert_eq!(verdict, GateVerdict::Pass, "a re-verify only reports them");
+		assert_eq!(
+			reported,
+			vec![
+				unknown,
+				"condition 1 matched without a citable observation: fallbacks are handled".to_string()
+			]
+		);
+
+		for stop in [SelfReport::Blocked, SelfReport::NeedInput] {
+			assert_eq!(
+				with_evidence_requests(
+					GateVerdict::Pass,
+					&report,
+					&GateInput {
+						stop: Some(stop),
+						..input(&ledger, &truth, &conditions)
+					},
+					&mut Vec::new()
+				),
+				GateVerdict::Pass,
+				"a condition waiting on the user is not the agent's to demonstrate"
+			);
+		}
+	}
+
+	#[test]
+	fn void_conditions_need_no_citation_and_requests_join_standing_gaps() {
+		let report = report(
+			r#"<condition n="1" status="matched">void: contradicts request</condition>
+<condition n="2" status="matched">fallbacks are handled</condition>"#,
+		);
+		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(2));
+		let verdict = with_evidence_requests(
+			GateVerdict::Gaps(vec!["standing gap".to_string()]),
+			&report,
+			&input(&ledger, &truth, &conditions),
+			&mut Vec::new(),
+		);
+		let GateVerdict::Gaps(gaps) = &verdict else {
+			panic!("expected gaps, got {verdict:?}")
+		};
+		assert_eq!(gaps[0], "standing gap");
+		assert_eq!(requested(&verdict), vec![2]);
+		let unreadable = GateVerdict::Indeterminate("missing verdict markers".to_string());
+		assert_eq!(
+			with_evidence_requests(
+				unreadable.clone(),
+				&report,
+				&input(&ledger, &truth, &conditions),
+				&mut Vec::new()
+			),
+			unreadable
+		);
+	}
+
+	#[test]
+	fn quotes_and_action_references_are_read_from_free_text() {
+		assert_eq!(
+			quoted_spans("the agent's test 'keeps the leaving root' passed"),
+			vec!["keeps the leaving root"]
+		);
+		assert_eq!(quoted_spans("`a()` then “b c” and \"d\""), vec!["a()", "d", "b c"]);
+		assert_eq!(
+			action_references("output:3, (#7) and omitted:9").collect::<Vec<_>>(),
+			vec![3, 7]
+		);
+	}
+}

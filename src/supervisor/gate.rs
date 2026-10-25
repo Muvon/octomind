@@ -262,7 +262,7 @@ VERDICT — every other time. Your ENTIRE answer is these parts, in this order, 
    context-stripped, acceptance-only, unenumerated-category; each with found (yes | no |
    unknown), a one-line reason, and — on every yes — its settles.
 3. The verdict: PASS when no observed violation remains. Unknown conditions or shapes and
-   inference-only unmatched conditions are advisory; they do not block. Do not repeat an
+   inference-only unmatched conditions are not violations; they are never gaps. Do not repeat an
    advisory suspicion as a gap or a yes shape to turn it into a blocking finding. Otherwise
    give one gap per observed violation, naming the requirement, the recorded evidence showing
    its violation (or the explicitly required action absent from the log), and its settles.
@@ -305,7 +305,11 @@ condition at a time, in isolation, before forming any overall impression: a gree
 does not match a condition unless its recorded output demonstrably exercised THAT condition.
 Every condition gets exactly one of three statuses:
 - matched — ONLY with a citable observation: the recorded action or ground-truth artifact whose
-  OBSERVED OUTPUT demonstrates it. Say which action and what its output showed.
+  OBSERVED OUTPUT demonstrates it. Say which action and what its output showed: name it as
+  output:N in the condition's sources, or quote the decisive excerpt verbatim, in quotes, from
+  the ground truth or a readback output. The runtime confirms every citation; a matched
+  condition it cannot trace to a successful recorded action or a verbatim excerpt counts as
+  unknown.
 - unmatched — ONLY on an observation of the violation, and you must name what that observation
   is as the condition's basis. The runtime charges an unmatched condition by its basis, not by
   its wording:
@@ -322,7 +326,8 @@ Every condition gets exactly one of three statuses:
     Declaring a suspicion under any other basis is the false positive this field exists to
     stop.
 - unknown — the supplied evidence can establish neither satisfaction nor violation, and no
-  basis fits. A verification limit: reported to the user, never blocks completion. Prefer a
+  basis fits. A verification limit, not a violation: the runtime asks the agent once for the
+  observation that would settle it and never blocks completion on it after that. Prefer a
   readback round over unknown when a recorded output would decide it.
 A condition that contradicts <current_user_turn> is void — mark it matched with the reason
 "void: contradicts request"; so is one whose only demonstration would require an action the
@@ -338,10 +343,10 @@ const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_condit
    absent_action | inference).
 "#;
 
-const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference">observation</condition> — the basis attribute only on an unmatched line. Only when an <evidence_conditions> block was given; write no condition line otherwise.
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the basis attribute only on an unmatched line; on a matched line, sources names the recorded action whose output demonstrates it unless the observation quotes its excerpt verbatim. Only when an <evidence_conditions> block was given; write no condition line otherwise.
 "#;
 
-const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise. Empty array when no <evidence_conditions> block was given.
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "sources" names the recorded action whose output demonstrates it (output:N) unless the observation quotes its excerpt verbatim. Empty array when no <evidence_conditions> block was given.
 "#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
@@ -1154,6 +1159,7 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 			};
 		}
 	}
+	verdict = with_evidence_requests(verdict, &report, &input, &mut reported);
 	crate::supervisor::accounting::record(
 		crate::supervisor::stats::CallKind::Gate,
 		crate::supervisor::accounting::Usage {
@@ -1216,7 +1222,8 @@ output:N for an observed output or ERROR outcome, omitted:N for an unseen portio
 action #N, ground_truth for supplied ground truth, absent_action for a required action not run.
 Use comma-separated references in a sources attribute (tags) or sources string field (JSON).
 Otherwise omit sources in tags or use null in JSON. These references apply to gaps, yes shapes,
-and unmatched checklist entries. Cite the visible observation in the finding's text.
+and unmatched checklist entries; a matched checklist entry cites output:N for the recorded output
+that demonstrates it. Cite the visible observation in the finding's text.
 A claim supported only by omitted output is a verification limit, not a task failure. The runtime
 makes it advisory only when EVERY source is omitted:N and NONE of #N's output is visible in this pass.
 Any visible portion, including a partial readback, keeps the finding actionable.
@@ -1297,7 +1304,7 @@ async fn ask_verifier(
 /// present exactly once, the condition numbering) stays where it already was:
 /// [`VerifierReport::verdict`] checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
-	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. Null when no output-visibility exemption is claimed." });
+	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: output:N for the recorded action whose output demonstrates it. Null when none applies." });
 	serde_json::json!({
 		"type": "object",
 		"additionalProperties": false,
@@ -2070,6 +2077,131 @@ fn json_number(value: &serde_json::Value) -> Option<u64> {
 		.or_else(|| value.as_str()?.trim().trim_start_matches('#').parse().ok())
 }
 
+/// Shortest quoted excerpt accepted as a verbatim citation. Anything shorter (a
+/// bare `true`, a short identifier) recurs by chance and locates nothing.
+const CITATION_QUOTE_MIN_CHARS: usize = 12;
+
+/// How the condition checklist marks a condition void against the request — a
+/// condition with nothing to demonstrate, so it needs no citation.
+const VOID_CONDITION: &str = "void:";
+
+/// What a matched condition may cite, gathered from the runtime's own records:
+/// a verifier's matched status counts only as far as these confirm it.
+struct CitationEvidence {
+	/// `#N` of recorded actions that succeeded, and of retained outputs.
+	succeeded: HashSet<u64>,
+	/// Runtime-recorded text a verbatim quote may come from, whitespace-collapsed,
+	/// one source per line so a quote cannot straddle two of them.
+	corpus: String,
+}
+
+impl CitationEvidence {
+	fn from_input(input: &GateInput<'_>) -> Self {
+		let historical = input
+			.ledger
+			.history
+			.iter()
+			.filter(|_| input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp)
+			.flat_map(|turn| &turn.entries);
+		let mut succeeded = HashSet::new();
+		let mut failed = HashSet::new();
+		for entry in input.ledger.entries.iter().chain(historical) {
+			if entry.error {
+				failed.insert(entry.last_sequence);
+			} else {
+				succeeded.insert(entry.last_sequence);
+			}
+		}
+		// Retained outputs outlive the ledger lines that named them (the ledger
+		// drops its oldest first). An ERROR outcome demonstrates nothing either way.
+		succeeded.extend(
+			input
+				.grounds
+				.iter()
+				.map(|(sequence, _)| *sequence)
+				.filter(|sequence| !failed.contains(sequence)),
+		);
+		let mut sources = vec![input.ground_truth.text.as_str()];
+		sources.extend(input.grounds.iter().map(|(_, output)| output.as_str()));
+		// A turn that changed no state delivered its answer: quoting the answer is
+		// then quoting the artifact. After a change, the answer is narrative.
+		if input.ledger.mutated_paths().is_empty() {
+			sources.push(input.result);
+		}
+		let corpus = sources
+			.iter()
+			.map(|text| collapse_whitespace(text))
+			.collect::<Vec<_>>()
+			.join("\n");
+		Self { succeeded, corpus }
+	}
+
+	/// True when the condition names a successful recorded action (`output:N` in
+	/// its sources or `#N` in its text) or quotes an excerpt found verbatim in the
+	/// runtime evidence — the citation the condition checklist demands.
+	fn cites(&self, condition: &ReportedCondition) -> bool {
+		if condition
+			.observation
+			.trim_start()
+			.to_lowercase()
+			.starts_with(VOID_CONDITION)
+		{
+			return true;
+		}
+		action_references(&condition.sources)
+			.chain(action_references(&condition.observation))
+			.any(|sequence| self.succeeded.contains(&sequence))
+			|| quoted_spans(&condition.observation).iter().any(|quote| {
+				let quote = collapse_whitespace(&unescape_xml(quote));
+				quote.chars().count() >= CITATION_QUOTE_MIN_CHARS && self.corpus.contains(&quote)
+			})
+	}
+}
+
+/// `output:N` and `#N` references in free text. `omitted:N` is not among them:
+/// output the verifier never saw demonstrates nothing.
+fn action_references(text: &str) -> impl Iterator<Item = u64> + '_ {
+	text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#' || c == ':'))
+		.filter_map(|token| token.strip_prefix("output:").or_else(|| token.strip_prefix('#')))
+		.filter_map(|number| number.trim_start_matches('#').parse().ok())
+}
+
+/// Spans the verifier quoted: between backticks, straight or curly double
+/// quotes, curly single quotes, or straight single quotes that open after a
+/// non-word character and close before one — so an apostrophe ("agent's")
+/// neither opens nor closes a quote.
+fn quoted_spans(text: &str) -> Vec<String> {
+	const PAIRS: [(char, char); 5] = [('`', '`'), ('"', '"'), ('“', '”'), ('‘', '’'), ('\'', '\'')];
+	let chars: Vec<char> = text.chars().collect();
+	let mut spans = Vec::new();
+	for (open, close) in PAIRS {
+		let mut start = None;
+		for (i, &c) in chars.iter().enumerate() {
+			match start {
+				None if c == open && (open != '\'' || i == 0 || !chars[i - 1].is_alphanumeric()) => start = Some(i + 1),
+				Some(from)
+					if c == close && (close != '\'' || chars.get(i + 1).is_none_or(|next| !next.is_alphanumeric())) =>
+				{
+					spans.push(chars[from..i].iter().collect());
+					start = None;
+				}
+				_ => {}
+			}
+		}
+	}
+	spans
+}
+
+fn collapse_whitespace(text: &str) -> String {
+	text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The verifier reads every evidence block through [`xml_text`], so a quote it
+/// copies carries that escaping while the runtime evidence holds the raw text.
+fn unescape_xml(text: &str) -> String {
+	text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+}
+
 impl VerifierReport {
 	/// The gate's decision over one answer, whatever encoding carried it.
 	///
@@ -2169,6 +2301,21 @@ impl VerifierReport {
 		}
 	}
 
+	/// Checklist entries the verifier could not settle with a citation the
+	/// runtime confirms: every unknown, and every matched one citing nothing
+	/// [`CitationEvidence::cites`] can trace. A bare restatement of a condition
+	/// ("the implementation ensures X") reads as matched yet demonstrates nothing.
+	fn unsettled_conditions(&self, evidence: &CitationEvidence) -> Vec<&ReportedCondition> {
+		self.conditions
+			.iter()
+			.filter(|condition| match condition.status.as_str() {
+				"unknown" => true,
+				"matched" => !evidence.cites(condition),
+				_ => false,
+			})
+			.collect()
+	}
+
 	/// Findings the verifier could not make actionable: an unknown condition, an
 	/// unmatched one it could only infer, an unknown shape, or a finding that
 	/// names no observation to close it. Surfaced to the user, never charged to
@@ -2227,6 +2374,71 @@ impl VerifierReport {
 			}
 		}
 		wanted
+	}
+}
+
+/// Charge the conditions the verifier could not settle (see
+/// [`VerifierReport::unsettled_conditions`]) as evidence requests — once per
+/// turn, on its first pass, so the agent demonstrates each one or reports it
+/// unsatisfied. Never on a hand-back: a condition waiting on the user's answer
+/// is not the agent's to demonstrate. After that first request they stay what an
+/// unknown always was, a limit reported to the user, so a condition no available
+/// check can demonstrate costs one round, never a loop. Joined after
+/// refutation: the second verifier tests accusations of a violation, and a
+/// missing citation accuses nothing.
+fn with_evidence_requests(
+	verdict: GateVerdict,
+	report: &VerifierReport,
+	input: &GateInput<'_>,
+	reported: &mut Vec<String>,
+) -> GateVerdict {
+	if matches!(verdict, GateVerdict::Indeterminate(_)) {
+		return verdict;
+	}
+	let unsettled = report.unsettled_conditions(&CitationEvidence::from_input(input));
+	if unsettled.is_empty() {
+		return verdict;
+	}
+	// A ruled report passed `verdict()`, which rejects any checklist that is not
+	// exactly conditions 1 through N, each with a numeric index.
+	let number = |condition: &ReportedCondition| condition.index.expect("verdict() checked every condition index");
+	let hand_back = matches!(
+		input.stop,
+		Some(crate::supervisor::detect::SelfReport::Blocked | crate::supervisor::detect::SelfReport::NeedInput)
+	);
+	if hand_back || !input.prior_gaps.is_empty() {
+		reported.extend(
+			unsettled
+				.iter()
+				.filter(|condition| condition.status == "matched")
+				.map(|condition| {
+					format!(
+						"condition {} matched without a citable observation: {}",
+						number(condition),
+						condition.observation
+					)
+				}),
+		);
+		return verdict;
+	}
+	let mut requests = Vec::new();
+	for condition in unsettled {
+		let n = number(condition);
+		// Charged now, so no longer a finding the runtime could not act on.
+		if condition.status == "unknown" {
+			let finding = format!("condition {n} unsettled: {}", condition.observation);
+			reported.retain(|reported| reported != &finding);
+		}
+		requests.push(format!(
+			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: a recorded check whose output exercises this exact condition, cited by what it showed, or report the condition as unsatisfied",
+			input.evidence_conditions[n - 1]
+		));
+	}
+	if let GateVerdict::Gaps(mut gaps) = verdict {
+		gaps.extend(requests);
+		GateVerdict::Gaps(gaps)
+	} else {
+		GateVerdict::Gaps(requests)
 	}
 }
 

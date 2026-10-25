@@ -46,7 +46,7 @@ fn caching_invalid_model_strings_do_not_panic() {
 #[test]
 fn caching_resolves_through_provider_when_model_is_known() {
 	// Resolves to the Anthropic provider, which supports caching on every model.
-	assert!(model_supports_caching("anthropic:claude-sonnet-4-5"));
+	assert!(model_supports_caching("anthropic:claude-sonnet-4-6"));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn vision_invalid_model_returns_err_gracefully() {
 
 #[test]
 fn vision_known_model_returns_ok_without_panicking() {
-	assert!(model_supports_vision("anthropic:claude-sonnet-4-5").is_ok());
+	assert!(model_supports_vision("anthropic:claude-sonnet-4-6").is_ok());
 }
 
 #[test]
@@ -84,5 +84,5 @@ fn max_input_tokens_unresolvable_model_is_none() {
 
 #[test]
 fn max_input_tokens_known_model_is_some() {
-	assert!(model_max_input_tokens("anthropic:claude-sonnet-4-5").is_some());
+	assert!(model_max_input_tokens("anthropic:claude-sonnet-4-6").is_some());
 }

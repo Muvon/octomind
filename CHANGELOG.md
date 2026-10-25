@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.63.0] - 2026-10-25
+
+### 📋 Release Summary
+
+Interactive MCP elicitation now works across client protocols. Supervisor and gate handling recognize self-reports, panic and Go test markers, validate evidence citations, and preserve failure diagnostics; file ranges exceed line 10,000, disappearing elicitation owners cancel questions, missing environment keys skip capabilities, startup failures and missing inputs are reported, and capability catalogs are cached with MCP prewarming deferred.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: support MCP elicitation across client protocols `618cfd86`
+- **mcp**: support interactive MCP elicitation `67b9d4e9`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: update model utility test model `7504cd17`
+- **dependencies**: update octolib to 0.45.5 `43fa6aa4`
+- **dependencies**: update octolib to 0.45.4 `a1bd094a`
+- **supervisor**: clarify condition finding retention `247719be`
+- **capabilities**: cache capability catalogs and defer MCP prewarming `1a78df1a`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: recognize untagged self-reports `ffd75b13`
+- **file-context**: allow file ranges beyond line 10000 `1e03d0e1`
+- **gate**: tighten gate evidence verification `af0ebab1`
+- **supervisor**: validate gate evidence citations `0ab057ca`
+- **supervisor**: recognize panic and Go test markers `ebeabe42`
+- **supervisor**: preserve failure diagnostics during condensation `0db36b56`
+- **supervisor**: preserve test-runner failure diagnostics `e2596e2c`
+- **elicitation**: cancel elicitation questions when owners disappear `6f5ea054`
+- **agent**: skip capabilities with missing environment keys `97bd7df5`
+- report startup failures and missing inputs `839abdb9`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.62.0] - 2026-10-24
 
 ### 📋 Release Summary

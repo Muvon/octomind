@@ -106,6 +106,44 @@ fn done_report_with_null_next_parses_and_is_hidden() {
 }
 
 #[test]
+fn report_written_without_its_tag_parses_and_is_hidden() {
+	// Prod 2026-10-25: the model ended its reply with the bare object.
+	let bare = "On it.\n\n{\"state\":\"progressing\",\"focus\":\"retrying carousel 9\",\"next\":\"read the gate result\",\"carry\":[\"lock FREE\"],\"plan\":null,\"memories\":[\"M1\"]}";
+	let parsed = parse_self_report_handoff(bare).expect("bare report");
+	assert_eq!(parsed.state, SelfReport::Progressing);
+	assert_eq!(parsed.handoff.focus, "retrying carousel 9");
+	assert_eq!(parsed.used_memories, vec!["M1"]);
+	assert_eq!(strip_self_report(bare), "On it.");
+
+	// An opening tag the model never closed.
+	let unclosed = "Done.\n<sup>{\"state\":\"done\",\"focus\":\"shipped\",\"next\":null,\"carry\":[]}";
+	assert_eq!(
+		parse_self_report_handoff(unclosed).map(|p| p.state),
+		Some(SelfReport::Done)
+	);
+	assert_eq!(strip_self_report(unclosed), "Done.");
+
+	// A reply that is nothing but the report shows nothing.
+	assert_eq!(
+		strip_self_report(r#"{"state":"exploring","focus":"reading","next":"x","carry":[]}"#),
+		""
+	);
+}
+
+#[test]
+fn json_the_user_asked_for_is_never_taken_for_a_report() {
+	for kept in [
+		"Here it is:\n{\"state\":\"CA\",\"city\":\"Los Angeles\"}",
+		"Status payload:\n{\"state\":\"done\"}",
+		"{\"state\":\"done\",\"focus\":\"x\"}\nand prose after it",
+		"x<sup>2",
+	] {
+		assert_eq!(strip_self_report(kept), kept, "stripped: {kept}");
+		assert!(parse_self_report_handoff(kept).is_none(), "parsed: {kept}");
+	}
+}
+
+#[test]
 fn need_input_variants() {
 	assert_eq!(
 		parse_self_report("<sup>need_input</sup>").map(|(s, _)| s),

@@ -111,10 +111,41 @@ struct WireSelfReport {
 	_behaviors: Vec<String>,
 }
 
-pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
+/// Field names a structured self-report may carry ([`WireSelfReport`]).
+const SELF_REPORT_FIELDS: &[&str] = &["state", "focus", "next", "carry", "plan", "memories", "behaviors"];
+
+/// A report the model wrote without its closed tag — bare JSON, or an opening
+/// `<sup>` never closed — as the response's last line: its byte offset and its
+/// JSON body. Models drop the tag (prod 2026-10-22..25, the bare object reached
+/// users), so the report is recognised by its own fields instead: an object
+/// with a `state` and a `focus` and nothing but report fields. JSON the user
+/// asked for lacks one of them or carries other keys, and is never taken for one.
+fn untagged_trailing_report(text: &str) -> Option<(usize, &str)> {
+	let trimmed = text.trim_end();
+	let start = trimmed.rfind('\n').map_or(0, |newline| newline + 1);
+	let line = trimmed[start..].trim();
+	let body = line.strip_prefix("<sup>").unwrap_or(line).trim();
+	let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_str(body).ok()?;
+	let is_report = fields.contains_key("state")
+		&& fields.contains_key("focus")
+		&& fields.keys().all(|key| SELF_REPORT_FIELDS.contains(&key.as_str()));
+	is_report.then_some((start, body))
+}
+
+/// The body of the last `<sup>…</sup>` pair.
+fn last_tagged_report(text: &str) -> Option<&str> {
 	let end = text.rfind("</sup>")?;
 	let start = text[..end].rfind("<sup>")? + "<sup>".len();
-	let inner = text[start..end].trim();
+	Some(text[start..end].trim())
+}
+
+pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
+	// The untagged form only matches on the last line, so it wins over an
+	// earlier tagged pair, which may be superscript the user wrote.
+	let inner = match untagged_trailing_report(text) {
+		Some((_, body)) => body,
+		None => last_tagged_report(text)?,
+	};
 	if inner.starts_with('{') {
 		let wire: WireSelfReport = serde_json::from_str(inner).ok()?;
 		return Some(ParsedSelfReport {
@@ -221,7 +252,9 @@ fn is_self_report_body(inner: &str) -> bool {
 /// Remove `<sup>…</sup>` tokens that look like a self-report (see
 /// [`is_self_report_body`]), leaving legitimate superscript markup untouched.
 /// Only clean pairs — inner text free of another `<sup>` — are candidates,
-/// so a prose mention of the tag never swallows a later real report.
+/// so a prose mention of the tag never swallows a later real report. A last
+/// line that is a report written without its closed tag goes too (see
+/// [`untagged_trailing_report`]).
 pub fn strip_self_report(text: &str) -> String {
 	let mut out = String::with_capacity(text.len());
 	let mut rest = text;
@@ -250,7 +283,11 @@ pub fn strip_self_report(text: &str) -> String {
 		}
 	}
 	out.push_str(rest);
-	out.trim_end().to_string()
+	let out = out.trim_end();
+	match untagged_trailing_report(out) {
+		Some((start, _)) => out[..start].trim_end().to_string(),
+		None => out.to_string(),
+	}
 }
 
 /// Shape-based: is this call a candidate VERIFIER — something that executes a

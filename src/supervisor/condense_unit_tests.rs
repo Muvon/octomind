@@ -356,6 +356,10 @@ fn test_runner_failure_markers_are_diagnostics() {
 		" FAIL  |unit-jsdom| packages/runtime-vapor/__tests__/vdomInterop.spec.ts > vdomInterop > VDOM Transition",
 		"FAIL src/select.test.ts",
 		"  3 failing",
+		"thread 'parser::tests::rejects_empty' panicked at src/parser.rs:42:9:",
+		"--- FAIL: TestRejectsEmpty (0.00s)",
+		"FAIL\tgithub.com/acme/parser\t0.012s",
+		"FAIL",
 	] {
 		assert!(is_diagnostic_line(failing), "{failing:?} must be protected");
 	}

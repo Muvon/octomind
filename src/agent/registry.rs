@@ -431,9 +431,8 @@ pub struct ResolvedCapability {
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
 	pub mcp_servers: Vec<crate::config::McpServerConfig>,
-	/// Env keys required by this capability's MCP server `env` blocks.
-	/// Extracted from `{{ENV:KEY}}` placeholders at parse time. Activation
-	/// gates on all keys being set and non-empty in the environment.
+	/// Env keys this capability's wiring references (`capability_env_keys`).
+	/// Every load path gates on all of them being set and non-empty.
 	pub required_env_keys: Vec<String>,
 	/// Root of the tap that provided this capability (first-wins across
 	/// `get_taps()`). Used to resolve `<tap_root>/deps/<org>/<tool>.sh`
@@ -449,6 +448,17 @@ pub struct ResolvedCapability {
 /// consistent (auto-activation, list, discover, enable, env-load).
 pub fn cap_available_in_domain(cap_domains: &[String], current: &str) -> bool {
 	cap_domains.is_empty() || cap_domains.iter().any(|d| d == current)
+}
+
+/// Every `{{ENV:KEY}}` in a capability's provider wiring — server env,
+/// headers, command, args, and URL — since a server can't start with any of
+/// them unset. Read from the parsed TOML so commented-out examples don't
+/// count; escaped `{{{{ENV:…}}}}` literals are not keys.
+fn capability_env_keys(cap: &toml::Value) -> Result<Vec<String>> {
+	let wiring = toml::to_string(cap).context("Failed to re-serialize capability wiring")?;
+	Ok(crate::agent::inputs::extract_env_keys(
+		&crate::agent::inputs::protect_escaped_braces(&wiring),
+	))
 }
 
 /// Read `triggers` (required) and `domains` (optional) arrays from
@@ -539,7 +549,7 @@ pub fn parse_capability_toml(cap_ref: &str, overrides: &HashMap<String, String>)
 		server_refs: Vec::new(),
 		allowed_tools: Vec::new(),
 		mcp_servers: Vec::new(),
-		required_env_keys: Vec::new(),
+		required_env_keys: capability_env_keys(&cap)?,
 		tap_root,
 	};
 
@@ -578,26 +588,6 @@ pub fn parse_capability_toml(cap_ref: &str, overrides: &HashMap<String, String>)
 			let server_str = toml::to_string(server_val).unwrap_or_default();
 			match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
 				Ok(server_config) => {
-					// Collect {{ENV:KEY}} placeholders from the server's env
-					// and HTTP headers — these gate activation when unset.
-					if let Some(env) = server_config.env() {
-						for value in env.values() {
-							for key in crate::agent::inputs::extract_env_keys(value) {
-								if !resolved.required_env_keys.contains(&key) {
-									resolved.required_env_keys.push(key);
-								}
-							}
-						}
-					}
-					if let Some(headers) = server_config.headers() {
-						for value in headers.values() {
-							for key in crate::agent::inputs::extract_env_keys(value) {
-								if !resolved.required_env_keys.contains(&key) {
-									resolved.required_env_keys.push(key);
-								}
-							}
-						}
-					}
 					resolved.mcp_servers.push(server_config);
 				}
 				// Don't silently drop — a malformed block means the capability
@@ -843,6 +833,18 @@ pub fn resolve_capabilities(
 			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;
 		let cap: toml::Value = toml::from_str(&cap_str)
 			.with_context(|| format!("Failed to parse capability file: {}", cap_path.display()))?;
+
+		// Same gate as the runtime load paths: a listed capability whose keys
+		// are unset is skipped, so the agent starts without that tool instead
+		// of stopping to ask for a key it may never need.
+		if let Err(missing) = crate::mcp::runtime::capability::check_env_readiness(&capability_env_keys(&cap)?) {
+			crate::log_info!(
+				"Capability '{}' skipped — set {} to enable it",
+				cap_ref,
+				missing.join(", ")
+			);
+			continue;
+		}
 
 		// [deps] require
 		if let Some(deps) = cap

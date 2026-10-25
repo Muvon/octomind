@@ -471,6 +471,108 @@ fn resolve_capabilities_merges_and_strips_capabilities() {
 	assert_eq!(servers, vec!["agent-srv", "cap-srv"]);
 }
 
+const SKIP_TEST_KEY: &str = "OCTOMIND_TEST_RESOLVE_SKIP_KEY";
+
+/// Tap with a keyless capability and one gated on `SKIP_TEST_KEY`.
+fn write_keyed_and_plain_caps(tap: &Path) {
+	write_file(
+		&tap.join("capabilities/keyed-cap/default.toml"),
+		&format!(
+			"[deps]\nrequire = [\"keyed/tool\"]\n\n[roles.mcp]\nserver_refs = [\"keyed-srv\"]\nallowed_tools = [\"keyed-srv:*\"]\n\n[[mcp.servers]]\nname = \"keyed-srv\"\ntype = \"stdio\"\ncommand = \"keyed\"\nargs = []\ntimeout_seconds = 5\ntools = []\nenv = {{ KEY = \"{{{{ENV:{SKIP_TEST_KEY}}}}}\" }}\n"
+		),
+	);
+	write_file(
+		&tap.join("capabilities/plain-cap/default.toml"),
+		"[roles.mcp]\nserver_refs = [\"plain-srv\"]\nallowed_tools = [\"plain-srv:*\"]\n\n[[mcp.servers]]\nname = \"plain-srv\"\ntype = \"stdio\"\ncommand = \"plain\"\nargs = []\ntimeout_seconds = 5\ntools = []\n",
+	);
+}
+
+const KEYED_AND_PLAIN_AGENT: &str =
+	"capabilities = [\"keyed-cap\", \"plain-cap\"]\n\n[[roles]]\nname = \"media:publisher\"\n";
+
+#[test]
+#[serial]
+fn resolve_capabilities_skips_capability_with_unset_env_key() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_keyed_and_plain_caps(tmp.path());
+	std::env::remove_var(SKIP_TEST_KEY);
+
+	let (out, deps) = resolve_capabilities(KEYED_AND_PLAIN_AGENT, tmp.path(), &HashMap::new()).expect("resolve");
+	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
+
+	assert!(deps.is_empty(), "a skipped capability's deps are not installed");
+	let servers: Vec<&str> = value["mcp"]["servers"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.filter_map(|s| s.get("name").and_then(|n| n.as_str()))
+		.collect();
+	assert_eq!(servers, vec!["plain-srv"]);
+	let refs: Vec<&str> = value["roles"][0]["mcp"]["server_refs"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.filter_map(|v| v.as_str())
+		.collect();
+	assert_eq!(refs, vec!["plain-srv"]);
+	assert!(!out.contains(SKIP_TEST_KEY), "no placeholder left to prompt for");
+}
+
+#[test]
+#[serial]
+fn resolve_capabilities_keeps_capability_when_env_key_set() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_keyed_and_plain_caps(tmp.path());
+	std::env::set_var(SKIP_TEST_KEY, "set");
+
+	let resolved = resolve_capabilities(KEYED_AND_PLAIN_AGENT, tmp.path(), &HashMap::new());
+	std::env::remove_var(SKIP_TEST_KEY);
+	let (out, deps) = resolved.expect("resolve");
+
+	let dep_names: Vec<&str> = deps.iter().map(|(name, _)| name.as_str()).collect();
+	assert_eq!(dep_names, vec!["keyed/tool"]);
+	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
+	let servers: Vec<&str> = value["mcp"]["servers"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.filter_map(|s| s.get("name").and_then(|n| n.as_str()))
+		.collect();
+	assert_eq!(servers, vec!["keyed-srv", "plain-srv"]);
+}
+
+#[test]
+#[serial]
+fn parse_capability_toml_gates_on_every_wiring_placeholder() {
+	let _guard = DataDirGuard::new();
+	let cap_dir = default_tap_dir().join("capabilities").join("wiring-keys");
+	write_file(&cap_dir.join("config.toml"), "triggers = [\"t\"]\n");
+	write_file(
+		&cap_dir.join("default.toml"),
+		r#"# env = { OLD = "{{ENV:COMMENTED_OUT}}" }
+[[mcp.servers]]
+name = "args-srv"
+type = "stdio"
+command = "sh"
+args = ["-c", "exec srv --token {{ENV:ARG_TOKEN}} --label {{{{ENV:LITERAL}}}}"]
+timeout_seconds = 5
+tools = []
+
+[[mcp.servers]]
+name = "url-srv"
+type = "http"
+url = "http://localhost:{{ENV:URL_PORT}}/mcp"
+timeout_seconds = 5
+tools = []
+"#,
+	);
+
+	let resolved = parse_capability_toml("wiring-keys", &HashMap::new()).expect("capability resolves");
+	let mut keys = resolved.required_env_keys;
+	keys.sort();
+	assert_eq!(keys, vec!["ARG_TOKEN".to_string(), "URL_PORT".to_string()]);
+}
+
 #[test]
 fn resolve_capabilities_dedupes_servers_by_name() {
 	let tmp = tempfile::tempdir().expect("tempdir");

@@ -276,8 +276,10 @@ octomind untap myorg/my-agents   # remove a tap
 
 The first time you run a tap agent, its manifest may prompt for `{{INPUT:KEY}}`
 values. Answers are persisted to `<data-root>/inputs.toml` and reused.
-`{{ENV:KEY}}` reads the environment; if unset, it prompts and saves the answer to the launch-directory `.env`.
-An explicitly empty environment value is accepted. `{{CWD}}` is the runtime working directory.
+`{{ENV:KEY}}` in the manifest itself reads the environment; if unset, it prompts and saves the answer to the
+launch-directory `.env`. An explicitly empty environment value is accepted. A listed capability never prompts: while
+any key its wiring references is unset or empty, octomind skips it and the agent runs without its tools; set the key
+and start a new session to load it. `{{CWD}}` is the runtime working directory.
 
 If a delegated run reports missing input, run that role interactively once to supply its manifest values:
 

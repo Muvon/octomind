@@ -421,7 +421,9 @@ When you specify a tag containing `:`, Octomind runs the full resolution pipelin
   Caching](#manifest-caching))
 
 2. **Expand capabilities** — any `capabilities = [...]` declared in the manifest are resolved and merged in (see
-  [Referencing Capabilities](#referencing-capabilities))
+  [Referencing Capabilities](#referencing-capabilities)). A capability whose wiring references an unset or empty
+  `{{ENV:KEY}}` is skipped with its deps and servers, the same gate auto-activation applies, so the agent starts
+  without that tool instead of prompting for its key.
 
 3. **Resolve placeholders** — `{{INPUT:KEY}}` (prompt once, cached) and `{{ENV:KEY}}` (environment value, including an
   explicitly empty string, or prompted `.env` fallback) are substituted (see [Manifest

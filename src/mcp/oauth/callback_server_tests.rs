@@ -108,9 +108,15 @@ async fn send_and_read(client: &mut tokio::net::TcpStream, request: &str) -> Str
 #[tokio::test]
 async fn start_callback_server_rejects_unparseable_url() {
 	let config = config_with_callback("not a url");
-	let err = start_callback_server(&config, "srv", "state".to_string(), "verifier".to_string())
-		.await
-		.unwrap_err();
+	let err = start_callback_server(
+		&config,
+		"srv",
+		"state".to_string(),
+		"verifier".to_string(),
+		SignInChannel::Terminal,
+	)
+	.await
+	.unwrap_err();
 	assert!(err.to_string().contains("Invalid callback_url"), "{err}");
 }
 
@@ -118,9 +124,15 @@ async fn start_callback_server_rejects_unparseable_url() {
 async fn start_callback_server_rejects_url_without_host() {
 	// Scheme-only URL: parses, but has no host component.
 	let config = config_with_callback("unix:/run/missing-host");
-	let err = start_callback_server(&config, "srv", "state".to_string(), "verifier".to_string())
-		.await
-		.unwrap_err();
+	let err = start_callback_server(
+		&config,
+		"srv",
+		"state".to_string(),
+		"verifier".to_string(),
+		SignInChannel::Terminal,
+	)
+	.await
+	.unwrap_err();
 	assert!(err.to_string().contains("must have a host"), "{err}");
 }
 
@@ -128,9 +140,15 @@ async fn start_callback_server_rejects_url_without_host() {
 async fn start_callback_server_rejects_url_without_port() {
 	// Non-HTTP scheme has no default port mapping.
 	let config = config_with_callback("ftp://localhost/oauth/callback");
-	let err = start_callback_server(&config, "srv", "state".to_string(), "verifier".to_string())
-		.await
-		.unwrap_err();
+	let err = start_callback_server(
+		&config,
+		"srv",
+		"state".to_string(),
+		"verifier".to_string(),
+		SignInChannel::Terminal,
+	)
+	.await
+	.unwrap_err();
 	assert!(err.to_string().contains("must have a valid port"), "{err}");
 }
 
@@ -139,9 +157,15 @@ async fn start_callback_server_fails_when_port_is_already_bound() {
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
 	let port = listener.local_addr().unwrap().port();
 	let config = config_with_callback(&format!("http://127.0.0.1:{port}/oauth/callback"));
-	let err = start_callback_server(&config, "srv", "state".to_string(), "verifier".to_string())
-		.await
-		.unwrap_err();
+	let err = start_callback_server(
+		&config,
+		"srv",
+		"state".to_string(),
+		"verifier".to_string(),
+		SignInChannel::Terminal,
+	)
+	.await
+	.unwrap_err();
 	// URL parsing succeeded — the failure comes from the bind itself.
 	assert!(!err.to_string().contains("callback_url"), "{err}");
 }

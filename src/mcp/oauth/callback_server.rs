@@ -18,6 +18,7 @@ use super::OAuthConfig;
 use crate::mcp::oauth::flow::{exchange_code_for_token, token_expires_at, NON_EXPIRING_TOKEN_SECS};
 use crate::mcp::oauth::token_store::{save_token, TokenMetadata};
 use anyhow::{anyhow, Result};
+use rmcp::model::{ElicitRequestParams, ElicitationAction};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -37,6 +38,15 @@ struct CallbackServerState {
 	server_name: String,
 	code_verifier: String,
 	redirect_uri: String,
+}
+
+/// Who is shown the authorization URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignInChannel {
+	/// The person at the interactive CLI: the browser opens on this machine.
+	Terminal,
+	/// A WebSocket or ACP client, sent the URL as a URL-mode elicitation.
+	Client { session_id: String },
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +70,7 @@ pub async fn start_callback_server(
 	server_name: &str,
 	auth_state: String,
 	code_verifier: String,
+	channel: SignInChannel,
 ) -> Result<OAuthCallbackResult> {
 	// Parse the configured callback_url to extract host and port
 	let callback_url = &config.callback_url;
@@ -119,9 +130,11 @@ pub async fn start_callback_server(
 		run_http_server(&listener, server_state).await;
 	});
 
-	let auth_url_str = authorization_url.clone();
-	open_browser(&authorization_url)
-		.map_err(|e| anyhow!("Failed to open browser: {}. Please manually visit: {}", e, auth_url_str))?;
+	if !present_sign_in(&channel, server_name, &authorization_url).await {
+		callback_state.shutdown.store(true, Ordering::Relaxed);
+		let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_handle).await;
+		return Ok(OAuthCallbackResult::Cancelled);
+	}
 
 	let timeout_seconds = 300;
 	let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_seconds), async {
@@ -360,20 +373,34 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 	}
 }
 
-fn open_browser(url: &str) -> Result<()> {
-	#[cfg(target_os = "macos")]
-	{
-		std::process::Command::new("open").arg(url).spawn()?;
+/// Show the authorization URL to whoever answers the session; `false` = they declined.
+async fn present_sign_in(channel: &SignInChannel, server_name: &str, url: &str) -> bool {
+	match channel {
+		SignInChannel::Terminal => {
+			// Starting the interactive CLI is the consent. The URL is printed too, for
+			// terminals where no browser can open (SSH, containers).
+			eprintln!("Sign in to MCP server '{}' in your browser:\n{}", server_name, url);
+			if let Err(e) = open::that(url) {
+				eprintln!("Could not open the browser ({}). Open the URL manually.", e);
+			}
+			true
+		}
+		SignInChannel::Client { session_id } => {
+			let params = ElicitRequestParams::UrlElicitationParams {
+				meta: None,
+				message: format!("Sign in to MCP server '{}' to let Octomind use it.", server_name),
+				url: url.to_string(),
+				elicitation_id: uuid::Uuid::new_v4().to_string(),
+			};
+			match crate::mcp::elicitation::ask(server_name, Some(session_id.as_str()), None, params).await {
+				Ok(answer) => answer.action == ElicitationAction::Accept,
+				Err(e) => {
+					crate::log_error!("OAuth sign-in request for '{}' failed: {}", server_name, e.message);
+					false
+				}
+			}
+		}
 	}
-	#[cfg(target_os = "linux")]
-	{
-		std::process::Command::new("xdg-open").arg(url).spawn()?;
-	}
-	#[cfg(target_os = "windows")]
-	{
-		std::process::Command::new("cmd").args(&["/c", "start", url]).spawn()?;
-	}
-	Ok(())
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ pub mod flow;
 pub mod token_store;
 
 // Re-export commonly used types
-pub use callback_server::{start_callback_server, OAuthCallbackResult};
+pub use callback_server::{start_callback_server, OAuthCallbackResult, SignInChannel};
 pub use cimd::resolve_client_id;
 pub use discovery::{clear_all_discovered_oauth_cache, clear_discovered_oauth_cache, discover_oauth_from_mcp_server};
 pub use flow::{
@@ -166,14 +166,37 @@ pub async fn start_oauth_flow(config: &OAuthConfig, server_name: &str) -> Result
 	config
 		.validate()
 		.map_err(|e| anyhow::anyhow!("OAuth config validation failed: {}", e))?;
+	let channel = sign_in_channel(server_name)?;
 
 	let pkce = generate_pkce_pair();
 	let state = generate_state();
 
 	// Start callback server using the configured callback_url
-	let result = start_callback_server(config, server_name, state, pkce.code_verifier).await?;
+	let result = start_callback_server(config, server_name, state, pkce.code_verifier, channel).await?;
 
 	Ok(result)
+}
+
+/// A browser sign-in needs a person, so it goes to whoever answers the calling
+/// session's elicitations. With nobody there (piped runs, sessionless startup or
+/// health checks, clients without elicitation) it fails fast instead of opening
+/// a browser no one watches and blocking on the callback.
+fn sign_in_channel(server_name: &str) -> Result<SignInChannel, anyhow::Error> {
+	let nobody = || {
+		anyhow::anyhow!(
+			"MCP server '{}' needs an OAuth sign-in, but nobody in this session can complete it — sign in once from an interactive octomind session",
+			server_name
+		)
+	};
+	let session_id = match crate::session::context::current_session_id() {
+		Some(session_id) if !crate::agent::inputs::in_non_interactive_scope() => session_id,
+		_ => return Err(nobody()),
+	};
+	match crate::mcp::elicitation::answerer(&session_id) {
+		Some(crate::mcp::elicitation::Answerer::Terminal) => Ok(SignInChannel::Terminal),
+		Some(crate::mcp::elicitation::Answerer::Client) => Ok(SignInChannel::Client { session_id }),
+		None => Err(nobody()),
+	}
 }
 
 /// Gets an access token for the given OAuth configuration and server name.

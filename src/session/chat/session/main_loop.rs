@@ -231,6 +231,11 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 	crate::proctitle::set_terminal_title(&title);
 
 	crate::session::context::with_session_id(session_id, async move {
+		// Before MCP init: an OAuth sign-in during startup goes to this terminal.
+		crate::mcp::elicitation::set_answerer(
+			&chat_session.session.info.name,
+			Some(crate::mcp::elicitation::Answerer::Terminal),
+		);
 		// MCP init (spinner still running from setup)
 		// MCP init with progress on spinner
 		{
@@ -270,10 +275,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 		let mut chat_session = chat_session;
 		// A human types these turns, so they count toward `/report day`.
 		chat_session.session.info.interactive = true;
-		crate::mcp::elicitation::set_answerer(
-			&chat_session.session.info.name,
-			Some(crate::mcp::elicitation::Answerer::Terminal),
-		);
 		let mut first_message_processed = first_message_processed;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;

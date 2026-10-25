@@ -307,6 +307,39 @@ async fn start_oauth_flow_rejects_invalid_config_before_binding() {
 }
 
 // ------------------------------------------------------------------
+// start_oauth_flow — sign-in needs someone to answer the session
+// ------------------------------------------------------------------
+
+#[tokio::test]
+async fn start_oauth_flow_without_session_fails_fast() {
+	let err = start_oauth_flow(&valid_config(), "no-session").await.unwrap_err();
+	assert!(err.to_string().contains("needs an OAuth sign-in"), "{err}");
+}
+
+#[tokio::test]
+async fn start_oauth_flow_session_without_answerer_fails_fast() {
+	let session_id = unique_server("oauth-no-answerer");
+	let err = crate::session::context::with_session_id(session_id, start_oauth_flow(&valid_config(), "srv"))
+		.await
+		.unwrap_err();
+	assert!(err.to_string().contains("needs an OAuth sign-in"), "{err}");
+}
+
+#[tokio::test]
+async fn start_oauth_flow_non_interactive_scope_fails_fast_despite_answerer() {
+	let session_id = unique_server("oauth-non-interactive");
+	crate::mcp::elicitation::set_answerer(&session_id, Some(crate::mcp::elicitation::Answerer::Terminal));
+	let err = crate::session::context::with_session_id(
+		session_id.clone(),
+		crate::agent::inputs::with_non_interactive(start_oauth_flow(&valid_config(), "srv")),
+	)
+	.await
+	.unwrap_err();
+	crate::mcp::elicitation::set_answerer(&session_id, None);
+	assert!(err.to_string().contains("needs an OAuth sign-in"), "{err}");
+}
+
+// ------------------------------------------------------------------
 // is_authenticated — stored token state
 // ------------------------------------------------------------------
 

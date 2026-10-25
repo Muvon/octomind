@@ -205,11 +205,12 @@ async fn get_access_token_renews_near_expiry_token_with_refresh_token() {
 		.expect("refresh must succeed without a browser flow");
 	assert_eq!(token.as_deref(), Some("refreshed-token"));
 
-	let request: serde_json::Value = serde_json::from_str(&endpoint.await.expect("endpoint")).expect("json body");
+	let request: std::collections::HashMap<String, String> =
+		serde_urlencoded::from_str(&endpoint.await.expect("endpoint")).expect("form body");
 	assert_eq!(request["grant_type"], "refresh_token");
 	assert_eq!(request["refresh_token"], "stored-refresh-token");
 	assert!(
-		request.get("client_secret").is_none(),
+		!request.contains_key("client_secret"),
 		"public client must not send a secret"
 	);
 

@@ -133,24 +133,24 @@ pub async fn exchange_code_for_token(
 ) -> Result<OAuthTokenResponse, String> {
 	let client = reqwest::Client::new();
 
-	// Build request body - GitHub requires specific format
+	// RFC 6749 §4.1.3: the token request body is form-encoded; strict servers reject JSON.
 	// For public clients (PKCE), do NOT include client_secret
-	let mut body = serde_json::json!({
-		"grant_type": "authorization_code",
-		"client_id": config.client_id,
-		"code": code,
-		"redirect_uri": redirect_uri,
-		"code_verifier": code_verifier,
-	});
+	let mut params = vec![
+		("grant_type", "authorization_code"),
+		("client_id", config.client_id.as_str()),
+		("code", code),
+		("redirect_uri", redirect_uri),
+		("code_verifier", code_verifier),
+	];
 
 	// RFC 9728 §2.1: include the resource parameter in the token exchange.
 	if let Some(resource) = &config.resource {
-		body["resource"] = serde_json::json!(resource);
+		params.push(("resource", resource));
 	}
 
 	// Only add client_secret if it's not empty (confidential clients)
 	if !config.client_secret.is_empty() {
-		body["client_secret"] = serde_json::json!(config.client_secret);
+		params.push(("client_secret", &config.client_secret));
 	}
 
 	crate::log_debug!(
@@ -163,7 +163,8 @@ pub async fn exchange_code_for_token(
 	let response = client
 		.post(&config.token_url)
 		.header(reqwest::header::ACCEPT, "application/json")
-		.json(&body)
+		.header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+		.body(serde_urlencoded::to_string(&params).map_err(|e| format!("Encode error: {}", e))?)
 		.send()
 		.await
 		.map_err(|e| format!("Network error: {}", e))?;
@@ -237,23 +238,24 @@ pub async fn exchange_code_for_token(
 pub async fn refresh_access_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthTokenResponse, String> {
 	let client = reqwest::Client::new();
 
-	// GitHub requires JSON body
-	let mut body = serde_json::json!({
-		"grant_type": "refresh_token",
-		"client_id": config.client_id,
-		"refresh_token": refresh_token,
-	});
+	// RFC 6749 §6: form-encoded body, same as the code exchange.
+	let mut params = vec![
+		("grant_type", "refresh_token"),
+		("client_id", config.client_id.as_str()),
+		("refresh_token", refresh_token),
+	];
 	if let Some(resource) = &config.resource {
-		body["resource"] = serde_json::json!(resource);
+		params.push(("resource", resource));
 	}
 	if !config.client_secret.is_empty() {
-		body["client_secret"] = serde_json::json!(config.client_secret);
+		params.push(("client_secret", &config.client_secret));
 	}
 
 	let response = client
 		.post(&config.token_url)
 		.header(reqwest::header::ACCEPT, "application/json")
-		.json(&body)
+		.header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+		.body(serde_urlencoded::to_string(&params).map_err(|e| format!("Encode error: {}", e))?)
 		.send()
 		.await
 		.map_err(|e| format!("Network error: {}", e))?;

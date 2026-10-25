@@ -1786,6 +1786,39 @@ async fn standing_session_rules_are_pinned_and_governed() {
 	assert!(pact.verify_governance(&session, fold_point).is_err());
 }
 
+/// A turn with a resolved checklist pins that checklist whole through the fold,
+/// not the keyword excerpts of its request: a subset pinned as the task's
+/// constraints steers the folded session toward the lines it kept.
+#[tokio::test]
+async fn a_resolved_checklist_is_pinned_in_place_of_request_excerpts() {
+	let request = "Match the reference ordering. Preserve the existing style.";
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "earlier turn"),
+		message("assistant", "done"),
+		message("user", request),
+		message("assistant", "drafted section one"),
+	]);
+	session.session.info.name = "gov-checklist-unit".to_string();
+	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(request);
+	resolved.evidence_conditions = vec![
+		"The ordering matches the reference.".to_string(),
+		"The existing style is unchanged.".to_string(),
+	];
+	session.gate_task = Some(resolved);
+	let pact = build(&session, 1, 4, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	let pinned: Vec<&str> = pact.pinned.constraints.iter().map(|item| item.text.as_str()).collect();
+	assert_eq!(
+		pinned,
+		vec![
+			"The ordering matches the reference.",
+			"The existing style is unchanged."
+		]
+	);
+}
+
 #[test]
 fn write_degraded_telemetry_records_fallback_without_archive() {
 	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));

@@ -76,8 +76,14 @@ pub fn set_process_non_interactive() {
 /// Returns `true` if prompts are refused here: the current async task is inside
 /// `with_non_interactive`, or the process was marked non-interactive.
 pub fn is_non_interactive() -> bool {
-	PROCESS_NON_INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed)
-		|| NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
+	PROCESS_NON_INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed) || in_non_interactive_scope()
+}
+
+/// Returns `true` inside `with_non_interactive` only. MCP elicitation uses this
+/// rather than [`is_non_interactive`]: a server or ACP process has no terminal,
+/// yet its sessions' clients can still answer.
+pub fn in_non_interactive_scope() -> bool {
+	NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
 }
 
 /// Extract all unique `{{INPUT:KEY}}` keys from a raw string.

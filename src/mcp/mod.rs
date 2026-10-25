@@ -56,6 +56,7 @@ pub mod oauth;
 pub mod agent;
 pub mod client;
 pub mod core;
+pub mod elicitation;
 pub mod health_monitor;
 pub mod orchestration;
 pub mod process;

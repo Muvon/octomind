@@ -322,6 +322,14 @@ The monitor is event-driven, not polling: each loop it flushes due/idle schedule
 `tokio::select!` over either the next schedule timer (`next_schedule_sleep`) or an inbox notification. It exits when the
 session is destroyed.
 
+## MCP Elicitation
+
+When an MCP server asks the user for input mid-tool-call, Octomind forwards it to the client as an ACP
+`elicitation/create` request, scoped to the session and the tool call that triggered it. This requires the client to
+advertise `clientCapabilities.elicitation` in `initialize`: with the `form` capability, form requests are forwarded;
+URL requests also need the `url` capability. Without the capability the elicitation is declined. The client's
+`accept` (with content), `decline` or `cancel` answer goes back to the MCP server unchanged.
+
 ## Extension Commands
 
 Beyond the slash commands sent as prompts, a host can invoke session commands programmatically through the

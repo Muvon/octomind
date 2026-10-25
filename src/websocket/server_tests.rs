@@ -4023,6 +4023,94 @@ async fn cancel_without_a_running_turn_is_only_acknowledged() {
 }
 
 #[tokio::test]
+async fn elicitation_response_for_an_unknown_id_is_an_error() {
+	let server = LoopbackServer::start(Arc::new(template_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "elicitation_response", "session_id": "idle-elicit", "id": "nope",
+			"request_id": "r1", "result": {"action": "decline"}
+		}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["type"], "ack", "got: {ack}");
+	assert_eq!(ack["message_type"], "elicitation_response");
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert_eq!(error["request_id"], "r1");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("no pending elicitation 'nope'"),
+		"got: {error}"
+	);
+}
+
+#[tokio::test]
+async fn elicitation_response_is_handled_while_the_session_lock_is_held() {
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	let state = ServerState::new(Arc::new(template_config()), "assistant".into(), Vec::new());
+	let session = "ws-elicit-held-turn";
+	let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+	let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+	let handler = tokio::spawn(async move {
+		let (stream, peer) = listener.accept().await.unwrap();
+		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sender, writer) = WsSender::spawn(sink);
+		let lock = get_or_create_session_lock(session, &state.session_locks).await;
+		let processing = async {
+			let _guard = lock.lock().await;
+			entered_tx.send(()).unwrap();
+			release_rx.await.unwrap();
+			Ok(())
+		};
+		let ctx = ConnCtx {
+			server: state,
+			closed: CancellationToken::new(),
+		};
+		read_while_processing(
+			processing,
+			&mut reader,
+			&sender,
+			&ctx,
+			&mut VecDeque::new(),
+			&mut false,
+			peer,
+		)
+		.await
+		.unwrap();
+		drop(sender);
+		writer.await.unwrap();
+	});
+	let mut client = connect_ws(addr).await;
+	entered_rx.await.unwrap();
+
+	send_json(
+		&mut client,
+		serde_json::json!({
+			"type": "elicitation_response", "session_id": session, "id": "nope",
+			"request_id": "r1", "result": {"action": "cancel"}
+		}),
+	)
+	.await;
+	// Both frames arrive while the turn still holds the lock.
+	assert_eq!(read_json(&mut client).await["type"], "ack");
+	let error = read_json(&mut client).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert_eq!(error["request_id"], "r1");
+
+	release_tx.send(()).unwrap();
+	drop(client);
+	handler.await.unwrap();
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn close_unloads_the_session_and_a_later_bind_resumes_it_from_disk() {
 	let _data = TestDataDirGuard::new();

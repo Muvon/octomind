@@ -201,8 +201,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 	// the echoed `^C` auto-wraps off the indicatif-padded line and our clear
 	// lands on the wrong row. See utils::term_echo for the full rationale.
 	let _echo_guard = crate::utils::term_echo::CtrlCEchoGuard::install();
-	// A person is at this terminal: MCP elicitations may prompt them.
-	crate::session::chat::elicitation::enable_terminal_prompts();
+	// Sessions here may answer MCP elicitations (each registers its terminal).
+	crate::mcp::elicitation::accept_elicitations();
 
 	// Setup and initialize session using helper function
 
@@ -270,6 +270,10 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 		let mut chat_session = chat_session;
 		// A human types these turns, so they count toward `/report day`.
 		chat_session.session.info.interactive = true;
+		crate::mcp::elicitation::set_answerer(
+			&chat_session.session.info.name,
+			Some(crate::mcp::elicitation::Answerer::Terminal),
+		);
 		let mut first_message_processed = first_message_processed;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
@@ -1023,6 +1027,10 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 											.with_max_retries(current_config.max_retries);
 										let mut new_session = ChatSession::initialize(session_params).await?;
 										new_session.session.info.interactive = true;
+										crate::mcp::elicitation::set_answerer(
+											&new_session.session.info.name,
+											Some(crate::mcp::elicitation::Answerer::Terminal),
+										);
 										crate::mcp::initialize_mcp_for_role(&role, &current_config).await?;
 										let guards =
 											init_session_runtime(args, &current_config, &new_session, &role).await?;

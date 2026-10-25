@@ -403,9 +403,9 @@ Stateless built-in function lists are memoized through `get_filtered_server_func
 
 `timeout_seconds` is a server field, not `config.timeout`. External MCP calls use an idle deadline refreshed by progress
 notifications in `src/mcp/client.rs`. Builtin routing supplies cancellation, but does not automatically wrap every
-handler in that server timeout. External calls also have an absolute cap of twenty times the idle timeout. A builtin
-that owns a long operation must implement its deadline and return a soft error on expiry; copy its duration from the
-resolved server configuration.
+handler in that server timeout. External calls also have an absolute cap of twenty times the idle timeout. Both hold
+while the user answers an elicitation for the call (see below). A builtin that owns a long operation must implement its
+deadline and return a soft error on expiry; copy its duration from the resolved server configuration.
 
 This wrapper is a complete example around the handler above; call it from the execution arm if you need that policy:
 
@@ -499,6 +499,33 @@ Rules for server authors:
 Octobrain (memory scope from `path_to_scope(workdir)`, private tool list naming the session's repos), octofs
 (per-session workdir and view cache) and octocode (each session's directory served like `mcp --auto`) follow these
 rules.
+
+### Elicitation
+
+An external server's `elicitation/create` is answered by whoever answers for the session that made the tool call
+(`src/mcp/elicitation.rs`). Each entry point registers that answerer with `set_answerer`, because it differs per
+entry point and per client: the interactive CLI registers `Answerer::Terminal` (the reedline prompt in
+`src/session/chat/elicitation.rs`); the WebSocket server registers `Answerer::Client` on a bind that lists
+`elicitation_v1`; the ACP agent registers it when the client's `initialize` advertised `clientCapabilities.elicitation`.
+A `Client` question goes out as `ServerMessage::Elicitation` on the session's notification channel (ACP translates it to
+its own `elicitation/create`), waits in a pending table, and is answered through `resolve`. `cleanup_session` resolves a
+session's open questions as `cancel`; sessions with no answerer decline.
+
+Routing a question to its session (`calls_awaiting_elicitation` in `src/mcp/client.rs`) uses `IN_FLIGHT_CALLS`, the
+registry of in-flight `tools/call` rounds keyed by server and request id:
+
+- **2026-07-28 servers** return the question as an `input_required` round of the call itself, so it is answered in the
+  call's own task and session (`fulfill_input_requests`), between rounds, with no round timer running.
+- **Older servers over Streamable HTTP** push it on the response stream of its call; rmcp tags it with that call's
+  request id (`InboundStreamOrigin::OutboundRequest`).
+- **Older servers over stdio** carry no association (SEP-2260 defines no wire field): the question is routed only when
+  every in-flight call on that server belongs to one session, otherwise declined.
+
+A call made inside `with_non_interactive` (subagents, detached MCP tasks) is never asked on. While a question is open,
+its call's `awaiting_user` counter holds both the idle deadline and the absolute cap. Capabilities follow the same rule:
+per-request capabilities offer `elicitation` only when the calling session has an answerer; a legacy handshake, which
+speaks for the whole shared connection, offers it when the process calls `accept_elicitations` (interactive CLI,
+`octomind server`, `octomind acp`). Legacy servers are offered protocol 2025-11-25.
 
 ## See also
 

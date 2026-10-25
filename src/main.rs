@@ -153,12 +153,16 @@ async fn main() -> Result<(), anyhow::Error> {
 			octomind::proctitle::set_process_title(&title);
 			// stdin is the protocol stream: never read a prompt answer from it.
 			octomind::agent::inputs::set_process_non_interactive();
+			// The ACP client may answer MCP elicitations for its sessions.
+			octomind::mcp::elicitation::accept_elicitations();
 		}
 		Commands::Server(_) => {
 			octomind::proctitle::set_process_title("octomind-server");
 			octomind::proctitle::set_terminal_title("octomind-server");
 			// A server has nobody at a terminal to answer a prompt.
 			octomind::agent::inputs::set_process_non_interactive();
+			// WebSocket clients may answer MCP elicitations for their sessions.
+			octomind::mcp::elicitation::accept_elicitations();
 		}
 		_ => {}
 	}

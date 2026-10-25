@@ -31,6 +31,7 @@ fn bind_ack() -> AckPayload {
 		cwd: None,
 		role: None,
 		resume: None,
+		capabilities: Vec::new(),
 	})
 }
 

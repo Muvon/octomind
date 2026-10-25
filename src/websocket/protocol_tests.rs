@@ -49,6 +49,7 @@ fn test_session_roundtrip() {
 		cwd: None,
 		role: None,
 		resume: None,
+		capabilities: Vec::new(),
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"session\""));
@@ -318,7 +319,8 @@ fn test_session_ack_advertises_message_attachments() {
 			"message_attachments_v1",
 			"session_control_v1",
 			"run_events_v1",
-			"stream_resume_v1"
+			"stream_resume_v1",
+			"elicitation_v1"
 		])
 	);
 	for field in ["stream", "stream_seq", "resumed"] {
@@ -327,6 +329,63 @@ fn test_session_ack_advertises_message_attachments() {
 			"{field} is filled in by the server once the session is bound: {json}"
 		);
 	}
+}
+
+#[test]
+fn session_bind_parses_elicitation_capability() {
+	let msg: ClientMessage =
+		serde_json::from_str(r#"{"type":"session","session_id":"s","capabilities":["elicitation_v1"]}"#).unwrap();
+	assert!(msg.validate().is_ok());
+	let ClientMessage::Session(bind) = &msg else {
+		panic!("expected a session bind: {msg:?}");
+	};
+	assert_eq!(bind.capabilities, vec![ELICITATION_CAPABILITY.to_string()]);
+
+	let round_trip = serde_json::to_value(&msg).unwrap();
+	assert_eq!(round_trip["capabilities"], serde_json::json!(["elicitation_v1"]));
+}
+
+#[test]
+fn elicitation_response_parses_and_validates() {
+	let json =
+		r#"{"type":"elicitation_response","session_id":"s","id":"e1","result":{"action":"accept","content":{"x":1}}}"#;
+	let msg: ClientMessage = serde_json::from_str(json).unwrap();
+	assert!(msg.validate().is_ok());
+	let ClientMessage::ElicitationResponse(response) = &msg else {
+		panic!("expected an elicitation response: {msg:?}");
+	};
+	assert_eq!(response.id, "e1");
+	assert_eq!(response.session_id, "s");
+	assert_eq!(msg.message_type(), "elicitation_response");
+}
+
+#[test]
+fn elicitation_response_with_empty_id_is_invalid() {
+	let json = r#"{"type":"elicitation_response","session_id":"s","id":"","result":{"action":"decline"}}"#;
+	let msg: ClientMessage = serde_json::from_str(json).unwrap();
+	assert!(msg.validate().is_err());
+}
+
+#[test]
+fn elicitation_server_frame_carries_mcp_params() {
+	let payload: ElicitationPayload = serde_json::from_value(serde_json::json!({
+		"session_id": "s",
+		"id": "e1",
+		"server": "forms",
+		"params": {
+			"mode": "form",
+			"message": "Pick one",
+			"requestedSchema": {"type": "object", "properties": {"x": {"type": "integer"}}}
+		}
+	}))
+	.unwrap();
+	let json = serde_json::to_value(ServerMessage::Elicitation(payload)).unwrap();
+	assert_eq!(json["type"], "elicitation");
+	assert_eq!(json["id"], "e1");
+	assert_eq!(json["server"], "forms");
+	assert_eq!(json["params"]["mode"], "form");
+	assert!(json["params"]["requestedSchema"].is_object(), "got: {json}");
+	assert!(json.get("tool_id").is_none());
 }
 
 #[test]

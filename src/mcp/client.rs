@@ -27,13 +27,13 @@ use rmcp::model::{
 	CacheScope, CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams, CancelledNotificationParam,
 	ClientCapabilities, ClientConfig, ClientRequest, ElicitRequestParams, ElicitResult, ElicitationAction,
 	ElicitationCapability, ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation,
-	InputRequest, InputResponses, ListToolsRequest, PaginatedRequestParams, ProgressToken, ProtocolVersion,
+	InputRequest, InputResponses, ListToolsRequest, PaginatedRequestParams, ProgressToken, ProtocolVersion, RequestId,
 	RequestMetaObject, ServerNotification, ServerResult, SubscriptionFilter, TaskPayload, UpdateTaskParams,
 	UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
-	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext, RunningService,
-	ServiceError,
+	ClientLifecycleMode, ClientServiceExt, InboundStreamOrigin, NotificationContext, PeerRequestOptions,
+	RequestContext, RunningService, ServiceError,
 };
 use rmcp::{ClientHandler, Peer, RoleClient};
 use std::collections::HashMap;
@@ -52,48 +52,111 @@ lazy_static::lazy_static! {
 	/// transport cannot change its Authorization header in place).
 	static ref HTTP_AUTH_TOKENS: RwLock<HashMap<String, Option<String>>> = RwLock::new(HashMap::new());
 
-	/// Tool call behind each in-flight progress token. MCP progress carries
-	/// only the token, but clients render progress against the tool call it
-	/// belongs to, and the call's idle timer restarts on it, so the route is
-	/// recorded for the life of the request.
-	static ref PROGRESS_ROUTES: RwLock<HashMap<ProgressToken, ProgressRoute>> = RwLock::new(HashMap::new());
+	/// Every in-flight `tools/call` round, keyed by server and request id: both
+	/// request ids and progress tokens are only unique per connection. Progress
+	/// rendering, the round's timers and elicitation routing all look it up.
+	static ref IN_FLIGHT_CALLS: RwLock<HashMap<(String, RequestId), InFlightCall>> = RwLock::new(HashMap::new());
 }
 
 #[derive(Clone)]
-struct ProgressRoute {
+struct InFlightCall {
+	server: String,
+	progress_token: ProgressToken,
 	tool_id: String,
-	/// Woken on every progress notification for the token.
+	/// Session that issued the call; `None` outside a session.
+	session_id: Option<String>,
+	/// Whether a person may be asked on the call's behalf: false for subagents
+	/// and detached work.
+	interactive: bool,
+	/// Woken on every progress notification for the call.
 	activity: Arc<tokio::sync::Notify>,
+	/// Questions open on the call's behalf; its timers hold while above zero.
+	awaiting_user: Arc<tokio::sync::watch::Sender<usize>>,
 }
 
-/// Register `token -> route` and unregister on drop, covering the timeout,
-/// cancellation and `?` exits of a tool-call round.
-struct ProgressTokenBinding {
-	token: ProgressToken,
-	activity: Arc<tokio::sync::Notify>,
+/// Registers a round in `IN_FLIGHT_CALLS` for its lifetime, covering the
+/// timeout, cancellation and `?` exits.
+struct InFlightCallBinding {
+	key: (String, RequestId),
+	call: InFlightCall,
 }
 
-impl ProgressTokenBinding {
-	fn new(token: &ProgressToken, tool_id: &str) -> Self {
-		let activity = Arc::new(tokio::sync::Notify::new());
-		PROGRESS_ROUTES.write().unwrap().insert(
-			token.clone(),
-			ProgressRoute {
-				tool_id: tool_id.to_string(),
-				activity: activity.clone(),
-			},
-		);
-		Self {
-			token: token.clone(),
-			activity,
+impl InFlightCallBinding {
+	fn new(server: &str, request_id: &RequestId, progress_token: &ProgressToken, tool_id: &str) -> Self {
+		let call = InFlightCall {
+			server: server.to_string(),
+			progress_token: progress_token.clone(),
+			tool_id: tool_id.to_string(),
+			session_id: crate::session::context::current_session_id(),
+			interactive: !crate::agent::inputs::in_non_interactive_scope(),
+			activity: Arc::new(tokio::sync::Notify::new()),
+			awaiting_user: Arc::new(tokio::sync::watch::Sender::new(0)),
+		};
+		let key = (server.to_string(), request_id.clone());
+		IN_FLIGHT_CALLS.write().unwrap().insert(key.clone(), call.clone());
+		Self { key, call }
+	}
+}
+
+impl Drop for InFlightCallBinding {
+	fn drop(&mut self) {
+		IN_FLIGHT_CALLS.write().unwrap().remove(&self.key);
+	}
+}
+
+/// Holds the timers of the calls a question is asked for until it is
+/// answered: the user's answering time is not server time.
+struct AwaitingUser(Vec<InFlightCall>);
+
+impl AwaitingUser {
+	fn hold(calls: Vec<InFlightCall>) -> Self {
+		for call in &calls {
+			call.awaiting_user.send_modify(|count| *count += 1);
+		}
+		Self(calls)
+	}
+}
+
+impl Drop for AwaitingUser {
+	fn drop(&mut self) {
+		for call in &self.0 {
+			call.awaiting_user.send_modify(|count| *count -= 1);
 		}
 	}
 }
 
-impl Drop for ProgressTokenBinding {
-	fn drop(&mut self) {
-		PROGRESS_ROUTES.write().unwrap().remove(&self.token);
+/// The in-flight calls an incoming elicitation belongs to (all from one
+/// session, none where nobody can answer), or why none can be chosen.
+fn calls_awaiting_elicitation(
+	server: &str,
+	context: &RequestContext<RoleClient>,
+) -> std::result::Result<Vec<InFlightCall>, &'static str> {
+	let in_flight = IN_FLIGHT_CALLS.read().unwrap();
+	let calls: Vec<InFlightCall> = match context.extensions.get::<InboundStreamOrigin>() {
+		// Streamable HTTP delivers it on the response stream of its call.
+		Some(InboundStreamOrigin::OutboundRequest(request_id)) => in_flight
+			.get(&(server.to_string(), request_id.clone()))
+			.cloned()
+			.into_iter()
+			.collect(),
+		Some(InboundStreamOrigin::Unassociated) => return Err("it arrived outside any tool call"),
+		// Stdio cannot tell which call it belongs to: SEP-2260 has no wire field.
+		None => in_flight
+			.values()
+			.filter(|call| call.server == server)
+			.cloned()
+			.collect(),
+	};
+	let Some(first) = calls.first() else {
+		return Err("no tool call on its server is waiting for it");
+	};
+	if calls.iter().any(|call| call.session_id != first.session_id) {
+		return Err("tool calls from several sessions share its server, so its session is ambiguous");
 	}
+	if calls.iter().any(|call| !call.interactive) {
+		return Err("its tool call runs where nobody can answer");
+	}
+	Ok(calls)
 }
 
 /// Client handler: identifies octomind (with the session context as an
@@ -146,12 +209,17 @@ impl ClientHandler for OctoClientHandler {
 		params: rmcp::model::ProgressNotificationParam,
 		_context: NotificationContext<RoleClient>,
 	) {
-		let route = PROGRESS_ROUTES.read().unwrap().get(&params.progress_token).cloned();
-		if let Some(route) = &route {
-			route.activity.notify_one();
+		let call = IN_FLIGHT_CALLS
+			.read()
+			.unwrap()
+			.values()
+			.find(|call| call.server == self.server_name && call.progress_token == params.progress_token)
+			.cloned();
+		if let Some(call) = &call {
+			call.activity.notify_one();
 		}
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-		self.emit_progress(&value, route.map(|route| route.tool_id));
+		self.emit_progress(&value, call.map(|call| call.tool_id));
 	}
 
 	// Logging is deprecated in MCP 2026-07-28 (SEP-2577) but legacy servers
@@ -216,21 +284,38 @@ impl ClientHandler for OctoClientHandler {
 		self.emit("notifications/tasks/status", &value);
 	}
 
-	/// Elicitation is answered by the person at the terminal. Where nobody can
-	/// answer (daemon, ACP, WebSocket, piped runs, subagents, detached tasks)
-	/// the request is surfaced to observers and declined, deterministically
-	/// rather than through rmcp's silent default.
+	/// A server pushes elicitation while one of its tool calls runs. It goes to
+	/// whoever answers for that call's session (`crate::mcp::elicitation`); when
+	/// the call cannot be told apart it is declined, never guessed.
 	async fn create_elicitation(
 		&self,
 		request: ElicitRequestParams,
-		_context: RequestContext<RoleClient>,
+		context: RequestContext<RoleClient>,
 	) -> std::result::Result<ElicitResult, rmcp::ErrorData> {
-		if crate::session::chat::elicitation::can_prompt() {
-			return crate::session::chat::elicitation::ask(&self.server_name, request).await;
+		let calls = match calls_awaiting_elicitation(&self.server_name, &context) {
+			Ok(calls) => calls,
+			Err(reason) => {
+				return Ok(crate::mcp::elicitation::decline(
+					&self.server_name,
+					self.session_id.as_deref(),
+					&request,
+					reason,
+				))
+			}
+		};
+		let session_id = calls[0].session_id.clone();
+		// Several calls of one session can share a stdio connection; the
+		// question then belongs to the session, not to one of its calls.
+		let tool_id = match calls.as_slice() {
+			[call] => Some(call.tool_id.clone()),
+			_ => None,
+		};
+		let _held = AwaitingUser::hold(calls);
+		tokio::select! {
+			result = crate::mcp::elicitation::ask(&self.server_name, session_id.as_deref(), tool_id.as_deref(), request) => result,
+			// The server withdrew the question, e.g. its tool call was cancelled.
+			_ = context.ct.cancelled() => Ok(ElicitResult::new(ElicitationAction::Cancel)),
 		}
-		let value = serde_json::to_value(&request).unwrap_or(serde_json::Value::Null);
-		self.emit("elicitation/requested", &value);
-		Ok(ElicitResult::new(ElicitationAction::Decline))
 	}
 
 	/// Forward vendor/unknown notifications under their real method name —
@@ -349,8 +434,16 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 		extensions.insert(WATCH_RESOURCE_LINKS_EXTENSION.to_string(), serde_json::Map::new());
 		capabilities.extensions = Some(extensions);
 	}
-	// Only a person at the terminal can answer an elicitation.
-	if crate::session::chat::elicitation::can_prompt() {
+	// Offered only where someone may answer. Per-request capabilities speak for
+	// the calling session; a legacy handshake speaks for the shared connection.
+	let answerable = if protocol_version >= ProtocolVersion::V_2026_07_28 {
+		!crate::agent::inputs::in_non_interactive_scope()
+			&& crate::session::context::current_session_id()
+				.is_some_and(|session_id| crate::mcp::elicitation::answerer(&session_id).is_some())
+	} else {
+		crate::mcp::elicitation::accepts_elicitations()
+	};
+	if answerable {
 		capabilities.elicitation = Some(
 			ElicitationCapability::new()
 				.with_form(FormElicitationCapability::default())
@@ -940,23 +1033,37 @@ async fn call_tool_round(
 		.map_err(|e| anyhow!("Failed to send tools/call to '{}': {}", server.name(), e))?;
 	let request_id = handle.id.clone();
 	let peer = handle.peer.clone();
-	let progress = ProgressTokenBinding::new(&handle.progress_token, tool_id);
-	let mut open_prompts = crate::session::chat::elicitation::subscribe_open_prompts();
+	let in_flight = InFlightCallBinding::new(server.name(), &request_id, &handle.progress_token, tool_id);
+	let mut awaiting_user = in_flight.call.awaiting_user.subscribe();
 	let response = handle.await_response();
 	tokio::pin!(response);
 	let absolute_deadline = tokio::time::sleep(absolute_cap);
 	tokio::pin!(absolute_deadline);
 	let mut idle_deadline = tokio::time::Instant::now() + idle_timeout;
+	let mut awaiting_since = None;
 	let result = loop {
-		let prompting = *open_prompts.borrow_and_update() > 0;
+		let awaiting = *awaiting_user.borrow_and_update() > 0;
 		tokio::select! {
 			biased;
 			result = &mut response => break result?,
-			_ = progress.activity.notified() => idle_deadline = tokio::time::Instant::now() + idle_timeout,
-			// A prompt opening or closing restarts the idle window: time the user
-			// spends answering is not server silence.
-			_ = open_prompts.changed() => idle_deadline = tokio::time::Instant::now() + idle_timeout,
-			_ = tokio::time::sleep_until(idle_deadline), if !prompting => {
+			_ = in_flight.call.activity.notified() => idle_deadline = tokio::time::Instant::now() + idle_timeout,
+			// Both timers hold while the user answers a question for this call:
+			// the idle window restarts when one opens or closes, and the total
+			// cap moves out by the time it stayed open.
+			_ = awaiting_user.changed() => {
+				let now = tokio::time::Instant::now();
+				idle_deadline = now + idle_timeout;
+				match (awaiting_since, *awaiting_user.borrow() > 0) {
+					(None, true) => awaiting_since = Some(now),
+					(Some(since), false) => {
+						let extended = absolute_deadline.deadline() + (now - since);
+						absolute_deadline.as_mut().reset(extended);
+						awaiting_since = None;
+					}
+					_ => {}
+				}
+			}
+			_ = tokio::time::sleep_until(idle_deadline), if !awaiting => {
 				let _ = peer
 					.notify_cancelled(CancelledNotificationParam::new(
 						Some(request_id.clone()),
@@ -969,7 +1076,7 @@ async fn call_tool_round(
 					idle_timeout_seconds,
 				)));
 			}
-			_ = &mut absolute_deadline => {
+			_ = &mut absolute_deadline, if !awaiting => {
 				let _ = peer
 					.notify_cancelled(CancelledNotificationParam::new(
 						Some(request_id.clone()),
@@ -1002,21 +1109,37 @@ async fn call_tool_round(
 	}
 }
 
-async fn fulfill_input_requests(service: &McpService, requests: rmcp::model::InputRequests) -> Result<InputResponses> {
+/// Answer a round's input requests. Asked between rounds, so the question is
+/// already in the call's own session and no round timer is running.
+async fn fulfill_input_requests(
+	server: &str,
+	tool_id: Option<&str>,
+	requests: rmcp::model::InputRequests,
+	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<InputResponses> {
+	let session_id = crate::session::context::current_session_id();
 	let mut responses = InputResponses::new();
 	for (key, request) in requests {
-		let context = RequestContext::new(
-			rmcp::model::NumberOrString::String(Arc::from(key.as_str())),
-			service.peer().clone(),
-		);
 		let value = match request {
-			InputRequest::Elicitation(request) => serde_json::to_value(
-				service
-					.service()
-					.create_elicitation(request.params, context)
-					.await
-					.map_err(|e| anyhow!(e.to_string()))?,
-			)?,
+			InputRequest::Elicitation(request) if crate::agent::inputs::in_non_interactive_scope() => {
+				serde_json::to_value(crate::mcp::elicitation::decline(
+					server,
+					session_id.as_deref(),
+					&request.params,
+					"its tool call runs where nobody can answer",
+				))?
+			}
+			InputRequest::Elicitation(request) => {
+				let result = tokio::select! {
+					result = crate::mcp::elicitation::ask(server, session_id.as_deref(), tool_id, request.params) => {
+						result.map_err(|e| anyhow!(e.to_string()))?
+					}
+					_ = wait_cancelled(cancellation_token) => {
+						return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+					}
+				};
+				serde_json::to_value(result)?
+			}
 			InputRequest::ListRoots(_) => {
 				return Err(anyhow!(
 					"server requested deprecated roots/list although Octomind did not advertise roots"
@@ -1138,7 +1261,7 @@ async fn drive_task(
 		match state.task.payload {
 			TaskPayload::Working => {}
 			TaskPayload::InputRequired { input_requests } => {
-				let responses = fulfill_input_requests(&service, input_requests).await?;
+				let responses = fulfill_input_requests(server.name(), None, input_requests, cancellation_token).await?;
 				tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
 					service
@@ -1418,7 +1541,13 @@ pub async fn call_tool(
 						"server returned input_required without inputRequests or requestState"
 					));
 				}
-				let responses = fulfill_input_requests(&service, result.input_requests.unwrap_or_default()).await?;
+				let responses = fulfill_input_requests(
+					server.name(),
+					Some(&call.tool_id),
+					result.input_requests.unwrap_or_default(),
+					&mut cancellation_token,
+				)
+				.await?;
 				params.input_responses = (!responses.is_empty()).then_some(responses);
 				params.request_state = result.request_state;
 				if had_requests {

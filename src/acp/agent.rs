@@ -14,7 +14,7 @@
 
 //! OctomindAgent — implements the ACP Agent trait over Octomind's session infrastructure.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,11 +22,12 @@ use std::rc::Rc;
 use agent_client_protocol::schema::v1::{
 	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
 	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification, ClientRequest,
-	ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest, ExtResponse, Implementation, InitializeRequest,
-	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest,
-	NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification,
-	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-	UnstructuredCommandInput,
+	ContentBlock, ContentChunk, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
+	ElicitationCapabilities, ElicitationFormMode, ElicitationSchema, ElicitationSessionScope, ElicitationUrlMode,
+	EmbeddedResourceResource, ExtRequest, ExtResponse, Implementation, InitializeRequest, InitializeResponse,
+	LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse,
+	PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification, SessionUpdate,
+	StopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, UnstructuredCommandInput,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
@@ -36,6 +37,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
+use crate::mcp::elicitation::Answerer;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
 	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled, setup_and_initialize_session,
@@ -85,6 +87,8 @@ pub struct OctomindAgent {
 	hooks: Vec<String>,
 	/// Set when the role failed to start; every session request answers with it.
 	startup_error: Option<String>,
+	/// What the client advertised for elicitation in `initialize`; default until then.
+	elicitation_support: Cell<ElicitationSupport>,
 }
 
 impl OctomindAgent {
@@ -103,6 +107,7 @@ impl OctomindAgent {
 			model: options.model,
 			hooks: options.hooks,
 			startup_error: options.startup_error,
+			elicitation_support: Cell::new(ElicitationSupport::default()),
 		}
 	}
 
@@ -347,6 +352,137 @@ fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> 
 	}
 }
 
+/// Which MCP elicitation modes the connected client can render, fixed by its `initialize` capabilities.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ElicitationSupport {
+	form: bool,
+	url: bool,
+}
+
+impl ElicitationSupport {
+	fn from_capabilities(capabilities: Option<&ElicitationCapabilities>) -> Self {
+		Self {
+			form: capabilities.is_some_and(|c| c.form.is_some()),
+			url: capabilities.is_some_and(|c| c.url.is_some()),
+		}
+	}
+
+	/// Without form rendering nobody can answer, so the session declines elicitations.
+	fn answerer(self) -> Option<Answerer> {
+		self.form.then_some(Answerer::Client)
+	}
+}
+
+/// MCP elicitation params -> ACP `elicitation/create`, scoped to the session and (when known) the tool call;
+/// ACP tool-call ids are octomind tool ids (see `translate_server_message_to_acp`).
+/// `Err` is the action to answer with at once: a mode the client cannot render is declined, a schema that does not
+/// convert cancels the call.
+fn elicitation_request(
+	session_id: &str,
+	tool_id: Option<String>,
+	params: rmcp::model::ElicitRequestParams,
+	support: ElicitationSupport,
+) -> Result<CreateElicitationRequest, rmcp::model::ElicitationAction> {
+	use rmcp::model::{ElicitRequestParams, ElicitationAction as McpAction};
+	let scope = ElicitationSessionScope::new(session_id.to_owned()).tool_call_id(tool_id.map(ToolCallId::new));
+	match params {
+		ElicitRequestParams::FormElicitationParams {
+			message,
+			requested_schema,
+			..
+		} if support.form => {
+			// Both sides model the same JSON Schema subset, so the wire form is the bridge.
+			let schema = serde_json::to_value(&requested_schema)
+				.and_then(serde_json::from_value::<ElicitationSchema>)
+				.map_err(|e| {
+					log_error!("ACP: elicitation schema not representable: {}", e);
+					McpAction::Cancel
+				})?;
+			Ok(CreateElicitationRequest::new(
+				ElicitationFormMode::new(scope, schema),
+				message,
+			))
+		}
+		ElicitRequestParams::UrlElicitationParams {
+			message,
+			url,
+			elicitation_id,
+			..
+		} if support.url => Ok(CreateElicitationRequest::new(
+			ElicitationUrlMode::new(scope, elicitation_id, url),
+			message,
+		)),
+		_ => Err(McpAction::Decline),
+	}
+}
+
+/// ACP response -> MCP result. Accepted content passes through; an action we do not know is not an answer,
+/// so it ends the call like a cancel.
+fn elicitation_result(response: CreateElicitationResponse) -> rmcp::model::ElicitResult {
+	use rmcp::model::{ElicitResult, ElicitationAction as McpAction};
+	match response.action {
+		ElicitationAction::Accept(accept) => {
+			let result = ElicitResult::new(McpAction::Accept);
+			match accept.content {
+				Some(content) => {
+					result.with_content(serde_json::to_value(content).expect("form content is plain JSON"))
+				}
+				None => result,
+			}
+		}
+		ElicitationAction::Decline => ElicitResult::new(McpAction::Decline),
+		_ => ElicitResult::new(McpAction::Cancel),
+	}
+}
+
+fn answer_elicitation(session_id: &str, id: &str, result: rmcp::model::ElicitResult) {
+	if !crate::mcp::elicitation::resolve(session_id, id, result) {
+		log_debug!(
+			"ACP: elicitation {} for session {} is no longer pending",
+			id,
+			session_id
+		);
+	}
+}
+
+/// Forward-task hook run before translation: an elicitation is not a `session/update`, it is a request the
+/// client must answer. It goes out on its own task so the forward loop keeps streaming while the user
+/// answers. Returns the message back when it is anything else.
+fn intercept_elicitation(
+	msg: ServerMessage,
+	conn: Option<&ConnectionTo<Client>>,
+	support: ElicitationSupport,
+) -> Option<ServerMessage> {
+	use rmcp::model::{ElicitResult, ElicitationAction as McpAction};
+	let ServerMessage::Elicitation(payload) = msg else {
+		return Some(msg);
+	};
+	let (session_id, id) = (payload.session_id, payload.id);
+	let Some(conn) = conn else {
+		answer_elicitation(&session_id, &id, ElicitResult::new(McpAction::Decline));
+		return None;
+	};
+	let request = match elicitation_request(&session_id, payload.tool_id, payload.params, support) {
+		Ok(request) => request,
+		Err(action) => {
+			answer_elicitation(&session_id, &id, ElicitResult::new(action));
+			return None;
+		}
+	};
+	let conn = conn.clone();
+	tokio::task::spawn_local(async move {
+		let result = match conn.send_request(request).block_task().await {
+			Ok(response) => elicitation_result(response),
+			Err(e) => {
+				log_error!("ACP: elicitation request failed: {}", e);
+				ElicitResult::new(McpAction::Cancel)
+			}
+		};
+		answer_elicitation(&session_id, &id, result);
+	});
+	None
+}
+
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
@@ -422,6 +558,7 @@ impl OctomindAgent {
 		let config = RefCell::new(self.config.borrow().clone());
 		let role = self.role.clone();
 		let conn = Rc::clone(&self.conn);
+		let support = self.elicitation_support.get();
 		let idle_notify = Rc::clone(&self.idle_notify);
 
 		tokio::task::spawn_local(async move {
@@ -542,6 +679,9 @@ impl OctomindAgent {
 						let conn_for_fwd = conn.borrow().as_ref().cloned();
 						let forward_task = tokio::task::spawn_local(async move {
 							while let Some(msg) = ws_rx.recv().await {
+								let Some(msg) = intercept_elicitation(msg, conn_for_fwd.as_ref(), support) else {
+									continue;
+								};
 								if let (Some(update), Some(c)) =
 									(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
 								{
@@ -625,6 +765,9 @@ impl OctomindAgent {
 impl OctomindAgent {
 	async fn initialize(&self, args: InitializeRequest) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
+		self.elicitation_support.set(ElicitationSupport::from_capabilities(
+			args.client_capabilities.elicitation.as_ref(),
+		));
 
 		// Advertise extension capabilities in _meta per ACP spec
 		let mut meta = Meta::new();
@@ -731,6 +874,7 @@ impl OctomindAgent {
 			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
+		crate::mcp::elicitation::set_answerer(&session_id, self.elicitation_support.get().answerer());
 
 		self.sessions
 			.borrow_mut()
@@ -1089,8 +1233,12 @@ impl OctomindAgent {
 
 					let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
 					let conn_for_fwd = self.conn.borrow().as_ref().cloned();
+					let support = self.elicitation_support.get();
 					let forward_task = tokio::task::spawn_local(async move {
 						while let Some(msg) = ws_rx.recv().await {
+							let Some(msg) = intercept_elicitation(msg, conn_for_fwd.as_ref(), support) else {
+								continue;
+							};
 							if let (Some(update), Some(c)) =
 								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
 							{
@@ -1194,8 +1342,12 @@ impl OctomindAgent {
 			// rather than allocating a new String per notification.
 			let session_id_for_task: std::sync::Arc<str> = session_id.as_str().into();
 			let conn_for_task = self.conn.borrow().as_ref().cloned();
+			let support = self.elicitation_support.get();
 			let forward_task = tokio::task::spawn_local(async move {
 				while let Some(msg) = ws_rx.recv().await {
+					let Some(msg) = intercept_elicitation(msg, conn_for_task.as_ref(), support) else {
+						continue;
+					};
 					let update = match msg {
 						ServerMessage::Assistant(p) => {
 							Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(p.content.into())))
@@ -1429,6 +1581,7 @@ impl OctomindAgent {
 			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
+		crate::mcp::elicitation::set_answerer(&actual_session_id, self.elicitation_support.get().answerer());
 
 		self.sessions
 			.borrow_mut()

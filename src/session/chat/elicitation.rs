@@ -24,48 +24,22 @@ use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 use rmcp::model::{ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema};
 use rmcp::ErrorData;
 use serde_json::{Map, Number, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use tokio::sync::{watch, Mutex, OwnedMutexGuard};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// Number of elicitation prompts that are on screen or queued for the terminal.
-static OPEN_PROMPTS: LazyLock<watch::Sender<usize>> = LazyLock::new(|| watch::Sender::new(0));
-
 /// Parallel tool calls can elicit at the same time; the terminal serves one prompt at a time.
 static TERMINAL: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
-
-/// Set once by the interactive CLI session, which owns the terminal for the life of the process.
-/// An explicit opt-in rather than a tty check: `cargo test` from a terminal inherits a tty stdin.
-static TERMINAL_PROMPTS: AtomicBool = AtomicBool::new(false);
-
-/// Called by the interactive CLI session: a person is at this terminal.
-pub fn enable_terminal_prompts() {
-	TERMINAL_PROMPTS.store(true, Ordering::Relaxed);
-}
-
-/// True when a person at this terminal can answer an elicitation.
-pub fn can_prompt() -> bool {
-	TERMINAL_PROMPTS.load(Ordering::Relaxed) && !crate::agent::inputs::is_non_interactive()
-}
-
-/// Live count of elicitation prompts that are on screen or waiting for the terminal.
-/// Tool-call idle timers pause while it is above zero.
-pub fn subscribe_open_prompts() -> watch::Receiver<usize> {
-	OPEN_PROMPTS.subscribe()
-}
 
 /// Ask the user. Schema outside the spec -> `invalid_params`; terminal/IO/join failure -> `internal_error`.
 pub async fn ask(server_name: &str, request: ElicitRequestParams) -> Result<ElicitResult, ErrorData> {
 	// Validate before any UI so a bad schema never touches the terminal.
 	let prompt = Prompt::plan(request)?;
-	let open = OpenPromptGuard::new();
 	let terminal = TERMINAL.clone().lock_owned().await;
 
 	let animation = crate::session::chat::get_animation_manager();
 	let mut session = PromptSession {
-		_open: open,
 		_terminal: terminal,
 		resume_spinner: false,
 	};
@@ -87,25 +61,8 @@ pub async fn ask(server_name: &str, request: ElicitRequestParams) -> Result<Elic
 	.map_err(|e| ErrorData::internal_error(format!("elicitation prompt task failed: {}", e), None))?
 }
 
-/// Counts one prompt in `OPEN_PROMPTS` for as long as it lives.
-pub(crate) struct OpenPromptGuard;
-
-impl OpenPromptGuard {
-	pub(crate) fn new() -> Self {
-		OPEN_PROMPTS.send_modify(|count| *count += 1);
-		Self
-	}
-}
-
-impl Drop for OpenPromptGuard {
-	fn drop(&mut self) {
-		OPEN_PROMPTS.send_modify(|count| *count -= 1);
-	}
-}
-
 /// Everything a prompt holds on the shared terminal; released together when the blocking read ends.
 struct PromptSession {
-	_open: OpenPromptGuard,
 	_terminal: OwnedMutexGuard<()>,
 	/// Only the prompt that suspended the spinner may resume it.
 	resume_spinner: bool,

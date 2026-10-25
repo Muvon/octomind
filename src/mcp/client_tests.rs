@@ -120,7 +120,7 @@ async fn progress_notification_carries_bound_tool_id() {
 	let mut tap = NotificationTap::install();
 
 	let token = ProgressToken(rmcp::model::NumberOrString::Number(41));
-	let binding = ProgressTokenBinding::new(&token, "call-41");
+	let binding = InFlightCallBinding::new(&name, &RequestId::Number(41), &token, "call-41");
 	push_notification(
 		&peer,
 		ServerNotification::ProgressNotification(Notification::new(ProgressNotificationParam::new(token.clone(), 0.5))),
@@ -128,7 +128,7 @@ async fn progress_notification_carries_bound_tool_id() {
 	let payload = tap.next(&name, "notifications/progress").await;
 	assert_eq!(payload.tool_id.as_deref(), Some("call-41"));
 	assert_eq!(payload.params.get("progress"), Some(&serde_json::json!(0.5)));
-	tokio::time::timeout(WAIT, binding.activity.notified())
+	tokio::time::timeout(WAIT, binding.call.activity.notified())
 		.await
 		.expect("progress must restart the bound call's idle timer");
 
@@ -327,6 +327,163 @@ async fn elicitation_requests_are_surfaced_and_declined() {
 		}
 		other => panic!("expected a response, got {other:?}"),
 	}
+}
+
+fn push_elicitation(peer: &InMemoryPeer, request_id: i64, message: &str) {
+	let params = ElicitRequestParams::FormElicitationParams {
+		meta: None,
+		message: message.to_string(),
+		requested_schema: serde_json::from_value(serde_json::json!({
+			"type": "object",
+			"properties": { "ok": { "type": "boolean" } }
+		}))
+		.expect("valid schema fixture"),
+	};
+	peer.incoming
+		.unbounded_send(JsonRpcMessage::request(
+			ServerRequest::ElicitRequest(Request::new(params)),
+			RequestId::Number(request_id),
+		))
+		.expect("fake server channel must stay open");
+}
+
+async fn next_elicit_result(peer: &mut InMemoryPeer) -> ElicitResult {
+	let response = tokio::time::timeout(WAIT, peer.outgoing.recv())
+		.await
+		.expect("client must answer the elicitation request")
+		.expect("fake server channel must stay open");
+	match response {
+		JsonRpcMessage::Response(resp) => match resp.result {
+			ClientResult::ElicitResult(result) => result,
+			other => panic!("expected ElicitResult, got {other:?}"),
+		},
+		other => panic!("expected a response, got {other:?}"),
+	}
+}
+
+/// A call registered from `session` the way `call_tool_round` registers it.
+async fn in_flight_call(server: &str, session: &str, request_id: i64, tool_id: &str) -> InFlightCallBinding {
+	let token = ProgressToken(rmcp::model::NumberOrString::Number(request_id));
+	crate::session::context::with_session_id(session.to_string(), async {
+		InFlightCallBinding::new(server, &RequestId::Number(request_id), &token, tool_id)
+	})
+	.await
+}
+
+fn forget_session(session: &str) {
+	crate::session::context::clear_notification_sender_for_session(&session.to_string());
+	crate::mcp::elicitation::clear_session(session);
+}
+
+/// A server's elicitation during a tool call reaches whoever answers for the
+/// call's session (stdio-style: no stream association, one session waiting),
+/// and the call's timers hold until the answer goes back.
+#[serial_test::serial]
+#[tokio::test]
+async fn pushed_elicitation_reaches_the_calling_sessions_client() {
+	let name = unique_server("elicit-routed");
+	let mut peer = serve_in_memory(&name);
+	let session = "client-elicit-routed";
+	let (frames_tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::set_notification_sender_for_session(&session.to_string(), frames_tx);
+	crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+	let call = in_flight_call(&name, session, 5, "call-routed").await;
+	let awaiting = call.call.awaiting_user.subscribe();
+
+	push_elicitation(&peer, 78, "Confirm the refund?");
+	let frame = tokio::time::timeout(WAIT, frames.recv())
+		.await
+		.expect("the question must reach the session")
+		.expect("session channel must stay open");
+	let crate::websocket::ServerMessage::Elicitation(question) = frame else {
+		panic!("expected an elicitation frame, got {frame:?}");
+	};
+	assert_eq!(question.server, name);
+	assert_eq!(question.session_id, session);
+	assert_eq!(question.tool_id.as_deref(), Some("call-routed"));
+	assert_eq!(*awaiting.borrow(), 1, "the call's timers hold while the user answers");
+
+	let answer = ElicitResult::new(ElicitationAction::Accept).with_content(serde_json::json!({ "ok": true }));
+	assert!(crate::mcp::elicitation::resolve(session, &question.id, answer));
+	let result = next_elicit_result(&mut peer).await;
+	assert_eq!(result.action, ElicitationAction::Accept);
+	assert_eq!(result.content, Some(serde_json::json!({ "ok": true })));
+	assert_eq!(*awaiting.borrow(), 0, "the call's timers resume once answered");
+
+	drop(call);
+	forget_session(session);
+}
+
+/// Stdio cannot say which call a request belongs to: with calls from two
+/// sessions waiting on the server, the question is declined, never guessed.
+#[serial_test::serial]
+#[tokio::test]
+async fn pushed_elicitation_with_calls_from_two_sessions_is_declined() {
+	let name = unique_server("elicit-ambiguous");
+	let mut peer = serve_in_memory(&name);
+	let sessions = ["client-elicit-a", "client-elicit-b"];
+	for session in sessions {
+		crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+	}
+	let first = in_flight_call(&name, sessions[0], 1, "call-a").await;
+	let second = in_flight_call(&name, sessions[1], 2, "call-b").await;
+
+	push_elicitation(&peer, 79, "Which session asked?");
+	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Decline);
+
+	drop((first, second));
+	for session in sessions {
+		forget_session(session);
+	}
+}
+
+/// A call made where nobody can answer (a subagent, detached work) never
+/// reaches its session's answerer.
+#[serial_test::serial]
+#[tokio::test]
+async fn pushed_elicitation_for_a_non_interactive_call_is_declined() {
+	let name = unique_server("elicit-subagent");
+	let mut peer = serve_in_memory(&name);
+	let session = "client-elicit-subagent";
+	crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+	let call = crate::agent::inputs::with_non_interactive(in_flight_call(&name, session, 3, "call-sub")).await;
+
+	push_elicitation(&peer, 80, "Allowed?");
+	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Decline);
+
+	drop(call);
+	forget_session(session);
+}
+
+/// A session that ends with a question open (client gone, session closed)
+/// answers it as cancelled, and the question can no longer be answered.
+#[serial_test::serial]
+#[tokio::test]
+async fn ending_a_session_cancels_its_open_question() {
+	let name = unique_server("elicit-session-end");
+	let mut peer = serve_in_memory(&name);
+	let session = "client-elicit-session-end";
+	let (frames_tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::set_notification_sender_for_session(&session.to_string(), frames_tx);
+	crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+	let call = in_flight_call(&name, session, 4, "call-session-end").await;
+
+	push_elicitation(&peer, 81, "Still there?");
+	let frame = tokio::time::timeout(WAIT, frames.recv())
+		.await
+		.expect("the question must reach the session")
+		.expect("session channel must stay open");
+	let crate::websocket::ServerMessage::Elicitation(question) = frame else {
+		panic!("expected an elicitation frame, got {frame:?}");
+	};
+	forget_session(session);
+	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Cancel);
+	assert!(
+		!crate::mcp::elicitation::resolve(session, &question.id, ElicitResult::new(ElicitationAction::Accept)),
+		"a cancelled question must not accept an answer"
+	);
+
+	drop(call);
 }
 
 #[serial_test::serial]

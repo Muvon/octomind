@@ -15,8 +15,8 @@
 // WebSocket server implementation
 
 use super::protocol::{
-	AckPayload, Attachment, AttachmentKind, CancelMessage, ClientMessage, CloseMessage, CommandMessage, ServerMessage,
-	SessionMessage, StatusPayload, UserMessage,
+	AckPayload, Attachment, AttachmentKind, CancelMessage, ClientMessage, CloseMessage, CommandMessage,
+	ElicitationResponseMessage, ServerMessage, SessionMessage, StatusPayload, UserMessage, ELICITATION_CAPABILITY,
 };
 use super::stream::{SessionStream, Streams};
 use crate::config::Config;
@@ -428,6 +428,10 @@ async fn serve_connection(
 						handle_run_log(request.clone(), ws_sender).await?;
 						continue;
 					}
+					ClientMessage::ElicitationResponse(response) => {
+						handle_elicitation_response(response.clone(), ws_sender).await?;
+						continue;
+					}
 					_ => {}
 				}
 
@@ -534,7 +538,7 @@ async fn accept_client_frame(text: &str, ws_sender: &WsSender, peer_addr: Socket
 
 /// Drive one client frame to completion while still reading the socket.
 ///
-/// `cancel` and `run_log` must remain usable during a running turn. Pings are
+/// `cancel`, `run_log` and `elicitation_response` must remain usable during a running turn. Pings are
 /// answered so a keepalive never times out behind a long turn. Every other frame is deferred
 /// and processed afterwards in arrival order, exactly as if it had been read then.
 ///
@@ -564,7 +568,7 @@ async fn read_while_processing(
 				Some(Ok(Message::Text(text))) => {
 					let immediate = matches!(
 						serde_json::from_str::<ClientMessage>(&text),
-						Ok(ClientMessage::Cancel(_) | ClientMessage::RunLog(_))
+						Ok(ClientMessage::Cancel(_) | ClientMessage::RunLog(_) | ClientMessage::ElicitationResponse(_))
 					);
 					if !immediate {
 						deferred.push_back(Message::Text(text));
@@ -572,6 +576,9 @@ async fn read_while_processing(
 						match message {
 							ClientMessage::Cancel(cancel) => cancel_turn(&ctx.server, &cancel),
 							ClientMessage::RunLog(request) => handle_run_log(request, ws_sender).await?,
+							ClientMessage::ElicitationResponse(response) => {
+								handle_elicitation_response(response, ws_sender).await?
+							}
 							_ => unreachable!("immediate control frame"),
 						}
 					}
@@ -598,6 +605,17 @@ async fn handle_run_log(request: super::protocol::RunLogMessage, sender: &WsSend
 		Err(error) => ServerMessage::RunLog(super::protocol::RunLogPayload::error(request, error.to_string())),
 	};
 	send_message(sender, &reply).await
+}
+
+/// Hand the user's answer to the MCP call waiting on it. An id nobody waits on
+/// (answered already, or the turn ended) is the client's error to hear about.
+async fn handle_elicitation_response(response: ElicitationResponseMessage, sender: &WsSender) -> Result<()> {
+	if !crate::mcp::elicitation::resolve(&response.session_id, &response.id, response.result) {
+		let error =
+			ServerMessage::error_for_request(format!("no pending elicitation '{}'", response.id), response.request_id);
+		send_message(sender, &error).await?;
+	}
+	Ok(())
 }
 
 /// Stop the session's running turn, wherever it runs: on this connection, on
@@ -684,6 +702,8 @@ async fn process_client_message(
 			result
 		}
 		ClientMessage::RunLog(msg) => handle_run_log(msg, ws_sender).await,
+		// Normally applied by the connection loop at once; this arm covers a frame deferred behind a turn.
+		ClientMessage::ElicitationResponse(msg) => handle_elicitation_response(msg, ws_sender).await,
 		ClientMessage::Close(msg) => handle_close_message(msg, ws_sender, &ctx.server, active_session_ids).await,
 		// Applied by the connection loop the moment it is read, never queued here.
 		ClientMessage::Cancel(cancel) => {
@@ -1220,6 +1240,16 @@ async fn handle_session_message(
 		.streams
 		.open(&session_id)
 		.attach(ws_sender, ack, msg.resume.as_ref(), &greeting)?;
+
+	// Questions asked while no capable client was attached wait for this bind.
+	let elicitation_capable = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
+	crate::mcp::elicitation::set_answerer(
+		&session_id,
+		elicitation_capable.then_some(crate::mcp::elicitation::Answerer::Client),
+	);
+	if elicitation_capable {
+		crate::mcp::elicitation::resend_pending(&session_id);
+	}
 
 	// Spawn independent background task that monitors schedules/inbox
 	// and processes messages automatically without waiting for user prompts.

@@ -33,6 +33,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 | Taps (shareable project agents) | `src/agent/` (registry, taps, resolver, deps) |
 | Layers / guardrails / pipes | `src/session/layers/`, `src/session/guardrails.rs`, `src/session/pipe.rs` |
 | ACP / WebSocket servers | `src/acp/agent.rs`, `src/websocket/server.rs` |
+| MCP elicitation (who answers, routing, timers) | `src/mcp/elicitation.rs` (answerers, pending questions), `src/mcp/client.rs` (`IN_FLIGHT_CALLS`, `calls_awaiting_elicitation`, `create_elicitation`), terminal prompt `src/session/chat/elicitation.rs` |
 | Sandbox / embeddings / telemetry | `src/sandbox/`, `src/embeddings/`, `src/telemetry.rs` |
 | CLI subcommands | `src/commands/` (run, tap, untap, workflow, config, send, server, acp, …) |
 | Path / directory constants | `src/directories.rs` |
@@ -42,6 +43,8 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 **Config → role → tools.** `Config::load()` merges every `*.toml` in the config dir alphabetically (arrays concat + dedup by `name`; tables deep-merge), then `mcp-*.toml` files AFTER base files — they always win for same-named servers (intended override path; `mcp persist` writes `<config_dir>/mcp-<name>.toml` with `auto_bind`). `get_merged_config_for_role(role)` collects explicit `server_refs` UNION exact-match `auto_bind` hits → `initialize_mcp_for_role()` spawns stdio/http servers, registers builtins, builds `TOOL_MAP` (tool name → server) → `try_execute_tool_call()` dispatches.
 
 **Session lifecycle (critical invariant).** Four entry points share one init contract; session-scoped state goes inside `init_session_services()` and ALL four must keep calling it (`rg init_session_services`): CLI + non-interactive (`main_loop.rs` `init_session_runtime()`), ACP `new_session` and ACP `initialize` (`src/acp/agent.rs`), WebSocket (`src/websocket/server.rs`) — always inside `with_session_id`. Never call `init_inbox_for_session` / `init_job_manager` / similar directly.
+
+**Elicitation answerer (the one per-entry-point exception).** Who answers a session's MCP elicitations depends on the entry point and its client, so it is NOT set in `init_session_services`: each entry point calls `crate::mcp::elicitation::set_answerer` itself — interactive CLI `Terminal` (`main_loop.rs`, also on `/new`-style switches), WebSocket `Client` on a bind listing `elicitation_v1`, ACP `Client` when `initialize` advertised `clientCapabilities.elicitation`. No answerer = declined. `cleanup_session` clears it and cancels open questions. Processes that may answer call `accept_elicitations()` (`main.rs`, `run_interactive_session`).
 
 **Processing pipeline.** User input → `/command` (`CommandResult` or `TreatAsUserInput`) → `run_activation` hook (main_loop only; skill auto-activation) → guardrails/pipe → workflows → layers → tool execution loop → `run_validators` hook (response.rs only) → spending check → output. `/done` is intercepted by the CLI main loop and the ACP prompt path, but the ACP `octomind/command` ext-method and WebSocket messages reach `process_command()` directly — its `DONE_COMMAND` arm is live code, not a leftover; keep it working.
 

@@ -87,9 +87,32 @@ tools = []
 ```
 
 For tool calls, `timeout_seconds` is an idle deadline rather than a total runtime limit: every MCP progress notification
-resets it. Calls are still bounded by an absolute cap of 20 times this value. After a timeout, completion and side
+resets it. Calls are still bounded by an absolute cap of 20 times this value. While you answer a server's question for
+the call (see [Server Questions](#server-questions-elicitation)), both deadlines hold: the idle deadline restarts when
+the question closes and the absolute cap moves out by the time it stayed open. After a timeout, completion and side
 effects may be unknown, so inspect state before retrying; prefer a narrower operation, a background/monitor workflow, or
 an MCP task for inherently long-running work.
+
+### Server Questions (Elicitation)
+
+An MCP server can ask you for input in the middle of a tool call: confirm a refund, pick an environment, fill in a
+missing detail, or open a sign-in page. This is MCP elicitation. Octomind answers it wherever a person is present:
+
+| Where the session runs | How you answer |
+|---|---|
+| Interactive CLI (`octomind run`) | A prompt in the terminal: one line per field, with type checks, then `Send? [Y/n]`. Ctrl+C cancels. URL questions show the full URL and its domain and open it only after you confirm. |
+| WebSocket client (`octomind server`) | The client receives an `elicitation` frame and answers it, when it bound with the `elicitation_v1` capability ([WebSocket server](../integration/01-websocket-server.md)). |
+| ACP client (`octomind acp`) | Forwarded as ACP `elicitation/create` when the client advertised `clientCapabilities.elicitation` ([ACP protocol](../integration/02-acp-protocol.md)). |
+
+The question is **declined** without asking anyone when nobody can answer: piped and `--format` runs, subagents and
+background tasks, clients that did not opt in, and calls Octomind cannot attribute to one session (see below). Your
+answer — accept with the values, decline, or cancel — goes back to the server unchanged.
+
+Servers on MCP 2026-07-28 return their question as part of the tool call's result, so it always reaches the right
+session. Older servers push it while the call runs: over HTTP it carries the call it belongs to, but over stdio it does
+not, so when tool calls from more than one session are waiting on the same stdio server (a daemon serving several
+clients), the question is declined rather than guessed. Octomind offers older servers protocol 2025-11-25, the first with
+URL questions.
 
 ### Auto-Bind to Roles
 
@@ -349,7 +372,7 @@ Manage MCP servers at runtime without editing config.
 | `command` | string | Executable (for stdio) |
 | `args` | array | Arguments (for stdio) |
 | `url` | string | Endpoint (for http) |
-| `timeout_seconds` | number | Per-operation timeout; tool-call progress resets this idle deadline (default: 30) |
+| `timeout_seconds` | number | Per-operation timeout; tool-call progress resets this idle deadline, and it holds while you answer a server's question (default: 30) |
 | `tools` | array | Tool filter (empty = all, supports wildcards like `"github_*"`). Also accepted by `enable` for a per-enable filter. |
 
 For a local HTTP MCP server already listening at this endpoint, call `mcp` in sequence:

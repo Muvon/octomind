@@ -1099,6 +1099,7 @@ pub fn clear_skill_capability_servers(session_id: &SessionId) {
 /// Call this when a WebSocket connection closes or a session is destroyed.
 pub fn cleanup_session(session_id: &SessionId) {
 	crate::mcp::orchestration::monitor::clear_for_session(session_id);
+	crate::mcp::elicitation::clear_session(session_id);
 	clear_notification_sender_for_session(session_id);
 	clear_session_workdir(session_id);
 	clear_session_role(session_id);

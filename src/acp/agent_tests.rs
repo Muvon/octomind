@@ -17,7 +17,9 @@ use crate::websocket::{
 	AssistantPayload, CostPayload, McpNotificationPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
 use agent_client_protocol::schema::v1::{
-	AudioContent, EmbeddedResource, ImageContent, McpServerHttp, McpServerSse, McpServerStdio, ResourceLink,
+	AudioContent, ClientCapabilities, ElicitationAcceptAction, ElicitationContentValue, ElicitationFormCapabilities,
+	ElicitationMode, ElicitationScope, ElicitationUrlCapabilities, EmbeddedResource, ImageContent, McpServerHttp,
+	McpServerSse, McpServerStdio, ResourceLink,
 };
 
 fn progress(tool_id: Option<&str>) -> ServerMessage {
@@ -1702,4 +1704,127 @@ async fn final_usage_notification_includes_gate_and_turn_timing_before_later_inf
 		.await;
 	})
 	.await;
+}
+
+fn full_support() -> ElicitationSupport {
+	ElicitationSupport { form: true, url: true }
+}
+
+fn form_params() -> rmcp::model::ElicitRequestParams {
+	serde_json::from_value(serde_json::json!({
+		"mode": "form",
+		"message": "Which branch?",
+		"requestedSchema": {
+			"type": "object",
+			"properties": { "branch": { "type": "string" } },
+			"required": ["branch"]
+		}
+	}))
+	.expect("valid MCP form params")
+}
+
+fn url_params() -> rmcp::model::ElicitRequestParams {
+	rmcp::model::ElicitRequestParams::UrlElicitationParams {
+		meta: None,
+		message: "Sign in".to_string(),
+		url: "https://example.com/oauth".to_string(),
+		elicitation_id: "elicit-1".to_string(),
+	}
+}
+
+#[test]
+fn form_elicitation_maps_to_a_session_scoped_form_request() {
+	let request =
+		elicitation_request("s1", Some("call-1".into()), form_params(), full_support()).expect("form is supported");
+	assert_eq!(request.message, "Which branch?");
+	let ElicitationMode::Form(form) = request.mode else {
+		panic!("expected form mode");
+	};
+	let ElicitationScope::Session(scope) = form.scope else {
+		panic!("expected session scope");
+	};
+	assert_eq!(&*scope.session_id.0, "s1");
+	assert_eq!(scope.tool_call_id.as_ref().map(|id| &*id.0), Some("call-1"));
+	assert!(form.requested_schema.properties.contains_key("branch"));
+	assert_eq!(
+		form.requested_schema.required.as_deref(),
+		Some(["branch".to_string()].as_slice())
+	);
+}
+
+#[test]
+fn url_elicitation_maps_to_a_url_request_without_a_tool_call() {
+	let request = elicitation_request("s1", None, url_params(), full_support()).expect("url is supported");
+	let ElicitationMode::Url(url) = request.mode else {
+		panic!("expected url mode");
+	};
+	assert_eq!(url.url, "https://example.com/oauth");
+	assert_eq!(&*url.elicitation_id.0, "elicit-1");
+	let ElicitationScope::Session(scope) = url.scope else {
+		panic!("expected session scope");
+	};
+	assert!(scope.tool_call_id.is_none());
+}
+
+#[test]
+fn url_elicitation_without_url_capability_is_declined_not_requested() {
+	let support = ElicitationSupport { form: true, url: false };
+	let declined = elicitation_request("s1", None, url_params(), support).expect_err("no request without url support");
+	assert_eq!(declined, rmcp::model::ElicitationAction::Decline);
+}
+
+#[test]
+fn accepted_content_is_preserved_in_the_mcp_result() {
+	let content = std::collections::BTreeMap::from([
+		("branch".to_string(), ElicitationContentValue::from("main")),
+		("force".to_string(), ElicitationContentValue::from(true)),
+	]);
+	let response = CreateElicitationResponse::new(ElicitationAction::Accept(
+		ElicitationAcceptAction::new().content(content),
+	));
+	let result = elicitation_result(response);
+	assert_eq!(result.action, rmcp::model::ElicitationAction::Accept);
+	assert_eq!(
+		result.content,
+		Some(serde_json::json!({ "branch": "main", "force": true }))
+	);
+}
+
+#[test]
+fn declined_and_cancelled_responses_carry_no_content() {
+	let declined = elicitation_result(CreateElicitationResponse::new(ElicitationAction::Decline));
+	assert_eq!(declined.action, rmcp::model::ElicitationAction::Decline);
+	assert!(declined.content.is_none());
+	let cancelled = elicitation_result(CreateElicitationResponse::new(ElicitationAction::Cancel));
+	assert_eq!(cancelled.action, rmcp::model::ElicitationAction::Cancel);
+	assert!(cancelled.content.is_none());
+}
+
+#[test]
+fn elicitation_without_client_capability_has_no_answerer() {
+	assert!(ElicitationSupport::from_capabilities(None).answerer().is_none());
+	// URL alone cannot render a form, so nobody answers.
+	let url_only = ElicitationCapabilities::new().url(ElicitationUrlCapabilities::new());
+	assert!(ElicitationSupport::from_capabilities(Some(&url_only))
+		.answerer()
+		.is_none());
+	let form = ElicitationCapabilities::new().form(ElicitationFormCapabilities::new());
+	let support = ElicitationSupport::from_capabilities(Some(&form));
+	assert!(matches!(support.answerer(), Some(Answerer::Client)));
+	assert!(!support.url);
+}
+
+#[tokio::test]
+async fn initialize_keeps_the_client_elicitation_capability() {
+	let agent = agent_with(Default::default());
+	let capabilities = ClientCapabilities::new().elicitation(
+		ElicitationCapabilities::new()
+			.form(ElicitationFormCapabilities::new())
+			.url(ElicitationUrlCapabilities::new()),
+	);
+	agent
+		.initialize(InitializeRequest::new(ProtocolVersion::LATEST).client_capabilities(capabilities))
+		.await
+		.expect("initialize succeeds");
+	assert_eq!(agent.elicitation_support.get(), full_support());
 }

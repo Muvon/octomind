@@ -256,27 +256,6 @@ fn multi_choice_selection_and_limits() {
 	assert!(parse_answer(&kind, "9").is_err());
 }
 
-// Serial: the count is process-global, and MCP client tests hold guards too.
-#[serial_test::serial]
-#[test]
-fn open_prompt_guard_moves_watched_count() {
-	let receiver = subscribe_open_prompts();
-	assert_eq!(*receiver.borrow(), 0);
-	let guard = OpenPromptGuard::new();
-	assert_eq!(*receiver.borrow(), 1);
-	drop(guard);
-	assert_eq!(*receiver.borrow(), 0);
-}
-
-#[tokio::test]
-async fn can_prompt_is_false_until_enabled_and_inside_non_interactive_scope() {
-	assert!(!can_prompt());
-	crate::agent::inputs::with_non_interactive(async {
-		assert!(!can_prompt());
-	})
-	.await;
-}
-
 #[test]
 fn unsupported_mode_url_without_host_is_invalid_params() {
 	let request = ElicitRequestParams::UrlElicitationParams {

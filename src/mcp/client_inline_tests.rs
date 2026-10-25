@@ -35,27 +35,42 @@ fn legacy_handshake_does_not_claim_mcp3_features() {
 	assert!(info.capabilities.roots.is_none());
 }
 
-/// Elicitation is offered on both protocol eras, but only where a person at
-/// the terminal can answer it.
-#[test]
-fn elicitation_is_advertised_only_where_a_person_can_answer() {
-	for version in [ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25] {
-		let elicitation = build_client_info(version).capabilities.elicitation;
-		assert_eq!(elicitation.is_some(), crate::session::chat::elicitation::can_prompt());
-		if let Some(elicitation) = elicitation {
-			assert!(elicitation.form.is_some());
-			assert!(elicitation.url.is_some());
-		}
-	}
-}
-
+/// Per-request capabilities speak for the calling session: elicitation is
+/// offered while someone answers for it, never inside a non-interactive scope.
+#[serial_test::serial]
 #[tokio::test]
-async fn non_interactive_scope_withholds_elicitation() {
-	crate::agent::inputs::with_non_interactive(async {
-		let info = build_client_info(ProtocolVersion::V_2026_07_28);
-		assert!(info.capabilities.elicitation.is_none());
+async fn per_request_elicitation_follows_the_sessions_answerer() {
+	let session = "client-elicitation-capability";
+	crate::session::context::with_session_id(session.to_string(), async {
+		let offered = || {
+			build_client_info(ProtocolVersion::V_2026_07_28)
+				.capabilities
+				.elicitation
+		};
+		assert!(offered().is_none(), "nobody answers yet");
+
+		crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+		let elicitation = offered().expect("a session with an answerer is offered elicitation");
+		assert!(elicitation.form.is_some());
+		assert!(elicitation.url.is_some());
+
+		crate::agent::inputs::with_non_interactive(async {
+			assert!(offered().is_none(), "a non-interactive scope never asks");
+		})
+		.await;
 	})
 	.await;
+	crate::mcp::elicitation::clear_session(session);
+}
+
+/// A legacy handshake speaks for the whole shared connection: elicitation is
+/// offered exactly when this process attaches answerers to its sessions.
+#[test]
+fn legacy_handshake_elicitation_follows_the_process() {
+	let offered = build_client_info(ProtocolVersion::V_2025_11_25)
+		.capabilities
+		.elicitation;
+	assert_eq!(offered.is_some(), crate::mcp::elicitation::accepts_elicitations());
 }
 
 #[test]
@@ -129,31 +144,34 @@ async fn dropped_cancellation_sender_is_terminal() {
 
 #[serial_test::serial]
 #[test]
-fn progress_token_binding_registers_overwrites_and_releases() {
+fn in_flight_call_binding_registers_and_releases() {
 	let token = ProgressToken(rmcp::model::NumberOrString::Number(7));
-	assert_eq!(bound_tool_id(&token), None);
+	let request_id = rmcp::model::NumberOrString::Number(7);
+	assert_eq!(bound_tool_id("srv-a", &token), None);
 
-	let binding = ProgressTokenBinding::new(&token, "call-1");
-	assert_eq!(bound_tool_id(&token), Some("call-1".to_string()));
+	let binding = InFlightCallBinding::new("srv-a", &request_id, &token, "call-1");
+	assert_eq!(bound_tool_id("srv-a", &token), Some("call-1".to_string()));
+	// Tokens and request ids are only unique per connection: the same token
+	// on another server is another call.
+	assert_eq!(bound_tool_id("srv-b", &token), None);
+	let other = InFlightCallBinding::new("srv-b", &request_id, &token, "call-2");
+	assert_eq!(bound_tool_id("srv-a", &token), Some("call-1".to_string()));
+	assert_eq!(bound_tool_id("srv-b", &token), Some("call-2".to_string()));
 
-	// A rebind of the same token replaces the tool id.
-	let rebound = ProgressTokenBinding::new(&token, "call-2");
-	assert_eq!(bound_tool_id(&token), Some("call-2".to_string()));
-
-	// Drop removes the mapping unconditionally — the binding assumes a
-	// single owner per token for the life of one tool-call round.
-	drop(rebound);
-	assert_eq!(bound_tool_id(&token), None);
 	drop(binding);
-	assert_eq!(bound_tool_id(&token), None);
+	assert_eq!(bound_tool_id("srv-a", &token), None);
+	assert_eq!(bound_tool_id("srv-b", &token), Some("call-2".to_string()));
+	drop(other);
+	assert_eq!(bound_tool_id("srv-b", &token), None);
 }
 
-fn bound_tool_id(token: &ProgressToken) -> Option<String> {
-	PROGRESS_ROUTES
+fn bound_tool_id(server: &str, token: &ProgressToken) -> Option<String> {
+	IN_FLIGHT_CALLS
 		.read()
 		.unwrap()
-		.get(token)
-		.map(|route| route.tool_id.clone())
+		.values()
+		.find(|call| call.server == server && &call.progress_token == token)
+		.map(|call| call.tool_id.clone())
 }
 
 #[test]

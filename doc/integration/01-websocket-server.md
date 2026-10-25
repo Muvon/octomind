@@ -138,7 +138,8 @@ Communication uses JSON messages over WebSocket.
   "request_id": "req-004",
   "session_id": "my-session",
   "cwd": "/home/me/projects/app",
-  "role": "developer:rust"
+  "role": "developer:rust",
+  "capabilities": ["elicitation_v1"]
 }
 ```
 
@@ -161,6 +162,10 @@ A role that fails to resolve returns an `error` and creates nothing.
 `resume` is optional: `{"stream": "<id>", "after": <stream_seq>}` from a client that was reading this session's output
 and lost its connection. See [Stream position and resume](#stream-position-and-resume).
 
+`capabilities` is optional: what this client implements. Today the only value is `elicitation_v1` — the client answers
+MCP servers' questions (see [MCP elicitation](#mcp-elicitation) below); without it the session declines
+them. Send it on every bind: it belongs to whichever connection owns the session's output.
+
 A bind with `resume` takes the session's output over: from then on every frame the session produces goes to this
 connection, including the rest of a turn another connection started. A bind without `resume` takes it only when no live
 connection owns it (the owner disconnected); otherwise output stays where it is until this connection sends a `message`
@@ -181,6 +186,12 @@ reply.
 
 ```json
 {"type": "close", "request_id": "req-006", "session_id": "my-session"}
+```
+
+**Elicitation response** — answer an MCP server's question (see [MCP elicitation](#mcp-elicitation)):
+
+```json
+{"type": "elicitation_response", "request_id": "req-007", "session_id": "my-session", "id": "e1", "result": {"action": "accept", "content": {"size": "L"}}}
 ```
 
 A long-running server keeps every bound session in memory. `close` drops the session and all of its session-scoped
@@ -274,7 +285,8 @@ message:
 ### Concurrency
 
 One connection processes one client frame at a time; frames sent while one runs wait and run in order afterwards. The
-exceptions are `cancel` and `run_log`: both are read and answered immediately, even during a running frame.
+exceptions are `cancel`, `run_log` and `elicitation_response`: all are read and answered immediately, even during a
+running frame.
 `run_log` does not acquire the parent session lock.
 Across connections, a per-session lock rejects a `message` or `command` while that session is processing another
 request or inbox work:
@@ -328,12 +340,14 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
   `request_id` on the cost frame that closes its turn.
 - `run_events_v1` — delegated `tap` runs have their own live event stream and `run_log` replay.
 - `stream_resume_v1` — session output carries `stream_seq`, and a bind may `resume` (below).
+- `elicitation_v1` — MCP servers can ask the user for input mid-tool-call (below). A client opts in by listing
+  `"capabilities": ["elicitation_v1"]` in its `session` bind; without it the session declines every elicitation.
 
 #### Stream position and resume
 
 A session loaded in the server process owns one output **stream**, identified by an opaque hex id that changes when the
 process restarts or the session is closed and loaded again. Every frame the session produces — `assistant`, `thinking`,
-`tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `evolution`, `injected`, `retry` —
+`tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `evolution`, `injected`, `retry`, `elicitation` —
 carries a top-level `stream_seq`: 1, 2, 3 … per stream, with no gaps, including frames produced while no connection is
 bound. Frames that answer one client frame on that connection only carry none: `ack`, `run_log`, the bind's own
 `status`, the `close` reply, and errors that refuse a frame before its turn starts (busy, `Session not found`, a bad
@@ -347,7 +361,7 @@ attachment, `Internal error`, malformed or invalid input).
 A successful bind's ack reports the stream and the highest `stream_seq` assigned so far (0 if none):
 
 ```json
-{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
+{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1","elicitation_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
 ```
 
 A failed bind's ack carries no `stream` or `stream_seq`. The server holds the frames of the running turn and of the turn
@@ -605,6 +619,32 @@ background agents, webhooks). These can fire **asynchronously without any user p
 followed by the normal `thinking`/`tool_use`/`tool_result`/`assistant`/`cost` stream. Clients should handle server
 frames arriving at any time, not only in direct response to a `message`.
 
+#### MCP elicitation
+
+When an MCP server sends `elicitation/create`, a client that bound with `elicitation_v1` receives an `elicitation`
+frame. `params` is MCP's own request, unchanged (`"mode":"form"` with `message` and `requestedSchema`, or URL mode).
+`tool_id` is present when the question belongs to a known tool call.
+
+```json
+{"type":"elicitation","session_id":"my-session","id":"e1","server":"forms","tool_id":"call-1","params":{"mode":"form","message":"Pick a size","requestedSchema":{"type":"object","properties":{"size":{"type":"string"}}}}}
+```
+
+Answer with an `elicitation_response` carrying the same `id` and MCP's own result (`action` is `accept`, `decline` or
+`cancel`; `content` accompanies `accept`):
+
+```json
+{"type":"elicitation_response","session_id":"my-session","id":"e1","result":{"action":"accept","content":{"size":"L"}}}
+```
+
+The response is acknowledged and applied at once, even while the session's turn is running. An `id` with no pending
+question (already answered, or its turn ended) gets an `error` frame echoing the response's `request_id`:
+`no pending elicitation '<id>'`.
+
+A question stays pending until answered. After every bind by a capable client (and after the bind's ack and any resumed
+frames) the server re-sends all unanswered `elicitation` frames, so a question asked while no capable client was attached
+still reaches one. Clients must dedupe by `id`. A client should close any open form when the turn's `cost` frame arrives:
+the question is no longer pending.
+
 ## Client Examples
 
 ### JavaScript/TypeScript
@@ -712,6 +752,7 @@ asyncio.run(main())
 | Session is busy | Wait for completion on the other connection or for background work to finish. |
 | Attachment is missing or unsupported | Check the configured media root, unique ID filename, and model modality support. |
 | Events arrive while the UI is idle | Inbox work produces unsolicited streams; keep receiving frames. |
+| An MCP tool's question is declined | Bind with `"capabilities": ["elicitation_v1"]` and answer `elicitation` frames. |
 | Binary upload is rejected | Send JSON text frames; store media out of band and send attachment references. |
 
 The server has no TLS. `OCTOMIND_SERVER_TOKEN` authenticates every client; without it, any local process can connect.
@@ -732,6 +773,8 @@ Use an authenticated TLS proxy for remote deployment and a process boundary per 
 - `session.role`, when present, must be non-empty
 - `session.resume`, when present, needs a non-empty `stream` and a numeric `after`
 - `cancel.session_id`, `close.session_id`, and `run_log.session_id` must be non-empty
+- `elicitation_response.session_id` and `elicitation_response.id` must be non-empty; `result.action` is `accept`,
+  `decline` or `cancel`
 - `run_log.run_id` must be a generated tap run ID
 
 A malformed JSON frame returns an `error` with a message starting `Invalid JSON:` and the connection **stays open** —

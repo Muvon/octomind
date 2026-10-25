@@ -146,7 +146,7 @@ octomind config --upgrade
 | `url` | Endpoint URL — **required** for `http`. |
 | `command` | Executable to launch — **required** for `stdio`. |
 | `args` | Space-separated arguments for a `stdio` command. |
-| `timeout` / `timeout_seconds` | Per-operation timeout in seconds (default `30`); tool-call progress resets the idle deadline. |
+| `timeout` / `timeout_seconds` | Per-operation timeout in seconds (default `30`); tool-call progress resets the idle deadline, and it holds while the user answers an MCP elicitation. |
 
 The name must not be blank and every option must contain `=`. Only the first `=` splits key from value, so `url=http://localhost:9000/mcp?mode=read` and `args=--mode=read` keep their values intact. Malformed input is reported and nothing is saved.
 

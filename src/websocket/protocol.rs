@@ -26,6 +26,10 @@ pub const RUN_EVENTS_CAPABILITY: &str = "run_events_v1";
 /// Session output frames carry `stream_seq`, the bind ack reports the stream
 /// position, and a bind may `resume` a stream it was reading.
 pub const STREAM_RESUME_CAPABILITY: &str = "stream_resume_v1";
+/// Sent by both sides: the server forwards MCP elicitations as `elicitation`
+/// frames, and a client that lists it in its bind `capabilities` answers them
+/// with `elicitation_response`. Without it, the session declines them.
+pub const ELICITATION_CAPABILITY: &str = "elicitation_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -66,6 +70,11 @@ pub struct SessionMessage {
 	/// over — a bind without `resume` only takes output nobody live owns.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub resume: Option<StreamResume>,
+
+	/// Capabilities this client implements, e.g. [`ELICITATION_CAPABILITY`].
+	/// Re-sent on each bind; they belong to whichever client owns the output.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub capabilities: Vec<String>,
 }
 
 /// Where a client stopped reading a session's output.
@@ -219,6 +228,17 @@ pub struct RunLogMessage {
 	pub summary: bool,
 }
 
+/// The user's answer to an `elicitation` frame, in MCP's own result shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitationResponseMessage {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+	pub session_id: String,
+	/// The `id` of the `elicitation` frame being answered.
+	pub id: String,
+	pub result: rmcp::model::ElicitResult,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunEvent {
@@ -308,6 +328,7 @@ pub enum ClientMessage {
 	Cancel(CancelMessage),
 	Close(CloseMessage),
 	RunLog(RunLogMessage),
+	ElicitationResponse(ElicitationResponseMessage),
 }
 
 impl ClientMessage {
@@ -332,6 +353,7 @@ impl ClientMessage {
 			ClientMessage::Cancel(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::Close(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::RunLog(c) => validate_request_id(&c.request_id)?,
+			ClientMessage::ElicitationResponse(c) => validate_request_id(&c.request_id)?,
 		}
 
 		match self {
@@ -389,6 +411,16 @@ impl ClientMessage {
 				}
 				Ok(())
 			}
+
+			ClientMessage::ElicitationResponse(m) => {
+				if m.session_id.trim().is_empty() {
+					return Err("session_id cannot be empty".to_string());
+				}
+				if m.id.trim().is_empty() {
+					return Err("id cannot be empty".to_string());
+				}
+				Ok(())
+			}
 		}
 	}
 
@@ -400,6 +432,7 @@ impl ClientMessage {
 			ClientMessage::Cancel(c) => c.request_id.as_deref(),
 			ClientMessage::Close(c) => c.request_id.as_deref(),
 			ClientMessage::RunLog(c) => c.request_id.as_deref(),
+			ClientMessage::ElicitationResponse(c) => c.request_id.as_deref(),
 		}
 	}
 
@@ -411,6 +444,7 @@ impl ClientMessage {
 			ClientMessage::Cancel(_) => "cancel",
 			ClientMessage::Close(_) => "close",
 			ClientMessage::RunLog(_) => "run_log",
+			ClientMessage::ElicitationResponse(_) => "elicitation_response",
 		}
 	}
 
@@ -422,6 +456,7 @@ impl ClientMessage {
 			ClientMessage::Cancel(c) => Some(c.session_id.as_str()),
 			ClientMessage::Close(c) => Some(c.session_id.as_str()),
 			ClientMessage::RunLog(c) => Some(c.session_id.as_str()),
+			ClientMessage::ElicitationResponse(c) => Some(c.session_id.as_str()),
 		}
 	}
 }
@@ -617,6 +652,23 @@ pub struct McpNotificationPayload {
 	pub tool_id: Option<String>,
 }
 
+/// An MCP server asks the user for input mid-tool-call. `params` is MCP's own
+/// `elicitation/create` request, unchanged (form `requestedSchema` or URL).
+/// Sent only to a client that bound with [`ELICITATION_CAPABILITY`]; re-sent
+/// after each bind while unanswered, so clients drop duplicates by `id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitationPayload {
+	pub session_id: String,
+	/// Answer with an `elicitation_response` carrying this id.
+	pub id: String,
+	/// MCP server asking.
+	pub server: String,
+	/// Tool call the question belongs to, when known.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub tool_id: Option<String>,
+	pub params: rmcp::model::ElicitRequestParams,
+}
+
 /// A model provider call failed with a retryable error (429, 5xx, a dropped
 /// connection) and the agent is waiting before trying it again. Sent once per
 /// retry, before the wait starts. Informational and mid-turn: it NEVER ends a
@@ -675,6 +727,8 @@ pub enum ServerMessage {
 	/// A provider call is being retried after a transient failure. Mid-turn
 	/// progress, never a turn boundary (see [`RetryPayload`]).
 	Retry(RetryPayload),
+	/// An MCP server asks the user for input (see [`ElicitationPayload`]).
+	Elicitation(ElicitationPayload),
 }
 
 impl AckPayload {
@@ -686,6 +740,7 @@ impl AckPayload {
 				SESSION_CONTROL_CAPABILITY.to_string(),
 				RUN_EVENTS_CAPABILITY.to_string(),
 				STREAM_RESUME_CAPABILITY.to_string(),
+				ELICITATION_CAPABILITY.to_string(),
 			],
 			..Self::received(msg.request_id.clone(), "session", msg.session_id.clone())
 		}

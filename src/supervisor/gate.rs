@@ -2432,7 +2432,7 @@ fn with_evidence_requests(
 			reported.retain(|existing| existing != &finding);
 		}
 		requests.push(format!(
-			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: the recorded action, output, or artifact that already shows it, cited by what it showed; else a new observation of this exact condition (never repeat an action with external effects, such as sending, posting, or purchasing, only to demonstrate it); or report the condition as unsatisfied",
+			"Condition {n} is not demonstrated by any cited observation: {} — clear it by: an observation that would come out differently if the condition did not hold — inputs where the requested behavior and the default or unchanged behavior differ, each enumerated item observed on its own. Cite a recorded one by what it showed, else make a new one (never repeat an action with external effects, such as sending, posting, or purchasing, only to demonstrate it); or report the condition as unsatisfied",
 			input.evidence_conditions[n - 1]
 		));
 	}

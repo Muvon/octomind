@@ -4042,6 +4042,11 @@ async fn elicitation_response_for_an_unknown_id_is_an_error() {
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error", "got: {error}");
 	assert_eq!(error["request_id"], "r1");
+	assert_eq!(
+		error["code"],
+		crate::websocket::protocol::ELICITATION_GONE_ERROR,
+		"clients match the code: relays may rewrite the message"
+	);
 	assert!(
 		error["message"]
 			.as_str()

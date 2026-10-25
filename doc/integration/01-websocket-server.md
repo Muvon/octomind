@@ -637,13 +637,18 @@ Answer with an `elicitation_response` carrying the same `id` and MCP's own resul
 ```
 
 The response is acknowledged and applied at once, even while the session's turn is running. An `id` with no pending
-question (already answered, or its turn ended) gets an `error` frame echoing the response's `request_id`:
-`no pending elicitation '<id>'`.
+question (already answered, or its tool call ended) gets an `error` frame echoing the response's `request_id`, with
+`"code": "elicitation_gone"` — match the code, since proxies may rewrite error text:
 
-A question stays pending until answered. After every bind by a capable client (and after the bind's ack and any resumed
-frames) the server re-sends all unanswered `elicitation` frames, so a question asked while no capable client was attached
-still reaches one. Clients must dedupe by `id`. A client should close any open form when the turn's `cost` frame arrives:
-the question is no longer pending.
+```json
+{"type":"error","message":"no pending elicitation 'e1'","request_id":"req-007","code":"elicitation_gone"}
+```
+
+Questions are answered by the connection that owns the session's output (see `resume` above), when its latest bind
+listed `elicitation_v1`; otherwise the session declines them. When a capable connection takes the output over, the
+server re-sends every unanswered `elicitation` frame after the bind's ack and any resumed frames, so clients dedupe by
+`id`. A question ends — answered as `cancel` — when its tool call ends, when no live connection owns the output any
+more, or when the session is closed. A client should close any open form when the turn's `cost` frame arrives.
 
 ## Client Examples
 

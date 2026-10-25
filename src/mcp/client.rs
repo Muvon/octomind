@@ -72,6 +72,9 @@ struct InFlightCall {
 	activity: Arc<tokio::sync::Notify>,
 	/// Questions open on the call's behalf; its timers hold while above zero.
 	awaiting_user: Arc<tokio::sync::watch::Sender<usize>>,
+	/// Cancelled when the round ends, however it ends: a question still open for
+	/// it has nobody waiting on the answer.
+	ended: tokio_util::sync::CancellationToken,
 }
 
 /// Registers a round in `IN_FLIGHT_CALLS` for its lifetime, covering the
@@ -91,6 +94,7 @@ impl InFlightCallBinding {
 			interactive: !crate::agent::inputs::in_non_interactive_scope(),
 			activity: Arc::new(tokio::sync::Notify::new()),
 			awaiting_user: Arc::new(tokio::sync::watch::Sender::new(0)),
+			ended: tokio_util::sync::CancellationToken::new(),
 		};
 		let key = (server.to_string(), request_id.clone());
 		IN_FLIGHT_CALLS.write().unwrap().insert(key.clone(), call.clone());
@@ -101,6 +105,7 @@ impl InFlightCallBinding {
 impl Drop for InFlightCallBinding {
 	fn drop(&mut self) {
 		IN_FLIGHT_CALLS.write().unwrap().remove(&self.key);
+		self.call.ended.cancel();
 	}
 }
 
@@ -310,11 +315,16 @@ impl ClientHandler for OctoClientHandler {
 			[call] => Some(call.tool_id.clone()),
 			_ => None,
 		};
+		let ended: Vec<_> = calls.iter().map(|call| call.ended.clone()).collect();
 		let _held = AwaitingUser::hold(calls);
 		tokio::select! {
 			result = crate::mcp::elicitation::ask(&self.server_name, session_id.as_deref(), tool_id.as_deref(), request) => result,
 			// The server withdrew the question, e.g. its tool call was cancelled.
 			_ = context.ct.cancelled() => Ok(ElicitResult::new(ElicitationAction::Cancel)),
+			// Every call it was asked for is over, even if the server never said so.
+			_ = futures::future::join_all(ended.iter().map(|ended| ended.cancelled())) => {
+				Ok(ElicitResult::new(ElicitationAction::Cancel))
+			}
 		}
 	}
 

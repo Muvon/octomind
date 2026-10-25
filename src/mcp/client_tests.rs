@@ -421,6 +421,8 @@ async fn pushed_elicitation_reaches_the_calling_sessions_client() {
 async fn pushed_elicitation_with_calls_from_two_sessions_is_declined() {
 	let name = unique_server("elicit-ambiguous");
 	let mut peer = serve_in_memory(&name);
+	// Captures the decline's observer notification, so it is not left buffered.
+	let mut tap = NotificationTap::install();
 	let sessions = ["client-elicit-a", "client-elicit-b"];
 	for session in sessions {
 		crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
@@ -430,6 +432,7 @@ async fn pushed_elicitation_with_calls_from_two_sessions_is_declined() {
 
 	push_elicitation(&peer, 79, "Which session asked?");
 	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Decline);
+	tap.next(&name, "elicitation/requested").await;
 
 	drop((first, second));
 	for session in sessions {
@@ -444,12 +447,15 @@ async fn pushed_elicitation_with_calls_from_two_sessions_is_declined() {
 async fn pushed_elicitation_for_a_non_interactive_call_is_declined() {
 	let name = unique_server("elicit-subagent");
 	let mut peer = serve_in_memory(&name);
+	// Captures the decline's observer notification, so it is not left buffered.
+	let mut tap = NotificationTap::install();
 	let session = "client-elicit-subagent";
 	crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
 	let call = crate::agent::inputs::with_non_interactive(in_flight_call(&name, session, 3, "call-sub")).await;
 
 	push_elicitation(&peer, 80, "Allowed?");
 	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Decline);
+	tap.next(&name, "elicitation/requested").await;
 
 	drop(call);
 	forget_session(session);
@@ -484,6 +490,37 @@ async fn ending_a_session_cancels_its_open_question() {
 	);
 
 	drop(call);
+}
+
+/// A question pushed for a tool call ends with that call, even when the server
+/// never withdraws it: nobody waits on the answer any more.
+#[serial_test::serial]
+#[tokio::test]
+async fn ending_the_tool_call_withdraws_its_question() {
+	let name = unique_server("elicit-call-end");
+	let mut peer = serve_in_memory(&name);
+	let session = "client-elicit-call-end";
+	let (frames_tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::set_notification_sender_for_session(&session.to_string(), frames_tx);
+	crate::mcp::elicitation::set_answerer(session, Some(crate::mcp::elicitation::Answerer::Client));
+	let call = in_flight_call(&name, session, 6, "call-ended").await;
+
+	push_elicitation(&peer, 82, "Still needed?");
+	let frame = tokio::time::timeout(WAIT, frames.recv())
+		.await
+		.expect("the question must reach the session")
+		.expect("session channel must stay open");
+	let crate::websocket::ServerMessage::Elicitation(question) = frame else {
+		panic!("expected an elicitation frame, got {frame:?}");
+	};
+	drop(call);
+	assert_eq!(next_elicit_result(&mut peer).await.action, ElicitationAction::Cancel);
+	assert!(
+		!crate::mcp::elicitation::resolve(session, &question.id, ElicitResult::new(ElicitationAction::Accept)),
+		"a withdrawn question must not accept an answer"
+	);
+
+	forget_session(session);
 }
 
 #[serial_test::serial]

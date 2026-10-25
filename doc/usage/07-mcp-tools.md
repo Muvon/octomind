@@ -106,7 +106,9 @@ missing detail, or open a sign-in page. This is MCP elicitation. Octomind answer
 
 The question is **declined** without asking anyone when nobody can answer: piped and `--format` runs, subagents and
 background tasks, clients that did not opt in, and calls Octomind cannot attribute to one session (see below). Your
-answer — accept with the values, decline, or cancel — goes back to the server unchanged.
+answer — accept with the values, decline, or cancel — goes back to the server unchanged. An open question ends as
+`cancel` when its tool call ends, when the session closes, or when the WebSocket client answering it disconnects without
+another taking over.
 
 Servers on MCP 2026-07-28 return their question as part of the tool call's result, so it always reaches the right
 session. Older servers push it while the call runs: over HTTP it carries the call it belongs to, but over stdio it does

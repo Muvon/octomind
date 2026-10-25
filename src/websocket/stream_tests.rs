@@ -59,7 +59,7 @@ fn stream_id(stream: &SessionStream) -> String {
 fn resume(stream: &SessionStream, resume: Option<StreamResume>) -> Vec<serde_json::Value> {
 	let (sink, mut rx) = WsSender::channel();
 	stream
-		.attach(&sink, bind_ack(), resume.as_ref(), &greeting())
+		.attach(&sink, bind_ack(), resume.as_ref(), &greeting(), false)
 		.expect("attach");
 	texts(&mut rx).iter().map(|text| json(text)).collect()
 }
@@ -73,9 +73,9 @@ fn at(stream: &SessionStream, after: u64) -> Option<StreamResume> {
 
 #[test]
 fn frames_carry_a_gapless_stream_seq_beside_their_own_fields() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	let (sink, mut rx) = WsSender::channel();
-	stream.attach(&sink, bind_ack(), None, &greeting()).unwrap();
+	stream.attach(&sink, bind_ack(), None, &greeting(), false).unwrap();
 	texts(&mut rx);
 
 	for content in ["one", "two", "three"] {
@@ -96,7 +96,7 @@ fn frames_carry_a_gapless_stream_seq_beside_their_own_fields() {
 
 #[test]
 fn the_bind_ack_reports_the_stream_and_carries_resumed_only_when_asked() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	let fresh = resume(&stream, None);
 	assert_eq!(fresh[0]["type"], "ack");
 	assert_eq!(fresh[0]["request_id"], "b1");
@@ -119,7 +119,7 @@ fn the_bind_ack_reports_the_stream_and_carries_resumed_only_when_asked() {
 	assert_eq!(again[0]["stream"], id, "one stream while the session stays loaded");
 	assert_eq!(again[0]["stream_seq"], 1);
 	assert_ne!(
-		SessionStream::new().0.lock().unwrap().id,
+		SessionStream::new("s1").0.lock().unwrap().id,
 		id,
 		"every load mints its own stream"
 	);
@@ -127,7 +127,7 @@ fn the_bind_ack_reports_the_stream_and_carries_resumed_only_when_asked() {
 
 #[test]
 fn frames_emitted_while_unbound_are_held_and_resumed() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	stream.emit(&assistant("one")).unwrap();
 	stream.emit(&assistant("two")).unwrap();
 
@@ -142,9 +142,9 @@ fn frames_emitted_while_unbound_are_held_and_resumed() {
 
 #[test]
 fn a_resume_replays_the_missed_frames_byte_identical_and_takes_the_live_rest() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	let (first, mut first_rx) = WsSender::channel();
-	stream.attach(&first, bind_ack(), None, &greeting()).unwrap();
+	stream.attach(&first, bind_ack(), None, &greeting(), false).unwrap();
 	texts(&mut first_rx);
 	for content in ["one", "two", "three", "four"] {
 		stream.emit(&assistant(content)).unwrap();
@@ -153,7 +153,7 @@ fn a_resume_replays_the_missed_frames_byte_identical_and_takes_the_live_rest() {
 
 	let (second, mut second_rx) = WsSender::channel();
 	stream
-		.attach(&second, bind_ack(), at(&stream, 2).as_ref(), &greeting())
+		.attach(&second, bind_ack(), at(&stream, 2).as_ref(), &greeting(), false)
 		.unwrap();
 	stream.emit(&assistant("five")).unwrap();
 
@@ -172,7 +172,7 @@ fn a_resume_replays_the_missed_frames_byte_identical_and_takes_the_live_rest() {
 
 #[test]
 fn a_resume_up_to_the_last_frame_replays_nothing_but_is_honoured() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	stream.emit(&assistant("one")).unwrap();
 	let frames = resume(&stream, at(&stream, 1));
 	assert_eq!(frames[0]["resumed"], true);
@@ -182,7 +182,7 @@ fn a_resume_up_to_the_last_frame_replays_nothing_but_is_honoured() {
 
 #[test]
 fn a_resume_of_another_stream_or_an_unknown_point_is_refused_without_replay() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	stream.emit(&assistant("one")).unwrap();
 
 	let other = resume(
@@ -203,7 +203,7 @@ fn a_resume_of_another_stream_or_an_unknown_point_is_refused_without_replay() {
 
 #[test]
 fn a_new_turn_keeps_only_the_turn_before_it() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	stream.begin_turn();
 	stream.emit(&assistant("turn one")).unwrap();
 	stream.begin_turn();
@@ -227,7 +227,7 @@ fn a_new_turn_keeps_only_the_turn_before_it() {
 
 #[test]
 fn held_frames_are_bounded_by_count_oldest_first() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	for _ in 0..=MAX_HELD_FRAMES {
 		stream.emit(&assistant("x")).unwrap();
 	}
@@ -239,7 +239,7 @@ fn held_frames_are_bounded_by_count_oldest_first() {
 
 #[test]
 fn held_frames_are_bounded_by_bytes_oldest_first() {
-	let stream = SessionStream::new();
+	let stream = SessionStream::new("s1");
 	let large = "x".repeat(MAX_HELD_BYTES / 2);
 	for _ in 0..3 {
 		stream.emit(&assistant(&large)).unwrap();
@@ -255,7 +255,7 @@ fn a_gone_connection_unbinds_and_its_frames_wait_for_the_next_bind() {
 	let streams = Streams::default();
 	let stream = streams.open("s1");
 	let (sink, mut rx) = WsSender::channel();
-	stream.attach(&sink, bind_ack(), None, &greeting()).unwrap();
+	stream.attach(&sink, bind_ack(), None, &greeting(), false).unwrap();
 	texts(&mut rx);
 
 	streams.detach(&sink);
@@ -263,7 +263,7 @@ fn a_gone_connection_unbinds_and_its_frames_wait_for_the_next_bind() {
 	assert!(texts(&mut rx).is_empty(), "a detached connection gets nothing");
 
 	let (other, mut other_rx) = WsSender::channel();
-	stream.attach(&other, bind_ack(), None, &greeting()).unwrap();
+	stream.attach(&other, bind_ack(), None, &greeting(), false).unwrap();
 	texts(&mut other_rx);
 	stream.emit(&assistant("adopted")).unwrap();
 	assert_eq!(
@@ -273,7 +273,7 @@ fn a_gone_connection_unbinds_and_its_frames_wait_for_the_next_bind() {
 	);
 
 	let (late, mut late_rx) = WsSender::channel();
-	stream.attach(&late, bind_ack(), None, &greeting()).unwrap();
+	stream.attach(&late, bind_ack(), None, &greeting(), false).unwrap();
 	assert_eq!(texts(&mut late_rx).len(), 2, "ack and greeting only");
 	stream.emit(&assistant("still the owner's")).unwrap();
 	assert!(
@@ -297,4 +297,71 @@ fn a_gone_connection_unbinds_and_its_frames_wait_for_the_next_bind() {
 		stream_id(&stream),
 		"a closed session loads under a new stream"
 	);
+}
+
+/// MCP elicitations are answered by the connection that owns the output, when
+/// it bound with `elicitation_v1`; with no live owner, nobody answers.
+#[test]
+fn the_output_owner_answers_elicitations() {
+	use crate::mcp::elicitation::{answerer, Answerer};
+	let session = "stream-elicitation-owner";
+	let stream = SessionStream::new(session);
+	let (capable, mut capable_rx) = WsSender::channel();
+	stream.attach(&capable, bind_ack(), None, &greeting(), true).unwrap();
+	texts(&mut capable_rx);
+	assert_eq!(answerer(session), Some(Answerer::Client));
+
+	let (plain, _plain_rx) = WsSender::channel();
+	stream.attach(&plain, bind_ack(), None, &greeting(), false).unwrap();
+	assert_eq!(
+		answerer(session),
+		Some(Answerer::Client),
+		"a plain bind leaves a live owner, and its answering, in place"
+	);
+
+	stream.own(&plain);
+	assert_eq!(answerer(session), None, "output moved to a client that cannot answer");
+	stream.own(&capable);
+	assert_eq!(answerer(session), Some(Answerer::Client));
+
+	stream.detach(&capable);
+	assert_eq!(answerer(session), None, "nobody answers once the owner is gone");
+}
+
+/// A question waits for its live owner: losing it ends the question instead of
+/// holding the tool call forever.
+#[serial_test::serial]
+#[tokio::test]
+async fn losing_the_output_owner_cancels_open_questions() {
+	let session = "stream-elicitation-owner-gone";
+	let stream = SessionStream::new(session);
+	let (capable, _capable_rx) = WsSender::channel();
+	stream.attach(&capable, bind_ack(), None, &greeting(), true).unwrap();
+	// The session's notification channel, where its questions go out.
+	let (frames_tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::set_notification_sender_for_session(&session.to_string(), frames_tx);
+	let params = rmcp::model::ElicitRequestParams::FormElicitationParams {
+		meta: None,
+		message: "Still there?".to_string(),
+		requested_schema: serde_json::from_value(serde_json::json!({
+			"type": "object",
+			"properties": { "ok": { "type": "boolean" } }
+		}))
+		.expect("valid schema fixture"),
+	};
+	let asker = tokio::spawn(async move { crate::mcp::elicitation::ask("srv", Some(session), None, params).await });
+	let asked = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv()).await;
+	assert!(
+		matches!(asked, Ok(Some(ServerMessage::Elicitation(_)))),
+		"the question must go out first"
+	);
+
+	stream.detach(&capable);
+	let answer = tokio::time::timeout(std::time::Duration::from_secs(2), asker)
+		.await
+		.expect("the question must end with its owner")
+		.expect("asker task must not panic")
+		.expect("a cancelled question is not an error");
+	assert_eq!(answer.action, rmcp::model::ElicitationAction::Cancel);
+	crate::session::context::clear_notification_sender_for_session(&session.to_string());
 }

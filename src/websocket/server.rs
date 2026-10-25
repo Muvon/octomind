@@ -608,12 +608,14 @@ async fn handle_run_log(request: super::protocol::RunLogMessage, sender: &WsSend
 }
 
 /// Hand the user's answer to the MCP call waiting on it. An id nobody waits on
-/// (answered already, or the turn ended) is the client's error to hear about.
+/// (answered already, or its tool call ended) is the client's error to hear about.
 async fn handle_elicitation_response(response: ElicitationResponseMessage, sender: &WsSender) -> Result<()> {
 	if !crate::mcp::elicitation::resolve(&response.session_id, &response.id, response.result) {
-		let error =
-			ServerMessage::error_for_request(format!("no pending elicitation '{}'", response.id), response.request_id);
-		send_message(sender, &error).await?;
+		send_message(
+			sender,
+			&ServerMessage::elicitation_gone(&response.id, response.request_id),
+		)
+		.await?;
 	}
 	Ok(())
 }
@@ -1236,20 +1238,13 @@ async fn handle_session_message(
 
 	// Ack, resumed frames and greeting reach this connection before any live
 	// frame of the session does — including those of a turn already running.
+	// Whether it answers MCP elicitations follows output ownership (see
+	// `SessionStream::attach`).
+	let answers_elicitation = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
 	ctx.server
 		.streams
 		.open(&session_id)
-		.attach(ws_sender, ack, msg.resume.as_ref(), &greeting)?;
-
-	// Questions asked while no capable client was attached wait for this bind.
-	let elicitation_capable = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
-	crate::mcp::elicitation::set_answerer(
-		&session_id,
-		elicitation_capable.then_some(crate::mcp::elicitation::Answerer::Client),
-	);
-	if elicitation_capable {
-		crate::mcp::elicitation::resend_pending(&session_id);
-	}
+		.attach(ws_sender, ack, msg.resume.as_ref(), &greeting, answers_elicitation)?;
 
 	// Spawn independent background task that monitors schedules/inbox
 	// and processes messages automatically without waiting for user prompts.

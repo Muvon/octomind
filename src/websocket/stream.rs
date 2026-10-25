@@ -44,6 +44,7 @@ struct HeldFrame {
 
 struct StreamState {
 	id: String,
+	session_id: String,
 	last_seq: u64,
 	/// Frames of the turn running now and of the one before it, oldest first,
 	/// exactly as they were sent.
@@ -55,6 +56,8 @@ struct StreamState {
 	/// The connection that owns the output (see `attach` and `own`). None until
 	/// one does, and again once it is gone: frames are then only held.
 	sink: Option<WsSender>,
+	/// Connections whose latest bind of this session listed `elicitation_v1`.
+	answering: Vec<WsSender>,
 }
 
 impl StreamState {
@@ -85,9 +88,29 @@ impl StreamState {
 		if let Some(sink) = &self.sink {
 			if sink.send(Message::text(text.to_owned())).is_err() {
 				crate::log_debug!("Session stream {}: bound connection is gone", self.id);
-				self.sink = None;
+				self.set_owner(None);
 			}
 		}
+	}
+
+	/// The session's MCP elicitations are answered by the connection that owns
+	/// its output, when it bound with `elicitation_v1`. With no live owner, open
+	/// questions end as cancelled instead of holding their tool calls. Returns
+	/// whether the new owner answers, so the caller can re-send open questions.
+	fn set_owner(&mut self, sink: Option<WsSender>) -> bool {
+		let answers = sink
+			.as_ref()
+			.is_some_and(|sink| self.answering.iter().any(|answering| answering.same_channel(sink)));
+		if sink.is_none() {
+			crate::mcp::elicitation::clear_session(&self.session_id);
+		} else {
+			crate::mcp::elicitation::set_answerer(
+				&self.session_id,
+				answers.then_some(crate::mcp::elicitation::Answerer::Client),
+			);
+		}
+		self.sink = sink;
+		answers
 	}
 }
 
@@ -98,14 +121,16 @@ impl StreamState {
 pub(crate) struct SessionStream(Mutex<StreamState>);
 
 impl SessionStream {
-	fn new() -> Self {
+	fn new(session_id: &str) -> Self {
 		Self(Mutex::new(StreamState {
 			id: uuid::Uuid::new_v4().simple().to_string(),
+			session_id: session_id.to_string(),
 			last_seq: 0,
 			held: VecDeque::new(),
 			held_bytes: 0,
 			turn_start: 1,
 			sink: None,
+			answering: Vec::new(),
 		}))
 	}
 
@@ -135,13 +160,14 @@ impl SessionStream {
 	/// A client frame starts a turn: the connection that sent it reads that
 	/// turn, as it does any later one until another connection takes over.
 	pub(crate) fn own(&self, sink: &WsSender) {
-		self.0.lock().unwrap().sink = Some(sink.clone());
+		self.0.lock().unwrap().set_owner(Some(sink.clone()));
 	}
 
 	/// Bind `sink` to the stream. Sends the bind's ack — completed with the
 	/// stream position and, for a resume, its outcome — then every frame the
 	/// resume asked for, byte-identical, then `greeting`, all before any live
-	/// frame can reach `sink`.
+	/// frame can reach `sink`. When the binding connection owns the output and
+	/// `answers_elicitation`, open questions are re-sent after all of that.
 	///
 	/// A bind that resumes always takes the output over. One that does not takes
 	/// it only when no live connection owns it, so a client re-binding ahead of
@@ -153,31 +179,43 @@ impl SessionStream {
 		mut ack: AckPayload,
 		resume: Option<&StreamResume>,
 		greeting: &ServerMessage,
+		answers_elicitation: bool,
 	) -> Result<()> {
-		let mut state = self.0.lock().unwrap();
-		let replay_after = resume
-			.filter(|resume| resume.stream == state.id && state.holds_after(resume.after))
-			.map(|resume| resume.after);
-		ack.stream = Some(state.id.clone());
-		ack.stream_seq = Some(state.last_seq);
-		ack.resumed = resume.map(|_| replay_after.is_some());
-		sink.send(Message::text(serde_json::to_string(&ServerMessage::Ack(ack))?))?;
-		if let Some(after) = replay_after {
-			for frame in state.held.iter().filter(|frame| frame.seq > after) {
-				sink.send(Message::text(frame.text.clone()))?;
+		let (resend_questions, session_id) = {
+			let mut state = self.0.lock().unwrap();
+			let replay_after = resume
+				.filter(|resume| resume.stream == state.id && state.holds_after(resume.after))
+				.map(|resume| resume.after);
+			ack.stream = Some(state.id.clone());
+			ack.stream_seq = Some(state.last_seq);
+			ack.resumed = resume.map(|_| replay_after.is_some());
+			sink.send(Message::text(serde_json::to_string(&ServerMessage::Ack(ack))?))?;
+			if let Some(after) = replay_after {
+				for frame in state.held.iter().filter(|frame| frame.seq > after) {
+					sink.send(Message::text(frame.text.clone()))?;
+				}
 			}
-		}
-		sink.send(Message::text(serde_json::to_string(greeting)?))?;
-		if resume.is_some() || state.sink.is_none() {
-			state.sink = Some(sink.clone());
+			sink.send(Message::text(serde_json::to_string(greeting)?))?;
+			state.answering.retain(|answering| !answering.same_channel(sink));
+			if answers_elicitation {
+				state.answering.push(sink.clone());
+			}
+			let owns = resume.is_some() || state.sink.as_ref().is_none_or(|owner| owner.same_channel(sink));
+			(owns && state.set_owner(Some(sink.clone())), state.session_id.clone())
+		};
+		// After the lock: re-sent questions travel the session's notification
+		// channel, which emits on this stream.
+		if resend_questions {
+			crate::mcp::elicitation::resend_pending(&session_id);
 		}
 		Ok(())
 	}
 
 	fn detach(&self, sink: &WsSender) {
 		let mut state = self.0.lock().unwrap();
+		state.answering.retain(|answering| !answering.same_channel(sink));
 		if state.sink.as_ref().is_some_and(|bound| bound.same_channel(sink)) {
-			state.sink = None;
+			state.set_owner(None);
 		}
 	}
 }
@@ -194,7 +232,7 @@ impl Streams {
 		Arc::clone(
 			streams
 				.entry(session_id.to_string())
-				.or_insert_with(|| Arc::new(SessionStream::new())),
+				.or_insert_with(|| Arc::new(SessionStream::new(session_id))),
 		)
 	}
 

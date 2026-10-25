@@ -559,7 +559,14 @@ pub struct ErrorPayload {
 	pub message: String,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub request_id: Option<String>,
+	/// Machine-readable reason a client can act on; relays may rewrite `message`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub code: Option<String>,
 }
+
+/// `code` of the error answering an `elicitation_response` whose question is
+/// no longer pending (answered already, or its tool call ended).
+pub const ELICITATION_GONE_ERROR: &str = "elicitation_gone";
 
 /// Acknowledges a valid client frame. Sent at once for every frame but a
 /// `session` bind, whose ack is sent once the session is bound — so it can say
@@ -765,11 +772,25 @@ impl ServerMessage {
 		ServerMessage::Error(ErrorPayload {
 			message,
 			request_id: None,
+			code: None,
 		})
 	}
 
 	pub fn error_for_request(message: String, request_id: Option<String>) -> Self {
-		ServerMessage::Error(ErrorPayload { message, request_id })
+		ServerMessage::Error(ErrorPayload {
+			message,
+			request_id,
+			code: None,
+		})
+	}
+
+	/// The answer to an `elicitation_response` for a question no longer pending.
+	pub fn elicitation_gone(id: &str, request_id: Option<String>) -> Self {
+		ServerMessage::Error(ErrorPayload {
+			message: format!("no pending elicitation '{id}'"),
+			request_id,
+			code: Some(ELICITATION_GONE_ERROR.to_string()),
+		})
 	}
 
 	pub fn ack(client_msg: &ClientMessage) -> Self {

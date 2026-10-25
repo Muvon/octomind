@@ -505,11 +505,13 @@ rules.
 An external server's `elicitation/create` is answered by whoever answers for the session that made the tool call
 (`src/mcp/elicitation.rs`). Each entry point registers that answerer with `set_answerer`, because it differs per
 entry point and per client: the interactive CLI registers `Answerer::Terminal` (the reedline prompt in
-`src/session/chat/elicitation.rs`); the WebSocket server registers `Answerer::Client` on a bind that lists
-`elicitation_v1`; the ACP agent registers it when the client's `initialize` advertised `clientCapabilities.elicitation`.
-A `Client` question goes out as `ServerMessage::Elicitation` on the session's notification channel (ACP translates it to
-its own `elicitation/create`), waits in a pending table, and is answered through `resolve`. `cleanup_session` resolves a
-session's open questions as `cancel`; sessions with no answerer decline.
+`src/session/chat/elicitation.rs`); the WebSocket server lets it follow output ownership (`SessionStream::set_owner` in
+`src/websocket/stream.rs`): `Answerer::Client` while the owning connection's bind listed `elicitation_v1`, none
+otherwise, and with no live owner the session's open questions end; the ACP agent registers `Client` when the client's
+`initialize` advertised `clientCapabilities.elicitation`. A `Client` question goes out as `ServerMessage::Elicitation`
+on the session's notification channel (ACP translates it to its own `elicitation/create`), waits in a pending table, and
+is answered through `resolve`. `cleanup_session` resolves a session's open questions as `cancel`; sessions with no
+answerer decline.
 
 Routing a question to its session (`calls_awaiting_elicitation` in `src/mcp/client.rs`) uses `IN_FLIGHT_CALLS`, the
 registry of in-flight `tools/call` rounds keyed by server and request id:
@@ -522,7 +524,8 @@ registry of in-flight `tools/call` rounds keyed by server and request id:
   every in-flight call on that server belongs to one session, otherwise declined.
 
 A call made inside `with_non_interactive` (subagents, detached MCP tasks) is never asked on. While a question is open,
-its call's `awaiting_user` counter holds both the idle deadline and the absolute cap. Capabilities follow the same rule:
+its call's `awaiting_user` counter holds both the idle deadline and the absolute cap; when the round ends its `ended`
+token withdraws the question even if the server never cancels it. Capabilities follow the same rule:
 per-request capabilities offer `elicitation` only when the calling session has an answerer; a legacy handshake, which
 speaks for the whole shared connection, offers it when the process calls `accept_elicitations` (interactive CLI,
 `octomind server`, `octomind acp`). Legacy servers are offered protocol 2025-11-25.

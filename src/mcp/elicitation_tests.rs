@@ -52,17 +52,31 @@ async fn next_question(frames: &mut mpsc::UnboundedReceiver<ServerMessage>) -> E
 	}
 }
 
+// Serial: it registers the CLI-global notification sender, so its declines'
+// observer notifications are captured instead of left buffered for others.
+#[serial_test::serial]
 #[tokio::test]
 async fn without_a_session_or_answerer_the_question_is_declined() {
-	let declined = ask("srv", None, None, form("anyone?"))
+	let (observer, mut observed) = mpsc::unbounded_channel();
+	super::super::process::set_notification_sender(None, observer);
+
+	let declined = ask("srv-decline", None, None, form("anyone?"))
+		.await
+		.expect("declining is not an error");
+	assert_eq!(declined.action, ElicitationAction::Decline);
+	let declined = ask("srv-decline", Some("elicitation-unanswered"), None, form("anyone?"))
 		.await
 		.expect("declining is not an error");
 	assert_eq!(declined.action, ElicitationAction::Decline);
 
-	let declined = ask("srv", Some("elicitation-unanswered"), None, form("anyone?"))
-		.await
-		.expect("declining is not an error");
-	assert_eq!(declined.action, ElicitationAction::Decline);
+	let surfaced = std::iter::from_fn(|| observed.try_recv().ok())
+		.filter(|message| {
+			matches!(message, ServerMessage::McpNotification(p)
+				if p.server == "srv-decline" && p.method == "elicitation/requested")
+		})
+		.count();
+	assert_eq!(surfaced, 2, "observers still see each declined question");
+	super::super::process::clear_notification_sender(None);
 }
 
 #[test]

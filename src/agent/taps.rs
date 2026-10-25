@@ -33,11 +33,18 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, SystemTime};
 
 /// The built-in default tap — always present as the last fallback.
 pub const DEFAULT_TAP: &str = "muvon/tap";
+
+/// How often a GitHub tap is pulled automatically. Every agent start reads the
+/// taps, and a delegated specialist has seconds to answer its parent's
+/// handshake, so the pull runs at most once per interval for every process
+/// sharing the data dir: git's own `FETCH_HEAD` marks the last one.
+const TAP_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// A tap entry: either a GitHub repo or a local path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,7 +133,21 @@ fn read_taps_file() -> Result<TapsFile> {
 fn write_taps_file(taps: &TapsFile) -> Result<()> {
 	let path = taps_file_path()?;
 	let content = toml::to_string_pretty(taps).context("Failed to serialize taps")?;
-	fs::write(&path, content).context(format!("Failed to write taps file: {}", path.display()))
+	fs::write(&path, content).context(format!("Failed to write taps file: {}", path.display()))?;
+	crate::agent::registry::invalidate_capability_catalog();
+	Ok(())
+}
+
+/// Whether a GitHub tap is due for its automatic pull. A clone that has never
+/// fetched has no `FETCH_HEAD`, so its first refresh is due at once.
+fn refresh_due(tap_dir: &Path) -> bool {
+	match fs::metadata(tap_dir.join(".git").join("FETCH_HEAD")).and_then(|meta| meta.modified()) {
+		// A stamp from the future (clock skew on a network mount) cannot prove freshness.
+		Ok(fetched_at) => SystemTime::now()
+			.duration_since(fetched_at)
+			.map_or(true, |age| age >= TAP_REFRESH_INTERVAL),
+		Err(_) => true,
+	}
 }
 
 /// Expand a path that may contain `~` or `./`.
@@ -185,7 +206,7 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 	for tap in &file.taps {
 		if tap.local_path.is_none() {
 			if let Ok(tap_dir) = tap.local_dir() {
-				if tap_dir.exists() {
+				if tap_dir.exists() && refresh_due(&tap_dir) {
 					// Silently pull updates — don't block on failure
 					let _ = git_pull(&tap_dir);
 				}
@@ -212,7 +233,7 @@ pub fn ensure_default_tap() -> Result<()> {
 		let url = default_tap.github_url();
 		crate::log_info!("Cloning default tap {}...", DEFAULT_TAP);
 		git_clone(&url, &tap_dir)?;
-	} else {
+	} else if refresh_due(&tap_dir) {
 		// Silently pull updates — don't block on failure
 		let _ = git_pull(&tap_dir);
 	}
@@ -440,6 +461,7 @@ fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 			}
 		);
 	}
+	crate::agent::registry::invalidate_capability_catalog();
 	Ok(())
 }
 
@@ -456,6 +478,7 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 		.output()
 		.context("Failed to run git pull")?;
 
+	crate::agent::registry::invalidate_capability_catalog();
 	if !output.status.success() {
 		crate::log_debug!(
 			"Failed to update tap at {}: {}",

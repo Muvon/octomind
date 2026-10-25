@@ -27,7 +27,7 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::config::registry::RegistryConfig;
 
@@ -604,24 +604,68 @@ pub fn parse_capability_toml(cap_ref: &str, overrides: &HashMap<String, String>)
 	Ok(resolved)
 }
 
+/// How long a process reuses its capability list before reading the taps again.
+/// Octomind's own tap changes clear the list at once; this bounds how long a
+/// change written from outside the process (the cloud editing a personal tap)
+/// stays unseen.
+const CAPABILITY_CATALOG_TTL: Duration = Duration::from_secs(60);
+
+/// The installed capabilities as last read, and what they were read for.
+struct CapabilityCatalog {
+	read_at: Instant,
+	tap_dirs: Vec<PathBuf>,
+	overrides: HashMap<String, String>,
+	capabilities: Vec<ResolvedCapability>,
+}
+
+/// Reading every capability costs a file open per capability per tap, which is
+/// seconds when the data dir is a network mount. Startup, every turn's
+/// auto-activation and `capability discover` all need the same list.
+static CAPABILITY_CATALOG: parking_lot::Mutex<Option<CapabilityCatalog>> = parking_lot::const_mutex(None);
+
 /// Enumerate every capability installed across all configured taps.
 ///
-/// Walks each tap's `capabilities/` directory, collects unique capability names
-/// (first-tap-wins precedence — same as `parse_capability_toml`), and returns
-/// the resolved metadata for each. Used at runtime by the `capability` tool to
-/// answer `list` and `discover` queries without the agent needing to know
-/// which tap provides what.
+/// Collects unique capability names across each tap's `capabilities/`
+/// directory (first-tap-wins precedence — same as `parse_capability_toml`) and
+/// returns the resolved metadata for each, sorted by name. Used at runtime by
+/// the `capability` tool to answer `list` and `discover` queries without the
+/// agent needing to know which tap provides what. The list is read once per
+/// [`CAPABILITY_CATALOG_TTL`] and shared by every caller in the process.
 pub fn list_all_capabilities(overrides: &HashMap<String, String>) -> Result<Vec<ResolvedCapability>> {
 	let taps = crate::agent::taps::get_taps().context("Failed to load taps for capability enumeration")?;
+	let tap_dirs: Vec<PathBuf> = taps.iter().filter_map(|tap| tap.local_dir().ok()).collect();
 
+	// Held while reading, so concurrent callers wait for one read instead of
+	// each walking the taps.
+	let mut catalog = CAPABILITY_CATALOG.lock();
+	if let Some(current) = catalog
+		.as_ref()
+		.filter(|c| c.read_at.elapsed() < CAPABILITY_CATALOG_TTL && c.tap_dirs == tap_dirs && &c.overrides == overrides)
+	{
+		return Ok(current.capabilities.clone());
+	}
+
+	let capabilities = read_all_capabilities(&tap_dirs, overrides);
+	*catalog = Some(CapabilityCatalog {
+		read_at: Instant::now(),
+		tap_dirs,
+		overrides: overrides.clone(),
+		capabilities: capabilities.clone(),
+	});
+	Ok(capabilities)
+}
+
+/// Drop the shared capability list so the next caller reads the taps again.
+/// Called after octomind itself changes a tap (add, remove, clone, pull).
+pub fn invalidate_capability_catalog() {
+	*CAPABILITY_CATALOG.lock() = None;
+}
+
+fn read_all_capabilities(tap_dirs: &[PathBuf], overrides: &HashMap<String, String>) -> Vec<ResolvedCapability> {
 	let mut seen_names: HashSet<String> = HashSet::new();
 	let mut resolved: Vec<ResolvedCapability> = Vec::new();
 
-	for tap in &taps {
-		let tap_root = match tap.local_dir() {
-			Ok(d) => d,
-			Err(_) => continue,
-		};
+	for tap_root in tap_dirs {
 		let cap_dir = tap_root.join("capabilities");
 		if !cap_dir.is_dir() {
 			continue;
@@ -649,7 +693,7 @@ pub fn list_all_capabilities(overrides: &HashMap<String, String>) -> Result<Vec<
 	}
 
 	resolved.sort_by(|a, b| a.name.cmp(&b.name));
-	Ok(resolved)
+	resolved
 }
 
 /// Prefix that points a capability reference at the built-in baseline tap.

@@ -53,3 +53,18 @@ fn test_expand_path() {
 	let cwd = std::env::current_dir().expect("cwd");
 	assert_eq!(expand_path("./rel").expect("relative"), cwd.join("rel"));
 }
+
+#[test]
+fn tap_refresh_is_due_only_when_the_last_fetch_is_older_than_the_interval() {
+	let tap = tempfile::tempdir().expect("tempdir");
+	assert!(refresh_due(tap.path()), "a clone that never fetched refreshes at once");
+
+	let git = tap.path().join(".git");
+	fs::create_dir_all(&git).expect("create .git");
+	let fetch_head = fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
+	assert!(!refresh_due(tap.path()), "a fresh fetch skips the pull");
+
+	let stale = SystemTime::now() - TAP_REFRESH_INTERVAL - Duration::from_secs(1);
+	fetch_head.set_modified(stale).expect("age FETCH_HEAD");
+	assert!(refresh_due(tap.path()), "an old fetch pulls again");
+}

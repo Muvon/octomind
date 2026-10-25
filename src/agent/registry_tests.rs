@@ -401,6 +401,48 @@ fn list_all_capabilities_lists_installed_sorted() {
 	assert_eq!(names, vec!["a-cap", "z-cap"]);
 }
 
+#[test]
+#[serial]
+fn list_all_capabilities_reuses_one_read_until_a_tap_changes() {
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	let add = |name: &str| {
+		let cap_dir = tap.join("capabilities").join(name);
+		write_file(&cap_dir.join("config.toml"), "triggers = [\"go\"]\n");
+		write_file(&cap_dir.join("default.toml"), "[deps]\nrequire = []\n");
+	};
+	let names = || -> Vec<String> {
+		list_all_capabilities(&HashMap::new())
+			.expect("list")
+			.into_iter()
+			.map(|c| c.name)
+			.collect()
+	};
+
+	add("first-cap");
+	assert_eq!(names(), vec!["first-cap"]);
+
+	add("second-cap");
+	assert_eq!(names(), vec!["first-cap"], "a second caller reuses the first read");
+
+	invalidate_capability_catalog();
+	assert_eq!(names(), vec!["first-cap", "second-cap"], "a tap change reads again");
+
+	let mut overrides = HashMap::new();
+	overrides.insert("first-cap".to_string(), "default".to_string());
+	add("third-cap");
+	let with_overrides: Vec<String> = list_all_capabilities(&overrides)
+		.expect("list")
+		.into_iter()
+		.map(|c| c.name)
+		.collect();
+	assert_eq!(
+		with_overrides,
+		vec!["first-cap", "second-cap", "third-cap"],
+		"other provider overrides are read for themselves"
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Capability merge into agent manifests
 // ---------------------------------------------------------------------------

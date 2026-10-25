@@ -233,11 +233,17 @@ pub async fn initialize_servers_for_role_with_callback(
 	// path (~30 ms for the user-input embed only) instead of paying the
 	// ~300-500 ms trigger-batch cost on the user's hot path. Tap updates
 	// invalidate per-text (content hash) so only changed triggers are
-	// recomputed.
-	if let Ok(caps) = crate::agent::registry::list_all_capabilities(&config.capabilities) {
-		let trigger_texts: Vec<String> = caps.into_iter().flat_map(|c| c.triggers).collect();
-		crate::embeddings::prewarm(trigger_texts);
-	}
+	// recomputed. Listing the capabilities reads every capability file of
+	// every tap — seconds on a network-mounted data dir — so it runs off the
+	// startup path: a delegated agent answers its client's handshake without
+	// waiting for it.
+	let overrides = config.capabilities.clone();
+	tokio::task::spawn_blocking(move || {
+		if let Ok(caps) = crate::agent::registry::list_all_capabilities(&overrides) {
+			let trigger_texts: Vec<String> = caps.into_iter().flat_map(|c| c.triggers).collect();
+			crate::embeddings::prewarm(trigger_texts);
+		}
+	});
 
 	// The config passed here should be the merged config for the role
 	// config.mcp.servers already contains only the role's enabled servers

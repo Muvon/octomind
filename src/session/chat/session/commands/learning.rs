@@ -278,15 +278,17 @@ async fn handle_list(session: &ChatSession, pattern: Option<&str>, page: usize) 
 	let all = all_lessons(&role, &project).await?;
 	let storage = learning_storage_summary(&role, &project, &all)?;
 
-	// Apply glob filter if present.
+	// Apply glob filter if present, keeping each lesson's position in `all`
+	// because show and delete look indices up there.
 	let filtered: Vec<_> = if let Some(pat) = pattern {
 		all.into_iter()
-			.filter(|l| {
+			.enumerate()
+			.filter(|(_, l)| {
 				glob_match(pat, &l.content) || glob_match(pat, &l.title) || l.tags.iter().any(|t| glob_match(pat, t))
 			})
 			.collect()
 	} else {
-		all
+		all.into_iter().enumerate().collect()
 	};
 
 	let total = filtered.len();
@@ -310,10 +312,9 @@ async fn handle_list(session: &ChatSession, pattern: Option<&str>, page: usize) 
 
 	let lessons: Vec<serde_json::Value> = filtered[start..end]
 		.iter()
-		.enumerate()
-		.map(|(i, l)| {
+		.map(|(pos, l)| {
 			json!({
-				"index": start + i + 1,
+				"index": pos + 1,
 				"id": l.file_id(),
 				"content": l.content,
 				"title": l.title,

@@ -180,6 +180,39 @@ async fn test_learning_list_and_delete_lifecycle() {
 
 #[serial]
 #[tokio::test]
+async fn test_learning_filtered_list_index_matches_show() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	cleanup();
+	let mut session = test_session();
+	store("first learning-cmd lesson about widgets").await;
+	store("second learning-cmd lesson about gadgets").await;
+
+	// Whichever lesson ranks second, its filtered index must still point at it
+	for word in ["widgets", "gadgets"] {
+		let pattern = format!("*{word}*");
+		let data = learning_data(
+			handle_learning(&mut session, &["list", &pattern])
+				.await
+				.expect("filtered list dispatches"),
+		);
+		let index = data["lessons"][0]["index"].to_string();
+		let shown = learning_data(
+			handle_learning(&mut session, &["show", &index])
+				.await
+				.expect("show dispatches"),
+		);
+		assert!(
+			shown["content"].as_str().unwrap_or_default().contains(word),
+			"{word}: {shown}"
+		);
+	}
+
+	cleanup();
+}
+
+#[serial]
+#[tokio::test]
 async fn test_learning_error_arms() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();

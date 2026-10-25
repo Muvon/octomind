@@ -789,8 +789,14 @@ pub const MAX_ITERATIONS: u8 = 2;
 
 /// Cap on the git diff inside the ground-truth block.
 const GT_DIFF_MAX: usize = 10_000;
-/// Overall cap on the ground-truth block.
-const GT_TOTAL_MAX: usize = 14_000;
+/// Cap on the changes part of the ground-truth block: the diff, new-file heads
+/// and MISSING notes.
+const GT_CHANGES_MAX: usize = 14_000;
+/// Overall cap on the ground-truth block. The changes part has its own cap so a
+/// large change cannot crowd out what follows it: the recent command tails
+/// ([`RECENT_COMMANDS_KEPT`] × [`LAST_COMMAND_TAIL`]) with their command lines,
+/// then the status lines.
+const GT_TOTAL_MAX: usize = 24_000;
 /// Head of a new/untracked mutated file attached when the diff can't cover it.
 const GT_FILE_HEAD_LINES: usize = 80;
 
@@ -805,9 +811,9 @@ pub struct RenderedEvidence {
 /// Runtime-gathered GROUND TRUTH for the verifier: the working-tree diff of the
 /// files successful mutations touched (vs HEAD, when inside a git repo), the
 /// current head of mutated files the diff does not cover (new/untracked), a
-/// MISSING note for mutated files that no longer exist, and the last command's
-/// recorded output tail. Deterministic — the agent's narrative cannot alter it.
-/// Empty when nothing was mutated and no command ran.
+/// MISSING note for mutated files that no longer exist, and the recent
+/// commands' recorded output tails. Deterministic — the agent's narrative cannot
+/// alter it. Empty when nothing was mutated and no command ran.
 pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 	let mutated_paths = ledger.mutated_paths();
 	let recent_commands = &ledger.recent_commands;
@@ -823,7 +829,7 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			}
 		}
 		for p in mutated_paths {
-			if s.len() > GT_TOTAL_MAX {
+			if s.len() > GT_CHANGES_MAX {
 				break;
 			}
 			if diff.contains(p.as_str()) {
@@ -845,6 +851,10 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			// Unreadable-as-text (binary) files are skipped: existence is already
 			// proven and content would not help a text verifier.
 		}
+	}
+	if s.len() > GT_CHANGES_MAX {
+		truncate_at_char_boundary(&mut s, GT_CHANGES_MAX);
+		s.push_str("\n(changes truncated to fit)\n");
 	}
 	if !recent_commands.is_empty() {
 		s.push_str("Recent commands run (runtime-recorded output tails, oldest first):\n");
@@ -885,11 +895,7 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 	}
 	let truncated = s.len() > GT_TOTAL_MAX;
 	if truncated {
-		let mut end = GT_TOTAL_MAX;
-		while !s.is_char_boundary(end) {
-			end -= 1;
-		}
-		s.truncate(end);
+		truncate_at_char_boundary(&mut s, GT_TOTAL_MAX);
 	}
 	let mut output_sequences = HashSet::new();
 	let mut has_unknown_output_provenance = false;
@@ -909,6 +915,14 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 		output_sequences,
 		has_unknown_output_provenance,
 	}
+}
+
+fn truncate_at_char_boundary(s: &mut String, max: usize) {
+	let mut end = max;
+	while !s.is_char_boundary(end) {
+		end -= 1;
+	}
+	s.truncate(end);
 }
 
 /// Cap on the working-tree status lines inside the ground-truth block.
@@ -1034,7 +1048,7 @@ pub struct GateInput<'a> {
 	pub grounds: &'a [(u64, String)],
 	/// Live plan checklist. Execution state only, never additional user intent.
 	pub plan: &'a str,
-	/// Rendered [`render_ground_truth`] block (diff + last command output).
+	/// Rendered [`render_ground_truth`] block (diff + recent command outputs).
 	pub ground_truth: &'a RenderedEvidence,
 	/// Gaps the previous verification pass found this task, so the re-verify
 	/// confirms each is closed instead of judging from scratch.

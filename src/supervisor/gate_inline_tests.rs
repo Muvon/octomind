@@ -676,11 +676,11 @@ fn git_helpers_degrade_to_empty_when_git_cannot_run() {
 
 /// An untracked-but-present path (gitignored scratch under target/) is not in
 /// any diff, so ground truth attaches its head directly — and a head that
-/// alone exceeds the total budget is truncated with an explicit marker.
+/// alone exceeds the changes budget is truncated with an explicit marker.
 #[test]
 fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 	let name = format!("target/gate-gt-head-{}.txt", std::process::id());
-	let line: String = "0123456789".repeat(30); // 300 chars; 80 lines ≈ 24k > GT_TOTAL_MAX
+	let line: String = "0123456789".repeat(30); // 300 chars; 80 lines ≈ 24k > GT_CHANGES_MAX
 	let body: String = std::iter::repeat_with(|| line.clone())
 		.take(120)
 		.collect::<Vec<_>>()
@@ -698,9 +698,53 @@ fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 		truth.contains(&format!("Current content of {name} (new or untracked")),
 		"an existing path outside the diff gets its head attached"
 	);
-	assert!(
-		truth.contains("(ground truth truncated)"),
-		"a head that alone exceeds the total budget is cut with a marker"
-	);
+	let marker = truth
+		.find("(changes truncated to fit)")
+		.expect("a head that alone exceeds the changes budget is cut with a marker");
+	assert!(marker <= GT_CHANGES_MAX + 1, "the changes cap holds: {marker}");
 	assert!(truth.len() <= GT_TOTAL_MAX + 64, "the total cap holds: {}", truth.len());
+}
+
+/// The decisive checks are the last runs before claiming done. A change large
+/// enough to fill the changes budget must not push their output tails out of
+/// the block: every retained command stays visible after it.
+#[test]
+fn recent_command_tails_survive_a_change_that_fills_its_budget() {
+	let name = format!("target/gate-gt-commands-{}.txt", std::process::id());
+	let line: String = "0123456789".repeat(30);
+	let body: String = std::iter::repeat_with(|| line.clone())
+		.take(120)
+		.collect::<Vec<_>>()
+		.join("\n");
+	std::fs::write(&name, &body).expect("write scratch head file");
+	let mut ledger = EvidenceLedger {
+		mutated_paths: vec![name.clone()],
+		..Default::default()
+	};
+	let mut sequences = Vec::new();
+	for run in 0..RECENT_COMMANDS_KEPT {
+		let command = format!("check {run}");
+		let output = format!("{}run {run}: 12 passed", "x".repeat(LAST_COMMAND_TAIL));
+		sequences.push(ledger.record(
+			"shell",
+			&serde_json::json!({ "command": command }),
+			false,
+			false,
+			output.len(),
+		));
+		ledger.record_command_output(&command, &output);
+	}
+
+	let truth = render_ground_truth(&ledger);
+
+	let _ = std::fs::remove_file(&name);
+	assert!(truth.text.contains("(changes truncated to fit)"));
+	for (run, sequence) in sequences.iter().enumerate() {
+		assert!(
+			truth.text.contains(&format!("run {run}: 12 passed")),
+			"tail of run {run} is visible"
+		);
+		assert!(truth.output_sequences.contains(sequence));
+	}
+	assert!(!truth.text.contains("(ground truth truncated)"));
 }

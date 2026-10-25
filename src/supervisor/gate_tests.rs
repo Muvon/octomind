@@ -56,7 +56,7 @@ fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
 				.iter()
 				.map(|byte| format!("{byte:02x}"))
 				.collect::<String>(),
-			"6bd446fbf9f01ba808cc40a88c776604cd18602d49f04dd2bd2022333e0923cd"
+			"c24cc3817a71cfc5fadc1a68a3019795b11e500e5fbd47af64691db35ebae1fa"
 		);
 	}
 }
@@ -1075,7 +1075,7 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 		);
 		assert_eq!(
 			properties["sources"],
-			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: output:N for the recorded action whose output demonstrates it. Null when none applies."})
+			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from. Null when none applies."})
 		);
 	}
 	// The only branch admitting unmatched requires a string from this enum;

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.63.1] - 2026-10-25
+
+### 📋 Release Summary
+
+Verify gates can now be rerun an additional time. Supervisor rendering preserves terminators in inline code and command tails, while citations require quoted runtime evidence and clearer observations. OAuth sign-in context is validated, and token requests use form data.
+
+### 🐛 Bug Fixes & Stability
+
+- **gate**: allow an additional verify-gate rerun `2f620be2`
+- **supervisor**: preserve terminators inside inline code `2af78767`
+- **supervisor**: preserve command tails in ground-truth rendering `76dc61ff`
+- **oauth**: validate OAuth sign-in context `21f49d0d`
+- **supervisor**: require quoted runtime evidence for citations `c36acf36`
+- **oauth**: send OAuth token requests as form data `ab5c10b1`
+- **supervisor**: clarify evidence observation requirements `c9d11bf1`
+
 ## [0.63.0] - 2026-10-25
 
 ### 📋 Release Summary

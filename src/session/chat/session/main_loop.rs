@@ -201,6 +201,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 	// the echoed `^C` auto-wraps off the indicatif-padded line and our clear
 	// lands on the wrong row. See utils::term_echo for the full rationale.
 	let _echo_guard = crate::utils::term_echo::CtrlCEchoGuard::install();
+	// A person is at this terminal: MCP elicitations may prompt them.
+	crate::session::chat::elicitation::enable_terminal_prompts();
 
 	// Setup and initialize session using helper function
 

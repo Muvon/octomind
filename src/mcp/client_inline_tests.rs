@@ -24,19 +24,38 @@ fn advertised_mcp3_capabilities_have_handlers() {
 		.as_ref()
 		.is_some_and(|extensions| extensions.contains_key(WATCH_RESOURCE_LINKS_EXTENSION)));
 	assert!(info.capabilities.sampling.is_none());
-	let elicitation = info.capabilities.elicitation.expect("elicitation must be advertised");
-	assert!(elicitation.form.is_some());
-	assert!(elicitation.url.is_some());
 	assert!(info.capabilities.roots.is_none());
 }
 
 #[test]
 fn legacy_handshake_does_not_claim_mcp3_features() {
-	let info = build_client_info(ProtocolVersion::V_2025_03_26);
+	let info = build_client_info(ProtocolVersion::V_2025_11_25);
 	assert!(!info.capabilities.supports_tasks());
-	assert!(info.capabilities.elicitation.is_none());
 	assert!(info.capabilities.sampling.is_none());
 	assert!(info.capabilities.roots.is_none());
+}
+
+/// Elicitation is offered on both protocol eras, but only where a person at
+/// the terminal can answer it.
+#[test]
+fn elicitation_is_advertised_only_where_a_person_can_answer() {
+	for version in [ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25] {
+		let elicitation = build_client_info(version).capabilities.elicitation;
+		assert_eq!(elicitation.is_some(), crate::session::chat::elicitation::can_prompt());
+		if let Some(elicitation) = elicitation {
+			assert!(elicitation.form.is_some());
+			assert!(elicitation.url.is_some());
+		}
+	}
+}
+
+#[tokio::test]
+async fn non_interactive_scope_withholds_elicitation() {
+	crate::agent::inputs::with_non_interactive(async {
+		let info = build_client_info(ProtocolVersion::V_2026_07_28);
+		assert!(info.capabilities.elicitation.is_none());
+	})
+	.await;
 }
 
 #[test]
@@ -112,27 +131,29 @@ async fn dropped_cancellation_sender_is_terminal() {
 #[test]
 fn progress_token_binding_registers_overwrites_and_releases() {
 	let token = ProgressToken(rmcp::model::NumberOrString::Number(7));
-	assert!(!PROGRESS_TOOL_IDS.read().unwrap().contains_key(&token));
+	assert_eq!(bound_tool_id(&token), None);
 
 	let binding = ProgressTokenBinding::new(&token, "call-1");
-	assert_eq!(
-		PROGRESS_TOOL_IDS.read().unwrap().get(&token).cloned(),
-		Some("call-1".to_string())
-	);
+	assert_eq!(bound_tool_id(&token), Some("call-1".to_string()));
 
 	// A rebind of the same token replaces the tool id.
 	let rebound = ProgressTokenBinding::new(&token, "call-2");
-	assert_eq!(
-		PROGRESS_TOOL_IDS.read().unwrap().get(&token).cloned(),
-		Some("call-2".to_string())
-	);
+	assert_eq!(bound_tool_id(&token), Some("call-2".to_string()));
 
 	// Drop removes the mapping unconditionally — the binding assumes a
 	// single owner per token for the life of one tool-call round.
 	drop(rebound);
-	assert!(!PROGRESS_TOOL_IDS.read().unwrap().contains_key(&token));
+	assert_eq!(bound_tool_id(&token), None);
 	drop(binding);
-	assert!(!PROGRESS_TOOL_IDS.read().unwrap().contains_key(&token));
+	assert_eq!(bound_tool_id(&token), None);
+}
+
+fn bound_tool_id(token: &ProgressToken) -> Option<String> {
+	PROGRESS_ROUTES
+		.read()
+		.unwrap()
+		.get(token)
+		.map(|route| route.tool_id.clone())
 }
 
 #[test]
@@ -155,7 +176,7 @@ fn client_handler_legacy_retry_advertises_legacy_protocol() {
 		legacy: true,
 		..OctoClientHandler::new("legacy-server")
 	};
-	assert_eq!(handler.get_info().protocol_version, ProtocolVersion::V_2025_03_26);
+	assert_eq!(handler.get_info().protocol_version, ProtocolVersion::V_2025_11_25);
 }
 
 /// Only per-request capabilities can carry a live context epoch: a legacy
@@ -177,7 +198,7 @@ async fn context_epoch_rides_only_in_modern_session_context() {
 			modern["context_epoch"].as_u64(),
 			Some(crate::session::context::context_epoch())
 		);
-		assert!(!session(ProtocolVersion::V_2025_03_26).contains_key("context_epoch"));
+		assert!(!session(ProtocolVersion::V_2025_11_25).contains_key("context_epoch"));
 	})
 	.await;
 	crate::session::context::clear_context_epoch(&sid);
@@ -191,7 +212,7 @@ fn lifecycle_probes_modern_with_legacy_fallback_version() {
 			legacy_version,
 		} => {
 			assert!(preferred_versions.contains(&ProtocolVersion::V_2026_07_28));
-			assert_eq!(legacy_version, Some(ProtocolVersion::V_2025_03_26));
+			assert_eq!(legacy_version, Some(ProtocolVersion::V_2025_11_25));
 		}
 		other => panic!("expected Auto lifecycle, got {other:?}"),
 	}

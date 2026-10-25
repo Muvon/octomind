@@ -412,6 +412,37 @@ async fn call_tool_maps_idle_timeout_to_the_actionable_error() {
 	disconnect(&name);
 }
 
+/// Time the user spends answering an elicitation is not server silence: the
+/// idle timer holds while a prompt is open and restarts once it closes.
+#[serial]
+#[tokio::test]
+async fn call_tool_idle_timer_pauses_while_a_prompt_is_open() {
+	let name = unique_server("idle-prompt");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 1);
+	let call_args = tool_call("call-prompt");
+
+	let prompt = crate::session::chat::elicitation::OpenPromptGuard::new();
+	let call = call_tool(&server, &call_args, None);
+	tokio::pin!(call);
+	// WAIT is twice the 1s idle timeout: an unpaused timer would have fired.
+	assert!(
+		tokio::time::timeout(WAIT, &mut call).await.is_err(),
+		"an open prompt must hold the idle timer"
+	);
+
+	drop(prompt);
+	let error = tokio::time::timeout(WAIT, &mut call)
+		.await
+		.expect("the idle timer must restart once the prompt closes")
+		.expect_err("silent server must still fail the round");
+	let msg = error.to_string();
+	assert!(msg.contains("timed out after PT1S idle"), "unexpected error: {msg}");
+
+	disconnect(&name);
+}
+
 #[serial]
 #[tokio::test]
 async fn call_tool_rejects_input_required_without_requests_or_state() {

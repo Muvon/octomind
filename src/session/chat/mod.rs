@@ -21,6 +21,7 @@ mod commands;
 pub(crate) mod conversation_compression;
 mod cost_tracker;
 mod edit_mode;
+pub mod elicitation;
 pub(crate) mod file_context;
 pub mod formatting;
 mod input;

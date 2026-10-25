@@ -128,6 +128,9 @@ async fn progress_notification_carries_bound_tool_id() {
 	let payload = tap.next(&name, "notifications/progress").await;
 	assert_eq!(payload.tool_id.as_deref(), Some("call-41"));
 	assert_eq!(payload.params.get("progress"), Some(&serde_json::json!(0.5)));
+	tokio::time::timeout(WAIT, binding.activity.notified())
+		.await
+		.expect("progress must restart the bound call's idle timer");
 
 	// Once the binding is gone the same token forwards without a tool id.
 	drop(binding);

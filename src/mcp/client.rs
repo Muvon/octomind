@@ -52,29 +52,47 @@ lazy_static::lazy_static! {
 	/// transport cannot change its Authorization header in place).
 	static ref HTTP_AUTH_TOKENS: RwLock<HashMap<String, Option<String>>> = RwLock::new(HashMap::new());
 
-	/// Tool call id behind each in-flight progress token. MCP progress carries
+	/// Tool call behind each in-flight progress token. MCP progress carries
 	/// only the token, but clients render progress against the tool call it
-	/// belongs to, so the mapping is recorded for the life of the request.
-	static ref PROGRESS_TOOL_IDS: RwLock<HashMap<ProgressToken, String>> = RwLock::new(HashMap::new());
+	/// belongs to, and the call's idle timer restarts on it, so the route is
+	/// recorded for the life of the request.
+	static ref PROGRESS_ROUTES: RwLock<HashMap<ProgressToken, ProgressRoute>> = RwLock::new(HashMap::new());
 }
 
-/// Register `token -> tool_id` and unregister on drop, covering the timeout,
+#[derive(Clone)]
+struct ProgressRoute {
+	tool_id: String,
+	/// Woken on every progress notification for the token.
+	activity: Arc<tokio::sync::Notify>,
+}
+
+/// Register `token -> route` and unregister on drop, covering the timeout,
 /// cancellation and `?` exits of a tool-call round.
-struct ProgressTokenBinding(ProgressToken);
+struct ProgressTokenBinding {
+	token: ProgressToken,
+	activity: Arc<tokio::sync::Notify>,
+}
 
 impl ProgressTokenBinding {
 	fn new(token: &ProgressToken, tool_id: &str) -> Self {
-		PROGRESS_TOOL_IDS
-			.write()
-			.unwrap()
-			.insert(token.clone(), tool_id.to_string());
-		Self(token.clone())
+		let activity = Arc::new(tokio::sync::Notify::new());
+		PROGRESS_ROUTES.write().unwrap().insert(
+			token.clone(),
+			ProgressRoute {
+				tool_id: tool_id.to_string(),
+				activity: activity.clone(),
+			},
+		);
+		Self {
+			token: token.clone(),
+			activity,
+		}
 	}
 }
 
 impl Drop for ProgressTokenBinding {
 	fn drop(&mut self) {
-		PROGRESS_TOOL_IDS.write().unwrap().remove(&self.0);
+		PROGRESS_ROUTES.write().unwrap().remove(&self.token);
 	}
 }
 
@@ -117,7 +135,7 @@ impl OctoClientHandler {
 impl ClientHandler for OctoClientHandler {
 	fn get_info(&self) -> ClientConfig {
 		build_client_info(if self.legacy {
-			ProtocolVersion::V_2025_03_26
+			ProtocolVersion::V_2025_11_25
 		} else {
 			ProtocolVersion::V_2026_07_28
 		})
@@ -128,9 +146,12 @@ impl ClientHandler for OctoClientHandler {
 		params: rmcp::model::ProgressNotificationParam,
 		_context: NotificationContext<RoleClient>,
 	) {
-		let tool_id = PROGRESS_TOOL_IDS.read().unwrap().get(&params.progress_token).cloned();
+		let route = PROGRESS_ROUTES.read().unwrap().get(&params.progress_token).cloned();
+		if let Some(route) = &route {
+			route.activity.notify_one();
+		}
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-		self.emit_progress(&value, tool_id);
+		self.emit_progress(&value, route.map(|route| route.tool_id));
 	}
 
 	// Logging is deprecated in MCP 2026-07-28 (SEP-2577) but legacy servers
@@ -195,15 +216,18 @@ impl ClientHandler for OctoClientHandler {
 		self.emit("notifications/tasks/status", &value);
 	}
 
-	/// Elicitation needs an application UI capable of collecting and validating
-	/// arbitrary schema-bound input. Octomind currently has no such response
-	/// channel in CLI, ACP, or WebSocket mode, so make the protocol decision
-	/// explicit and deterministic instead of relying on rmcp's silent default.
+	/// Elicitation is answered by the person at the terminal. Where nobody can
+	/// answer (daemon, ACP, WebSocket, piped runs, subagents, detached tasks)
+	/// the request is surfaced to observers and declined, deterministically
+	/// rather than through rmcp's silent default.
 	async fn create_elicitation(
 		&self,
 		request: ElicitRequestParams,
 		_context: RequestContext<RoleClient>,
 	) -> std::result::Result<ElicitResult, rmcp::ErrorData> {
+		if crate::session::chat::elicitation::can_prompt() {
+			return crate::session::chat::elicitation::ask(&self.server_name, request).await;
+		}
 		let value = serde_json::to_value(&request).unwrap_or(serde_json::Value::Null);
 		self.emit("elicitation/requested", &value);
 		Ok(ElicitResult::new(ElicitationAction::Decline))
@@ -324,6 +348,9 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 		extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
 		extensions.insert(WATCH_RESOURCE_LINKS_EXTENSION.to_string(), serde_json::Map::new());
 		capabilities.extensions = Some(extensions);
+	}
+	// Only a person at the terminal can answer an elicitation.
+	if crate::session::chat::elicitation::can_prompt() {
 		capabilities.elicitation = Some(
 			ElicitationCapability::new()
 				.with_form(FormElicitationCapability::default())
@@ -338,8 +365,9 @@ fn lifecycle() -> ClientLifecycleMode {
 	ClientLifecycleMode::Auto {
 		preferred_versions: vec![ProtocolVersion::V_2026_07_28],
 		// Version advertised in the initialize handshake when the server
-		// proves to be legacy — matches what octomind sent before this refactor.
-		legacy_version: Some(ProtocolVersion::V_2025_03_26),
+		// proves to be legacy — the newest pre-2026 revision, so legacy
+		// servers can elicit (form mode since 2025-06-18, URL mode since 2025-11-25).
+		legacy_version: Some(ProtocolVersion::V_2025_11_25),
 	}
 }
 
@@ -892,9 +920,11 @@ async fn call_tool_round(
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<CallToolResponse> {
 	let idle_timeout_seconds = server.timeout_seconds();
-	let options = PeerRequestOptions::with_timeout(Duration::from_secs(idle_timeout_seconds))
-		.reset_timeout_on_progress()
-		.with_meta(session_request_meta());
+	let idle_timeout = Duration::from_secs(idle_timeout_seconds);
+	// The idle timeout is enforced here, not by rmcp: only server progress can
+	// restart rmcp's timer, but a call waiting on the user to answer an
+	// elicitation is not idle.
+	let options = PeerRequestOptions::no_options().with_meta(session_request_meta());
 	// Progress keeps a call alive but must not extend it forever: a runaway
 	// command that streams output resets the idle timeout on every line, so
 	// without a ceiling one spinning tool stalls the whole session until an
@@ -910,42 +940,59 @@ async fn call_tool_round(
 		.map_err(|e| anyhow!("Failed to send tools/call to '{}': {}", server.name(), e))?;
 	let request_id = handle.id.clone();
 	let peer = handle.peer.clone();
-	let _progress_binding = ProgressTokenBinding::new(&handle.progress_token, tool_id);
-	let result = tokio::select! {
-		result = handle.await_response() => result,
-		_ = tokio::time::sleep(absolute_cap) => {
-			let _ = peer
-				.notify_cancelled(CancelledNotificationParam::new(
-					Some(request_id),
-					Some("absolute tool-call time cap exceeded".to_string()),
-				))
-				.await;
-			return Err(anyhow!(absolute_timeout_message(
-				&tool_name,
-				server.name(),
-				idle_timeout_seconds,
-				absolute_cap.as_secs(),
-			)));
+	let progress = ProgressTokenBinding::new(&handle.progress_token, tool_id);
+	let mut open_prompts = crate::session::chat::elicitation::subscribe_open_prompts();
+	let response = handle.await_response();
+	tokio::pin!(response);
+	let absolute_deadline = tokio::time::sleep(absolute_cap);
+	tokio::pin!(absolute_deadline);
+	let mut idle_deadline = tokio::time::Instant::now() + idle_timeout;
+	let result = loop {
+		let prompting = *open_prompts.borrow_and_update() > 0;
+		tokio::select! {
+			biased;
+			result = &mut response => break result?,
+			_ = progress.activity.notified() => idle_deadline = tokio::time::Instant::now() + idle_timeout,
+			// A prompt opening or closing restarts the idle window: time the user
+			// spends answering is not server silence.
+			_ = open_prompts.changed() => idle_deadline = tokio::time::Instant::now() + idle_timeout,
+			_ = tokio::time::sleep_until(idle_deadline), if !prompting => {
+				let _ = peer
+					.notify_cancelled(CancelledNotificationParam::new(
+						Some(request_id.clone()),
+						Some("idle timeout exceeded".to_string()),
+					))
+					.await;
+				return Err(anyhow!(idle_timeout_message(
+					&tool_name,
+					server.name(),
+					idle_timeout_seconds,
+				)));
+			}
+			_ = &mut absolute_deadline => {
+				let _ = peer
+					.notify_cancelled(CancelledNotificationParam::new(
+						Some(request_id.clone()),
+						Some("absolute tool-call time cap exceeded".to_string()),
+					))
+					.await;
+				return Err(anyhow!(absolute_timeout_message(
+					&tool_name,
+					server.name(),
+					idle_timeout_seconds,
+					absolute_cap.as_secs(),
+				)));
+			}
+			_ = wait_cancelled(cancellation_token) => {
+				let _ = peer
+					.notify_cancelled(CancelledNotificationParam::new(
+						Some(request_id.clone()),
+						Some("cancelled by user".to_string()),
+					))
+					.await;
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+			}
 		}
-		_ = wait_cancelled(cancellation_token) => {
-			let _ = peer
-				.notify_cancelled(CancelledNotificationParam::new(
-					Some(request_id),
-					Some("cancelled by user".to_string()),
-				))
-				.await;
-			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
-		}
-	};
-	let result = match result {
-		Err(ServiceError::Timeout { .. }) => {
-			return Err(anyhow!(idle_timeout_message(
-				&tool_name,
-				server.name(),
-				idle_timeout_seconds,
-			)))
-		}
-		other => other?,
 	};
 	match result {
 		ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),
@@ -1150,51 +1197,56 @@ fn background_task(
 	);
 
 	// Task-locals do not cross `tokio::spawn`: re-enter the session so a reconnect
-	// while polling carries this session's context to the server.
+	// while polling carries this session's context to the server. Nobody waits
+	// at the terminal for a detached task, so its elicitations are declined
+	// rather than prompted over the session's input line.
 	let scope = session_id.clone();
-	tokio::spawn(crate::session::context::with_session_id(scope, async move {
-		let mut cancellation_token = Some(stop);
-		let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
-			if let Some(status) = state.status_message.as_deref() {
-				shell_jobs::set_task_status_for_session(&session_id, &key, status);
+	tokio::spawn(crate::session::context::with_session_id(
+		scope,
+		crate::agent::inputs::with_non_interactive(async move {
+			let mut cancellation_token = Some(stop);
+			let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
+				if let Some(status) = state.status_message.as_deref() {
+					shell_jobs::set_task_status_for_session(&session_id, &key, status);
+				}
+			})
+			.await;
+			let stopped = cancellation_token.as_ref().is_some_and(|stop| *stop.borrow());
+			let (body, is_error) = match outcome {
+				Ok(result) => (
+					result
+						.content
+						.iter()
+						.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+						.collect::<Vec<_>>()
+						.join("\n"),
+					result.is_error == Some(true),
+				),
+				Err(_) if stopped => (
+					"stopped on request; the server was asked to cancel it".to_string(),
+					true,
+				),
+				Err(error) if crate::session::cancellation::is_cancelled(&error) => {
+					("the server cancelled the task".to_string(), true)
+				}
+				Err(error) => (format!("{error:#}"), true),
+			};
+			// False once the session was torn down: nobody is left to deliver to.
+			if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
+				return;
 			}
-		})
-		.await;
-		let stopped = cancellation_token.as_ref().is_some_and(|stop| *stop.borrow());
-		let (body, is_error) = match outcome {
-			Ok(result) => (
-				result
-					.content
-					.iter()
-					.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
-					.collect::<Vec<_>>()
-					.join("\n"),
-				result.is_error == Some(true),
-			),
-			Err(_) if stopped => (
-				"stopped on request; the server was asked to cancel it".to_string(),
-				true,
-			),
-			Err(error) if crate::session::cancellation::is_cancelled(&error) => {
-				("the server cancelled the task".to_string(), true)
-			}
-			Err(error) => (format!("{error:#}"), true),
-		};
-		// False once the session was torn down: nobody is left to deliver to.
-		if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
-			return;
-		}
-		let error = if is_error { shell_jobs::DELIVERY_ERROR_ATTR } else { "" };
-		let content = shell_jobs::delivery_message(&format!("<background_job task=\"{key}\"{error}>"), &body);
-		crate::session::inbox::push_inbox_message_for_session(
-			&session_id,
-			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
-				content,
-			},
-		);
-		shell_jobs::complete_for_session(&session_id, &key, &body);
-	}));
+			let error = if is_error { shell_jobs::DELIVERY_ERROR_ATTR } else { "" };
+			let content = shell_jobs::delivery_message(&format!("<background_job task=\"{key}\"{error}>"), &body);
+			crate::session::inbox::push_inbox_message_for_session(
+				&session_id,
+				crate::session::inbox::InboxMessage {
+					source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
+					content,
+				},
+			);
+			shell_jobs::complete_for_session(&session_id, &key, &body);
+		}),
+	));
 
 	rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(notice)])
 }

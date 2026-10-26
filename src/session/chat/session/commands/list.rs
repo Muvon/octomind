@@ -84,7 +84,7 @@ pub fn handle_list(session: &ChatSession, _config: &Config, params: &[&str]) -> 
 				.iter()
 				.map(|(name, info)| {
 					let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-						.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M").to_string())
+						.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 						.unwrap_or_default();
 
 					let is_current = current_session_name.as_ref().map(|s| s == name).unwrap_or(false);
@@ -123,7 +123,7 @@ pub fn handle_list(session: &ChatSession, _config: &Config, params: &[&str]) -> 
 			for (name, info) in page_sessions {
 				// Format date from timestamp
 				let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-					.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M").to_string())
+					.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 					.unwrap_or_default();
 
 				// Determine if this is the current session

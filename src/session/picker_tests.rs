@@ -25,7 +25,7 @@ fn entry(name: &str, title: Option<&str>, role: Option<&str>, model: Option<&str
 }
 
 /// The label starts with a `%Y-%m-%d %H:%M` timestamp. The wall-clock value is
-/// timezone-dependent (`naive_local`), so assert the shape, not the exact date.
+/// timezone-dependent (`Local`), so assert the shape, not the exact date.
 fn has_timestamp_prefix(label: &str) -> bool {
 	let b = label.as_bytes();
 	b.len() >= 16
@@ -38,6 +38,22 @@ fn has_timestamp_prefix(label: &str) -> bool {
 		&& b[11..13].iter().all(|c| c.is_ascii_digit())
 		&& b[13] == b':'
 		&& b[14..16].iter().all(|c| c.is_ascii_digit())
+}
+
+#[test]
+fn label_formats_timestamp_in_local_time() {
+	let created_at = 1_700_000_000_u64;
+	let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(created_at as i64, 0)
+		.expect("timestamp in range")
+		.with_timezone(&chrono::Local)
+		.format("%Y-%m-%d %H:%M")
+		.to_string();
+	let e = entry("abc123", None, None, None, created_at);
+	let label = e.label();
+	assert!(
+		label.starts_with(&expected),
+		"expected local timestamp {expected:?} at start of {label:?}"
+	);
 }
 
 #[test]

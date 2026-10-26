@@ -145,11 +145,21 @@ async fn test_lists_sessions_with_metadata() {
 	assert_eq!(sessions[0]["model"], "octohub/big");
 	assert_eq!(sessions[0]["tokens"], 1_234 + 567);
 	assert_eq!(sessions[0]["is_current"], false);
+	let expected_created = chrono::DateTime::<chrono::Utc>::from_timestamp(2_000, 0)
+		.expect("timestamp in range")
+		.with_timezone(&chrono::Local)
+		.format("%Y-%m-%d %H:%M")
+		.to_string();
+	assert_eq!(sessions[0]["created"], expected_created);
 
 	let text = plain_text.expect("markdown");
 	assert!(text.contains("# Available Sessions (Page 1 of 1)"), "text: {text}");
 	assert!(text.contains("Showing 2 of 2 sessions"), "text: {text}");
 	assert!(text.contains("| alpha |"), "text: {text}");
+	assert!(
+		text.contains(&format!("| alpha | {expected_created} |")),
+		"text: {text}"
+	);
 	assert!(text.contains("| beta |"), "text: {text}");
 	// Model prefix stripped in the table, tokens thousand-separated, cost row
 	assert!(text.contains("| big |"), "text: {text}");

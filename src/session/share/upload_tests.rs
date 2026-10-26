@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use std::io::Read;
 
 fn user_line(content: &str) -> String {
 	serde_json::json!({ "role": "user", "content": content }).to_string()

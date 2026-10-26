@@ -806,7 +806,7 @@ pub struct SessionRuntimeState {
 }
 
 /// Extract runtime state from session log file
-pub fn extract_runtime_state_from_log(session_file: &PathBuf) -> Result<SessionRuntimeState> {
+pub fn extract_runtime_state_from_log(session_file: &Path) -> Result<SessionRuntimeState> {
 	let mut state = SessionRuntimeState::default();
 
 	for line in SessionLog::open(session_file)? {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.64.2] - 2026-10-26
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update locked dependency versions `f7264bae`
+
 ## [0.64.1] - 2026-10-26
 
 ### 📋 Release Summary

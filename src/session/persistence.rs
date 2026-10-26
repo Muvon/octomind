@@ -762,18 +762,23 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		return Err(anyhow::anyhow!("Session file does not exist"));
 	}
 
-	let file = File::open(session_file)?;
-	file.lock_shared()?;
-	let seen_len = file.metadata()?.len();
+	// Exclusive, and held through the cut: a torn final frame is cut under the same
+	// lock that read it, so no append can land in between and bury it mid-log.
+	let file = OpenOptions::new().read(true).write(true).open(session_file)?;
+	file.lock()?;
 	let mut log = SessionLog::new(BufReader::new(&file));
 	let parsed = parse_log_lines(&mut log)?;
-	let torn_at = log.torn_at();
-	// The cut takes the writers' exclusive lock, which this shared one would block.
+	if let Some(complete_len) = log.torn_at() {
+		let torn_len = file.metadata()?.len() - complete_len;
+		file.set_len(complete_len)?;
+		file.sync_data()?;
+		crate::log_info!(
+			"Session log {}: cut a torn final frame ({torn_len} bytes) left by an interrupted append",
+			session_file.display()
+		);
+	}
 	drop(log);
 	drop(file);
-	if let Some(complete_len) = torn_at {
-		cut_torn_tail(session_file, complete_len, seen_len)?;
-	}
 
 	let final_messages = if parsed.restoration_point_found && !parsed.restoration_messages.is_empty() {
 		parsed.restoration_messages
@@ -953,6 +958,9 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 	Ok(())
 }
 
+/// Every zstd frame starts with these bytes (RFC 8878 §3.1.1).
+const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
 /// A session log, read line by line and frame by frame.
 ///
 /// Every append is one zstd frame, acknowledged only once synced (see
@@ -1006,7 +1014,10 @@ impl<R: BufRead + Seek> SessionLog<R> {
 			.map(|decoder| decoder.single_frame())
 			.and_then(|mut decoder| decoder.read_to_end(&mut frame));
 		if let Err(error) = decoded {
-			if error.kind() == ErrorKind::UnexpectedEof && self.input.fill_buf()?.is_empty() {
+			// zstd reports UnexpectedEof only once its input ran out mid-frame. That is a
+			// torn final frame unless a later frame starts inside the bytes it read: then
+			// a damaged header swallowed acknowledged frames, which is corruption.
+			if error.kind() == ErrorKind::UnexpectedEof && !self.frame_starts_after_last_complete()? {
 				self.torn = true;
 				return Ok(false);
 			}
@@ -1026,6 +1037,20 @@ impl<R: BufRead + Seek> SessionLog<R> {
 		}
 		self.unterminated.drain(..start);
 		Ok(true)
+	}
+
+	/// Whether the bytes read past the last complete frame hold the start of
+	/// another one. Only what the failed decode consumed is scanned, so an append
+	/// landing since cannot change the answer for a reader that holds no lock.
+	fn frame_starts_after_last_complete(&mut self) -> Result<bool> {
+		let read_to = self.input.stream_position()?;
+		self.input.seek(SeekFrom::Start(self.complete_len))?;
+		let mut consumed = vec![0; usize::try_from(read_to - self.complete_len)?];
+		self.input.read_exact(&mut consumed)?;
+		Ok(consumed
+			.windows(ZSTD_FRAME_MAGIC.len())
+			.skip(1)
+			.any(|window| window == ZSTD_FRAME_MAGIC))
 	}
 }
 
@@ -1067,30 +1092,6 @@ pub fn session_log_jsonl(compressed: &[u8]) -> Result<Vec<u8>> {
 		jsonl.push(b'\n');
 	}
 	Ok(jsonl)
-}
-
-/// Cut a torn final frame off a session log, so the next append follows a
-/// complete frame instead of burying the torn one mid-log, where it would read
-/// as corruption. `seen_len` is the length the log had when it was read: a log
-/// that grew since already holds the torn frame mid-log, and is reported.
-fn cut_torn_tail(session_file: &Path, complete_len: u64, seen_len: u64) -> Result<()> {
-	let file = OpenOptions::new().write(true).open(session_file)?;
-	file.lock()?;
-	let len = file.metadata()?.len();
-	if len != seen_len {
-		anyhow::bail!(
-			"session log {} ended on a torn frame at byte {complete_len}, then grew to {len} bytes before it could be cut",
-			session_file.display()
-		);
-	}
-	file.set_len(complete_len)?;
-	file.sync_data()?;
-	crate::log_info!(
-		"Session log {}: cut a torn final frame ({} bytes) left by an interrupted append",
-		session_file.display(),
-		seen_len - complete_len
-	);
-	Ok(())
 }
 
 #[cfg(test)]

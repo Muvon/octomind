@@ -1042,17 +1042,36 @@ fn bytes_that_are_no_frame_mid_log_are_an_error_never_skipped() {
 }
 
 #[test]
-fn a_torn_frame_is_not_cut_once_the_log_grew_past_it() {
+fn a_damaged_header_that_swallows_later_frames_is_corruption_never_cut() {
 	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("grown.jsonl.zst");
-	let complete_len = log_with_torn_final_frame(&path);
-	let seen_len = std::fs::metadata(&path).unwrap().len();
-	append_to_session_file(&path, &msg_json_line("user", "late")).unwrap();
+	let path = dir.path().join("swallowed.jsonl.zst");
+	append_to_session_file(&path, &msg_json_line("user", "first")).unwrap();
+	let first_len = std::fs::metadata(&path).unwrap().len();
+	// A frame header whose one raw block claims 65,535 bytes: the decoder reads
+	// every later frame as that block's payload and runs out at end of file —
+	// what a torn final frame also looks like to it.
+	let block_header = ((65_535u32 << 3) | 1).to_le_bytes();
+	let damaged = [&[0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x30][..], &block_header[..3]].concat();
+	OpenOptions::new()
+		.append(true)
+		.open(&path)
+		.unwrap()
+		.write_all(&damaged)
+		.unwrap();
+	append_to_session_file(&path, &msg_json_line("user", "acknowledged")).unwrap();
 	let len = std::fs::metadata(&path).unwrap().len();
 
-	let error = cut_torn_tail(&path, complete_len, seen_len).unwrap_err().to_string();
-	assert!(error.contains("grew"), "{error}");
-	assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+	let lines: Vec<Result<String>> = SessionLog::open(&path).unwrap().collect();
+	assert_eq!(lines.len(), 2);
+	let error = lines[1].as_ref().unwrap_err().to_string();
+	assert!(error.contains(&format!("byte {first_len}")), "{error}");
+
+	assert!(load_session(&path).is_err());
+	assert_eq!(
+		std::fs::metadata(&path).unwrap().len(),
+		len,
+		"the acknowledged frame is never cut"
+	);
 }
 
 #[test]

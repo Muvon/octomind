@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.64.0] - 2026-10-26
+
+### 📋 Release Summary
+
+Recitation now resolves request checklists. Sessions preserve provider-native output items, and supervisor verification selects relevant evidence.
+
+### 🚨 Breaking Changes
+
+- **recite**: recite resolved request checklists `552ee9d0`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: update response lint and test fixtures `f71394e3`
+- **dependencies**: upgrade octolib and Brotli dependencies `c0dfcafd`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: preserve provider-native output items `d182e2de`
+- **supervisor**: select relevant evidence for supervisor verification `cc738740`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.63.1] - 2026-10-25
 
 ### 📋 Release Summary

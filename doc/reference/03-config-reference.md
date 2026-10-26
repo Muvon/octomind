@@ -713,6 +713,13 @@ only if those pass.
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
 
+With `[decision] supervisor = true`, a working-tree diff larger than the gate's size cut is not cut by size: the evaluation
+model scores every hunk in batched windows, as the condense seam scores tool-output chunks, and the verifier reads in full
+the hunks the request's conditions depend on (the work itself and the checks produced for it), bounded by what the
+verifier model's input window leaves. The rest become one-line stubs naming the hunk and marked unseen, so the verifier
+knows they exist and does not read them as absent changes. An unavailable or empty answer falls back to the size cut. The
+second-opinion refutation reads evidence over the evaluation state cap in slices and drops a finding any slice refutes.
+
 ### `[supervisor.authorizer]`
 
 Checks exact proposed tool operations against role + user intent after native pre-call guards and before execution.

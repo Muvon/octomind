@@ -983,7 +983,7 @@ fn omission_notice(r: &McpToolResult, original: &str) -> Option<String> {
 }
 
 /// The task block every request carries, under the same cap on both judges.
-fn task_block(task: &str) -> String {
+pub(crate) fn task_block(task: &str) -> String {
 	if task.trim().is_empty() {
 		"(task context unavailable — be conservative, keep anything plausibly useful)".to_string()
 	} else {

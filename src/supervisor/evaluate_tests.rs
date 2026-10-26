@@ -306,6 +306,24 @@ fn windows_respect_the_state_cap_and_the_question_bound_in_order() {
 	assert!(windows(Vec::<usize>::new(), 0, |_| 1).is_empty());
 }
 
+#[test]
+fn text_windows_split_long_text_at_lines_under_the_cap_and_keep_short_text_whole() {
+	let line = "#1 [read] shell cargo test → ok, every crate compiled and linked\n";
+	let long = line.repeat(3_000);
+	assert!(crate::session::estimate_tokens(&long) > MAX_STATE_TOKENS);
+	let slices = text_windows(&long, 500);
+	assert!(slices.len() >= 2);
+	assert_eq!(slices.concat(), long, "nothing is lost, duplicated or reordered");
+	for slice in &slices {
+		assert!(slice.ends_with('\n'), "slices end on a line boundary");
+		let tokens = crate::session::estimate_tokens(&serde_json::Value::from(slice.as_str()).to_string());
+		assert!(tokens + 500 <= MAX_STATE_TOKENS, "slice over the cap: {tokens}");
+	}
+
+	assert_eq!(text_windows(line, 500), vec![line.to_string()]);
+	assert!(text_windows("", 500).is_empty());
+}
+
 #[tokio::test]
 async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 	let fake = install_fake_evaluation(vec![

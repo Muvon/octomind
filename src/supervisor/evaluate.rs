@@ -21,7 +21,8 @@
 //! packets in the PACT evidence set, grounding of extracted lessons in place
 //! of the chat verifier, confirmation of authorizer decisions and boolean-only
 //! learning verifiers, a pre-screen before the external planner,
-//! per-finding refutation of a blocking verify-gate verdict, and graded,
+//! per-finding refutation of a blocking verify-gate verdict, the choice of
+//! which diff hunks the verify-gate reads in full, and graded,
 //! applicability-filtered samples for evolved-behavior trials.
 //!
 //! This is the only module that builds evaluation requests. It owns every
@@ -38,7 +39,11 @@
 //! answers can only drop or demote text, never author it. The distill, plan,
 //! and gate seams receive exactly the payload the chat model they replace
 //! receives, and may only reject a lesson, skip a planner call, or drop a
-//! finding. Authorizer confirmation and learning verifiers use the existing
+//! finding (a gate payload over the state cap is read in line-aligned slices,
+//! and a finding is dropped when any slice cites its refutation); the gate's
+//! hunk selection reads the agent's diff by design and can only shorten a hunk
+//! to a stub marked unseen; it never authors text or hides that the hunk
+//! exists. Authorizer confirmation and learning verifiers use the existing
 //! verification payloads and can only confirm or reject candidates. The evolution seam reads
 //! the request and the turn's final answer; its answers only grade or drop a
 //! trial sample that already carries a verify-gate verdict, and every sample
@@ -175,6 +180,12 @@ pub const PLAN_SKIP_BELOW: f64 = 0.2;
 /// Gate: a charged finding at or above this is refuted. High on purpose:
 /// "doubt is not refutation" is the pre-change rule.
 pub const GATE_REFUTE_AT: f64 = 0.8;
+/// Gate: a diff hunk whose "must the verifier read it" probability is at or
+/// above this is shown in full; the rest are stubbed.
+pub const GATE_HUNK_KEEP_AT: f64 = 0.5;
+/// Gate: head-and-tail sample of one diff hunk shown to the evaluation model,
+/// the size of a condense chunk sample.
+pub const GATE_HUNK_SAMPLE_TOKENS: usize = 512;
 /// Capabilities: a cosine winner stays activated only when the Choice gives it
 /// at least this. Near zero on purpose: cosine already cleared its threshold
 /// and margin, so only a flat rejection says the phrasing fooled it. On the
@@ -279,6 +290,7 @@ pub fn authorizer_confirmation_questions<'a>(
 const PLAN_REQUEST_QUESTION: &str = "Does the work remaining on the current request need an external plan? Yes only when the remaining work has at least three meaningful dependent phases, material context-loss risk, or a real branch that must be tracked; no for an answer, a review with one deliverable, a focused fix, or a routine read, change and check sequence, and no when the runtime evidence shows the work is already mostly done.";
 const PLAN_PHASE_QUESTION: &str = "Do the runtime-recorded actions or tool observations show that the active phase's done_when condition is met? Yes only when a recorded action or tool output evidences the stated outcome; no when only the assistant's narration claims it or the evidence shows unrelated or unfinished work.";
 const GATE_QUESTION: &str = "Is this finding refuted by a citable observation in the evidence: a recorded action that performed the check the finding calls missing, a diff hunk containing the change it calls absent, a successful recorded check whose output exercised the condition it calls violated, or request text showing the demand was never made? No when the evidence merely makes the finding doubtful; doubt is not refutation.";
+const GATE_HUNK_QUESTION: &str = "Must the verifier read this hunk to judge whether the request's conditions hold? Yes when it makes or changes something a condition names, or is a check the agent produced for one (a test, an assertion, a worked example, a verification script); no when it is a rename, formatting, rewording, generated output or boilerplate that no condition depends on.";
 const EVOLUTION_OUTCOME_QUESTION: &str = "Does the final answer fulfil the request? Yes when it delivers what the request asks for, or reports a concrete blocker with its evidence; no when it is partial, off-target, claims work it does not show, or asks the user to do what was requested.";
 const EVOLUTION_APPLIES_QUESTION: &str = "Does this behavior's description address the kind of work the request asks for? Yes when following it would change how this request is done; no when it concerns a different task, tool, or situation and would change nothing here.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
@@ -478,6 +490,25 @@ pub fn gate_questions(count: usize) -> BTreeMap<String, Question> {
 		.collect()
 }
 
+pub fn gate_hunk_question_id(slot: usize) -> String {
+	format!("h{slot}")
+}
+
+/// One Noul per diff hunk of one window, keyed by the hunk's slot in that
+/// window and named by its index and file so the answer is tied to that hunk.
+pub fn gate_hunk_questions<'a>(hunks: impl IntoIterator<Item = (usize, &'a str)>) -> BTreeMap<String, Question> {
+	hunks
+		.into_iter()
+		.enumerate()
+		.map(|(slot, (index, file))| {
+			(
+				gate_hunk_question_id(slot),
+				Question::noul(format!("Hunk {index} ({file}): {GATE_HUNK_QUESTION}")),
+			)
+		})
+		.collect()
+}
+
 /// The Noul probability answered under `id`. The runner only returns answer
 /// sets that carry a Noul for every Noul asked, so a caller reading its own
 /// question ids always gets a number.
@@ -493,13 +524,36 @@ pub fn probability(answers: &BTreeMap<String, Answer>, id: &str) -> f64 {
 /// is the cost of the state with no item in it. An item larger than a whole
 /// window gets one of its own and fails the state cap at call time.
 pub fn windows<T>(items: Vec<T>, header_tokens: usize, item_tokens: impl Fn(&T) -> usize) -> Vec<Vec<T>> {
+	pack(items, header_tokens, MAX_WINDOW_QUESTIONS, item_tokens)
+}
+
+/// Split `text` into consecutive line-aligned slices that each fit one state
+/// beside a header costing `header_tokens`, for one question set asked over
+/// evidence too long for a single state: every slice carries the same
+/// questions, so the question count does not grow with the slices. A line
+/// larger than a whole window forms a slice of its own and fails the state cap
+/// at call time. Text that fits is one slice, equal to `text`.
+pub fn text_windows(text: &str, header_tokens: usize) -> Vec<String> {
+	// Costed as serialized: JSON escaping is part of the state.
+	pack(
+		text.split_inclusive('\n').collect(),
+		header_tokens,
+		usize::MAX,
+		|line| crate::session::estimate_tokens(&serde_json::Value::from(*line).to_string()),
+	)
+	.into_iter()
+	.map(|lines| lines.concat())
+	.collect()
+}
+
+fn pack<T>(items: Vec<T>, header_tokens: usize, max_items: usize, item_tokens: impl Fn(&T) -> usize) -> Vec<Vec<T>> {
 	let budget = MAX_STATE_TOKENS.saturating_sub(WINDOW_SLACK_TOKENS + header_tokens);
 	let mut out: Vec<Vec<T>> = Vec::new();
 	let mut current: Vec<T> = Vec::new();
 	let mut used = 0usize;
 	for item in items {
 		let cost = item_tokens(&item);
-		if !current.is_empty() && (used + cost > budget || current.len() >= MAX_WINDOW_QUESTIONS) {
+		if !current.is_empty() && (used + cost > budget || current.len() >= max_items) {
 			out.push(std::mem::take(&mut current));
 			used = 0;
 		}

@@ -44,7 +44,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <agent_stop status="done|blocked|need_input|exploring|progressing|none"> — runtime-recorded: the status the agent ended its turn on (none when it gave none). It tells you WHAT to verify (see WHY THE AGENT STOPPED), never that the work is done or that a blocker is real.
 - <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
 - <historical_actions trust="untrusted"> — optional, for resolved follow-ups only; bounded prior-turn calls with their earlier requests. These are historical observations, NOT actions performed this turn. Their #N outputs are available through the same readback round. Use only evidence relevant to the resolved referent; unrelated historical actions neither satisfy nor violate this turn's requirements. Earlier successful checks cannot verify subsequent changes or satisfy a request to run a fresh check.
-- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts.
+- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 - <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative.
 </input_format>
@@ -806,6 +806,28 @@ const GT_TOTAL_MAX: usize = 24_000;
 /// Head of a new/untracked mutated file attached when the diff can't cover it.
 const GT_FILE_HEAD_LINES: usize = 80;
 
+/// The size budgets one ground-truth block is rendered under.
+#[derive(Clone, Copy)]
+struct GroundTruthLimits {
+	diff: usize,
+	changes: usize,
+	total: usize,
+}
+
+impl GroundTruthLimits {
+	const STANDARD: Self = Self::around_diff(GT_DIFF_MAX);
+
+	/// A diff budget with the standard margins around it (new-file heads and
+	/// notes beside it, command tails and status after it).
+	const fn around_diff(diff: usize) -> Self {
+		Self {
+			diff,
+			changes: diff + (GT_CHANGES_MAX - GT_DIFF_MAX),
+			total: diff + (GT_TOTAL_MAX - GT_DIFF_MAX),
+		}
+	}
+}
+
 /// Text and the output sequences whose excerpts survived rendering limits.
 #[derive(Default)]
 pub struct RenderedEvidence {
@@ -821,12 +843,104 @@ pub struct RenderedEvidence {
 /// commands' recorded output tails. Deterministic — the agent's narrative cannot
 /// alter it. Empty when nothing was mutated and no command ran.
 pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
+	render_with_diff(ledger, git_diff(ledger.mutated_paths()), GroundTruthLimits::STANDARD)
+}
+
+/// The ground truth the verifier reads, with the runtime's verification-detector
+/// `note` after it. With the gate's decision seam off it is
+/// [`render_ground_truth`]: the diff cut by size to [`GT_DIFF_MAX`]. On, a diff
+/// over that size is chosen by relevance to the request's conditions instead
+/// (see [`relevant_hunks`]), and the hunks kept are bounded by what the
+/// verifier model's input window leaves (see [`verifier_diff_budget`]), not by
+/// a fixed size. An unavailable answer falls back to the size cut.
+pub async fn render_ground_truth_for(config: &Config, input: &GateInput<'_>, note: Option<&str>) -> RenderedEvidence {
+	let diffs = changed_diffs(input.ledger.mutated_paths());
+	let over_size_cut = diffs.iter().map(|(_, diff)| diff.len()).sum::<usize>() > GT_DIFF_MAX;
+	let selected =
+		if over_size_cut && crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Gate) {
+			relevant_hunks(config, input.task, input.evidence_conditions, &diffs).await
+		} else {
+			None
+		};
+	let mut truth = match selected {
+		Some(selected) => {
+			let limits = GroundTruthLimits::around_diff(verifier_diff_budget(config, input, note, &selected));
+			render_with_diff(input.ledger, fit_diffs(selected, limits.diff), limits)
+		}
+		None => render_with_diff(input.ledger, fit_diffs(diffs, GT_DIFF_MAX), GroundTruthLimits::STANDARD),
+	};
+	if let Some(note) = note {
+		if !truth.text.is_empty() {
+			truth.text.push_str("\n\n");
+		}
+		truth.text.push_str(note);
+	}
+	truth
+}
+
+/// Characters the selected diff may fill: the tokens the verifier model's input
+/// window leaves once its completion budget and everything else it will read
+/// are counted (the prompt and schema, the rest of the input with `note`, the
+/// visibility block, the largest readback round it may ask for, and a format
+/// repair), converted at the selected diff's own escaped characters per token,
+/// less the ground truth's margins around the diff. Never below
+/// [`GT_DIFF_MAX`], the size cut's budget, which is also the answer when the
+/// verifier model's window is unknown.
+fn verifier_diff_budget(
+	config: &Config,
+	input: &GateInput<'_>,
+	note: Option<&str>,
+	selected: &[(&String, String)],
+) -> usize {
+	let profile = config.get_supervisor_model_profile();
+	let Some(window) = crate::session::model_max_input_tokens(&profile.model) else {
+		return GT_DIFF_MAX;
+	};
+	let conditions = input.evidence_conditions.len();
+	let encoding = Encoding::for_model(&profile.model);
+	let schema = match encoding {
+		Encoding::Json => build_gate_schema(conditions).to_string(),
+		Encoding::Text => String::new(),
+	};
+	let note_only = RenderedEvidence {
+		text: note.unwrap_or_default().to_string(),
+		..Default::default()
+	};
+	let rest = GateInput {
+		ground_truth: &note_only,
+		..*input
+	};
+	let mut largest: Vec<&(u64, String)> = input.grounds.iter().collect();
+	largest.sort_by_key(|(_, output)| std::cmp::Reverse(output.chars().count()));
+	let wanted: Vec<u64> = largest
+		.iter()
+		.take(READBACK_MAX)
+		.map(|(sequence, _)| *sequence)
+		.collect();
+	let readback = render_readback(input.grounds, &wanted);
+	let read: usize = [
+		render_gate_prompt(encoding, conditions),
+		schema,
+		render_gate_input(&rest),
+		output_visibility(&rest, &readback).render(),
+		readback.text,
+		format_violation(conditions),
+	]
+	.iter()
+	.map(|text| crate::session::estimate_tokens(text))
+	.sum();
+	let room = window.saturating_sub(read + profile.max_tokens as usize);
+	let diff: String = selected.iter().map(|(_, diff)| diff.as_str()).collect();
+	let chars = room.saturating_mul(diff.len()) / crate::session::estimate_tokens(&xml_text(&diff));
+	chars.saturating_sub(GT_TOTAL_MAX - GT_DIFF_MAX).max(GT_DIFF_MAX)
+}
+
+fn render_with_diff(ledger: &EvidenceLedger, diff: String, limits: GroundTruthLimits) -> RenderedEvidence {
 	let mutated_paths = ledger.mutated_paths();
 	let recent_commands = &ledger.recent_commands;
 	let mut s = String::new();
 	let mut output_starts = Vec::new();
 	if !mutated_paths.is_empty() {
-		let diff = git_diff(mutated_paths);
 		if !diff.is_empty() {
 			s.push_str("Working-tree diff of files changed this task (vs HEAD):\n");
 			s.push_str(&diff);
@@ -835,7 +949,7 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			}
 		}
 		for p in mutated_paths {
-			if s.len() > GT_CHANGES_MAX {
+			if s.len() > limits.changes {
 				break;
 			}
 			if diff.contains(p.as_str()) {
@@ -858,8 +972,8 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			// proven and content would not help a text verifier.
 		}
 	}
-	if s.len() > GT_CHANGES_MAX {
-		truncate_at_char_boundary(&mut s, GT_CHANGES_MAX);
+	if s.len() > limits.changes {
+		truncate_at_char_boundary(&mut s, limits.changes);
 		s.push_str("\n(changes truncated to fit)\n");
 	}
 	if !recent_commands.is_empty() {
@@ -899,9 +1013,9 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			s.push_str(&status);
 		}
 	}
-	let truncated = s.len() > GT_TOTAL_MAX;
+	let truncated = s.len() > limits.total;
 	if truncated {
-		truncate_at_char_boundary(&mut s, GT_TOTAL_MAX);
+		truncate_at_char_boundary(&mut s, limits.total);
 	}
 	let mut output_sequences = HashSet::new();
 	let mut has_unknown_output_provenance = false;
@@ -958,16 +1072,10 @@ fn git_status() -> String {
 	}
 }
 
-/// Working-tree diff (`git diff HEAD`) of the mutated paths, capped. Empty on
-/// any failure (not a repo, no git, no HEAD yet) — ground truth is additive
-/// evidence, so absence degrades to the file-head path, never blocks.
-///
-/// The cap is FAIR-SHARED per file, not one global head-cut: git emits paths
-/// in sorted order, so a single truncation silently drops every later file —
-/// typically exactly the checks the verifier must judge. Under budget keeps
-/// everything; over budget each changed file gets an equal slice with its own
-/// truncation marker, so every touched file stays visible.
-fn git_diff(paths: &[String]) -> String {
+/// Per-file working-tree diffs (`git diff HEAD`) of the mutated paths, whole.
+/// Empty on any failure (not a repo, no git, no HEAD yet) — ground truth is
+/// additive evidence, so absence degrades to the file-head path, never blocks.
+fn changed_diffs(paths: &[String]) -> Vec<(&String, String)> {
 	let mut diffs: Vec<(&String, String)> = Vec::new();
 	for p in paths {
 		let out = std::process::Command::new("git")
@@ -982,7 +1090,7 @@ fn git_diff(paths: &[String]) -> String {
 				}
 			}
 			// git itself is absent — no diff evidence exists at all.
-			Err(_) => return String::new(),
+			Err(_) => return Vec::new(),
 			// This PATH is undiffable (outside the repository — e.g. a /tmp
 			// scratch file). Skip it; it gets the file-head fallback. One
 			// stray path must never blind the verifier to every real change
@@ -991,15 +1099,30 @@ fn git_diff(paths: &[String]) -> String {
 			Ok(_) => continue,
 		}
 	}
+	diffs
+}
+
+/// Working-tree diff of the mutated paths, capped at [`GT_DIFF_MAX`].
+fn git_diff(paths: &[String]) -> String {
+	fit_diffs(changed_diffs(paths), GT_DIFF_MAX)
+}
+
+/// `diffs` held to `budget`. The cap is FAIR-SHARED per file, not one global
+/// head-cut: git emits paths in sorted order, so a single truncation silently
+/// drops every later file — typically exactly the checks the verifier must
+/// judge. Under budget keeps everything; over budget each changed file gets an
+/// equal slice with its own truncation marker, so every touched file stays
+/// visible.
+fn fit_diffs(diffs: Vec<(&String, String)>, budget: usize) -> String {
 	let total: usize = diffs.iter().map(|(_, d)| d.len()).sum();
 	let mut s = String::new();
-	if total <= GT_DIFF_MAX {
+	if total <= budget {
 		for (_, d) in diffs {
 			s.push_str(&d);
 		}
 		return s;
 	}
-	let share = GT_DIFF_MAX / diffs.len().max(1);
+	let share = budget / diffs.len().max(1);
 	for (p, mut d) in diffs {
 		if d.len() > share {
 			let mut end = share;
@@ -1012,6 +1135,124 @@ fn git_diff(paths: &[String]) -> String {
 		s.push_str(&d);
 	}
 	s
+}
+
+/// Every file's diff with the hunks the evaluation model judged unneeded for
+/// the request's conditions replaced by a one-line stub, so the verifier still
+/// sees that they exist. The model reads the hunks in batched windows, as the
+/// condense seam reads tool-output chunks. `None` when it is unavailable or
+/// keeps nothing (an answer that drops the whole change is not a selection).
+async fn relevant_hunks<'a>(
+	config: &Config,
+	task: &str,
+	conditions: &[String],
+	diffs: &[(&'a String, String)],
+) -> Option<Vec<(&'a String, String)>> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let files: Vec<(&'a String, &str, Vec<&str>)> = diffs
+		.iter()
+		.map(|(path, diff)| {
+			let (preamble, hunks) = split_hunks(diff);
+			(*path, preamble, hunks)
+		})
+		.collect();
+	let hunks: Vec<(usize, &str)> = files
+		.iter()
+		.enumerate()
+		.flat_map(|(file, (_, _, hunks))| hunks.iter().map(move |hunk| (file, *hunk)))
+		.collect();
+	if hunks.is_empty() {
+		return None;
+	}
+	let header = serde_json::json!({
+		"task": crate::supervisor::condense::task_block(task),
+		"conditions": conditions,
+		"hunks": [],
+	});
+	let header_tokens = crate::session::estimate_tokens(&header.to_string());
+	let hunk_json = |index: usize| {
+		let (file, text) = hunks[index];
+		serde_json::json!({
+			"index": index,
+			"file": files[file].0,
+			"text": crate::supervisor::condense::truncate_preserving_edges(text, evaluate::GATE_HUNK_SAMPLE_TOKENS),
+		})
+	};
+	let windows = evaluate::windows((0..hunks.len()).collect(), header_tokens, |index| {
+		crate::session::estimate_tokens(&hunk_json(*index).to_string())
+	});
+	let window_sizes: Vec<usize> = windows.iter().map(Vec::len).collect();
+	let requests = windows
+		.iter()
+		.map(|window| {
+			let mut state = header.clone();
+			state["hunks"] = window.iter().map(|index| hunk_json(*index)).collect();
+			let questions =
+				evaluate::gate_hunk_questions(window.iter().map(|index| (*index, files[hunks[*index].0].0.as_str())));
+			(state, questions)
+		})
+		.collect();
+	let mut answers = evaluate::run_windows(config, Seam::Gate, requests).await?.into_iter();
+	let mut keep = Vec::with_capacity(hunks.len());
+	for size in window_sizes {
+		let window = answers.next()?;
+		keep.extend((0..size).map(|slot| {
+			evaluate::probability(&window, &evaluate::gate_hunk_question_id(slot)) >= evaluate::GATE_HUNK_KEEP_AT
+		}));
+	}
+	let shown = keep.iter().filter(|kept| **kept).count();
+	crate::log_debug!("evaluate gate: kept {} of {} diff hunks", shown, keep.len());
+	if shown == 0 {
+		return None;
+	}
+	crate::supervisor::stats::evaluate_applied(Seam::Gate, (keep.len() - shown) as u64);
+	let mut kept = keep.into_iter();
+	Some(
+		files
+			.into_iter()
+			.map(|(path, preamble, hunks)| {
+				let mut diff = preamble.to_string();
+				for hunk in hunks {
+					if kept.next().expect("one keep flag per hunk") {
+						diff.push_str(hunk);
+					} else {
+						diff.push_str(&omitted_hunk(hunk));
+					}
+				}
+				(path, diff)
+			})
+			.collect(),
+	)
+}
+
+/// One file's diff split into its header and its hunks. A line starting `@@ `
+/// is a hunk header: every body line of a unified diff starts with a space,
+/// `+`, `-` or `\`.
+fn split_hunks(diff: &str) -> (&str, Vec<&str>) {
+	let mut starts = Vec::new();
+	let mut offset = 0;
+	for line in diff.split_inclusive('\n') {
+		if line.starts_with("@@ ") {
+			starts.push(offset);
+		}
+		offset += line.len();
+	}
+	let preamble_end = starts.first().copied().unwrap_or(diff.len());
+	let hunks = starts
+		.iter()
+		.enumerate()
+		.map(|(i, start)| &diff[*start..starts.get(i + 1).copied().unwrap_or(diff.len())])
+		.collect();
+	(&diff[..preamble_end], hunks)
+}
+
+/// A hunk the selection left out: its header line and how much it holds, so
+/// the verifier knows it exists and that its content is unseen, not absent.
+fn omitted_hunk(hunk: &str) -> String {
+	let header = hunk.lines().next().unwrap_or_default();
+	let added = hunk.lines().skip(1).filter(|line| line.starts_with('+')).count();
+	let removed = hunk.lines().skip(1).filter(|line| line.starts_with('-')).count();
+	format!("{header}\n(hunk not shown: +{added} -{removed} lines)\n")
 }
 
 /// Compact byte-size hint for a tool result (`412b`, `2.3k`).
@@ -1054,7 +1295,7 @@ pub struct GateInput<'a> {
 	pub grounds: &'a [(u64, String)],
 	/// Live plan checklist. Execution state only, never additional user intent.
 	pub plan: &'a str,
-	/// Rendered [`render_ground_truth`] block (diff + recent command outputs).
+	/// Rendered [`render_ground_truth_for`] block (diff + recent command outputs).
 	pub ground_truth: &'a RenderedEvidence,
 	/// Gaps the previous verification pass found this task, so the re-verify
 	/// confirms each is closed instead of judging from scratch.
@@ -1126,14 +1367,7 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 		// Do not echo parser text derived from the malformed model response back
 		// into an instruction-bearing block. The retry needs the contract, not
 		// attacker-controlled tag names or content.
-		let condition_rule = if conditions == 0 {
-			"no condition lines (no <evidence_conditions> block was given)".to_string()
-		} else {
-			format!("conditions 1 through {conditions}, each exactly once (an unmatched one with its basis)")
-		};
-		let retry_user = format!(
-            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
-        );
+		let retry_user = format!("{user}{}", format_violation(conditions));
 		match ask_verifier(config, encoding, conditions, retry_user, operation_rx.clone()).await {
 			Ok((raw, retry)) => {
 				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, raw);
@@ -1459,26 +1693,62 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 	})
 }
 
+/// The repair note a malformed verifier answer gets, appended to the same input.
+fn format_violation(conditions: usize) -> String {
+	let condition_rule = if conditions == 0 {
+		"no condition lines (no <evidence_conditions> block was given)".to_string()
+	} else {
+		format!("conditions 1 through {conditions}, each exactly once (an unmatched one with its basis)")
+	};
+	format!(
+		"\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
+	)
+}
+
 /// Evaluation-model refutation: one Noul per charged finding over the same
-/// evidence the verifier saw. `None` means the seam is off or unavailable and
-/// the chat refuter decides.
+/// evidence the verifier saw. Evidence over the state cap is read in
+/// line-aligned slices that each carry every finding (see
+/// [`crate::supervisor::evaluate::text_windows`]), and a finding is refuted when
+/// any slice refutes it: a refutation cites one observation, which one slice
+/// holds, the way chunked grounding checkers take a claim's best chunk. `None`
+/// means the evaluation was unavailable, and every finding stands.
 async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Option<(Vec<String>, Vec<String>)> {
 	use crate::supervisor::evaluate::{self, Seam};
-	let state = serde_json::json!({
-		"evidence": evidence,
+	let header = serde_json::json!({
+		"evidence": "",
 		"findings": gaps
 			.iter()
 			.enumerate()
 			.map(|(i, gap)| serde_json::json!({ "number": i + 1, "text": gap }))
 			.collect::<Vec<_>>(),
 	});
-	let replaced = crate::session::estimate_tokens(&state.to_string()) + crate::session::estimate_tokens(REFUTE_PROMPT);
-	let answers = evaluate::run(config, Seam::Gate, state, evaluate::gate_questions(gaps.len())).await?;
+	let header_tokens = crate::session::estimate_tokens(&header.to_string());
+	let mut whole = header.clone();
+	whole["evidence"] = evidence.into();
+	let replaced = crate::session::estimate_tokens(&whole.to_string()) + crate::session::estimate_tokens(REFUTE_PROMPT);
+	let requests = evaluate::text_windows(evidence, header_tokens)
+		.into_iter()
+		.map(|slice| {
+			let mut state = header.clone();
+			state["evidence"] = slice.into();
+			(state, evaluate::gate_questions(gaps.len()))
+		})
+		.collect();
+	let windows = evaluate::run_windows(config, Seam::Gate, requests).await?;
 	let refuted: HashSet<usize> = (0..gaps.len())
-		.filter(|slot| evaluate::probability(&answers, &evaluate::gate_question_id(*slot)) >= evaluate::GATE_REFUTE_AT)
+		.filter(|slot| {
+			windows.iter().any(|answers| {
+				evaluate::probability(answers, &evaluate::gate_question_id(*slot)) >= evaluate::GATE_REFUTE_AT
+			})
+		})
 		.map(|slot| slot + 1)
 		.collect();
-	crate::log_debug!("evaluate gate: refuted {} of {} findings", refuted.len(), gaps.len());
+	crate::log_debug!(
+		"evaluate gate: refuted {} of {} findings over {} evidence slice(s)",
+		refuted.len(),
+		gaps.len(),
+		windows.len()
+	);
 	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
 	evaluate::avoided(config, Seam::Gate, replaced);
 	Some(split_refuted(gaps, &refuted))

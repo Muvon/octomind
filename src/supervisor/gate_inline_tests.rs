@@ -748,3 +748,138 @@ fn recent_command_tails_survive_a_change_that_fills_its_budget() {
 	}
 	assert!(!truth.text.contains("(ground truth truncated)"));
 }
+
+/// A repo whose `tracked.txt` has five far-apart changes — five hunks that
+/// together overflow the diff budget — each carrying its index as a marker.
+fn temp_repo_with_five_hunks() -> tempfile::TempDir {
+	let tmp = tempfile::tempdir().expect("tempdir for the scratch repo");
+	let repo = tmp.path().join("repo");
+	std::fs::create_dir_all(&repo).expect("create repo dir");
+	run_git(&repo, &["init"]);
+	let seed: Vec<String> = (0..300).map(|n| format!("seed line {n}")).collect();
+	std::fs::write(repo.join("tracked.txt"), seed.join("\n") + "\n").expect("seed file");
+	run_git(&repo, &["add", "tracked.txt"]);
+	run_git(
+		&repo,
+		&[
+			"-c",
+			"user.email=gate@test",
+			"-c",
+			"user.name=gate",
+			"commit",
+			"-m",
+			"seed",
+		],
+	);
+	let mut changed = seed;
+	for (hunk, line) in [10, 70, 130, 190, 250].into_iter().enumerate() {
+		changed[line] = format!("changed hunk {hunk} {}", "x".repeat(3_000));
+	}
+	std::fs::write(repo.join("tracked.txt"), changed.join("\n") + "\n").expect("dirty the file");
+	tmp
+}
+
+fn gate_config(decision: bool) -> Config {
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.enabled = true;
+	config.decision.supervisor = decision;
+	config
+}
+
+fn edit_input(ledger: &EvidenceLedger) -> GateInput<'_> {
+	GateInput {
+		ledger,
+		original_task: "edit the file",
+		task: "edit the file",
+		task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
+		context_sources: &[],
+		resolution_evidence: &[],
+		result: "edited the file",
+		claim: None,
+		stop: None,
+		actions: "",
+		historical_actions: "",
+		grounds: &[],
+		plan: "",
+		ground_truth: &EMPTY_EVIDENCE,
+		prior_gaps: &[],
+		role_context: "",
+		evidence_conditions: &[],
+		first_verification: true,
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ground_truth_selects_hunks_by_relevance_only_when_switched_on() {
+	use crate::session::chat::test_support::{install_fake_evaluation, nouls, FakeEvaluationStep};
+	let tmp = temp_repo_with_five_hunks();
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
+		("h0", 0.9),
+		("h1", 0.1),
+		("h2", 0.1),
+		("h3", 0.1),
+		("h4", 0.9),
+	]))])
+	.await;
+	let ledger = EvidenceLedger {
+		mutated_paths: vec!["tracked.txt".to_string()],
+		..Default::default()
+	};
+	let env = RepoEnv::point_at(&tmp.path().join("repo"));
+
+	let original = render_ground_truth(&ledger).text;
+	let off = render_ground_truth_for(&gate_config(false), &edit_input(&ledger), None)
+		.await
+		.text;
+	let on = render_ground_truth_for(&gate_config(true), &edit_input(&ledger), None)
+		.await
+		.text;
+
+	drop(env);
+	assert!(
+		original.contains("(diff of tracked.txt truncated to fit)"),
+		"the fixture overflows the size budget"
+	);
+	assert_eq!(off, original, "switched off, the block is the original one");
+	assert_eq!(
+		fake.requests().len(),
+		1,
+		"only the switched-on render asked the evaluation"
+	);
+	for kept in [0, 4] {
+		assert!(on.contains(&format!("changed hunk {kept} xxx")), "hunk {kept} is read");
+	}
+	for dropped in [1, 2, 3] {
+		assert!(
+			!on.contains(&format!("changed hunk {dropped} xxx")),
+			"hunk {dropped} is a stub"
+		);
+	}
+	assert_eq!(on.matches("(hunk not shown").count(), 3);
+	assert!(
+		!on.contains("(diff of tracked.txt truncated to fit)"),
+		"relevance, not size, decided"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ground_truth_falls_back_to_the_original_block_when_the_evaluation_is_unavailable() {
+	use crate::session::chat::test_support::{install_fake_evaluation, FakeEvaluationStep};
+	let tmp = temp_repo_with_five_hunks();
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
+	let ledger = EvidenceLedger {
+		mutated_paths: vec!["tracked.txt".to_string()],
+		..Default::default()
+	};
+	let env = RepoEnv::point_at(&tmp.path().join("repo"));
+
+	let original = render_ground_truth(&ledger).text;
+	let selected = render_ground_truth_for(&gate_config(true), &edit_input(&ledger), None)
+		.await
+		.text;
+
+	drop(env);
+	assert_eq!(selected, original);
+}

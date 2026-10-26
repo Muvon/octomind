@@ -635,62 +635,56 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					.fold_job_completion(job.sequence, &job.label, &job.body);
 			}
 		}
-		// Runtime-gathered ground truth: the diff of what actually changed and
-		// the last command's recorded output — the verifier judges state, not story.
-		let mut ground_truth = crate::supervisor::gate::render_ground_truth(&chat_session.evidence);
+		// Diff hunk selection may wait on the evaluation model, so the phase shows from here.
+		animation_manager.set_phase("Verifying completion …").await;
 		// Report detector limits as heuristics. Failure to recognize a check is
 		// not proof that no check ran, or that the task requires another action.
-		if !chat_session.evidence.mutated_paths().is_empty() {
-			let provenance = if chat_session
-				.detectors
-				.needs_verification(crate::supervisor::workdir::fingerprint())
-			{
-				Some(
-					"Verification detector: no qualifying check was recognized after the recorded state changes. This heuristic does not establish that verification is absent or required; judge the recorded outputs and resulting artifacts against the request.",
-				)
-			} else if chat_session.detectors.cleared_by_readback_only() {
-				Some(
-					"Verification detector: artifact read-back was recognized, but no qualifying command check was recognized at that clearance. This heuristic is not an exhaustive account of the evidence. Artifact content can satisfy an artifact request; behavior claims require supporting observations.",
-				)
-			} else {
-				None
-			};
-			if let Some(p) = provenance {
-				if !ground_truth.text.is_empty() {
-					ground_truth.text.push_str("\n\n");
-				}
-				ground_truth.text.push_str(p);
-			}
-		}
+		let detector_note = if chat_session.evidence.mutated_paths().is_empty() {
+			None
+		} else if chat_session
+			.detectors
+			.needs_verification(crate::supervisor::workdir::fingerprint())
+		{
+			Some(
+				"Verification detector: no qualifying check was recognized after the recorded state changes. This heuristic does not establish that verification is absent or required; judge the recorded outputs and resulting artifacts against the request.",
+			)
+		} else if chat_session.detectors.cleared_by_readback_only() {
+			Some(
+				"Verification detector: artifact read-back was recognized, but no qualifying command check was recognized at that clearance. This heuristic is not an exhaustive account of the evidence. Artifact content can satisfy an artifact request; behavior claims require supporting observations.",
+			)
+		} else {
+			None
+		};
 		let (historical_actions, grounds) = chat_session.evidence.verification_evidence(resolved_task.scope);
 		let prior_gaps = chat_session.last_gate_gaps.clone();
+		let no_ground_truth = crate::supervisor::gate::RenderedEvidence::default();
+		let mut gate_input = crate::supervisor::gate::GateInput {
+			ledger: &chat_session.evidence,
+			original_task: &resolved_task.original_request,
+			task: &resolved_task.resolved_request,
+			task_scope: resolved_task.scope,
+			context_sources: &resolved_task.context_sources,
+			resolution_evidence: &resolved_task.resolution_evidence,
+			result: &result,
+			claim: claim.as_deref(),
+			stop,
+			actions: &actions,
+			historical_actions: &historical_actions,
+			grounds: &grounds,
+			plan: &plan,
+			ground_truth: &no_ground_truth,
+			prior_gaps: &prior_gaps,
+			role_context: &crate::supervisor::role_context(&chat_session.session.messages),
+			evidence_conditions: &resolved_task.evidence_conditions,
+			first_verification: chat_session.gate_iterations == 0,
+		};
+		// Runtime-gathered ground truth: the diff of what actually changed and
+		// the last command's recorded output — the verifier judges state, not story.
+		// Rendered against the rest of the input, which bounds a selected diff.
+		let ground_truth = crate::supervisor::gate::render_ground_truth_for(config, &gate_input, detector_note).await;
+		gate_input.ground_truth = &ground_truth;
 		crate::supervisor::stats::gate_run();
-		animation_manager.set_phase("Verifying completion …").await;
-		let verdict = crate::supervisor::gate::verify(
-			config,
-			crate::supervisor::gate::GateInput {
-				ledger: &chat_session.evidence,
-				original_task: &resolved_task.original_request,
-				task: &resolved_task.resolved_request,
-				task_scope: resolved_task.scope,
-				context_sources: &resolved_task.context_sources,
-				resolution_evidence: &resolved_task.resolution_evidence,
-				result: &result,
-				claim: claim.as_deref(),
-				stop,
-				actions: &actions,
-				historical_actions: &historical_actions,
-				grounds: &grounds,
-				plan: &plan,
-				ground_truth: &ground_truth,
-				prior_gaps: &prior_gaps,
-				role_context: &crate::supervisor::role_context(&chat_session.session.messages),
-				evidence_conditions: &resolved_task.evidence_conditions,
-				first_verification: chat_session.gate_iterations == 0,
-			},
-			operation_rx.clone(),
-		)
-		.await;
+		let verdict = crate::supervisor::gate::verify(config, gate_input, operation_rx.clone()).await;
 		animation_manager.clear_phase();
 		// Did the trajectory gain anything since the pass that produced
 		// `prior_gaps`? A finding that survives new evidence is diagnostic (see

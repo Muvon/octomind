@@ -94,6 +94,7 @@ fn log_response_debug(
 }
 
 // Helper function to handle final response when no tool calls are present
+#[allow(clippy::too_many_arguments)]
 fn handle_final_response(
 	content: &str,
 	thinking: &Option<ThinkingBlock>,

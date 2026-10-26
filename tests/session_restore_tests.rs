@@ -58,6 +58,7 @@ mod session_restore_tests {
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
+			provider_items: None,
 			images: None,
 			videos: None,
 			thinking: None,

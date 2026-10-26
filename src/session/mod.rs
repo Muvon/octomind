@@ -111,6 +111,8 @@ pub struct Message {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub tool_calls: Option<serde_json::Value>, // For assistant messages: original tool calls from API response
 	#[serde(skip_serializing_if = "Option::is_none")]
+	pub provider_items: Option<serde_json::Value>, // Provider-native ordered output items for exact replay
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<crate::session::image::ImageAttachment>>, // For messages with image attachments
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub videos: Option<Vec<crate::session::video::VideoAttachment>>, // For messages with video attachments
@@ -139,6 +141,7 @@ impl Default for Message {
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
+			provider_items: None,
 			images: None,
 			videos: None,
 			thinking: None,

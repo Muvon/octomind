@@ -63,6 +63,7 @@ impl MessageHandler {
 			tool_call_id: None,
 			name: None,
 			tool_calls: original_tool_calls,
+			provider_items: exchange.response.get("output_items").cloned(),
 			images: None,
 			videos: None,
 			thinking: None,

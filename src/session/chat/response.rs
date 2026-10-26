@@ -97,6 +97,7 @@ fn log_response_debug(
 fn handle_final_response(
 	content: &str,
 	thinking: &Option<ThinkingBlock>,
+	provider_items: Option<serde_json::Value>,
 	response_id: Option<String>,
 	chat_session: &mut ChatSession,
 	config: &Config,
@@ -124,6 +125,7 @@ fn handle_final_response(
 		tool_call_id: None,
 		name: None,
 		tool_calls: None,
+		provider_items,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -338,6 +340,7 @@ fn add_assistant_message_with_tool_calls(
 		tool_call_id: None,
 		name: None,
 		tool_calls: original_tool_calls.clone(),
+		provider_items: current_exchange.response.get("output_items").cloned(),
 		images: None,
 		videos: None,
 		thinking: thinking_value,
@@ -370,7 +373,8 @@ fn add_assistant_message_with_tool_calls(
 }
 
 /// Supervisor: capture the agent's self-report (state + reason) from a freshly
-/// produced assistant message and strip the token so it is never shown or stored.
+/// produced assistant message and strip the token from its `content`, so it is
+/// never shown. Captured provider items keep the output as returned, for replay.
 /// Each call overwrites `last_self_report`, so across a multi-round turn it
 /// converges on the final message's state (None when no token was emitted).
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
@@ -420,7 +424,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 
 	// Supervisor: capture + strip the agent's self-report. Re-run for every
 	// response in the turn (here and after each tool round), so `last_self_report`
-	// reflects the final message and no token leaks to display or storage.
+	// reflects the final message and no token leaks to display or `content`.
 	params.content = capture_self_report(&mut *params.chat_session, params.config, &params.content);
 
 	// Note: No explicit stop needed here. The spinner-aware print macros in
@@ -451,6 +455,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 	// Process original content first, then any follow-up tool calls
 	let mut current_content = params.content.clone();
 	let mut current_exchange = params.exchange.clone(); // Clone to avoid moving params
+	let mut current_provider_items = current_exchange.response.get("output_items").cloned();
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
 	let mut current_response_id = params.response_id.clone(); // Track response_id through iterations
 	let mut current_thinking = params.thinking.clone(); // Track thinking only for the current response
@@ -867,6 +872,9 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 					params.config,
 					params.role,
 				)?;
+				// This response was persisted with its tool calls above. Any final
+				// message below is either a later provider response or runtime text.
+				current_provider_items = None;
 
 				// Loop stop: answer this round's tool calls, then finish the turn on the
 				// notice instead of asking the model again.
@@ -895,6 +903,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 					{
 						// Update current content for next iteration
 						current_content = capture_self_report(&mut *params.chat_session, params.config, &new_content);
+						current_provider_items = new_exchange.response.get("output_items").cloned();
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response
@@ -957,6 +966,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 	handle_final_response(
 		&current_content,
 		&thinking_for_final,
+		current_provider_items,
 		current_response_id, // Use current_response_id (updated from follow-up responses)
 		params.chat_session,
 		params.config,

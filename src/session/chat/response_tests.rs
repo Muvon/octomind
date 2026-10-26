@@ -122,10 +122,15 @@ impl OutputSink for RecordingSink {
 fn test_handle_final_response_records_assistant_message() {
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 	let config = template_config();
+	let output_items = json!([
+		{"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+		{"type": "message", "id": "msg_1", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "final answer"}]}
+	]);
 
 	handle_final_response(
 		"final answer",
 		&None,
+		Some(output_items.clone()),
 		Some("resp_9".to_string()),
 		&mut session,
 		&config,
@@ -138,6 +143,7 @@ fn test_handle_final_response_records_assistant_message() {
 	let message = &session.session.messages[0];
 	assert_eq!(message.role, "assistant");
 	assert_eq!(message.content, "final answer");
+	assert_eq!(message.provider_items.as_ref(), Some(&output_items));
 	assert_eq!(message.id.as_deref(), Some("resp_9"));
 	assert_eq!(session.last_response, "final answer");
 	assert_eq!(session.turn_answers, vec!["final answer".to_string()]);
@@ -151,6 +157,7 @@ fn test_handle_final_response_blank_content_skips_turn_answer() {
 	handle_final_response(
 		"   ",
 		&None,
+		None,
 		None,
 		&mut session,
 		&config,
@@ -170,7 +177,13 @@ fn test_add_assistant_message_with_tool_calls_preserves_exchange_shape() {
 	let config = template_config();
 	let exchange = ProviderExchange::new(
 		json!({}),
-		json!({"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}),
+		json!({
+			"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}],
+			"output_items": [
+				{"type": "message", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "running tools\n<sup>progressing</sup>"}]},
+				{"type": "function_call", "call_id": "c1"}
+			]
+		}),
 		None,
 		"test",
 	);
@@ -194,6 +207,17 @@ fn test_add_assistant_message_with_tool_calls_preserves_exchange_shape() {
 	let calls = message.tool_calls.as_ref().expect("tool_calls preserved");
 	assert_eq!(calls[0]["id"], json!("c1"));
 	assert_eq!(calls[0]["function"]["name"], json!("shell"));
+	assert_eq!(
+		message.provider_items.as_ref().expect("provider items")[0]["phase"],
+		"commentary"
+	);
+	assert!(
+		message.provider_items.as_ref().expect("provider items")[0]["content"][0]["text"]
+			.as_str()
+			.expect("output text")
+			.contains("<sup>"),
+		"display-only self-report stripping must not rewrite provider replay state"
+	);
 	// Thinking block is serialized onto the message
 	assert!(message.thinking.is_some());
 	assert_eq!(message.id.as_deref(), Some("resp_1"));

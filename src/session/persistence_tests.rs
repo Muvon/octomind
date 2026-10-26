@@ -28,6 +28,7 @@ fn msg(role: &str, content: &str) -> Message {
 		tool_call_id: None,
 		name: None,
 		tool_calls: None,
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -45,6 +46,7 @@ fn assistant_with_tool_calls(content: &str, tool_calls: serde_json::Value) -> Me
 		tool_call_id: None,
 		name: None,
 		tool_calls: Some(tool_calls),
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -62,6 +64,7 @@ fn tool_response(call_id: &str, name: &str, content: &str) -> Message {
 		tool_call_id: Some(call_id.to_string()),
 		name: Some(name.to_string()),
 		tool_calls: None,
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -228,6 +231,31 @@ fn round_trip_without_compression_preserves_messages() {
 	assert_eq!(session.messages[0].content, "hi");
 	assert_eq!(session.messages[3].content, "fine");
 	assert_eq!(session.info.name, "round-trip");
+}
+
+#[test]
+fn provider_items_survive_session_round_trip_and_default_for_legacy_messages() {
+	let s = summary_line("provider-items", 1_700_000_000);
+	let items = json!([
+		{"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+		{"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "done"}]}
+	]);
+	let mut assistant = msg("assistant", "done");
+	assistant.provider_items = Some(items.clone());
+	let current = serde_json::to_string(&assistant).unwrap();
+	let legacy = json!({
+		"role": "assistant",
+		"content": "old",
+		"timestamp": 1_700_000_001,
+		"cached": false
+	})
+	.to_string();
+
+	let file = write_session(&[&s, &current, &legacy]);
+	let session = load_session(&file.path().to_path_buf()).expect("load");
+
+	assert_eq!(session.messages[0].provider_items.as_ref(), Some(&items));
+	assert!(session.messages[1].provider_items.is_none());
 }
 
 #[test]

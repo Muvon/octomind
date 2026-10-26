@@ -171,7 +171,13 @@ fn assistant_message_tracks_usage_and_cost_from_exchange() {
 	};
 	let exchange = crate::session::ProviderExchange::new(
 		serde_json::json!({}),
-		serde_json::json!({"usage": {"cost": 0.25}}),
+		serde_json::json!({
+			"usage": {"cost": 0.25},
+			"output_items": [
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+				{"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "answer"}]}
+			]
+		}),
 		Some(usage),
 		"test",
 	);
@@ -179,6 +185,17 @@ fn assistant_message_tracks_usage_and_cost_from_exchange() {
 		.add_assistant_message("answer", Some(exchange), &config, "assistant")
 		.unwrap();
 	assert_eq!(session.session.messages.last().unwrap().role, "assistant");
+	assert_eq!(
+		session
+			.session
+			.messages
+			.last()
+			.unwrap()
+			.provider_items
+			.as_ref()
+			.unwrap()[1]["phase"],
+		"final_answer"
+	);
 	assert_eq!(session.last_response, "answer");
 	assert_eq!(session.session.info.total_api_calls, 1);
 	// Normalized usage.cost wins over the raw response cost

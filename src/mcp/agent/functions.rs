@@ -573,6 +573,7 @@ fn run_dynamic_agent_in_process(
 						.as_secs(),
 					cached: false,
 					tool_calls: original_tool_calls,
+					provider_items: current_exchange.response.get("output_items").cloned(),
 					..Default::default()
 				});
 

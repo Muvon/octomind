@@ -215,6 +215,7 @@ fn msg(role: &str, content: &str) -> Message {
 		tool_call_id: None,
 		name: None,
 		tool_calls: None,
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -489,6 +490,23 @@ async fn test_octolib_params_defaults_and_passthrough() {
 	assert!(octo.tools.is_none(), "no MCP servers → no tools attached");
 	assert_eq!(octo.messages.len(), 1);
 	assert_eq!(octo.messages[0].timestamp, 1_700_000_000);
+}
+
+#[tokio::test]
+async fn test_octolib_params_carry_provider_items() {
+	let config = test_config();
+	let items = serde_json::json!([
+		{"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+		{"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "done"}]}
+	]);
+	let mut assistant = msg("assistant", "done");
+	assistant.provider_items = Some(items.clone());
+	let messages = vec![msg("user", "go"), assistant, msg("user", "again")];
+
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+
+	assert_eq!(octo.messages[1].provider_items.as_ref(), Some(&items));
 }
 
 #[tokio::test]

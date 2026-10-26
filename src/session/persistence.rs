@@ -239,6 +239,7 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 				tool_call_id: Some(call_id),
 				name: Some(tool_name),
 				tool_calls: None,
+				provider_items: None,
 				images: None,
 				videos: None,
 				thinking: None,

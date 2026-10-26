@@ -483,7 +483,10 @@ impl ChatSession {
 		// ATOMIC ADD: build, persist, then push. If persist fails, `?` propagates with
 		// clean memory state — no orphaned assistant message and no token/cost
 		// bookkeeping side-effects.
-		let message = crate::session::Session::build_message("assistant", content);
+		let mut message = crate::session::Session::build_message("assistant", content);
+		message.provider_items = exchange
+			.as_ref()
+			.and_then(|exchange| exchange.response.get("output_items").cloned());
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;

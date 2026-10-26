@@ -1190,6 +1190,7 @@ impl ChatSession {
 			tool_call_id: None,
 			name: Some("plan_compression".to_string()),
 			tool_calls: None,
+			provider_items: None,
 			images: None,
 			videos: None,
 			thinking: None,

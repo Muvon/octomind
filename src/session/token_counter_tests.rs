@@ -26,6 +26,7 @@ fn msg(role: &str, content: &str) -> Message {
 		tool_call_id: None,
 		name: None,
 		tool_calls: None,
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,
@@ -44,6 +45,24 @@ fn token_count_grows_with_text() {
 	let long = estimate_tokens(&"hello world ".repeat(50));
 	assert!(short > 0);
 	assert!(long > short * 10, "short={short} long={long}");
+}
+
+#[test]
+fn provider_items_are_not_counted_as_transcript_text() {
+	let plain = msg("assistant", "done");
+	let mut with_provider_items = plain.clone();
+	with_provider_items.provider_items = Some(serde_json::json!([
+		{"type": "reasoning", "encrypted_content": "opaque-ciphertext-".repeat(10_000)}
+	]));
+
+	assert_eq!(
+		estimate_message_tokens(&with_provider_items),
+		estimate_message_tokens(&plain)
+	);
+	assert_eq!(
+		estimate_sent_message_tokens(&with_provider_items, "openai:gpt-5"),
+		estimate_sent_message_tokens(&plain, "openai:gpt-5")
+	);
 }
 
 #[test]

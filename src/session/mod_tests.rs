@@ -92,6 +92,7 @@ fn create_test_message(
 		tool_call_id,
 		name: None,
 		tool_calls,
+		provider_items: None,
 		images: None,
 		videos: None,
 		thinking: None,

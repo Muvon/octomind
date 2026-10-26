@@ -431,7 +431,9 @@ fn convert_message_to_octolib(msg: &Message) -> Result<octolib::llm::Message, oc
 		}
 	}
 
-	builder.build()
+	let mut message = builder.build()?;
+	message.provider_items.clone_from(&msg.provider_items);
+	Ok(message)
 }
 
 /// Convert Octomind ImageAttachment to octolib ImageAttachment

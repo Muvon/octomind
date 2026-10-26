@@ -68,7 +68,13 @@ fn test_add_assistant_message_with_tool_calls_persists_and_tracks_usage() {
 	let calls = json!([{"tool_name": "shell", "parameters": {"cmd": "ls"}, "tool_id": "id1"}]);
 	let exchange = ProviderExchange::new(
 		json!({}),
-		json!({"tool_calls": calls}),
+		json!({
+			"tool_calls": calls,
+			"output_items": [
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+				{"type": "function_call", "call_id": "id1"}
+			]
+		}),
 		Some(usage(10, 5, 0.02, 120)),
 		"test",
 	);
@@ -86,6 +92,7 @@ fn test_add_assistant_message_with_tool_calls_persists_and_tracks_usage() {
 	assert_eq!(last.role, "assistant");
 	assert_eq!(last.content, "working on it");
 	assert_eq!(last.tool_calls, Some(calls));
+	assert_eq!(last.provider_items.as_ref().expect("provider items")[0]["id"], "rs_1");
 	assert_eq!(last.id.as_deref(), Some("resp-1"));
 	assert_eq!(session.last_response, "working on it");
 
@@ -103,6 +110,7 @@ fn test_add_assistant_message_with_tool_calls_persists_and_tracks_usage() {
 	let log = String::from_utf8(decoded).expect("log is UTF-8");
 	assert!(log.contains("working on it"), "log: {log}");
 	assert!(log.contains("tool_calls"), "log: {log}");
+	assert!(log.contains("provider_items"), "log: {log}");
 }
 
 #[test]

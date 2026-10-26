@@ -618,11 +618,7 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 ///
 /// Applies runtime state overrides (e.g. model changes from `/model` commands),
 /// cleans up any interrupted tool calls, and returns the final Session.
-fn reconstruct_messages(
-	mut info: SessionInfo,
-	final_messages: Vec<Message>,
-	session_file: &PathBuf,
-) -> Result<Session> {
+fn reconstruct_messages(mut info: SessionInfo, final_messages: Vec<Message>, session_file: &Path) -> Result<Session> {
 	let runtime_state = extract_runtime_state_from_log(session_file)?;
 	if let Some(model) = runtime_state.model {
 		info.model = model;
@@ -636,7 +632,7 @@ fn reconstruct_messages(
 	Ok(Session {
 		info,
 		messages: cleaned_messages,
-		session_file: Some(session_file.clone()),
+		session_file: Some(session_file.to_path_buf()),
 	})
 }
 
@@ -644,7 +640,7 @@ fn reconstruct_messages(
 ///
 /// Synthesises a default SessionInfo from the file path and any STATS entries,
 /// then applies runtime state overrides.
-fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) -> Result<Session> {
+fn restore_session_info(final_messages: Vec<Message>, session_file: &Path) -> Result<Session> {
 	// file_stem() on "name.jsonl.zst" yields "name.jsonl" — strip the residual
 	// .jsonl so the session name matches what the logger writes under. Leaving it
 	// forks all subsequent log writes to a differently-named file.
@@ -757,7 +753,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 	Ok(Session {
 		info,
 		messages: final_messages,
-		session_file: Some(session_file.clone()),
+		session_file: Some(session_file.to_path_buf()),
 	})
 }
 

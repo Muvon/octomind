@@ -1056,32 +1056,6 @@ fn a_torn_frame_is_not_cut_once_the_log_grew_past_it() {
 }
 
 #[test]
-#[ignore]
-fn tmp_timing_large_log() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("big.jsonl.zst");
-	let mut bytes = Vec::new();
-	let body = "x".repeat(9000);
-	for index in 0..8200 {
-		let line = format!("{}\n", msg_json_line("user", &format!("{index} {body}")));
-		bytes.extend(zstd::encode_all(line.as_bytes(), 1).unwrap());
-	}
-	std::fs::write(&path, &bytes).unwrap();
-	let started = std::time::Instant::now();
-	let frames = SessionLog::open(&path).unwrap().count();
-	let frame_by_frame = started.elapsed();
-	let started = std::time::Instant::now();
-	let stream = BufReader::new(ZstdDecoder::new(File::open(&path).unwrap()).unwrap())
-		.lines()
-		.count();
-	let one_stream = started.elapsed();
-	eprintln!(
-		"TIMING frames={frames} stream={stream} size={} frame_by_frame={frame_by_frame:?} one_stream={one_stream:?}",
-		bytes.len()
-	);
-}
-
-#[test]
 fn lines_are_read_across_frames_like_one_stream() {
 	// Older logs hold several lines in one frame, or end without a newline.
 	let bytes = [

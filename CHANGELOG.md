@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.64.1] - 2026-10-26
+
+### 📋 Release Summary
+
+Session logs now handle torn frames safely, and session appends are crash-safe. Learning list indices stay aligned when showing or deleting filtered entries, and session path handling accepts borrowed paths.
+
+### 🔧 Improvements & Optimizations
+
+- **session**: accept borrowed session paths `78b1b215`
+
+### 🐛 Bug Fixes & Stability
+
+- **persistence**: handle torn session-log frames safely `7191f215`
+- **session**: make session appends crash-safe `3bc79d6b`
+- **learning**: keep filtered list indices aligned with show and delete `a2773f3e`
+
 ## [0.64.0] - 2026-10-26
 
 ### 📋 Release Summary

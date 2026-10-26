@@ -21,7 +21,6 @@ use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use zstd::stream::read::Decoder as ZstdDecoder;
-use zstd::stream::write::Encoder as ZstdEncoder;
 
 // Get sessions directory path
 pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
@@ -923,23 +922,40 @@ pub fn summary_log_entry(info: &SessionInfo) -> serde_json::Value {
 
 // Helper function to append to session file as an independent zstd frame.
 // Each call writes one complete frame; the decoder reads all frames sequentially on load.
+//
+// A frame lands whole or not at all. Session files live on NFS, where a write
+// that never reaches the server is reported only by a later sync: unsynced, the
+// next append already moved past it and the lost frame stayed behind as zero
+// bytes — not a zstd frame, so every later load of the session failed. The
+// frame is synced before the lock is released, and any failure cuts the file
+// back to the length it had before this append.
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
-	let file = OpenOptions::new()
+	// Ensure content is on a single line - replace any newlines with spaces
+	let line = format!("{}\n", content.replace(['\n', '\r'], " "));
+	let frame = zstd::encode_all(line.as_bytes(), 1)?;
+
+	// `write` as well as `append`: on Windows append alone grants no right to
+	// truncate, and the rollback below truncates.
+	let mut file = OpenOptions::new()
 		.create(true)
 		.read(true)
+		.write(true)
 		.append(true)
 		.open(session_file)?;
 	// A detached distiller can append while the parent saves its final SUMMARY.
 	// Keep each compressed frame intact across both writers.
 	file.lock()?;
 
-	// Ensure content is on a single line - replace any newlines with spaces
-	let single_line_content = content.replace(['\n', '\r'], " ");
-
-	let mut encoder = ZstdEncoder::new(file, 1)?;
-	encoder.write_all(single_line_content.as_bytes())?;
-	encoder.write_all(b"\n")?;
-	encoder.finish()?;
+	let length = file.metadata()?.len();
+	if let Err(error) = file.write_all(&frame).and_then(|()| file.sync_data()) {
+		file.set_len(length).and_then(|()| file.sync_data()).with_context(|| {
+			format!(
+				"append to {} failed ({error}) and the partial frame could not be removed",
+				session_file.display()
+			)
+		})?;
+		return Err(error).with_context(|| format!("append to {} failed", session_file.display()));
+	}
 	Ok(())
 }
 

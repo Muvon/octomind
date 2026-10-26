@@ -21,8 +21,6 @@ use crate::session::timing::{self, SessionTurns, Turn};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Width of the request column in the rendered table. Requests are truncated
@@ -97,9 +95,7 @@ struct RequestContext {
 impl SessionReport {
 	/// Generate a session report from the session log file
 	pub fn generate_from_log(session_log_path: &str) -> Result<SessionReport> {
-		// Session logs are zstd-compressed JSONL — decode before reading lines.
-		let file = File::open(session_log_path)?;
-		let reader = BufReader::new(zstd::stream::read::Decoder::new(file)?);
+		let log = crate::session::persistence::SessionLog::open(Path::new(session_log_path))?;
 
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;
@@ -112,7 +108,7 @@ impl SessionReport {
 
 		// Read all log entries
 		let mut all_entries: Vec<Value> = Vec::new();
-		for line in reader.lines() {
+		for line in log {
 			let line = line?;
 			if line.trim().is_empty() {
 				continue;

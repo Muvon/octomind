@@ -194,21 +194,20 @@ async fn serve_session(req: Request<Incoming>, session_file: &std::path::Path, t
 	};
 
 	// Decompress zstd → plain JSONL before serving to the browser.
-	use std::io::Read;
-	let mut decompressed = Vec::new();
-	if let Err(e) = zstd::stream::read::Decoder::new(bytes.as_slice())
-		.and_then(|mut d| d.read_to_end(&mut decompressed).map(|_| ()))
-	{
-		log_error!(
-			"/analyze bridge: failed to decompress {}: {}",
-			session_file.display(),
-			e
-		);
-		return plain(
-			StatusCode::INTERNAL_SERVER_ERROR,
-			&format!("Decompress failed: {}\n", e),
-		);
-	}
+	let decompressed = match crate::session::persistence::session_log_jsonl(&bytes) {
+		Ok(jsonl) => jsonl,
+		Err(e) => {
+			log_error!(
+				"/analyze bridge: failed to decompress {}: {:#}",
+				session_file.display(),
+				e
+			);
+			return plain(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				&format!("Decompress failed: {:#}\n", e),
+			);
+		}
+	};
 
 	let mut res = Response::new(Full::new(Bytes::from(decompressed)));
 	*res.status_mut() = StatusCode::OK;

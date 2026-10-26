@@ -27,15 +27,12 @@
 //! Live signal comes from the run's on-disk session file (`<id>.jsonl.zst`),
 //! which the agent subprocess appends to as it works (one independent zstd
 //! frame per message — see `persistence::append_to_session_file`). We read it
-//! tolerantly so a frame being written mid-call never breaks the panel.
+//! with `SessionLog`, which ends the log before a frame still being written.
 
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::time::SystemTime;
 
 use anyhow::Result;
 use serde_json::json;
-use zstd::stream::read::Decoder as ZstdDecoder;
 
 use crate::session::tap_runs::{self, TapJobStatus, TapLiveState};
 use crate::session::{Message, SessionInfo};
@@ -245,20 +242,19 @@ fn read_agent_snapshot(id: &str) -> AgentSnapshot {
 		Ok(p) => p,
 		Err(_) => return snap,
 	};
-	let file = match File::open(&path) {
-		Ok(f) => f,
+	let log = match crate::session::persistence::SessionLog::open(&path) {
+		Ok(log) => log,
 		Err(_) => return snap,
 	};
-	let decoder = match ZstdDecoder::new(file) {
-		Ok(d) => d,
-		Err(_) => return snap,
-	};
-	for line in BufReader::new(decoder).lines() {
-		// A partial trailing frame surfaces as a read error — stop, keep what
-		// we have rather than discarding the whole snapshot.
+	for line in log {
+		// A frame still being written already ended the log; an error here is
+		// corruption — stop, keep what came before it.
 		let line = match line {
 			Ok(l) => l,
-			Err(_) => break,
+			Err(e) => {
+				crate::log_debug!("agent snapshot {}: {:#}", path.display(), e);
+				break;
+			}
 		};
 		if line.trim().is_empty() {
 			continue;

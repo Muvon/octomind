@@ -21,7 +21,7 @@
 
 use super::*;
 use serde_json::json;
-use std::io::{BufRead, Cursor};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 // ---- helpers ----
@@ -72,8 +72,7 @@ fn test_session_info(name: &str) -> SessionInfo {
 }
 
 fn parse(lines: &[String]) -> ParsedLogLines {
-	let joined = lines.join("\n");
-	parse_log_lines(Cursor::new(joined)).expect("parse log lines")
+	parse_log_lines(lines.iter().cloned().map(Ok)).expect("parse log lines")
 }
 
 fn summary_json_line(info: &SessionInfo, timestamp: u64) -> String {
@@ -511,15 +510,15 @@ fn parse_log_lines_summary_without_session_info_keeps_none() {
 
 #[test]
 fn parse_log_lines_invalid_session_info_in_summary_errors() {
-	let result = parse_log_lines(Cursor::new(
+	let result = parse_log_lines(std::iter::once(Ok(
 		json!({"type": "SUMMARY", "session_info": {"name": 123}}).to_string(),
-	));
+	)));
 	assert!(result.is_err());
 }
 
 #[test]
 fn parse_log_lines_legacy_summary_with_invalid_json_errors() {
-	let result = parse_log_lines(Cursor::new("SUMMARY: not json at all".to_string()));
+	let result = parse_log_lines(std::iter::once(Ok("SUMMARY: not json at all".to_string())));
 	assert!(result.is_err());
 }
 
@@ -966,4 +965,133 @@ fn concurrent_background_and_summary_writers_keep_journal_frames_intact() {
 		assert!(entries.insert((value["writer"].as_u64().unwrap(), value["index"].as_u64().unwrap())));
 	}
 	assert_eq!(entries.len(), 40);
+}
+
+// ---- SessionLog: torn final frame vs corruption ----
+
+/// Appends `kept` as a whole frame, then the first half of another frame — what
+/// a crash between an append's write and its sync leaves behind. Returns the
+/// length of the complete frames.
+fn log_with_torn_final_frame(path: &PathBuf) -> u64 {
+	append_to_session_file(path, &msg_json_line("user", "kept")).unwrap();
+	let complete_len = std::fs::metadata(path).unwrap().len();
+	let frame = zstd::encode_all(format!("{}\n", msg_json_line("assistant", "lost")).as_bytes(), 1).unwrap();
+	let mut file = OpenOptions::new().append(true).open(path).unwrap();
+	file.write_all(&frame[..frame.len() / 2]).unwrap();
+	complete_len
+}
+
+#[test]
+fn torn_final_frame_ends_the_log_and_load_cuts_it_off() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("torn.jsonl.zst");
+	let complete_len = log_with_torn_final_frame(&path);
+
+	let mut log = SessionLog::open(&path).unwrap();
+	let lines: Vec<String> = log.by_ref().map(|line| line.unwrap()).collect();
+	assert_eq!(lines, vec![msg_json_line("user", "kept")]);
+	assert_eq!(log.torn_at(), Some(complete_len));
+
+	let session = load_session(&path).expect("a torn final frame does not fail the load");
+	assert_eq!(session.messages.len(), 1);
+	assert_eq!(session.messages[0].content, "kept");
+	assert_eq!(
+		std::fs::metadata(&path).unwrap().len(),
+		complete_len,
+		"load cuts the torn frame off"
+	);
+
+	append_to_session_file(&path, &msg_json_line("user", "after")).unwrap();
+	let session = load_session(&path).expect("the next append follows a complete frame");
+	assert_eq!(session.messages.len(), 2);
+	assert_eq!(session.messages[1].content, "after");
+}
+
+#[test]
+fn bytes_that_are_no_frame_mid_log_are_an_error_never_skipped() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("zeros.jsonl.zst");
+	append_to_session_file(&path, &msg_json_line("user", "first")).unwrap();
+	let first_len = std::fs::metadata(&path).unwrap().len();
+	// The 2026-10-26 prod damage: a lost write left zero bytes between frames.
+	OpenOptions::new()
+		.append(true)
+		.open(&path)
+		.unwrap()
+		.write_all(&[0; 64])
+		.unwrap();
+	append_to_session_file(&path, &msg_json_line("user", "second")).unwrap();
+	let len = std::fs::metadata(&path).unwrap().len();
+
+	let lines: Vec<Result<String>> = SessionLog::open(&path).unwrap().collect();
+	assert_eq!(
+		lines.len(),
+		2,
+		"the log stops at the corruption, \"second\" is never reached"
+	);
+	assert_eq!(lines[0].as_ref().unwrap(), &msg_json_line("user", "first"));
+	let error = lines[1].as_ref().unwrap_err().to_string();
+	assert!(error.contains(&format!("byte {first_len}")), "{error}");
+
+	assert!(load_session(&path).is_err());
+	assert_eq!(
+		std::fs::metadata(&path).unwrap().len(),
+		len,
+		"a corrupt log is reported, never cut"
+	);
+}
+
+#[test]
+fn a_torn_frame_is_not_cut_once_the_log_grew_past_it() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("grown.jsonl.zst");
+	let complete_len = log_with_torn_final_frame(&path);
+	let seen_len = std::fs::metadata(&path).unwrap().len();
+	append_to_session_file(&path, &msg_json_line("user", "late")).unwrap();
+	let len = std::fs::metadata(&path).unwrap().len();
+
+	let error = cut_torn_tail(&path, complete_len, seen_len).unwrap_err().to_string();
+	assert!(error.contains("grew"), "{error}");
+	assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+}
+
+#[test]
+#[ignore]
+fn tmp_timing_large_log() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("big.jsonl.zst");
+	let mut bytes = Vec::new();
+	let body = "x".repeat(9000);
+	for index in 0..8200 {
+		let line = format!("{}\n", msg_json_line("user", &format!("{index} {body}")));
+		bytes.extend(zstd::encode_all(line.as_bytes(), 1).unwrap());
+	}
+	std::fs::write(&path, &bytes).unwrap();
+	let started = std::time::Instant::now();
+	let frames = SessionLog::open(&path).unwrap().count();
+	let frame_by_frame = started.elapsed();
+	let started = std::time::Instant::now();
+	let stream = BufReader::new(ZstdDecoder::new(File::open(&path).unwrap()).unwrap())
+		.lines()
+		.count();
+	let one_stream = started.elapsed();
+	eprintln!(
+		"TIMING frames={frames} stream={stream} size={} frame_by_frame={frame_by_frame:?} one_stream={one_stream:?}",
+		bytes.len()
+	);
+}
+
+#[test]
+fn lines_are_read_across_frames_like_one_stream() {
+	// Older logs hold several lines in one frame, or end without a newline.
+	let bytes = [
+		zstd::encode_all(&b"a\nb\r\nc"[..], 1).unwrap(),
+		zstd::encode_all(&b"d\ne"[..], 1).unwrap(),
+	]
+	.concat();
+	let lines: Vec<String> = SessionLog::new(std::io::Cursor::new(&bytes[..]))
+		.map(|line| line.unwrap())
+		.collect();
+	assert_eq!(lines, ["a", "b", "cd", "e"]);
+	assert_eq!(session_log_jsonl(&bytes).unwrap(), b"a\nb\ncd\ne\n");
 }

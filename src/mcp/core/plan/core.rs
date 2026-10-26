@@ -276,26 +276,24 @@ pub fn restore_plan_for_session(session_name: &str) {
 		return;
 	}
 
-	let file = match std::fs::File::open(&log_file) {
-		Ok(f) => f,
+	let log = match crate::session::persistence::SessionLog::open(&log_file) {
+		Ok(log) => log,
 		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: open failed: {}", e);
+			crate::log_debug!("restore_plan_for_session: {:#}", e);
 			return;
 		}
 	};
-
-	use std::io::{BufRead, BufReader};
-	let decoder = match zstd::stream::read::Decoder::new(file) {
-		Ok(d) => d,
-		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: zstd decoder failed: {}", e);
-			return;
-		}
-	};
-	let reader = BufReader::new(decoder);
 	let mut latest_plan: Option<super::storage::ExecutionPlan> = None;
 
-	for line in reader.lines().map_while(Result::ok) {
+	for line in log {
+		// Corruption: the latest plan may sit past it, so restore none.
+		let line = match line {
+			Ok(line) => line,
+			Err(e) => {
+				crate::log_error!("restore_plan_for_session: {:#}", e);
+				return;
+			}
+		};
 		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
 			continue;
 		};

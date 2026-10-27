@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.64.3] - 2026-10-27
+
+### 📋 Release Summary
+
+Chat prompts now include environment context. Orchestration and supervisor guidance is clearer, and the supervisor no longer polls background jobs.
+
+### ✨ New Features & Enhancements
+
+- **chat**: include environment context in chat prompts `abd6d4a5`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update Rust dependency lockfile `5371f0c1`
+
+### 🐛 Bug Fixes & Stability
+
+- **guidance**: clarify orchestration and supervisor guidance `452b9a98`
+- **supervisor**: stop polling background jobs `2702701e`
+
 ## [0.64.2] - 2026-10-26
 
 ### 🔧 Improvements & Optimizations

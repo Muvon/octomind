@@ -25,8 +25,9 @@
 //!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
 //!   • Read+write on cwd, ~/.local/share (MCP server state/logs),
 //!   <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh),
-//!   the run dir (session inject sockets, PID files — `octomind send`)
-//!   and ~/.npm (npm cache for `npx`-launched MCP servers)
+//!   the run dir (session inject sockets, PID files — `octomind send`),
+//!   ~/.npm (npm cache for `npx`-launched MCP servers), `/tmp`, `$TMPDIR` and
+//!   the device nodes shell commands write to (`/dev/null`, `/dev/tty`, …)
 //!   • All writes outside those paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.
@@ -36,7 +37,11 @@ use anyhow::Result;
 use landlock::{
 	make_bitflags, path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Scratch space and the device nodes shell commands write to (`2>/dev/null`,
+/// `mktemp`, terminal I/O). The macOS Seatbelt profile grants the same.
+const SHARED_WRITE_PATHS: [&str; 6] = ["/tmp", "/dev/null", "/dev/zero", "/dev/full", "/dev/tty", "/dev/pts"];
 
 pub fn apply(dir: &Path) -> Result<()> {
 	let abi = ABI::V3;
@@ -65,7 +70,11 @@ pub fn apply(dir: &Path) -> Result<()> {
 	// configs, and project files outside cwd.
 	ruleset = ruleset.add_rules(path_beneath_rules(["/"], read_only))?;
 
-	let rw_paths = writable_paths(dir, &xdg_data_home, &octolib_config, &npm_cache, &run_dir);
+	let tmpdir = std::env::var_os("TMPDIR").map(PathBuf::from);
+	let mut optional = vec![xdg_data_home.as_path(), octolib_config.as_path(), npm_cache.as_path()];
+	optional.extend(SHARED_WRITE_PATHS.iter().map(Path::new));
+	optional.extend(tmpdir.as_deref());
+	let rw_paths = writable_paths(dir, &run_dir, &optional);
 	ruleset = ruleset.add_rules(path_beneath_rules(rw_paths, all_access))?;
 
 	let status = ruleset.restrict_self()?;
@@ -93,23 +102,12 @@ pub fn apply(dir: &Path) -> Result<()> {
 	Ok(())
 }
 
-/// Read+write roots: cwd, the run dir (inject sockets and PID files), the XDG
-/// data home (MCP server logs/state), octolib auth state and the npm cache.
-/// The last three are optional — Landlock cannot add a rule for a path that
-/// does not exist.
-fn writable_paths<'a>(
-	dir: &'a Path,
-	xdg_data_home: &'a Path,
-	octolib_config: &'a Path,
-	npm_cache: &'a Path,
-	run_dir: &'a Path,
-) -> Vec<&'a Path> {
+/// Read+write roots: cwd and the run dir (inject sockets and PID files), plus
+/// each `optional` path that exists — Landlock cannot add a rule for a path
+/// that does not exist.
+fn writable_paths<'a>(dir: &'a Path, run_dir: &'a Path, optional: &[&'a Path]) -> Vec<&'a Path> {
 	let mut rw_paths = vec![dir, run_dir];
-	for optional in [xdg_data_home, octolib_config, npm_cache] {
-		if optional.exists() {
-			rw_paths.push(optional);
-		}
-	}
+	rw_paths.extend(optional.iter().copied().filter(|path| path.exists()));
 	rw_paths
 }
 

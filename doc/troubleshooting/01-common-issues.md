@@ -426,7 +426,7 @@ Run from the project directory you intend to modify.
 
 | Platform | Filesystem policy |
 |---|---|
-| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd, the run dir (inject sockets, PID files), and, when they exist, `~/.local/share`, `<config_dir>/octolib`, and `~/.npm`. |
+| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd, the run dir (inject sockets, PID files), and, when they exist, `~/.local/share`, `<config_dir>/octolib`, `~/.npm`, `/tmp`, `$TMPDIR`, `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/tty` and `/dev/pts`. |
 | macOS (Seatbelt) | Writes: cwd, `~/.local/share`, `<config_dir>/octolib`, the run dir, `~/.npm`, `/dev`, `/tmp`, `/private/tmp`, `/private/var/folders`. |
 | Windows | Sandbox requests log a warning and continue without OS write restrictions. |
 

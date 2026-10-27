@@ -23,6 +23,10 @@
 //! I/O happens; this file holds exactly one test, so the process-wide env
 //! mutation races with nothing.
 
+// The server's connection future is laid out in this crate: it needs the
+// library's own limit (src/lib.rs).
+#![recursion_limit = "1024"]
+
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};

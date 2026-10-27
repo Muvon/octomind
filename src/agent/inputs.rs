@@ -264,7 +264,15 @@ pub(crate) fn extract_env_keys(raw: &str) -> Vec<String> {
 /// Creates the file if it doesn't exist. Appends so existing entries are preserved.
 fn save_env_to_dotenv(key: &str, value: &str) -> Result<()> {
 	let dotenv_path = std::path::Path::new(".env");
-	let line = format!("{}={}\n", key, value);
+	let needs_leading_newline = match fs::read(dotenv_path) {
+		Ok(bytes) => !bytes.is_empty() && bytes.last() != Some(&b'\n'),
+		Err(_) => false,
+	};
+	let line = if needs_leading_newline {
+		format!("\n{}={}\n", key, value)
+	} else {
+		format!("{}={}\n", key, value)
+	};
 	let mut file = fs::OpenOptions::new()
 		.create(true)
 		.append(true)

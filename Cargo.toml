@@ -22,6 +22,25 @@ exclude = [
     "install.sh"
 ]
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ version }/{ name }-{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+
+# Releases ship musl Linux archives; remap gnu hosts to those assets.
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/{ version }/{ name }-{ version }-x86_64-unknown-linux-musl.tar.gz"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.aarch64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/{ version }/{ name }-{ version }-aarch64-unknown-linux-musl.tar.gz"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 # Enable static linking
 [profile.release]
 lto = true              # Enable Link Time Optimization

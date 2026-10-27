@@ -18,6 +18,7 @@
 //! their error paths — nothing here spawns a real server process.
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 
 fn call(params: serde_json::Value) -> crate::mcp::McpToolCall {
@@ -172,25 +173,6 @@ async fn test_enable_disable_persist_unknown_server() {
 // Parameter-validation arms, persistence round trip (sandboxed config dir),
 // session-scoped registry branches, and tool-name lookups.
 // ---------------------------------------------------------------------------
-
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 #[tokio::test]
 #[serial]

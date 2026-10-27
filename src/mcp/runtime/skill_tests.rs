@@ -613,26 +613,8 @@ mod tests {
 	// ActivateCheck::matches — filesystem, env, and regex checks
 	// ---------------------------------------------------------------------------
 
-	struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-	impl EnvGuard {
-		fn new(keys: &[&'static str]) -> Self {
-			Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-		}
-	}
-
-	impl Drop for EnvGuard {
-		fn drop(&mut self) {
-			for (key, saved) in &self.0 {
-				match saved {
-					Some(v) => std::env::set_var(key, v),
-					None => std::env::remove_var(key),
-				}
-			}
-		}
-	}
-
 	use crate::mcp::runtime::skill::{universal_skill_dirs, ActivateCheck};
+	use crate::session::chat::test_support::EnvGuard;
 
 	#[test]
 	fn test_activate_check_grep_matches() {

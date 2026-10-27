@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 
 #[test]
 fn builtin_tools_pass_through_and_mcp_tools_collapse_to_a_category() {
@@ -178,23 +179,6 @@ fn install_source_of_classifies_each_install_path() {
 	);
 	assert_eq!(install_source_of("/usr/local/bin/octomind"), "binary");
 	assert_eq!(install_source_of("/home/a/Downloads/release/octomind"), "binary");
-}
-
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
 }
 
 fn template_config() -> crate::config::Config {

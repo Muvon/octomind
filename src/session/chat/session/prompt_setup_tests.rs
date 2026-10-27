@@ -33,6 +33,28 @@ fn system_message(content: &str) -> crate::session::Message {
 	}
 }
 
+#[test]
+fn environment_block_formats_one_line_with_rounded_memory() {
+	for (memory_kib, rounded_gb) in [(8_388_608, 8), (8_912_895, 8), (8_912_896, 9)] {
+		let block = format_environment_block("linux", "x86_64", 6, Some(memory_kib));
+		assert_eq!(
+			block,
+			format!(
+				"<environment>OS: linux x86_64; CPU cores available: 6; memory: {} GB</environment>",
+				rounded_gb
+			)
+		);
+	}
+}
+
+#[test]
+fn environment_block_omits_memory_when_unavailable() {
+	assert_eq!(
+		format_environment_block("macos", "aarch64", 10, None),
+		"<environment>OS: macos aarch64; CPU cores available: 10</environment>"
+	);
+}
+
 #[tokio::test]
 async fn resumed_session_with_compressions_gets_hint_appended() {
 	let config = template_config();
@@ -58,6 +80,7 @@ async fn resumed_session_with_compressions_gets_hint_appended() {
 		.expect("setup");
 	let content = &session.session.messages[0].content;
 	assert_eq!(content.matches("<context_compression").count(), 1);
+	assert_eq!(content.matches("<environment>").count(), 1);
 }
 
 /// A prompt persisted by an older build keeps instructions that build has
@@ -134,6 +157,8 @@ async fn fresh_session_non_interactive_builds_cached_system_prompt_and_welcome()
 	let system = &session.session.messages[0];
 	assert_eq!(system.role, "system");
 	assert!(!system.content.is_empty());
+	assert_eq!(system.content.matches("<environment>").count(), 1);
+	assert!(system.content.ends_with("</environment>"));
 	assert!(
 		!system.content.contains("Retrieve the verbatim archived messages"),
 		"tool descriptions are sent as tool definitions; the system prompt must not repeat them"

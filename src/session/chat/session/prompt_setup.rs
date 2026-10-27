@@ -34,7 +34,62 @@ pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role:
 		system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
 	}
 	push_mcp_server_instructions(&mut system_prompt, config_for_role);
+	system_prompt.push_str("\n\n");
+	system_prompt.push_str(&environment_block().await);
 	system_prompt
+}
+
+/// Where the agent runs, so it can size work to the machine (e.g. build parallelism).
+/// `available_parallelism` honours cgroup/cpuset limits, so a pinned container reports its share.
+async fn environment_block() -> String {
+	let cores = std::thread::available_parallelism()
+		.expect("determine CPU cores available for the session environment")
+		.get();
+	format_environment_block(
+		std::env::consts::OS,
+		std::env::consts::ARCH,
+		cores,
+		total_memory_kib().await,
+	)
+}
+
+#[cfg(target_os = "linux")]
+async fn total_memory_kib() -> Option<u64> {
+	let meminfo = tokio::fs::read_to_string("/proc/meminfo")
+		.await
+		.expect("read /proc/meminfo for the session environment");
+	Some(
+		meminfo
+			.lines()
+			.find_map(|line| line.strip_prefix("MemTotal:"))
+			.expect("/proc/meminfo must contain MemTotal")
+			.trim()
+			.strip_suffix("kB")
+			.expect("/proc/meminfo MemTotal must use kB")
+			.trim()
+			.parse::<u64>()
+			.expect("/proc/meminfo MemTotal must be an integer"),
+	)
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn total_memory_kib() -> Option<u64> {
+	None
+}
+
+fn format_environment_block(os: &str, arch: &str, cores: usize, memory_kib: Option<u64>) -> String {
+	let memory = match memory_kib {
+		Some(total_kib) => {
+			const KIB_PER_GB: u64 = 1024 * 1024;
+			let total_gb = (total_kib + KIB_PER_GB / 2) / KIB_PER_GB;
+			format!("; memory: {} GB", total_gb)
+		}
+		None => String::new(),
+	};
+	format!(
+		"<environment>OS: {} {}; CPU cores available: {}{}</environment>",
+		os, arch, cores, memory
+	)
 }
 
 /// MCP `initialize` instructions are the server's own guidance on using its

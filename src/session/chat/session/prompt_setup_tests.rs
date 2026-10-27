@@ -55,6 +55,13 @@ fn environment_block_omits_memory_when_unavailable() {
 	);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn cgroup_memory_limit_reads_bytes_and_unlimited() {
+	assert_eq!(cgroup_memory_limit_kib("17179869184\n"), Some(16 * 1024 * 1024));
+	assert_eq!(cgroup_memory_limit_kib("max\n"), None);
+}
+
 #[tokio::test]
 async fn resumed_session_with_compressions_gets_hint_appended() {
 	let config = template_config();

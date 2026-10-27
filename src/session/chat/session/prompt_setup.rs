@@ -53,23 +53,46 @@ async fn environment_block() -> String {
 	)
 }
 
+/// Memory the session may use: the cgroup v2 limit when one is set (a container started
+/// with `--memory`), else physical memory. `/proc/meminfo` ignores cgroup limits, so a
+/// capped container would otherwise report the host's total.
 #[cfg(target_os = "linux")]
 async fn total_memory_kib() -> Option<u64> {
+	const CGROUP_MEMORY_MAX: &str = "/sys/fs/cgroup/memory.max";
 	let meminfo = tokio::fs::read_to_string("/proc/meminfo")
 		.await
 		.expect("read /proc/meminfo for the session environment");
-	Some(
-		meminfo
-			.lines()
-			.find_map(|line| line.strip_prefix("MemTotal:"))
-			.expect("/proc/meminfo must contain MemTotal")
-			.trim()
-			.strip_suffix("kB")
-			.expect("/proc/meminfo MemTotal must use kB")
-			.trim()
-			.parse::<u64>()
-			.expect("/proc/meminfo MemTotal must be an integer"),
-	)
+	let physical_kib = meminfo
+		.lines()
+		.find_map(|line| line.strip_prefix("MemTotal:"))
+		.expect("/proc/meminfo must contain MemTotal")
+		.trim()
+		.strip_suffix("kB")
+		.expect("/proc/meminfo MemTotal must use kB")
+		.trim()
+		.parse::<u64>()
+		.expect("/proc/meminfo MemTotal must be an integer");
+	// The root cgroup (a host process) has no memory.max file.
+	let limit_kib = match tokio::fs::read_to_string(CGROUP_MEMORY_MAX).await {
+		Ok(memory_max) => cgroup_memory_limit_kib(&memory_max),
+		Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+		Err(err) => panic!("read {CGROUP_MEMORY_MAX} for the session environment: {err}"),
+	};
+	Some(limit_kib.map_or(physical_kib, |limit| limit.min(physical_kib)))
+}
+
+/// `memory.max` holds a byte count, or `max` when the cgroup has no limit.
+#[cfg(target_os = "linux")]
+fn cgroup_memory_limit_kib(memory_max: &str) -> Option<u64> {
+	match memory_max.trim() {
+		"max" => None,
+		bytes => Some(
+			bytes
+				.parse::<u64>()
+				.expect("cgroup memory.max must be `max` or a byte count")
+				/ 1024,
+		),
+	}
 }
 
 #[cfg(not(target_os = "linux"))]

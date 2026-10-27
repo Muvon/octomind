@@ -240,8 +240,8 @@ cat hook-events.jsonl
 python3 scripts/check.py
 ```
 
-The OS boundary has exceptions. Both backends allow writes under `~/.local/share`; macOS also permits device and
-temporary paths. Linux keeps reads unrestricted; macOS additionally restricts several credential directories.
+The OS boundary has exceptions. Both backends allow writes under `~/.local/share` and to device and temporary
+paths. Linux keeps reads unrestricted; macOS additionally restricts several credential directories.
 Network access remains available. Hooks and validators queue feedback after work; they neither undo writes nor
 guarantee a retry before exit. Keep an independent test command as your final acceptance check.
 

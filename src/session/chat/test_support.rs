@@ -312,3 +312,24 @@ pub(crate) fn choice(
 		},
 	)])
 }
+
+/// Snapshot environment variables and restore them on drop, so a failed assert
+/// cannot leak a sandboxed data dir or API URL into the next test.
+pub(crate) struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvGuard {
+	pub(crate) fn new(keys: &[&'static str]) -> Self {
+		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
+	}
+}
+
+impl Drop for EnvGuard {
+	fn drop(&mut self) {
+		for (key, saved) in &self.0 {
+			match saved {
+				Some(v) => std::env::set_var(key, v),
+				None => std::env::remove_var(key),
+			}
+		}
+	}
+}

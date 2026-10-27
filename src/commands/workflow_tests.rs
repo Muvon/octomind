@@ -18,6 +18,7 @@
 //! a sandboxed `OCTOMIND_DATA_DIR`.
 
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use octomind::workflow::schema::{ConditionalStep, LoopStep, ParallelStep};
 use serial_test::serial;
 use tempfile::tempdir;
@@ -25,27 +26,6 @@ use tempfile::tempdir;
 use octomind::config::Config;
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop — a failed assert must not leak
-/// a sandboxed data dir into the next test.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 /// A fresh per-test data dir under the system temp dir.
 fn sandbox(tag: &str) -> PathBuf {

@@ -17,6 +17,7 @@
 //! Env-touching tests are `#[serial]` because env vars are process-global.
 
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 use octomind::account::{self, Session};
 use serial_test::serial;
@@ -24,26 +25,6 @@ use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
 	let dir = std::env::temp_dir().join(format!("octomind-login-{tag}-{}", std::process::id()));

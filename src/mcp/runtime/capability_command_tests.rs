@@ -18,6 +18,7 @@
 //! installed on the machine (list is asserted as "answers", not contents).
 
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 
 fn cap_call(params: serde_json::Value) -> McpToolCall {
@@ -182,25 +183,6 @@ async fn test_load_env_capabilities_reports_failures_per_name() {
 // a local tap, so enable/disable/list run against fixture capabilities only,
 // never against whatever taps happen to be installed on this machine.
 // ---------------------------------------------------------------------------
-
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 struct CapSandbox {
 	_env: EnvGuard,

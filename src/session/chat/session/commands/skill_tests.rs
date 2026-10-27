@@ -58,6 +58,26 @@ fn skill_workdir(tag: &str) -> std::path::PathBuf {
 	dir
 }
 
+const PAGE_SKILL_COUNT: usize = 16;
+
+/// Temp workdir containing `cov-page-01` … `cov-page-16` skills, enough to
+/// exercise a filtered list across two pages without machine skills leaking in.
+fn paginated_skills_workdir(tag: &str) -> std::path::PathBuf {
+	let dir = std::env::temp_dir().join(format!("octomind-skill-{tag}-{}", std::process::id()));
+	let _ = std::fs::remove_dir_all(&dir);
+	for index in 1..=PAGE_SKILL_COUNT {
+		let name = format!("cov-page-{index:02}");
+		let skill_dir = dir.join(".agents").join("skills").join(&name);
+		std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+		std::fs::write(
+			skill_dir.join("SKILL.md"),
+			format!("---\nname: {name}\ndescription: Pagination fixture skill\n---\n\nPagination fixture.\n"),
+		)
+		.expect("write SKILL.md");
+	}
+	dir
+}
+
 fn skill_data(result: CommandResult) -> serde_json::Value {
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected typed output");
@@ -167,6 +187,51 @@ async fn use_forget_and_page_range_roundtrip() {
 		};
 		assert!(error.contains("Page 9999 not found"), "{error}");
 		assert_eq!(context.expect("context")["page"], 9999);
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn filtered_list_pages_past_first_page() {
+	let session_id = format!("skill-cmd-pagination-{}", std::process::id());
+	let workdir = paginated_skills_workdir("pagination");
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("developer");
+		crate::mcp::workdir::set_session_working_directory(workdir.clone());
+
+		let mut session = ChatSession::for_tests(Vec::new());
+
+		// No page argument: the filtered list defaults to page 1.
+		let data = skill_data(handle_skill(&mut session, &["*cov-page-*"]).await.expect("page 1"));
+		assert_eq!(data["subcommand"], "list");
+		assert_eq!(data["page"], 1);
+		assert_eq!(data["total"].as_u64(), Some(PAGE_SKILL_COUNT as u64));
+		assert_eq!(data["pattern"], "*cov-page-*");
+
+		// A page argument pages the filtered list instead of resetting to page 1.
+		let data = skill_data(handle_skill(&mut session, &["*cov-page-*", "2"]).await.expect("page 2"));
+		assert_eq!(data["subcommand"], "list");
+		assert_eq!(data["page"], 2);
+		assert_eq!(data["total"].as_u64(), Some(PAGE_SKILL_COUNT as u64));
+		assert_eq!(data["pattern"], "*cov-page-*");
+		let skills = data["skills"].as_array().expect("skills array");
+		assert_eq!(skills.len(), 1, "page 2 should hold the last fixture: {data}");
+		assert_eq!(skills[0]["name"], "cov-page-16");
+
+		// Page 0 is rejected for filtered lists too.
+		let result = handle_skill(&mut session, &["*cov-page-*", "0"])
+			.await
+			.expect("page zero");
+		let CommandResult::HandledWithOutput(output) = result else {
+			panic!("expected typed output");
+		};
+		let CommandOutput::Error { error, .. } = *output else {
+			panic!("expected Error output");
+		};
+		assert_eq!(error, "Page number must be a positive integer");
 
 		crate::session::context::cleanup_session(&session_id);
 	})

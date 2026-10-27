@@ -2792,12 +2792,19 @@ fn display_skill_list(data: &serde_json::Value) {
 	}
 
 	if total_pages > 1 {
+		let page_command = |target: u64| {
+			if pattern.is_empty() {
+				format!("/skill {}", target)
+			} else {
+				format!("/skill {} {}", pattern, target)
+			}
+		};
 		let mut nav = Vec::new();
 		if page > 1 {
-			nav.push(format!("/skill {}", page - 1));
+			nav.push(page_command(page - 1));
 		}
 		if page < total_pages {
-			nav.push(format!("/skill {}", page + 1));
+			nav.push(page_command(page + 1));
 		}
 		block_line(
 			&format!("Page {}/{}  {}", page, total_pages, nav.join("  "))
@@ -2806,7 +2813,7 @@ fn display_skill_list(data: &serde_json::Value) {
 		);
 	}
 	block_line(
-		&"Use '/skill <name>' to toggle, '/skill *pattern*' to filter."
+		&"Use '/skill <name>' to toggle, '/skill *pattern* [page]' to filter."
 			.dimmed()
 			.to_string(),
 	);

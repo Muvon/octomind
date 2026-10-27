@@ -2741,7 +2741,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"Close each gap with a concrete artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied or out of scope, point to the exact evidence and explain briefly. Then re-report status, and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
+		"Close each gap with a concrete artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied or out of scope, point to the exact evidence and explain briefly. Then re-report your status (the closing status line), and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
 	);
 	s
 }
@@ -2760,7 +2760,7 @@ fn format_unverified_advisory() -> String {
 		"Make the next pass checkable: restate your result as a numbered list of the conditions the user's request has to satisfy — one per line — and for each give the observation that satisfies it: the action you ran and what its output showed, or the artifact and where it is. A condition you cannot point at an observation for must be listed as unsatisfied rather than argued.\n",
 	);
 	s.push_str(
-		"Then re-report status, and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
+		"Then re-report your status (the closing status line), and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
 	);
 	s
 }

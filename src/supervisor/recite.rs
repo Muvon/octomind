@@ -350,7 +350,7 @@ pub fn recite_note(
 	// turn — and a resumed session typically does so on a just-compacted context
 	// that will not compact again for many turns. Reciting the previous request
 	// at the tail then outranks the live one in the recency window, and the model
-	// refuses the new ask as out of scope ("Goal (fixed)" is quoted back at the
+	// refuses the new ask as out of scope (the goal line, once labelled "fixed", is quoted back at the
 	// user). The newest user message must always win.
 	let goal_is_live = match (anchor.intent_task_sig, current_task_sig) {
 		// Unsigned intent: provenance unknown, so we cannot claim it is the live
@@ -380,7 +380,7 @@ pub fn recite_note(
 	}
 	let mut s = String::from(RECITE_HEADER);
 	if !intent.is_empty() {
-		s.push_str("Goal (fixed): <intent>");
+		s.push_str("Goal (the current request governs where it differs): <intent>");
 		s.push_str(&xml_text(intent.trim()));
 		s.push_str("</intent>\n");
 	}

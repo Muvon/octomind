@@ -92,11 +92,12 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 			"{}\n\n\
 			Async execution:\n\
 			async=false (default): blocks until complete, result returned immediately.\n\
-			async=true: returns immediately, result injected as a user message when done.\n\n\
+			async=true: returns immediately, result injected as a user message when done.\n\
+			Do not poll, re-check or relaunch it; the result arrives on its own.\n\n\
 			Use async when task takes 30+ seconds, or you can continue other work while waiting.\n\
 			Use sync when you need the result before your next action.\n\n\
 			Result format: [Async agent 'name' completed] or [Async agent 'name' failed]\n\
-			Track active work with /status. Max {} concurrent async jobs. Jobs cancelled on session exit.",
+			The user can track active work with /status. Max {} concurrent async jobs. Jobs cancelled on session exit.",
 			agent_config.description,
 			get_max_concurrent_jobs()
 		),
@@ -279,7 +280,7 @@ async fn execute_config_agent(
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Agent task [{job_id}] started asynchronously. Track it with /status; the result will be injected automatically when ready."),
+			format!("Agent task [{job_id}] started asynchronously. The user can track it with /status; the result will be injected automatically when ready."),
 		));
 	}
 
@@ -389,7 +390,7 @@ async fn execute_dynamic_agent(
 		return Ok(McpToolResult::success(
 			tool_name,
 			tool_id,
-			format!("Agent task [{job_id}] started asynchronously. Track it with /status; the result will be injected automatically when ready."),
+			format!("Agent task [{job_id}] started asynchronously. The user can track it with /status; the result will be injected automatically when ready."),
 		));
 	}
 

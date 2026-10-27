@@ -241,7 +241,7 @@ fn synthetic_user_messages_excluded_from_tasks() {
 	));
 	// Goal recitation (also <pay-attention>-wrapped).
 	assert!(is_synthetic_user_message(
-		"<pay-attention>\nYou are deep in this session — re-anchor on your goal:\nGoal (fixed): <intent>x</intent>\n</pay-attention>"
+		"<pay-attention>\nYou are deep in this session — re-anchor on your goal:\nGoal (the current request governs where it differs): <intent>x</intent>\n</pay-attention>"
 	));
 	// Recalled lessons.
 	assert!(is_synthetic_user_message("<recall>\n<lessons>...</lessons>\n</recall>"));

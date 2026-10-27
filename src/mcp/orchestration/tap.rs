@@ -52,11 +52,11 @@ use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus, TapLiveSt
 pub fn get_tap_function() -> McpFunction {
 	McpFunction {
 		name: "tap".to_string(),
-		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Use this tool to hand off a focused task, watch its progress, stop it, or browse the catalog.
+		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Use this tool to hand off a focused task, check its status, stop it, or browse the catalog.
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
-- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn.
+- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn on its own; do not poll, re-check or relaunch it (`list` shows its status).
 - You want to keep a focused dialog with one specialist across multiple turns — keep the returned `session` id and pass it back on subsequent `run` calls.
 
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
@@ -95,7 +95,7 @@ Actions:
 				},
 				"workdir": {
 					"type": "string",
-					"description": "Working directory the specialist operates in. Optional — defaults to the current working directory. Useful when the specialist must reason over a different repo or sub-project than the parent."
+					"description": "Working directory the specialist operates in. Optional — defaults to the current working directory. Useful when the specialist must reason over a different repo or sub-project than the parent. Ignored when resuming with `session` (the original workdir is kept)."
 				},
 				"intent": {
 					"type": "string",

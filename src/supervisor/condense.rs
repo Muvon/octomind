@@ -961,7 +961,7 @@ fn extract_content(r: &McpToolResult, original: &str, lines: &[&str], ranges: &[
 	}
 	let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
 	Some(format!(
-		"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; kept text was reconstructed from the original, not rewritten. Full original output:\n  {}\nIf something you need was cut, read the exact span from that file. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
+		"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; the kept lines are verbatim original text, nothing was rewritten. Full original output:\n  {}\nIf something you need was cut, read the exact span from that file. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
 		lines.len(),
 		path.display()
 	))

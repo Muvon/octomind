@@ -135,7 +135,7 @@ fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) 
 /// <continuation>
 /// The conversation summary above is the concise record of prior work;
 /// its archive is the lossless record. Resume from where the previous
-/// turn left off; read the archive rather than guessing an omitted exact
+/// turn left off; prefer `recall` on the cited block, else read the archive, rather than guessing an omitted exact
 /// detail.
 ///
 /// {plan continuation note, only when a plan is active}
@@ -220,7 +220,7 @@ fn build_continuation_content(
 	};
 	format!(
 		"<continuation>\n\
-		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <previous_assistant_response> and <request> blocks preserve the exact turn boundary and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
+		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, prefer the `recall` tool on the cited block; otherwise read the archive before acting; never guess. The <previous_assistant_response> and <request> blocks preserve the exact turn boundary and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
 		{}{}{}{}{}<task>\n{}\n</task>\n\
 		</continuation>",
 		plan_note,
@@ -408,7 +408,8 @@ pub(super) async fn apply_compression(
 	};
 
 	// Re-point the session anchor at the goal we just resolved. `recite_note`
-	// injects `anchor.intent` mid-turn as "Goal (fixed)", so leaving it on an
+	// injects `anchor.intent` mid-turn as "Goal (the current request governs
+	// where it differs)", so leaving it on an
 	// older task makes the supervisor itself steer the model back to work the
 	// user has moved on from — the same stale-task failure compaction just
 	// fixed, arriving through a different door.

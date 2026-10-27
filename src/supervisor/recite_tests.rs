@@ -223,7 +223,7 @@ fn live_plan_checklist_preferred_over_stale_next_steps() {
 fn goal_from_a_superseded_request_is_not_recited() {
 	// The failure this guards: a session compacts while working request A, the
 	// user then asks for B, and B's turn does not compact (the context was just
-	// shrunk). Reciting A as "Goal (fixed)" at the tail outranks B in the
+	// shrunk). Reciting A as the goal (once labelled "fixed") at the tail outranks B in the
 	// recency window, and the model refuses B as out of scope.
 	let sig = crate::session::anchor::task_sig;
 	let mut a = Anchor::default();

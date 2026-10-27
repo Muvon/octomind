@@ -88,7 +88,7 @@ Use valid single-line JSON with exactly those fields. `carry` and `memories` may
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
 
-`plan` is normally `null`. Set it to `"request"` once, alongside real work, only when the task clearly needs 3+ dependent outcomes or durable tracking. With an injected plan, use `"phase_complete"` alongside the next work batch only after the current outcome is evidenced, or `"reassess"` when evidence invalidates the remaining route. The external manager owns the plan; never emit a response only for planning.
+`plan` is normally `null`. Set it to `"request"` once, alongside real work, only when the task clearly needs 3+ dependent outcomes or durable tracking. With an injected plan, use `"phase_complete"` alongside the next work batch only after the current outcome is evidenced, or `"reassess"` when evidence invalidates the remaining route. The external manager owns the plan; never emit a response only for planning: a plan request or update always rides on real work.
 Example: `<sup>{"state":"progressing","focus":"fixing tab handling in the fence parser","next":"run the parser tests for the edited path","carry":["regression input is tests/fixtures/tabs.md"],"plan":null,"memories":["M2"]}</sup>`
 This line is read by the system and hidden from the user. Emit exactly one."#;
 

@@ -70,8 +70,8 @@ pub struct Anchor {
 	/// only by `extend()`, i.e. on compaction — but the user can issue a new
 	/// request at any time, and a resumed session typically does so on a freshly
 	/// compacted (small) context that will not compact again for many turns.
-	/// Without this, `recite_note` keeps injecting the previous request as
-	/// "Goal (fixed)" and the model rules the new request out of scope.
+	/// Without this, `recite_note` keeps injecting the previous request as the goal
+	/// (once labelled "fixed") and the model rules the new request out of scope.
 	/// 0 = unknown (legacy sessions), which recites exactly as before.
 	#[serde(default, skip_serializing_if = "is_zero_u64")]
 	pub intent_task_sig: u64,
@@ -150,7 +150,7 @@ impl Anchor {
 	/// `intent` replaces whenever the update supplies one. Suppliers deliberately
 	/// do NOT guard with `is_empty()`: a first-write-wins intent froze the goal at
 	/// whatever the session opened with, and `recite::recite_note` re-injects it
-	/// mid-turn as "Goal (fixed)" — so the supervisor kept steering the model back
+	/// mid-turn as the goal (once labelled "fixed") — so the supervisor kept steering the model back
 	/// to work the user had already moved past. Both suppliers now re-resolve the
 	/// CURRENT request every time (conversation compaction from its fidelity goal,
 	/// task compaction from the latest real user turn) and skip the update when

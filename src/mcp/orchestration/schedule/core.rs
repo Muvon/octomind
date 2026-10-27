@@ -263,7 +263,7 @@ pub fn get_schedule_function() -> McpFunction {
 One-shot entries fire once and are removed. Repeating entries (set via 'every') re-schedule automatically after each firing until explicitly removed — this is the loop mechanism: a periodic poll or status check ('every'='10m'), a heartbeat, or an autonomous keep-going loop ('every'='idle', fires each time the session settles). A repeating entry runs until removed, so give every loop a stop condition: the injected 'message' should check whether its goal is met and remove its own entry ('id' from list) when done, instead of looping forever.
 
 Commands:
-- add: schedule a new message ('message' required; 'when' and 'every' both optional — defaults to when=\"idle\")
+- add: schedule a new message ('message' required; 'when' optional only for idle entries — see below)
 - list: show all pending scheduled entries with IDs, trigger times, and countdown
 - remove: cancel a scheduled entry by 'id'
 - edit: update an existing entry by 'id' (any of when, message, description, every)
@@ -276,11 +276,11 @@ Commands:
 - Exact datetime: '2026-03-22 15:30'
 
 'every' format (optional, omit for one-shot):
-- 'idle' — fires every time the session becomes idle (pairs with when=\"idle\" or omitted)
-- '10m', '1h', '30s', '1h30m' fires first at 'when', then every interval after
+- 'idle' — fires every time the session becomes idle (pairs with when="idle" or no 'when', never with a time)
+- '10m', '1h', '30s', '1h30m' fires first at 'when' (required, time-based, e.g. 'now' or 'in 10m'), then every interval after
 - To stop a repeating entry use remove, or clear interval with edit every='none'
 
-If neither 'when' nor 'every' is provided, the entry defaults to when=\"idle\" (one-shot at next idle).
+If neither 'when' nor 'every' is provided, the entry defaults to when="idle" (one-shot at next idle). A time interval in 'every' without a time-based 'when' is rejected.
 
 'description' is what this task is about (shown in list, helps track intent).
 'message' is the EXACT text injected verbatim as a user message when the entry fires. Write it as if a human typed it: include all context the AI will need to act on it, because the AI will see only this message at trigger time with no other hint about why it arrived."#.to_string(),
@@ -294,7 +294,7 @@ If neither 'when' nor 'every' is provided, the entry defaults to when=\"idle\" (
 				},
 				"when": {
 					"type": "string",
-					"description": "When to fire. 'idle' fires on the next session idle (no running taps/jobs). 'now' fires immediately. Relative: 'in 5m', 'in 1h30m'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Optional for add (defaults to 'idle' if both when and every are omitted)."
+					"description": "When to fire. 'idle' fires on the next session idle (no running taps/jobs). 'now' fires immediately. Relative: 'in 5m', 'in 1h30m'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Omit for add only when the entry is idle (every omitted or 'idle'); required when 'every' is a time interval."
 				},
 				"message": {
 					"type": "string",

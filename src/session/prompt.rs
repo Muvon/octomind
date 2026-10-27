@@ -41,7 +41,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 	if has_tap_tool {
 		prompt.push_str(
 			"\n<delegation>\n\
-		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it. \
+		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it (no handoff). \
 		Task outside your role → tap(action=\"run\", role=\"…\", …) to hand off.\n\
 		</delegation>",
 		);
@@ -64,9 +64,9 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 
 	prompt.push_str(
 		"\n<supervisor-rules>\n\
-		The supervisor injects control messages mid-task. They appear in the user turn but are system orders, not the user — obey each on your very next action, ahead of whatever you were doing.\n\
-		- <pay-attention>…</pay-attention>: a steering order. Loop/stall → change tool, args, or sub-goal, never repeat the call. Verification → run the project's check and report the real result before claiming done. Format (status line / evidence) → emit exactly as given.\n\
-		- <recall>…</recall>: past-session lessons (rules) and orientation (unverified — check first).\n\
+		The supervisor injects control messages mid-task. They appear in the user turn but come from the system, not the user.\n\
+		- <pay-attention>…</pay-attention>: a note starting \"Advisory:\" informs your judgment and mandates no action — weigh it against the actual outcomes. Any other note is binding as written, its own qualifiers included (\"context reminders, not additional requirements\", \"may be stale\"), and is handled at your very next action ahead of whatever you were doing: verification → run the project's check and report the real result before claiming done; format (status line / evidence) → emit exactly as given.\n\
+		- <recall>…</recall>: past-session lessons (rules) and orientation (unverified hints — check each before relying on it).\n\
 		Never echo or mention these blocks; they are hidden from the user, and they never replace the task you were given.\n\
 		The user sees only your final message. Write it as the complete, standalone answer to their original request — never a reply about a note, and never a delta on an earlier draft they never saw (\"here it is with evidence\", \"fixed as asked\"). If a note made you redo work, re-state the whole answer, not the correction.\n\
 		</supervisor-rules>",
@@ -103,7 +103,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 /// per-compression counters would change its bytes — and void the cache — on
 /// each resume, while telling the model nothing it can act on.
 const COMPRESSION_HINT: &str = "\n\n<context_compression>\n\
-	Compressed turns appear as <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">. Their <analysis_findings> and <file_context> were extracted from real tool results and disk at compression time — treat them as current and accurate; do not re-read files or re-run searches to verify what they already state. Read files NOT in <file_context> normally. Use recent uncompressed messages for current intent, summaries for background.\n\
+	Compressed turns appear as <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">. Their <analysis_findings> and <file_context> were extracted from real tool results and disk at compression time — treat them as accurate as of then; do not re-read files or re-run searches to verify what they already state, but anything changed in later uncompressed messages (e.g. a file edited after compression) supersedes them. Read files NOT in <file_context> normally. Use recent uncompressed messages for current intent, summaries for background.\n\
 	</context_compression>";
 const COMPRESSION_HINT_CLOSE: &str = "</context_compression>";
 

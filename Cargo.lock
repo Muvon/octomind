@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "octomind"
-version = "0.64.3"
+version = "0.64.4"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

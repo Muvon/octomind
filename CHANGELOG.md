@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.64.4] - 2026-10-27
+
+### 📋 Release Summary
+
+Prompt setup now respects cgroup memory limits.
+
+### 🐛 Bug Fixes & Stability
+
+- **prompt-setup**: respect cgroup memory limits `7aaadcc5`
+
 ## [0.64.3] - 2026-10-27
 
 ### 📋 Release Summary

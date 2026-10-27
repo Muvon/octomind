@@ -457,7 +457,11 @@ fn identical_tap_delegations_with_different_run_ids_count_as_repeated_rounds() {
 	d.record_round_signals(&[h1], false, 3, 9);
 	assert_eq!(d.identical_rounds(), 1);
 	d.record_round_signals(&[h2], false, 3, 9);
-	assert_eq!(d.identical_rounds(), 2, "second run with new id still counts as identical round");
+	assert_eq!(
+		d.identical_rounds(),
+		2,
+		"second run with new id still counts as identical round"
+	);
 }
 
 #[test]

@@ -576,11 +576,12 @@ fn xml_summary_body() -> String {
 }
 
 /// A loopback WebSocket server accepting any number of connections, sharing
-/// the sessions map and session locks with the test so it can stage state.
+/// its state with the test so it can stage sessions, locks and turns.
 struct LoopbackServer {
 	addr: std::net::SocketAddr,
 	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
 	session_locks: SessionLocks,
+	state: ServerState,
 }
 
 impl LoopbackServer {
@@ -592,6 +593,7 @@ impl LoopbackServer {
 		let state = ServerState::new(config, "assistant".to_string(), Vec::new());
 		let sessions = state.sessions.clone();
 		let session_locks = state.session_locks.clone();
+		let shared = state.clone();
 		tokio::spawn(async move {
 			while let Ok((stream, peer)) = listener.accept().await {
 				let state = state.clone();
@@ -604,6 +606,7 @@ impl LoopbackServer {
 			addr,
 			sessions,
 			session_locks,
+			state: shared,
 		}
 	}
 }
@@ -2160,6 +2163,115 @@ async fn monitor_skips_processing_while_the_session_lock_is_held() {
 	// API call (no stub is scripted for this test).
 	crate::session::context::cleanup_session(&session_id);
 	drop(_guard);
+}
+
+/// Sends a bind for `session_id` on a fresh connection.
+async fn bind_from_another_connection(addr: std::net::SocketAddr, session_id: &str) -> ClientWs {
+	let mut ws = connect_ws(addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": session_id}),
+	)
+	.await;
+	ws
+}
+
+async fn read_bind_answer(ws: &mut ClientWs, session_id: &str) {
+	let ack = read_json(ws).await;
+	assert_eq!(ack["type"], "ack", "got: {ack}");
+	assert_eq!(ack["message_type"], "session", "got: {ack}");
+	let status = read_json(ws).await;
+	assert_eq!(status["session_id"], session_id, "got: {status}");
+}
+
+async fn stays_unanswered(ws: &mut ClientWs) -> bool {
+	tokio::time::timeout(Duration::from_millis(300), ws.next())
+		.await
+		.is_err()
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_bind_while_a_turn_runs_attaches_without_loading_a_copy() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut first = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut first).await;
+	let session_id = create_session(&mut first, None).await;
+
+	// A turn drives the session: it holds the lock and has the session out of memory.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	let live = server
+		.sessions
+		.lock()
+		.await
+		.remove(&session_id)
+		.expect("the bound session is in memory");
+	let cancellation = SessionCancellation::new();
+	let turn = TurnGuard::register(&server.state, &session_id, &cancellation);
+
+	// Another connection binds meanwhile — a phone reopening the chat.
+	let mut second = bind_from_another_connection(server.addr, &session_id).await;
+	read_bind_answer(&mut second, &session_id).await;
+	assert!(
+		!server.sessions.lock().await.contains_key(&session_id),
+		"the bind must not load a second copy of a session a turn drives"
+	);
+
+	// The turn ends: the session it drove is the one in memory.
+	drop(turn);
+	server.sessions.lock().await.insert(session_id.clone(), live);
+	drop(guard);
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_bind_waits_out_a_brief_holder_of_the_session_then_binds() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut first = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut first).await;
+	let session_id = create_session(&mut first, None).await;
+
+	// Something other than a turn holds the session: another bind setting it up, a close.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	let mut second = bind_from_another_connection(server.addr, &session_id).await;
+	assert!(stays_unanswered(&mut second).await, "the bind must wait for the holder");
+
+	drop(guard);
+	read_bind_answer(&mut second, &session_id).await;
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_bind_waiting_on_the_session_attaches_once_a_turn_takes_it() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut first = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut first).await;
+	let session_id = create_session(&mut first, None).await;
+
+	// A frame holds the session — still loading it — and only then starts its turn.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	let mut second = bind_from_another_connection(server.addr, &session_id).await;
+	assert!(
+		stays_unanswered(&mut second).await,
+		"the bind must wait while no turn runs"
+	);
+
+	let cancellation = SessionCancellation::new();
+	let turn = TurnGuard::register(&server.state, &session_id, &cancellation);
+	read_bind_answer(&mut second, &session_id).await;
+
+	drop(turn);
+	drop(guard);
+	crate::session::context::cleanup_session(&session_id);
 }
 
 #[tokio::test]

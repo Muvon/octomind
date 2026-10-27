@@ -69,11 +69,16 @@ struct TurnGuard {
 }
 
 impl TurnGuard {
-	fn register(turns: &ActiveTurns, session_id: &str, cancellation: &SessionCancellation) -> Self {
+	fn register(server: &ServerState, session_id: &str, cancellation: &SessionCancellation) -> Self {
 		let handle = cancellation.handle();
-		turns.lock().unwrap().insert(session_id.to_string(), handle.clone());
+		server
+			.turns
+			.lock()
+			.unwrap()
+			.insert(session_id.to_string(), handle.clone());
+		server.turn_started.notify_waiters();
 		Self {
-			turns: Arc::clone(turns),
+			turns: Arc::clone(&server.turns),
 			session_id: session_id.to_string(),
 			handle,
 		}
@@ -105,6 +110,9 @@ struct ServerState {
 	session_locks: SessionLocks,
 	role_configs: RoleConfigs,
 	turns: ActiveTurns,
+	/// Fired as a turn registers: a bind waiting on the session's lock learns the
+	/// wait is a turn's ([`lock_for_bind`]).
+	turn_started: Arc<tokio::sync::Notify>,
 	/// Output streams of the loaded sessions: what each session sends, and to
 	/// which connection.
 	streams: Streams,
@@ -125,6 +133,7 @@ impl ServerState {
 			session_locks: Arc::default(),
 			role_configs: Arc::default(),
 			turns: Arc::default(),
+			turn_started: Arc::default(),
 			streams: Streams::default(),
 			allow_origins: Arc::new(allow_origins),
 			token: None,
@@ -644,7 +653,9 @@ async fn process_client_message(
 	active_session_ids: &mut HashSet<String>,
 ) -> Result<()> {
 	match client_msg {
-		ClientMessage::Session(msg) => handle_session_message(msg, ws_sender, ctx, active_session_ids).await,
+		// Boxed: a bind's future is deep, and inlined into the connection's it overflows
+		// the compiler's layout depth.
+		ClientMessage::Session(msg) => Box::pin(handle_session_message(msg, ws_sender, ctx, active_session_ids)).await,
 		ClientMessage::Message(msg) => {
 			let session_id = msg.session_id.clone();
 			active_session_ids.insert(session_id.clone());
@@ -906,7 +917,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					let mut cancellation = crate::session::cancellation::SessionCancellation::new();
 					let op_rx = cancellation.new_operation();
 					let cancel_probe = op_rx.clone();
-					let _turn = TurnGuard::register(&ctx.server.turns, &session_id, &cancellation);
+					let _turn = TurnGuard::register(&ctx.server, &session_id, &cancellation);
 
 					// Notify the client what's about to drive the AI, before we kick off
 					// the API call. Mirrors `display_injected_input` in CLI mode.
@@ -1080,7 +1091,7 @@ async fn handle_session_message(
 	active_session_ids: &mut HashSet<String>,
 ) -> Result<()> {
 	log_debug!("Handling session message: session_id={:?}", msg.session_id);
-	let mut ack = AckPayload::bind(&msg);
+	let ack = AckPayload::bind(&msg);
 
 	// Refused before the session is taken out of memory or created on disk, so a
 	// bad directory costs nothing and leaves an existing session untouched.
@@ -1100,6 +1111,58 @@ async fn handle_session_message(
 		(None, None) => None,
 	};
 
+	let Some(session_id) = requested_id.clone() else {
+		return bind_session(&msg, cwd, None, ack, ws_sender, ctx, active_session_ids).await;
+	};
+	let Some(guard) = lock_for_bind(&session_id, &ctx.server).await else {
+		return attach_to_running_turn(&msg, session_id, ack, ws_sender, ctx, active_session_ids).await;
+	};
+	let bound = bind_session(&msg, cwd, requested_id, ack, ws_sender, ctx, active_session_ids).await;
+	// Bound or refused, nothing sets the session up any more: a frame that drove it
+	// meanwhile was answered busy, and an inbox monitor that tried waits to be woken.
+	drop(guard);
+	wake_inbox_monitor(session_id).await;
+	bound
+}
+
+/// The session's lock for a bind, or `None` when a turn holds it.
+///
+/// A bind is serialized with every frame that drives the session (a turn, a
+/// command, the inbox drain, a close, another bind): they take the session out of
+/// memory while they hold it, and a bind that missed it there loaded a stale copy
+/// from disk, set it up again and put it back — over the live session when the turn
+/// ended meanwhile, so the next turn ran without the last exchange. Every holder
+/// but a turn holds it for a setup at most (a disk load, a role's MCP servers),
+/// so the bind waits for it. A turn holds the lock for its whole run, and the
+/// session it drives is loaded and set up: the bind attaches.
+async fn lock_for_bind(session_id: &str, server: &ServerState) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	loop {
+		// Armed before the check, so a turn registering in between still wakes it.
+		let turn_started = server.turn_started.notified();
+		tokio::pin!(turn_started);
+		turn_started.as_mut().enable();
+		if server.turns.lock().unwrap().contains_key(session_id) {
+			return None;
+		}
+		tokio::select! {
+			guard = Arc::clone(&lock).lock_owned() => return Some(guard),
+			_ = &mut turn_started => {}
+		}
+	}
+}
+
+/// Load or create the session a bind names (a new auto-named one without a name)
+/// and bind to it.
+async fn bind_session(
+	msg: &SessionMessage,
+	cwd: Option<PathBuf>,
+	requested_id: Option<String>,
+	ack: AckPayload,
+	ws_sender: &WsSender,
+	ctx: &ConnCtx,
+	active_session_ids: &mut HashSet<String>,
+) -> Result<()> {
 	let (mut chat_session, config_for_role, session_role, is_new) = match &requested_id {
 		Some(session_id) => {
 			// session_id present: create-or-resume
@@ -1237,19 +1300,7 @@ async fn handle_session_message(
 			return Err(e);
 		}
 	};
-
-	// Ack, resumed frames and greeting reach this connection before any live
-	// frame of the session does — including those of a turn already running.
-	// Whether it answers MCP elicitations follows output ownership (see
-	// `SessionStream::attach`).
-	let answers_elicitation = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
-	if msg.capabilities.iter().any(|c| c == COMMANDS_CAPABILITY) {
-		ack.commands = Some(session_commands(&config_for_role));
-	}
-	ctx.server
-		.streams
-		.open(&session_id)
-		.attach(ws_sender, ack, msg.resume.as_ref(), &greeting, answers_elicitation)?;
+	bind_stream(msg, &session_id, ack, &greeting, &config_for_role, ws_sender, ctx)?;
 
 	// Spawn independent background task that monitors schedules/inbox
 	// and processes messages automatically without waiting for user prompts.
@@ -1258,6 +1309,65 @@ async fn handle_session_message(
 	}
 
 	Ok(())
+}
+
+/// Bind to a session a turn is driving: the session is in the turn's hands, set up
+/// for its role and directory, so nothing is loaded or set up again — nor is the
+/// bind's `cwd` applied, which would move the running turn's directory under it.
+/// Only this connection's own wiring is done (its run events, its inbox monitor),
+/// and it reads the session's stream like any bind.
+async fn attach_to_running_turn(
+	msg: &SessionMessage,
+	session_id: String,
+	ack: AckPayload,
+	ws_sender: &WsSender,
+	ctx: &ConnCtx,
+	active_session_ids: &mut HashSet<String>,
+) -> Result<()> {
+	log_debug!("Binding to session {} while a turn runs", session_id);
+	// The turn ended and a close unloaded the session in between: refused like any
+	// failed bind, so the client binds again rather than waiting on an ack.
+	let Some(role) = crate::session::context::get_session_role(&session_id) else {
+		let error = ServerMessage::error(format!("Session {} unloaded", session_id));
+		return refuse_bind(ws_sender, ack, &error).await;
+	};
+	let config_for_role = role_config(&ctx.server.config, &ctx.server.role_configs, &session_id, &role).await;
+	let wired = crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()))
+	})
+	.await;
+	if let Err(e) = wired {
+		let error = ServerMessage::error(format!("Session {} unloaded: {}", session_id, e));
+		return refuse_bind(ws_sender, ack, &error).await;
+	}
+	let greeting = ServerMessage::status(format!("Session resumed: {}", session_id), Some(session_id.clone()));
+	bind_stream(msg, &session_id, ack, &greeting, &config_for_role, ws_sender, ctx)?;
+	if active_session_ids.insert(session_id.clone()) {
+		spawn_ws_inbox_monitor(session_id, ctx.clone());
+	}
+	Ok(())
+}
+
+/// Ack, resumed frames and greeting reach this connection before any live frame
+/// of the session does — including those of a turn already running. Whether it
+/// answers MCP elicitations follows output ownership (see `SessionStream::attach`).
+fn bind_stream(
+	msg: &SessionMessage,
+	session_id: &str,
+	mut ack: AckPayload,
+	greeting: &ServerMessage,
+	config_for_role: &Config,
+	ws_sender: &WsSender,
+	ctx: &ConnCtx,
+) -> Result<()> {
+	let answers_elicitation = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
+	if msg.capabilities.iter().any(|c| c == COMMANDS_CAPABILITY) {
+		ack.commands = Some(session_commands(config_for_role));
+	}
+	ctx.server
+		.streams
+		.open(session_id)
+		.attach(ws_sender, ack, msg.resume.as_ref(), greeting, answers_elicitation)
 }
 
 /// What a `commands_v1` client's `/` menu lists, in `/help` order: the built-ins
@@ -1295,11 +1405,13 @@ async fn refuse_bind(ws_sender: &WsSender, ack: AckPayload, error: &ServerMessag
 /// the server role instead hands a `/role`-switched session another role's
 /// servers, and every call to its own tools is rejected.
 async fn session_config(base: &Config, role_configs: &RoleConfigs, session: &ChatSession) -> Config {
-	let pinned = role_configs.lock().await.get(&session.session.info.name).cloned();
-	pinned
-		.as_deref()
-		.unwrap_or(base)
-		.get_merged_config_for_role(&session.role)
+	role_config(base, role_configs, &session.session.info.name, &session.role).await
+}
+
+/// [`session_config`] for a session known by id and role, when it is out of reach.
+async fn role_config(base: &Config, role_configs: &RoleConfigs, session_id: &str, role: &str) -> Config {
+	let pinned = role_configs.lock().await.get(session_id).cloned();
+	pinned.as_deref().unwrap_or(base).get_merged_config_for_role(role)
 }
 
 /// Role and config a session loaded from disk runs under.
@@ -1414,7 +1526,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 	let config_for_role = session_config(&server.config, &server.role_configs, &chat_session).await;
 	let mut cancellation = SessionCancellation::new();
 	let operation_rx = cancellation.new_operation();
-	let _turn = TurnGuard::register(&server.turns, &session_id, &cancellation);
+	let _turn = TurnGuard::register(server, &session_id, &cancellation);
 
 	// Handle /done specially — it hits unreachable!() in process_command
 	// because the CLI intercepts it before routing. We handle it here directly.
@@ -1715,7 +1827,7 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	let mut cancellation = SessionCancellation::new();
 	// Registered for the whole frame: the handle follows every new_operation()
 	// below, so a `cancel` stops whichever turn — injected or the user's — runs.
-	let _turn = TurnGuard::register(&server.turns, &session_id, &cancellation);
+	let _turn = TurnGuard::register(server, &session_id, &cancellation);
 	// The main-call `operation_rx` is created AFTER the pre-user inbox drain
 	// below: the drain calls new_operation() per message, each dropping the
 	// previous watch sender, so a receiver made here would be closed by the

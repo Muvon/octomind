@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.65.1] - 2026-10-27
+
+### 📋 Release Summary
+
+Releases now publish SHA-256 checksums, which the installer verifies. WebSocket session binding is coordinated with active turns, and end-to-end tests use a higher recursion limit.
+
+### ✨ New Features & Enhancements
+
+- **release**: publish sha256 checksums and verify them in install.sh `4a93c6e1`
+
+### 🔧 Improvements & Optimizations
+
+- **ws**: raise end-to-end test recursion limit `a0e1bf72`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: coordinate session binding with active turns `66d3a925`
+
 ## [0.65.0] - 2026-10-27
 
 ### 📋 Release Summary

@@ -24,16 +24,21 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const MARKER: &str = "ACP-E2E-MARKER";
 
+type CapturedRequests = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+
 /// Serves the scripted assistant messages in order, one per provider call, or
 /// the default marker answer to every call when no script is given.
-async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> String {
+async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> (String, CapturedRequests) {
 	let script = std::sync::Arc::new(std::sync::Mutex::new(script.map(std::collections::VecDeque::from)));
+	let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+	let captured = requests.clone();
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
 		while let Ok((mut sock, _)) = listener.accept().await {
 			let script = std::sync::Arc::clone(&script);
+			let requests = requests.clone();
 			tokio::spawn(async move {
 				let mut buf = Vec::new();
 				let mut tmp = [0u8; 8192];
@@ -60,6 +65,10 @@ async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> String {
 					}
 					buf.extend_from_slice(&tmp[..n]);
 				}
+				requests
+					.lock()
+					.expect("captured requests")
+					.push(serde_json::from_slice(&buf[header_end..header_end + content_length]).expect("request JSON"));
 				let message = match script.lock().expect("script lock").as_mut() {
 					Some(messages) => messages.pop_front().expect("unexpected provider call"),
 					None => text_message(&format!("{MARKER}: acp answer")),
@@ -85,7 +94,7 @@ async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> String {
 		}
 	});
 
-	format!("http://{}/v1/chat/completions", addr)
+	(format!("http://{}/v1/chat/completions", addr), captured)
 }
 
 fn text_message(content: &str) -> serde_json::Value {
@@ -246,8 +255,61 @@ impl AcpClient {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_acp_text_resource_reaches_the_provider_prompt() {
+	let (stub_url, captured) = spawn_openai_stub(None).await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
+	client
+		.request(
+			"initialize",
+			serde_json::json!({"protocolVersion": 1, "clientCapabilities": {}}),
+		)
+		.await;
+	let (session, _) = client
+		.request("session/new", serde_json::json!({"cwd": home.path(), "mcpServers": []}))
+		.await;
+	let uri = "file:///src/mentioned.rs";
+	let resource_text = "fn mentioned_file_is_visible() {}";
+	let (response, _) = client
+		.request(
+			"session/prompt",
+			serde_json::json!({
+				"sessionId": session["sessionId"],
+				"prompt": [{"type": "resource", "resource": {"uri": uri, "text": resource_text}}]
+			}),
+		)
+		.await;
+	assert_eq!(response["stopReason"], "end_turn");
+	{
+		let requests = captured.lock().expect("captured provider requests");
+		assert!(!requests.is_empty(), "a resource-only prompt must reach the provider");
+		let user = requests[0]["messages"]
+			.as_array()
+			.expect("messages")
+			.iter()
+			.find(|message| message["role"] == "user")
+			.expect("user prompt");
+		let content = user["content"].as_str().expect("text prompt");
+		assert!(
+			content.contains(&format!("Resource: {uri}\n```\n{resource_text}\n```")),
+			"prompt: {content}"
+		);
+	}
+	let AcpClient { mut child, stdin, .. } = client;
+	drop(stdin);
+	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+		Ok(status) => assert!(status.expect("wait").success()),
+		Err(_) => {
+			let _ = child.kill().await;
+			panic!("acp agent did not exit after stdin EOF");
+		}
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_initialize_new_session_prompt() {
-	let stub_url = spawn_openai_stub(None).await;
+	let (stub_url, _) = spawn_openai_stub(None).await;
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
@@ -433,7 +495,7 @@ async fn test_acp_initialize_new_session_prompt() {
 /// translation paths only run when the model actually calls a tool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_tool_round_updates() {
-	let stub_url = spawn_openai_stub(Some(vec![
+	let (stub_url, _) = spawn_openai_stub(Some(vec![
 		tool_call_message("call_acp", "schedule", serde_json::json!({"action": "list"})),
 		text_message(&format!("{MARKER}: tool round done")),
 	]))
@@ -485,7 +547,7 @@ async fn test_acp_tool_round_updates() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
-	let stub_url = spawn_openai_stub(Some(vec![
+	let (stub_url, _) = spawn_openai_stub(Some(vec![
 		text_message(
 			r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
 		),
@@ -569,7 +631,7 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_sub_agent_tool_round() {
 	const SUB_AGENT_MARKER: &str = "ACP-SUB-AGENT-DONE";
-	let stub_url = spawn_openai_stub(Some(vec![
+	let (stub_url, _) = spawn_openai_stub(Some(vec![
 		tool_call_message(
 			"call_add",
 			"agent",

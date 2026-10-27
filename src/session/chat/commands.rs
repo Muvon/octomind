@@ -48,39 +48,164 @@ pub const USAGE_COMMAND: &str = "/usage";
 pub const LOGIN_COMMAND: &str = "/login";
 pub const RENAME_COMMAND: &str = "/rename";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
-// List of all available commands for autocomplete
-pub const COMMANDS: [&str; 33] = [
-	HELP_COMMAND,
-	HELP_COMMAND_ALT,
-	EXIT_COMMAND,
-	QUIT_COMMAND,
-	COPY_COMMAND,
-	REPLY_COMMAND,
-	CLEAR_COMMAND,
-	LIST_COMMAND,
-	NEW_COMMAND,
-	INFO_COMMAND,
-	DONE_COMMAND,
-	LOGLEVEL_COMMAND,
-	MODEL_COMMAND,
-	RUN_COMMAND,
-	MCP_COMMAND,
-	REPORT_COMMAND,
-	IMAGE_COMMAND,
-	VIDEO_COMMAND,
-	CONTEXT_COMMAND,
-	ROLE_COMMAND,
-	PROMPT_COMMAND,
-	PLAN_COMMAND,
-	SKILL_COMMAND,
-	EFFORT_COMMAND,
-	SCHEDULE_COMMAND,
-	STATUS_COMMAND,
-	LEARNING_COMMAND,
-	SHARE_COMMAND,
-	ANALYZE_COMMAND,
-	USAGE_COMMAND,
-	LOGIN_COMMAND,
-	RENAME_COMMAND,
-	WORKFLOW_COMMAND,
+/// Where a built-in command can run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+	/// The CLI and WebSocket sessions alike.
+	Anywhere,
+	/// Acts on the host's terminal, clipboard or CLI prompt, or ends the process
+	/// from inside: a WebSocket client has `close` and message attachments for those.
+	CliOnly,
+}
+
+/// Every built-in command in `/help` order: (name, argument hint, description, reach).
+/// The hint is empty only when the command takes no argument. `/help`, the
+/// completer and the WebSocket bind ack all list from here (the ACP menu in
+/// `acp/agent.rs` keeps its own list).
+pub const BUILTIN_COMMANDS: [(&str, &str, &str, Reach); 31] = [
+	(HELP_COMMAND, "", "Show this help message", Reach::Anywhere),
+	(
+		COPY_COMMAND,
+		"[last|assistant|user|all]",
+		"Copy the last response, or a scope",
+		Reach::CliOnly,
+	),
+	(
+		REPLY_COMMAND,
+		"[N|words]",
+		"Quote a reply into the prompt, Tab picks",
+		Reach::CliOnly,
+	),
+	(CLEAR_COMMAND, "", "Clear the screen", Reach::CliOnly),
+	(LIST_COMMAND, "[page]", "List all available sessions", Reach::Anywhere),
+	(NEW_COMMAND, "[title]", "Start a fresh session", Reach::CliOnly),
+	(
+		RENAME_COMMAND,
+		"[title]",
+		"Set a display title for this session (no title clears)",
+		Reach::Anywhere,
+	),
+	(INFO_COMMAND, "", "Detailed token and cost breakdown", Reach::Anywhere),
+	(
+		DONE_COMMAND,
+		"[instructions]",
+		"Finalize task with memorize/summarize/commit",
+		Reach::Anywhere,
+	),
+	(
+		LOGLEVEL_COMMAND,
+		"[none|info|debug]",
+		"View or set the logging level",
+		Reach::Anywhere,
+	),
+	(
+		RUN_COMMAND,
+		"[name] [input]",
+		"Execute a command layer",
+		Reach::Anywhere,
+	),
+	(
+		CONTEXT_COMMAND,
+		"[all|assistant|user|tool|large]",
+		"Display session context",
+		Reach::Anywhere,
+	),
+	(
+		MODEL_COMMAND,
+		"[provider:model]",
+		"View or change current AI model",
+		Reach::Anywhere,
+	),
+	(
+		EFFORT_COMMAND,
+		"[level]",
+		"View or change reasoning effort",
+		Reach::Anywhere,
+	),
+	(ROLE_COMMAND, "[name]", "View or change current role", Reach::Anywhere),
+	(
+		MCP_COMMAND,
+		"[list|info|full|health|dump|validate]",
+		"MCP server management",
+		Reach::Anywhere,
+	),
+	(IMAGE_COMMAND, "<path>", "Attach image to next message", Reach::CliOnly),
+	(VIDEO_COMMAND, "<path>", "Attach video to next message", Reach::CliOnly),
+	(PROMPT_COMMAND, "[name]", "Manage prompt templates", Reach::Anywhere),
+	(PLAN_COMMAND, "", "Display current plan", Reach::Anywhere),
+	(
+		SKILL_COMMAND,
+		"[name]",
+		"List skills or toggle by name",
+		Reach::Anywhere,
+	),
+	(
+		SCHEDULE_COMMAND,
+		"[list|add|edit|remove]",
+		"Schedule a message to be injected later",
+		Reach::Anywhere,
+	),
+	(
+		WORKFLOW_COMMAND,
+		"[name] [input]",
+		"List tap workflows or run one",
+		Reach::Anywhere,
+	),
+	(
+		STATUS_COMMAND,
+		"[agents|monitors|jobs]",
+		"Show active agents, MCP jobs, and command monitors",
+		Reach::Anywhere,
+	),
+	(
+		LEARNING_COMMAND,
+		"[list|show|delete|clear|evolution]",
+		"Manage role/project lessons",
+		Reach::Anywhere,
+	),
+	(
+		REPORT_COMMAND,
+		"[day|week|month] [here]",
+		"Usage report with human time and energy",
+		Reach::Anywhere,
+	),
+	(
+		SHARE_COMMAND,
+		"",
+		"Upload session and print shareable URL",
+		Reach::Anywhere,
+	),
+	// The bridge listens on the host's loopback, out of a remote client's reach.
+	(
+		ANALYZE_COMMAND,
+		"",
+		"Open this session in the web viewer (local-only)",
+		Reach::CliOnly,
+	),
+	(
+		USAGE_COMMAND,
+		"",
+		"Show account usage, quotas, and balance",
+		Reach::Anywhere,
+	),
+	(LOGIN_COMMAND, "", "Sign in to an Octomind account", Reach::Anywhere),
+	(EXIT_COMMAND, "", "Exit the session", Reach::CliOnly),
 ];
+
+/// The second name a command answers to, which `/help` shows beside it.
+pub fn alias_of(command: &str) -> Option<&'static str> {
+	match command {
+		HELP_COMMAND => Some(HELP_COMMAND_ALT),
+		EXIT_COMMAND => Some(QUIT_COMMAND),
+		_ => None,
+	}
+}
+
+/// Every name a built-in answers to, aliases included: what the completer offers
+/// and command routing accepts.
+pub static COMMANDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+	BUILTIN_COMMANDS
+		.iter()
+		.flat_map(|&(name, ..)| std::iter::once(name).chain(alias_of(name)))
+		.collect()
+});

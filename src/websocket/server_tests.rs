@@ -869,6 +869,76 @@ async fn named_session_resumes_from_disk_on_a_fresh_connection() {
 	crate::session::context::cleanup_session(&"disk-resume-1".to_string());
 }
 
+#[tokio::test]
+#[serial_test::serial]
+async fn bind_ack_lists_session_commands_only_for_a_client_that_asks() {
+	let _data = TestDataDirGuard::new();
+	// The shipped template's custom commands, so `/run <name>` entries are covered too.
+	let template: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
+	let custom = template.commands.clone().unwrap_or_default();
+	assert!(!custom.is_empty(), "the default template ships a custom command");
+	let mut config = ws_fake_config();
+	config.commands = template.commands;
+	let server = LoopbackServer::start(Arc::new(config)).await;
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "commands-1", "capabilities": [COMMANDS_CAPABILITY]}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	let commands = ack["commands"]
+		.as_array()
+		.unwrap_or_else(|| panic!("commands listed: {ack}"));
+	let names: Vec<&str> = commands.iter().map(|c| c["name"].as_str().expect("name")).collect();
+	let mut expected: Vec<String> = BUILTIN_COMMANDS
+		.iter()
+		.filter(|&&(.., reach)| reach == Reach::Anywhere)
+		.map(|&(name, ..)| name.trim_start_matches('/').to_string())
+		.collect();
+	expected.extend(custom.iter().map(|c| format!("run {}", c.name)));
+	assert_eq!(
+		names, expected,
+		"`/help` order, CLI-only left out, custom commands last"
+	);
+	for cli_only in ["copy", "clear", "new", "exit", "image"] {
+		assert!(!names.contains(&cli_only), "{cli_only} cannot run over a websocket");
+	}
+
+	let entry = |name: &str| {
+		commands
+			.iter()
+			.find(|c| c["name"] == name)
+			.unwrap_or_else(|| panic!("{name} listed: {ack}"))
+	};
+	assert_eq!(entry("model")["hint"], "[provider:model]");
+	assert!(
+		entry("info").get("hint").is_none(),
+		"a command without arguments has no hint"
+	);
+	let run = entry(&format!("run {}", custom[0].name));
+	assert_eq!(run["hint"], "[input]");
+	assert_eq!(run["description"], custom[0].description);
+
+	// A client that does not ask gets the ack it always did.
+	let mut plain = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut plain).await;
+	send_json(
+		&mut plain,
+		serde_json::json!({"type": "session", "session_id": "commands-2"}),
+	)
+	.await;
+	let ack = read_json(&mut plain).await;
+	assert_eq!(ack["type"], "ack", "got: {ack}");
+	assert!(ack.get("commands").is_none(), "got: {ack}");
+
+	crate::session::context::cleanup_session(&"commands-1".to_string());
+	crate::session::context::cleanup_session(&"commands-2".to_string());
+}
+
 // ---- per-session role tool binding ----
 
 /// Server role `assistant` owns core+orchestration; `outbound` swaps

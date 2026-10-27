@@ -162,9 +162,11 @@ A role that fails to resolve returns an `error` and creates nothing.
 `resume` is optional: `{"stream": "<id>", "after": <stream_seq>}` from a client that was reading this session's output
 and lost its connection. See [Stream position and resume](#stream-position-and-resume).
 
-`capabilities` is optional: what this client implements. Today the only value is `elicitation_v1` — the client answers
-MCP servers' questions (see [MCP elicitation](#mcp-elicitation) below); without it the session declines
-them. Send it on every bind: it belongs to whichever connection owns the session's output.
+`capabilities` is optional: what this client implements. Send it on every bind.
+
+- `elicitation_v1`: the client answers MCP servers' questions (see [MCP elicitation](#mcp-elicitation) below). Without
+  it the session declines them. It belongs to whichever connection owns the session's output.
+- `commands_v1`: the bind's ack lists the slash commands the session can run in `commands` (see below).
 
 A bind with `resume` takes the session's output over: from then on every frame the session produces goes to this
 connection, including the rest of a turn another connection started. A bind without `resume` takes it only when no live
@@ -342,6 +344,16 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
 - `stream_resume_v1` — session output carries `stream_seq`, and a bind may `resume` (below).
 - `elicitation_v1` — MCP servers can ask the user for input mid-tool-call (below). A client opts in by listing
   `"capabilities": ["elicitation_v1"]` in its `session` bind; without it the session declines every elicitation.
+- `commands_v1` — a client that lists it in its `session` bind gets `commands` on that bind's ack: the slash commands
+  the session can run, in `/help` order, each `{"name", "description", "hint"?}`. `name` has no leading `/` and is what
+  a `command` frame carries (custom commands are listed as `run <name>`). `hint` is the argument shape, such as
+  `[provider:model]`, and is absent only when the command takes no argument. Commands that act on the CLI's own terminal
+  (`copy`, `reply`, `clear`, `new`, `image`, `video`, `analyze`, `exit`) are left out. The list follows the config the
+  session runs under, so read it from every bind's ack. Without the capability the ack has no `commands`.
+
+```json
+{"type":"ack","message_type":"session","session_id":"my-session","status":"received","capabilities":["…","commands_v1"],"commands":[{"name":"help","description":"Show this help message"},{"name":"model","description":"View or change current AI model","hint":"[provider:model]"}],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":0}
+```
 
 #### Stream position and resume
 
@@ -361,7 +373,7 @@ attachment, `Internal error`, malformed or invalid input).
 A successful bind's ack reports the stream and the highest `stream_seq` assigned so far (0 if none):
 
 ```json
-{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1","elicitation_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
+{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1","elicitation_v1","commands_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
 ```
 
 A failed bind's ack carries no `stream` or `stream_seq`. The server holds the frames of the running turn and of the turn

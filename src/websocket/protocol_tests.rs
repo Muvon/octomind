@@ -320,10 +320,11 @@ fn test_session_ack_advertises_message_attachments() {
 			"session_control_v1",
 			"run_events_v1",
 			"stream_resume_v1",
-			"elicitation_v1"
+			"elicitation_v1",
+			"commands_v1"
 		])
 	);
-	for field in ["stream", "stream_seq", "resumed"] {
+	for field in ["stream", "stream_seq", "resumed", "commands"] {
 		assert!(
 			json.get(field).is_none(),
 			"{field} is filled in by the server once the session is bound: {json}"

@@ -22,6 +22,7 @@
 
 use super::CommandOutput;
 use crate::config::{Config, ReasoningEffortConfig};
+use crate::session::chat::commands::{alias_of, BUILTIN_COMMANDS};
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::tool_display::{
 	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
@@ -33,61 +34,21 @@ use colored::Colorize;
 // Note: Main display routing is now in CommandOutput::display_cli()
 // These functions handle the actual formatting
 
-/// (command, description) rows rendered by `/help` in the CLI. Commands with an
-/// alias name it in the description, so `/?` and `/quit` are discoverable.
+/// (command, description) rows rendered by `/help` in the CLI. The argument hint
+/// follows the description, and an alias is named so `/?` and `/quit` are
+/// discoverable.
 fn help_builtin_rows() -> Vec<(&'static str, String)> {
-	use crate::session::chat::commands::*;
-
-	const BUILTINS: &[(&str, &str)] = &[
-		(HELP_COMMAND, "Show this help message"),
-		(COPY_COMMAND, "Copy last response, or scope: last|assistant|user|all"),
-		(REPLY_COMMAND, "Quote a reply into the prompt: [N|words], Tab picks"),
-		(CLEAR_COMMAND, "Clear the screen"),
-		(LIST_COMMAND, "List all available sessions"),
-		(NEW_COMMAND, "Start a fresh session (optional title)"),
-		(RENAME_COMMAND, "Set a display title for this session (no arg clears)"),
-		(INFO_COMMAND, "Detailed token and cost breakdown"),
-		(DONE_COMMAND, "Finalize task with memorize/summarize/commit"),
-		(LOGLEVEL_COMMAND, "Set logging level: none, info, debug"),
-		(RUN_COMMAND, "Execute a command layer"),
-		(CONTEXT_COMMAND, "Display session context (filterable)"),
-		(MODEL_COMMAND, "View or change current AI model"),
-		(EFFORT_COMMAND, "View or change reasoning effort"),
-		(ROLE_COMMAND, "View or change current role"),
-		(MCP_COMMAND, "MCP server management"),
-		(IMAGE_COMMAND, "Attach image to next message"),
-		(VIDEO_COMMAND, "Attach video to next message"),
-		(PROMPT_COMMAND, "Manage prompt templates"),
-		(PLAN_COMMAND, "Display current plan"),
-		(SKILL_COMMAND, "List skills or toggle by name"),
-		(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
-		(WORKFLOW_COMMAND, "List tap workflows or run one"),
-		(STATUS_COMMAND, "Show active agents, MCP jobs, and command monitors"),
-		(LEARNING_COMMAND, "Manage role/project lessons"),
-		(
-			REPORT_COMMAND,
-			"Usage report with human time and energy ([day|week|month] [here])",
-		),
-		(SHARE_COMMAND, "Upload session and print shareable URL"),
-		(ANALYZE_COMMAND, "Open this session in the web viewer (local-only)"),
-		(USAGE_COMMAND, "Show account usage, quotas, and balance"),
-		(LOGIN_COMMAND, "Sign in to an Octomind account"),
-		(EXIT_COMMAND, "Exit the session"),
-	];
-
-	BUILTINS
+	BUILTIN_COMMANDS
 		.iter()
-		.map(|&(cmd, desc)| {
-			let alias = match cmd {
-				HELP_COMMAND => Some(HELP_COMMAND_ALT),
-				EXIT_COMMAND => Some(QUIT_COMMAND),
-				_ => None,
-			};
-			let desc = match alias {
-				Some(alias) => format!("{desc} (alias: {alias})"),
-				None => desc.to_string(),
-			};
-			(cmd, desc)
+		.map(|&(name, hint, description, _)| {
+			let mut text = description.to_string();
+			if !hint.is_empty() {
+				text = format!("{text} {hint}");
+			}
+			if let Some(alias) = alias_of(name) {
+				text = format!("{text} (alias: {alias})");
+			}
+			(name, text)
 		})
 		.collect()
 }

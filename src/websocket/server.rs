@@ -15,8 +15,9 @@
 // WebSocket server implementation
 
 use super::protocol::{
-	AckPayload, Attachment, AttachmentKind, CancelMessage, ClientMessage, CloseMessage, CommandMessage,
-	ElicitationResponseMessage, ServerMessage, SessionMessage, StatusPayload, UserMessage, ELICITATION_CAPABILITY,
+	AckPayload, Attachment, AttachmentKind, CancelMessage, ClientMessage, CloseMessage, CommandInfo, CommandMessage,
+	ElicitationResponseMessage, ServerMessage, SessionMessage, StatusPayload, UserMessage, COMMANDS_CAPABILITY,
+	ELICITATION_CAPABILITY,
 };
 use super::stream::{SessionStream, Streams};
 use crate::config::Config;
@@ -25,6 +26,7 @@ use crate::session::chat::session::{
 	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled, setup_and_initialize_session,
 	setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
+use crate::session::chat::{Reach, BUILTIN_COMMANDS, RUN_COMMAND};
 use crate::session::output::{OutputMode, WebSocketSink};
 use crate::{log_debug, log_error, log_info};
 use anyhow::Result;
@@ -1078,7 +1080,7 @@ async fn handle_session_message(
 	active_session_ids: &mut HashSet<String>,
 ) -> Result<()> {
 	log_debug!("Handling session message: session_id={:?}", msg.session_id);
-	let ack = AckPayload::bind(&msg);
+	let mut ack = AckPayload::bind(&msg);
 
 	// Refused before the session is taken out of memory or created on disk, so a
 	// bad directory costs nothing and leaves an existing session untouched.
@@ -1241,6 +1243,9 @@ async fn handle_session_message(
 	// Whether it answers MCP elicitations follows output ownership (see
 	// `SessionStream::attach`).
 	let answers_elicitation = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
+	if msg.capabilities.iter().any(|c| c == COMMANDS_CAPABILITY) {
+		ack.commands = Some(session_commands(&config_for_role));
+	}
 	ctx.server
 		.streams
 		.open(&session_id)
@@ -1253,6 +1258,28 @@ async fn handle_session_message(
 	}
 
 	Ok(())
+}
+
+/// What a `commands_v1` client's `/` menu lists, in `/help` order: the built-ins
+/// a session can run, then the custom commands, named as `/help` lists them
+/// under `/run`. Built per bind: custom commands follow the config it runs under.
+fn session_commands(config: &Config) -> Vec<CommandInfo> {
+	let bare = |name: &str| name.trim_start_matches('/').to_string();
+	let builtins = BUILTIN_COMMANDS
+		.iter()
+		.filter(|&&(.., reach)| reach == Reach::Anywhere)
+		.map(|&(name, hint, description, _)| CommandInfo {
+			name: bare(name),
+			description: description.to_string(),
+			hint: (!hint.is_empty()).then(|| hint.to_string()),
+		});
+	// A custom command takes the rest of the line as its input (`run::handle_run`).
+	let custom = config.commands.iter().flatten().map(|c| CommandInfo {
+		name: format!("{} {}", bare(RUN_COMMAND), c.name),
+		description: c.description.clone(),
+		hint: Some("[input]".to_string()),
+	});
+	builtins.chain(custom).collect()
 }
 
 /// A bind that fails is acknowledged like any frame — without a stream, as

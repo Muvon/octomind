@@ -20,42 +20,14 @@ use crate::config::Config;
 use anyhow::Result;
 
 pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
-	// Build list of command names for structured output
-	let mut commands = Vec::new();
-
-	commands.push(format!("{} | {}", HELP_COMMAND, HELP_COMMAND_ALT));
-	commands.push(COPY_COMMAND.to_string());
-	commands.push(REPLY_COMMAND.to_string());
-	commands.push(CLEAR_COMMAND.to_string());
-	commands.push(LIST_COMMAND.to_string());
-	commands.push(NEW_COMMAND.to_string());
-	commands.push(RENAME_COMMAND.to_string());
-	commands.push(INFO_COMMAND.to_string());
-	commands.push(DONE_COMMAND.to_string());
-
-	commands.push(LOGLEVEL_COMMAND.to_string());
-
-	commands.push(RUN_COMMAND.to_string());
-	commands.push(CONTEXT_COMMAND.to_string());
-	commands.push(MODEL_COMMAND.to_string());
-	commands.push(EFFORT_COMMAND.to_string());
-	commands.push(ROLE_COMMAND.to_string());
-	commands.push(MCP_COMMAND.to_string());
-	commands.push(IMAGE_COMMAND.to_string());
-	commands.push(VIDEO_COMMAND.to_string());
-	commands.push(PROMPT_COMMAND.to_string());
-	commands.push(PLAN_COMMAND.to_string());
-	commands.push(SKILL_COMMAND.to_string());
-	commands.push(SCHEDULE_COMMAND.to_string());
-	commands.push(WORKFLOW_COMMAND.to_string());
-	commands.push(STATUS_COMMAND.to_string());
-	commands.push(LEARNING_COMMAND.to_string());
-	commands.push(REPORT_COMMAND.to_string());
-	commands.push(SHARE_COMMAND.to_string());
-	commands.push(ANALYZE_COMMAND.to_string());
-	commands.push(USAGE_COMMAND.to_string());
-	commands.push(LOGIN_COMMAND.to_string());
-	commands.push(format!("{} | {}", EXIT_COMMAND, QUIT_COMMAND));
+	// Build list of command names for structured output, aliases beside their command
+	let mut commands: Vec<String> = BUILTIN_COMMANDS
+		.iter()
+		.map(|&(name, ..)| match alias_of(name) {
+			Some(alias) => format!("{name} | {alias}"),
+			None => name.to_string(),
+		})
+		.collect();
 
 	// Add custom commands from config
 	let (_, _, _, commands_config, _) = config.get_role_config(role);

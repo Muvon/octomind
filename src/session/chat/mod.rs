@@ -45,7 +45,8 @@ pub use animation_manager::{get_animation_manager, AnimationManager};
 pub use assistant_output::print_assistant_response;
 pub use command_executor::{command_exists, execute_command_layer, get_command_help, list_available_commands};
 pub use commands::{
-	CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND, QUIT_COMMAND, RUN_COMMAND,
+	Reach, BUILTIN_COMMANDS, CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND,
+	QUIT_COMMAND, RUN_COMMAND,
 };
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;

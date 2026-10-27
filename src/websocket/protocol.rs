@@ -30,6 +30,10 @@ pub const STREAM_RESUME_CAPABILITY: &str = "stream_resume_v1";
 /// frames, and a client that lists it in its bind `capabilities` answers them
 /// with `elicitation_response`. Without it, the session declines them.
 pub const ELICITATION_CAPABILITY: &str = "elicitation_v1";
+/// A client that lists it in its bind `capabilities` gets the slash commands a
+/// session can run in the bind ack's `commands`. Without it the ack has no such
+/// field, so older clients see the ack they always did.
+pub const COMMANDS_CAPABILITY: &str = "commands_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -597,6 +601,21 @@ pub struct AckPayload {
 	/// `resume.after` follows this ack. Present only when resume was requested.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub resumed: Option<bool>,
+	/// Slash commands the session can run, in `/help` order. Present only when
+	/// the bind listed [`COMMANDS_CAPABILITY`].
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub commands: Option<Vec<CommandInfo>>,
+}
+
+/// One entry of the ack's `commands`: a command a `command` frame can run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+	/// Without the leading `/`, as a `command` frame carries it.
+	pub name: String,
+	pub description: String,
+	/// Argument shape, e.g. `[provider:model]`; absent only when the command takes none.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub hint: Option<String>,
 }
 
 /// Skill lifecycle event (activate via auto-activation, explicit use, or forget).
@@ -748,6 +767,7 @@ impl AckPayload {
 				RUN_EVENTS_CAPABILITY.to_string(),
 				STREAM_RESUME_CAPABILITY.to_string(),
 				ELICITATION_CAPABILITY.to_string(),
+				COMMANDS_CAPABILITY.to_string(),
 			],
 			..Self::received(msg.request_id.clone(), "session", msg.session_id.clone())
 		}
@@ -763,6 +783,7 @@ impl AckPayload {
 			stream: None,
 			stream_seq: None,
 			resumed: None,
+			commands: None,
 		}
 	}
 }

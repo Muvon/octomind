@@ -18,7 +18,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 | Task | Start here |
 |------|------------|
 | Add an MCP tool | schema in that server's `get_all_functions()` — `src/mcp/core/functions.rs`, `src/mcp/orchestration/mod.rs`, `src/mcp/runtime/mod.rs`, `src/mcp/agent/functions.rs` → implement in same module → match arm in `src/mcp/mod.rs` `route_builtin_tool()` → register in `src/mcp/tool_map.rs` |
-| Add a session command (`/foo`) | `src/session/chat/session/commands/<name>.rs` returning `CommandResult` → `mod` + routing arm in `commands/mod.rs` `process_command()` → new `CommandOutput` variant if the result shape is new → constant + entry in the fixed-size `COMMANDS` array in `src/session/chat/commands.rs` (bump the length) |
+| Add a session command (`/foo`) | `src/session/chat/session/commands/<name>.rs` returning `CommandResult` → `mod` + routing arm in `commands/mod.rs` `process_command()` → new `CommandOutput` variant if the result shape is new → constant + row in the fixed-size `BUILTIN_COMMANDS` array in `src/session/chat/commands.rs` (bump the length; `Reach::CliOnly` hides it from WebSocket clients) |
 | Change a config field/default | `config-templates/default.toml` FIRST, then the matching type in `src/config/` |
 | Config load / merge / role resolution | `src/config/loading.rs` (`load()`), `src/config/merge.rs` (`get_merged_config_for_role()`) |
 | Tool not found / routing bugs | `src/mcp/tool_map.rs` `get_server_for_tool()` → `src/mcp/mod.rs` `try_execute_tool_call()` |

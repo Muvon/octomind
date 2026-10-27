@@ -88,7 +88,7 @@ commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.no
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
+| `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. Also the shared per-prompt budget for ACP embedded text resources and file links. `0` = unlimited. |
 | `max_session_tokens_threshold` | usize | `200000` | Full-context safety limit, capped further by model window minus output reservation. `0` removes this configured limit, not the model ceiling. Maximum `2,000,000`; unrecoverable overflow errors before a provider request. |
 | `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while the session idles. Provider-aware: currently **only Anthropic** is pinged, and the ping interval comes from the provider's cache TTL (1h), not from this config. |
 | `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. Validation fails if `> 86400` (24h). |

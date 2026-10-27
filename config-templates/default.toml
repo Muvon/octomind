@@ -52,6 +52,7 @@ commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.no
 
 # Global token limit for ALL MCP tool responses (0 = unlimited)
 # When exceeded, responses are automatically truncated with notice
+# Also the shared per-prompt budget for ACP @-mentioned files and file links
 mcp_response_tokens_threshold = 20000
 
 # Maximum tokens per session before truncation kicks in (0 = disabled, >0 = enabled)

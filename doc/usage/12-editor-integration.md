@@ -196,11 +196,28 @@ For a local HTTP server already listening on port 3000:
 
 Inspect the resulting tools with `/mcp full`. See [MCP tools](07-mcp-tools.md) for authenticated TOML server examples.
 
-## Attach Images and Video
+## Attach Files, Images and Video
 
-ACP accepts text blocks, inline base64 image blocks, and embedded blob resources whose MIME type starts with `video/`.
-Only the first image and first video in a prompt are attached. Audio, resource links, and other resource content are
-ignored by this prompt handler, even though initialization advertises embedded context support.
+ACP accepts text blocks, embedded text resources (@-mentioned files), local file links, inline base64 images, and
+embedded blob resources whose MIME type starts with `video/`. All images and videos in a prompt are attached.
+Audio and other blob resources remain unsupported.
+
+Embedded text is included as a fenced block labelled with its URI, in order with the surrounding prompt text:
+
+```json
+{"type":"resource","resource":{"uri":"file:///absolute/project/src/main.rs","text":"fn main() {}"}}
+```
+
+A resource link is read as UTF-8 text only if its resolved path is inside the session's working directory:
+
+```json
+{"type":"resource_link","name":"main.rs","uri":"file:///absolute/project/src/main.rs"}
+```
+
+Links outside that directory (including symlink escapes), remote links, missing files, directories, and invalid UTF-8
+produce a short note in the prompt. Octomind does not fetch remote resource links. Embedded and linked text share the
+per-prompt token cap that tool results get, `mcp_response_tokens_threshold` (default `20000`). Text past it is cut with
+a notice.
 
 For a concrete image example, this JSON-RPC prompt attaches a one-pixel PNG:
 

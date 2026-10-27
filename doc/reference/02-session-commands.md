@@ -525,7 +525,7 @@ Focused work stays plan-free.
 /plan
 ```
 
-### `/skill [NAME|PAGE|PATTERN]`
+### `/skill [NAME|PAGE|PATTERN [PAGE]]`
 
 Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 
@@ -535,11 +535,13 @@ Manage skills from taps. Skills are reusable instruction packs that inject domai
 | `/skill <name>` | Toggle the skill: enable it if inactive (`use`), disable it if active (`forget`). Unknown names return `Skill not found`. |
 | `/skill <page>` | Show page N of the skill list |
 | `/skill *pattern*` | Filter skills by glob pattern |
+| `/skill *pattern* <page>` | Show page N of the filtered list |
 
 ```text
 /skill
 /skill 1
 /skill *review*
+/skill *review* 2
 ```
 
 Use an exact listed skill name to toggle it, for example:

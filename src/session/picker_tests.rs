@@ -25,7 +25,7 @@ fn entry(name: &str, title: Option<&str>, role: Option<&str>, model: Option<&str
 }
 
 /// The label starts with a `%Y-%m-%d %H:%M` timestamp. The wall-clock value is
-/// timezone-dependent (`naive_local`), so assert the shape, not the exact date.
+/// timezone-dependent (local time), so assert the shape, not the exact date.
 fn has_timestamp_prefix(label: &str) -> bool {
 	let b = label.as_bytes();
 	b.len() >= 16
@@ -138,5 +138,23 @@ fn label_epoch_timestamp_still_formats() {
 	assert!(
 		has_timestamp_prefix(&label),
 		"epoch must format as YYYY-MM-DD HH:MM (local): {label}"
+	);
+}
+
+#[test]
+fn label_renders_local_time_not_utc() {
+	// 2026-03-15 12:00:00 UTC. In any zone east of UTC the local rendering
+	// must differ from the UTC one, which is what `naive_local` on a
+	// `DateTime<Utc>` used to produce. Comparing against `chrono::Local`
+	// keeps the assertion true in every timezone, UTC included.
+	let ts = 1_773_576_000u64;
+	let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(ts as i64, 0)
+		.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+		.unwrap();
+	let e = entry("abc123", None, None, None, ts);
+	let label = e.label();
+	assert!(
+		label.starts_with(&expected),
+		"label must use local time: expected prefix {expected:?}, got {label:?}"
 	);
 }

@@ -36,9 +36,10 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::task::TaskTracker;
 
 use crate::config::mcp::McpServerConfig;
-use crate::config::Config;
+use crate::config::{Config, ReasoningEffortConfig};
 use crate::mcp::elicitation::Answerer;
 use crate::session::cancellation::SessionCancellation;
+use crate::session::chat::session::commands::CopyScope;
 use crate::session::chat::session::{
 	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled, setup_and_initialize_session,
 	setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
@@ -493,6 +494,15 @@ mod tests;
 fn build_available_commands() -> Vec<AvailableCommand> {
 	let unstructured = |hint: &str| AvailableCommandInput::Unstructured(UnstructuredCommandInput::new(hint));
 
+	// Derived from the parsers' own lists so the hints cannot drift from what
+	// the handlers accept.
+	let copy_hint = format!("[{}]", CopyScope::ALL.map(CopyScope::name).join("|"));
+	let effort_hint = format!("[{}]", ReasoningEffortConfig::ALL.map(|level| level.as_str()).join("|"));
+	let context_hint = format!(
+		"[{}]",
+		crate::session::chat_helper::CommandCompleter::get_context_filters().join("|")
+	);
+
 	vec![
 		AvailableCommand::new("help", "Show available commands"),
 		AvailableCommand::new("role", "View or change current role").input(unstructured("<role_name>")),
@@ -503,11 +513,12 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		),
 		AvailableCommand::new("info", "Display token and cost breakdown for this session"),
 		AvailableCommand::new("clear", "Clear the screen"),
-		AvailableCommand::new("copy", "Copy last response to clipboard"),
-		AvailableCommand::new("context", "Display session context")
-			.input(unstructured("[all|assistant|user|tool|large]")),
+		AvailableCommand::new("copy", "Copy last response to clipboard").input(unstructured(&copy_hint)),
+		AvailableCommand::new("context", "Display session context").input(unstructured(&context_hint)),
 		AvailableCommand::new("list", "List all available sessions").input(unstructured("[page]")),
-		AvailableCommand::new("session", "Switch to or create a session").input(unstructured("[session_name]")),
+		AvailableCommand::new("new", "Start a new session").input(unstructured("[title]")),
+		AvailableCommand::new("rename", "Rename the current session").input(unstructured("[title]")),
+		AvailableCommand::new("reply", "Re-send a previous user message").input(unstructured("[N|words]")),
 		AvailableCommand::new("run", "Execute a command layer").input(unstructured("<command_name>")),
 		AvailableCommand::new("workflow", "Execute a workflow").input(unstructured("<workflow_name> [input]")),
 		AvailableCommand::new("mcp", "MCP server management")
@@ -520,13 +531,16 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("report", "Generate detailed usage report for this session")
 			.input(unstructured("[day|week|month] [here]")),
 		AvailableCommand::new("skill", "List, filter, or toggle skills").input(unstructured("[name|pattern|page]")),
-		AvailableCommand::new("effort", "View or change reasoning effort level")
-			.input(unstructured("[low|medium|high]")),
+		AvailableCommand::new("effort", "View or change reasoning effort level").input(unstructured(&effort_hint)),
 		AvailableCommand::new("schedule", "Schedule a message to be injected at a future time").input(unstructured(
 			"[list|add|remove|edit] [<id>] [when=...] [message=...] [every=...]",
 		)),
-		AvailableCommand::new("agents", "Show running/offloaded agents in this session")
-			.input(unstructured("[session]")),
+		AvailableCommand::new("status", "Show session status and diagnostics")
+			.input(unstructured("[agents|monitors|jobs]")),
+		AvailableCommand::new("learning", "Inspect or manage supervisor learning")
+			.input(unstructured("[list|show|delete|clear|evolution]")),
+		AvailableCommand::new("share", "Share the current session"),
+		AvailableCommand::new("analyze", "Analyze the current session"),
 		AvailableCommand::new("usage", "Show spend and quotas for your Octomind account"),
 		AvailableCommand::new("login", "Sign in to your Octomind account"),
 		AvailableCommand::new("exit", "Exit the session"),

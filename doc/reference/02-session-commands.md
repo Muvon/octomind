@@ -75,8 +75,9 @@ or `success: false`; inspect it, not just the transport envelope.
 | `/done [INSTRUCTIONS]` | Compress, then process instructions if supplied. | Prompt path continues instructions; extension only compresses and returns no output. | Compress status, then process joined args as a message. |
 | `/analyze` | Prints loopback bridge URL. | URL points to agent host loopback. | URL points to server host loopback. |
 
-ACP discovery currently advertises removed `session`, `workflow`, and `agents` entries and omits some working commands.
-Use this inventory and the dispatcher, not discovery descriptions, as the command contract.
+ACP discovery advertises exactly the commands the dispatcher routes (`build_available_commands()` is
+checked against `COMMANDS` in `acp/agent_tests.rs`), so a client can trust the advertised list — including
+`/reply`, `/new`, `/rename`, `/status`, `/learning`, `/share`, `/analyze` and `/workflow`.
 
 For an existing session whose ID is `demo`, these are complete command envelopes:
 

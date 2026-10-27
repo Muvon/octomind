@@ -19,7 +19,7 @@ pub mod cache;
 pub mod cache_keepalive; // Idle-time prompt cache keepalive pings
 pub mod cancellation; // Cancellation management
 pub mod chat; // Chat session logic
-mod chat_helper; // Chat command completion
+pub(crate) mod chat_helper; // Chat command completion
 pub mod context; // Session-scoped context for multi-session concurrency
 pub mod dedup; // Tool result deduplication
 pub mod external_spend; // Spend by models outside the main loop (subagents, layers, supervisor)

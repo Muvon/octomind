@@ -265,6 +265,36 @@ fn available_commands_are_advertised_without_leading_slash() {
 	}
 	// Input hints are attached where a command takes arguments.
 	assert!(commands.iter().any(|c| c.name == "model" && c.input.is_some()));
+
+	// Advertising a command the dispatcher does not route leaves the client
+	// holding a name that answers "not supported" — keep the two in lockstep.
+	let routable: Vec<&str> = crate::session::chat::COMMANDS.to_vec();
+	for command in &commands {
+		let with_slash = format!("/{}", command.name);
+		assert!(
+			routable.contains(&with_slash.as_str()),
+			"{} is advertised but not in COMMANDS, so process_command would not route it",
+			command.name
+		);
+	}
+
+	// The commands the issue called out as missing must all be advertised now.
+	for expected in ["reply", "new", "rename", "status", "learning", "share", "analyze"] {
+		assert!(
+			names.contains(&expected),
+			"{expected} is routed by process_command and must be advertised"
+		);
+	}
+
+	// And the two that are not routed must be gone.
+	assert!(
+		!names.contains(&"session"),
+		"`session` is not routed, so it must not be advertised"
+	);
+	assert!(
+		!names.contains(&"agents"),
+		"`agents` is not routed, so it must not be advertised"
+	);
 }
 
 // ---- agent construction, session locks, one-shot args ----

@@ -31,6 +31,12 @@ fn test_config() -> crate::config::Config {
 }
 
 #[test]
+fn test_effort_levels_start_with_none() {
+	// `/effort` accepts `none`; the levels it prints have to say so.
+	assert!(effort_levels().starts_with("none"));
+}
+
+#[test]
 fn test_fmt_tokens_scales() {
 	assert_eq!(fmt_tokens(850), "850");
 	assert_eq!(fmt_tokens(12_400), "12.4k");

@@ -430,6 +430,40 @@ fn test_mcp_providers_replace_servers_with_dedup() {
 
 #[test]
 #[serial]
+fn test_mcp_providers_blank_name_is_rejected() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	for (index, providers) in ["core,", "", " , core"].iter().enumerate() {
+		let dir = sandbox(&format!("mcpproviders-blank-{index}"));
+		std::env::set_var(DATA_DIR_KEY, &dir);
+		let mut a = args();
+		a.mcp_providers = Some((*providers).to_string());
+
+		execute(&a, template_config()).expect("rejected input is not a hard error");
+		assert!(
+			!saved_config_path(&dir).exists(),
+			"a blank provider name in --mcp-providers must not save"
+		);
+	}
+}
+
+#[test]
+#[serial]
+fn test_mcp_providers_valid_saves_both_servers() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("mcpproviders-valid");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+
+	let mut a = args();
+	a.mcp_providers = Some("core,runtime".to_string());
+	execute(&a, template_config()).expect("valid providers save");
+
+	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
+	let names: Vec<&str> = reloaded.mcp.servers.iter().map(|s| s.name()).collect();
+	assert_eq!(names, vec!["core", "runtime"]);
+}
+
+#[test]
+#[serial]
 fn test_http_mcp_server_persists_with_timeout() {
 	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
 	let dir = sandbox("mcpsrv-http");

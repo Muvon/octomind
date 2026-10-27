@@ -237,6 +237,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	if let Some(providers) = &args.mcp_providers {
 		let server_names: Vec<String> = providers.split(',').map(|s| s.trim().to_string()).collect();
+		if server_names.iter().any(|s| s.is_empty()) {
+			block_open("config", None);
+			block_close_err("config", "mcp server name cannot be empty");
+			println!();
+			return Ok(());
+		}
 		config.mcp.servers.clear();
 		for server_name in &server_names {
 			if !config.mcp.servers.iter().any(|s| s.name() == *server_name) {

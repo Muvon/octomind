@@ -270,6 +270,22 @@ jobs:
         cd target/${{ matrix.target }}/release
         7z a ../../../dist/octomind-${{ inputs.tag || github.ref_name }}-${{ matrix.target }}.zip octomind.exe
 
+    - name: Write sha256 sidecars
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd dist
+        for archive in octomind-*; do
+          case "$archive" in
+            *.sha256) continue ;;
+          esac
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+        done
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

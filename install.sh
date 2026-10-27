@@ -41,6 +41,59 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Expected SHA256 of a release archive: its .sha256 sidecar, else the digest GitHub
+# records for every asset (releases published before sidecars shipped only have that)
+expected_sha256() {
+    local version="$1"
+    local filename="$2"
+    local sidecar token
+
+    if sidecar=$(curl -fsSL "https://github.com/$REPO/releases/download/$version/${filename}.sha256" 2>/dev/null); then
+        printf '%s\n' "$sidecar" | awk '{print $1; exit}'
+        return
+    fi
+
+    token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+    # The asset's "digest" precedes its "browser_download_url"; stopping there keeps
+    # a digest-less asset from picking up the next asset's digest
+    curl -fsSL ${token:+-H "Authorization: token $token"} \
+        "https://api.github.com/repos/$REPO/releases/tags/$version" 2>/dev/null | \
+        awk -v asset="\"name\": \"$filename\"," '
+            index($0, asset) { found = 1 }
+            found && /"digest": "sha256:/ { sub(/.*"sha256:/, ""); sub(/".*/, ""); print; exit }
+            found && /"browser_download_url"/ { exit }
+        '
+}
+
+# Verify an archive against its expected SHA256
+verify_checksum() {
+    local archive_path="$1"
+    local expected="$2"
+    local archive_base actual
+
+    archive_base=$(basename "$archive_path")
+    if [ -z "$expected" ]; then
+        log_error "No SHA256 found for $archive_base (no .sha256 asset, no GitHub digest) - aborting install."
+        exit 1
+    fi
+
+    if command_exists sha256sum; then
+        actual=$(sha256sum "$archive_path" | awk '{print $1}')
+    elif command_exists shasum; then
+        actual=$(shasum -a 256 "$archive_path" | awk '{print $1}')
+    else
+        log_error "Neither sha256sum nor shasum found; cannot verify download integrity."
+        exit 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        log_error "Checksum mismatch for $archive_base - aborting install."
+        exit 1
+    fi
+
+    log_success "Checksum verified for $archive_base"
+}
+
 # Detect platform and architecture
 detect_platform() {
     local os arch
@@ -167,6 +220,7 @@ download_and_install() {
             log_error "3. GitHub is accessible"
             exit 1
         fi
+        verify_checksum "$tmp_dir/$filename" "$(expected_sha256 "$version" "$filename")"
     else
         log_error "curl is required but not found. Please install curl."
         log_info "On Ubuntu/Debian: sudo apt-get install curl"
@@ -347,7 +401,7 @@ SUPPORTED TARGETS:
 
 ENVIRONMENT VARIABLES:
     OCTOMIND_INSTALL_DIR         Override default installation directory
-    OCTOMIND_VERSION            Override version to install
+    OCTOMIND_VERSION             Override version to install
 
 EXAMPLES WITH ENVIRONMENT VARIABLES:
     export OCTOMIND_INSTALL_DIR=/opt/bin

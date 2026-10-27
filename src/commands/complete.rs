@@ -43,6 +43,13 @@ pub fn execute(args: &CompleteArgs, config: &Config) -> Result<()> {
 				println!("{}", w.name);
 			}
 		}
+		"untap" => {
+			// Names of the taps that are currently installed
+			let taps = octomind::agent::taps::list_taps().unwrap_or_default();
+			for tap in &taps {
+				println!("{}", tap.name);
+			}
+		}
 		_ => {
 			// Unknown subcommand — emit nothing, let the shell fall back to file completion
 		}

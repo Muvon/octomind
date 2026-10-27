@@ -79,6 +79,25 @@ fn workflow_subcommand_lists_tap_workflows() {
 }
 
 #[test]
+#[serial]
+fn untap_subcommand_lists_installed_taps() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("untap");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+
+	// `list_taps` reads the taps file, so seed one entry directly — no symlink
+	// (which would need extra privileges on Windows) is involved.
+	let taps_toml = dir.join("taps.toml");
+	std::fs::write(&taps_toml, "[[taps]]\nname = \"testorg/probe\"\n").expect("seed taps file");
+
+	let taps = octomind::agent::taps::list_taps().expect("list taps");
+	assert_eq!(taps.len(), 1, "the seeded tap is visible");
+	assert_eq!(taps[0].name, "testorg/probe");
+
+	execute(&complete_args("untap"), &template_config()).expect("untap completion is read-only");
+}
+
+#[test]
 fn unknown_subcommand_is_silent_success() {
 	execute(&complete_args("bogus"), &template_config()).expect("unknown subcommands fall back to file completion");
 }

@@ -303,27 +303,31 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 
 /// Patch the clap-generated completion script to add dynamic positional
 /// completions, by calling `octomind complete <sub>` at runtime. Applied to
-/// both `run` (agent tags + roles) and `workflow` (tap workflow names).
+/// `run` (agent tags + roles), `workflow` (tap workflow names) and `untap`
+/// (installed tap names).
 fn patch_completion_script(script: &str, shell: Shell) -> String {
 	match shell {
 		Shell::Bash => {
 			let s = patch_bash(script, "run", "TAG");
-			patch_bash(&s, "workflow", "NAME")
+			let s = patch_bash(&s, "workflow", "NAME");
+			patch_bash(&s, "untap", "TAP")
 		}
 		Shell::Zsh => {
 			let s = patch_zsh(script, "run", "tag");
-			patch_zsh(&s, "workflow", "name")
+			let s = patch_zsh(&s, "workflow", "name");
+			patch_zsh(&s, "untap", "name")
 		}
 		Shell::Fish => {
 			let s = patch_fish(script, "run", "Agent tag or role name");
-			patch_fish(&s, "workflow", "Workflow name")
+			let s = patch_fish(&s, "workflow", "Workflow name");
+			patch_fish(&s, "untap", "Installed tap name")
 		}
 		// PowerShell and Elvish: emit as-is (no dynamic patching needed for now)
 		_ => script.to_string(),
 	}
 }
 
-/// Bash: patch the `octomind__<sub>)` block so its positional gets dynamic
+/// Bash: patch the `octomind__subcmd__<sub>)` block so its positional gets dynamic
 /// completions from `octomind complete <sub>` instead of falling back to
 /// file/directory completion. `value_name` is the positional's placeholder
 /// token (`TAG`, `NAME`) that clap emits in the opts string.
@@ -337,7 +341,7 @@ fn patch_completion_script(script: &str, shell: Shell) -> String {
 ///    appear as a completion candidate when typing flags.
 fn patch_bash(script: &str, sub: &str, value_name: &str) -> String {
 	// The case label uses 8 spaces of indentation in the clap output.
-	let marker = format!("        octomind__{sub})\n");
+	let marker = format!("        octomind__subcmd__{sub})\n");
 	let Some(run_pos) = script.find(&marker) else {
 		return script.to_string();
 	};
@@ -402,7 +406,8 @@ fn patch_zsh(script: &str, sub: &str, field_id: &str) -> String {
 		let block_len = block_body.find("\n(").unwrap_or(block_body.len());
 		let run_block = &block_body[..block_len];
 
-		let tag_prefix = format!("'::{field_id} -- ");
+		// Optional positionals are emitted as `'::id -- `, required ones as `':id -- `.
+		let tag_prefix = format!(":{field_id} -- ");
 		let tag_suffix = ":_default' \\";
 		if let (Some(tag_pos), Some(suffix_rel)) = (
 			run_block.find(&tag_prefix),

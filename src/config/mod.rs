@@ -116,6 +116,29 @@ impl LogLevel {
 			LogLevel::Debug => "debug",
 		}
 	}
+
+	/// Get the name users type and see in `/loglevel`.
+	///
+	/// Distinct from [`Self::as_str`], which yields the tracing-filter spelling
+	/// (`"off"`). The command vocabulary is `none`, not `off`, so the two must
+	/// not be conflated.
+	pub fn display_name(&self) -> &'static str {
+		match self {
+			LogLevel::None => "none",
+			LogLevel::Info => "info",
+			LogLevel::Debug => "debug",
+		}
+	}
+
+	/// Parse the `/loglevel` argument vocabulary (`none`, `info`, `debug`).
+	pub fn from_display_name(name: &str) -> Option<Self> {
+		match name.to_lowercase().as_str() {
+			"none" => Some(LogLevel::None),
+			"info" => Some(LogLevel::Info),
+			"debug" => Some(LogLevel::Debug),
+			_ => None,
+		}
+	}
 }
 
 // REMOVED: All default functions - config must be complete and explicit

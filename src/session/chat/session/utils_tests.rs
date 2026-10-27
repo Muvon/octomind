@@ -70,9 +70,7 @@ async fn get_initial_messages_without_agents_file_returns_only_welcome() {
 	let config = template_config();
 	let dir = tempfile::tempdir().expect("tempdir");
 
-	let messages = get_initial_messages(&config, "assistant", dir.path())
-		.await
-		.expect("initial messages");
+	let messages = get_initial_messages(&config, "assistant", dir.path()).await;
 
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].role, "assistant");
@@ -90,9 +88,7 @@ async fn get_initial_messages_wraps_agents_file_as_user_instructions() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	std::fs::write(dir.path().join(AGENTS_FILE), "Do things carefully.").expect("write AGENTS.md");
 
-	let messages = get_initial_messages(&config, "assistant", dir.path())
-		.await
-		.expect("initial messages");
+	let messages = get_initial_messages(&config, "assistant", dir.path()).await;
 
 	assert_eq!(messages.len(), 2);
 	assert_eq!(messages[0].role, "assistant");
@@ -112,9 +108,7 @@ async fn get_initial_messages_skips_whitespace_only_agents_file() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	std::fs::write(dir.path().join(AGENTS_FILE), "   \n").expect("write AGENTS.md");
 
-	let messages = get_initial_messages(&config, "assistant", dir.path())
-		.await
-		.expect("initial messages");
+	let messages = get_initial_messages(&config, "assistant", dir.path()).await;
 
 	assert_eq!(messages.len(), 1, "empty instructions must be skipped");
 	assert_eq!(messages[0].role, "assistant");

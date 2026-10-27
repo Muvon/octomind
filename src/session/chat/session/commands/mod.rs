@@ -24,7 +24,6 @@ mod done;
 pub use done::{handle_done, DoneOutcome, LessonHandoff};
 mod analyze;
 mod effort;
-mod exit;
 mod help;
 mod image;
 mod info;
@@ -420,10 +419,7 @@ pub async fn process_command(
 	let current_role = session.role.clone();
 
 	let result = match command {
-		EXIT_COMMAND | QUIT_COMMAND => {
-			exit::handle_exit()?;
-			Ok(CommandResult::Exit)
-		}
+		EXIT_COMMAND | QUIT_COMMAND => Ok(CommandResult::Exit),
 		HELP_COMMAND | HELP_COMMAND_ALT => help::handle_help(config, &current_role).await,
 		COPY_COMMAND => copy::handle_copy(session, params),
 		REPLY_COMMAND => reply::handle_reply(session, params),

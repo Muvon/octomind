@@ -23,16 +23,12 @@ use serde::{Deserialize, Serialize};
 
 /// Get the current compression ID for logging/tracking
 /// Uses full nanosecond timestamp for uniqueness
-pub fn get_compression_id() -> Option<String> {
+pub fn get_compression_id() -> String {
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default();
 
-	Some(format!(
-		"comp_{}_{}",
-		now.as_millis(),
-		now.as_nanos() // Full nanoseconds for uniqueness
-	))
+	format!("comp_{}", now.as_nanos())
 }
 
 /// Metrics tracking compression effectiveness

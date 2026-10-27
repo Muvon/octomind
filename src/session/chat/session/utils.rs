@@ -16,7 +16,6 @@
 
 use crate::config::Config;
 use crate::{log_debug, log_info};
-use anyhow::Result;
 
 /// Standard project instructions file, auto-loaded at session start when present
 pub const AGENTS_FILE: &str = "AGENTS.md";
@@ -68,7 +67,7 @@ pub async fn get_initial_messages(
 	config: &Config,
 	role: &str,
 	current_dir: &std::path::Path,
-) -> Result<Vec<crate::session::Message>> {
+) -> Vec<crate::session::Message> {
 	let mut initial_messages = Vec::new();
 
 	// 1. Generate welcome message (assistant role)
@@ -88,10 +87,6 @@ pub async fn get_initial_messages(
 		let welcome_msg = crate::session::Message {
 			role: "assistant".to_string(),
 			content: welcome_message,
-			timestamp: std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs(),
 			cached: false,
 			..Default::default()
 		};
@@ -119,10 +114,6 @@ pub async fn get_initial_messages(
 					// mistakes the project instructions for a genuine user task. Mirrors
 					// the non-interactive path in prompt_setup.rs.
 					content: format!("<instructions>\n{}\n</instructions>", processed_instructions),
-					timestamp: std::time::SystemTime::now()
-						.duration_since(std::time::UNIX_EPOCH)
-						.unwrap_or_default()
-						.as_secs(),
 					cached: false,
 					..Default::default()
 				};
@@ -135,7 +126,7 @@ pub async fn get_initial_messages(
 		}
 	}
 
-	Ok(initial_messages)
+	initial_messages
 }
 
 #[cfg(test)]

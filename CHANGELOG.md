@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.65.0] - 2026-10-27
+
+### 📋 Release Summary
+
+Session commands are now exposed to WebSocket clients, and command completion covers tap names for untap while shell patch markers are corrected. ACP resources, attachments, and command dispatch are preserved; sandbox, MCP process, effort reporting, session times, environment appends, MCP name validation, and delegation retries are corrected. Agent guidelines now document skill update requirements.
+
+### ✨ New Features & Enhancements
+
+- **websocket**: expose session commands to websocket clients `83f6b96d`
+- **commands**: complete tap names for untap, fix shell patch markers `842efe3e`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: remove impossible errors from helpers `61e89e15`
+- **supervisor**: format repeated-round assertion `57543420`
+
+### 🐛 Bug Fixes & Stability
+
+- **acp**: preserve ACP prompt resources and attachments `50a23cf9`
+- **sandbox**: allow Landlock writes to temp and device paths `009273d2`
+- **mcp**: terminate Windows MCP process trees `9c869287`
+- **session**: show none and accept off for effort `be4460ba`
+- **acp**: align ACP commands with dispatcher `0fb25eb6`
+- **session**: report previous level and actual changes `458e24a8`
+- **session**: render session times in local time `01d3c57f`
+- **inputs**: preserve existing .env line when appending `cfc42742`
+- **config**: reject empty MCP server names `ea8ebd38`
+- **orchestration**: stop repeated delegation retries `aaf47446`
+
+### 📚 Documentation & Examples
+
+- **agent-guidelines**: document skill update requirements `cd28c3d3`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.64.4] - 2026-10-27
 
 ### 📋 Release Summary

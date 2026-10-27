@@ -323,3 +323,72 @@ async fn resolve_env_vars_prompts_missing_key_writes_dotenv_and_sets_process_env
 		None => std::env::remove_var(KEY),
 	}
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn resolve_env_vars_appends_to_dotenv_without_trailing_newline() {
+	let dir = tempfile::tempdir().expect("tempdir for cwd");
+	let previous_cwd = std::env::current_dir().expect("current dir");
+	std::env::set_current_dir(dir.path()).expect("enter temp cwd");
+	const KEY: &str = "OCTOMIND_PROBE_ENV_KEY";
+	let had_value = std::env::var_os(KEY);
+	std::env::remove_var(KEY);
+	let _stdin = StdinNullGuard::new();
+
+	std::fs::write(dir.path().join(".env"), "EXISTING=1").expect("write initial .env");
+
+	let resolved = resolve_env_vars("key={{ENV:OCTOMIND_PROBE_ENV_KEY}}")
+		.await
+		.expect("resolve with missing env key");
+	assert_eq!(resolved, "key=");
+
+	let dotenv = std::fs::read_to_string(dir.path().join(".env")).expect(".env written");
+	let lines: Vec<&str> = dotenv.lines().collect();
+	assert_eq!(
+		lines,
+		vec!["EXISTING=1", &format!("{KEY}=")],
+		"expected each entry on its own line: {dotenv:?}"
+	);
+
+	// Restore the process state the test mutated.
+	std::env::set_current_dir(previous_cwd).expect("restore cwd");
+	match had_value {
+		Some(value) => std::env::set_var(KEY, value),
+		None => std::env::remove_var(KEY),
+	}
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn resolve_env_vars_appends_to_dotenv_with_trailing_newline_no_blank_line() {
+	let dir = tempfile::tempdir().expect("tempdir for cwd");
+	let previous_cwd = std::env::current_dir().expect("current dir");
+	std::env::set_current_dir(dir.path()).expect("enter temp cwd");
+	const KEY: &str = "OCTOMIND_PROBE_ENV_KEY";
+	let had_value = std::env::var_os(KEY);
+	std::env::remove_var(KEY);
+	let _stdin = StdinNullGuard::new();
+
+	std::fs::write(dir.path().join(".env"), "EXISTING=1\n").expect("write initial .env");
+
+	let resolved = resolve_env_vars("key={{ENV:OCTOMIND_PROBE_ENV_KEY}}")
+		.await
+		.expect("resolve with missing env key");
+	assert_eq!(resolved, "key=");
+
+	let dotenv = std::fs::read_to_string(dir.path().join(".env")).expect(".env written");
+	assert_eq!(
+		dotenv,
+		format!("EXISTING=1\n{KEY}=\n"),
+		"an existing file ending with newline must not have a blank line inserted: {dotenv:?}"
+	);
+
+	// Restore the process state the test mutated.
+	std::env::set_current_dir(previous_cwd).expect("restore cwd");
+	match had_value {
+		Some(value) => std::env::set_var(KEY, value),
+		None => std::env::remove_var(KEY),
+	}
+}

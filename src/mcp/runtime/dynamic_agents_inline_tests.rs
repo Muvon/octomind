@@ -13,15 +13,15 @@
 // limitations under the License.
 
 use super::*;
-use std::sync::Mutex;
+use serial_test::serial;
 
-// Serialize all tests that mutate the global DYNAMIC_AGENT_MANAGER to prevent
-// race conditions when tests run in parallel (RUST_TEST_THREADS > 1).
-static TEST_MUTEX: Mutex<()> = Mutex::new(());
+// Tests that mutate the global DYNAMIC_AGENT_MANAGER are `#[serial]`: a
+// file-local mutex would not exclude the `#[serial]` tests in other files
+// (e.g. dynamic_agents_command_tests.rs) that use the same registry.
 
 #[test]
+#[serial]
 fn test_agent_register_enable_disable() {
-	let _guard = TEST_MUTEX.lock().unwrap();
 	clear_all();
 
 	let agent = DynamicAgentConfig {
@@ -64,8 +64,8 @@ fn test_agent_register_enable_disable() {
 }
 
 #[test]
+#[serial]
 fn test_duplicate_agent() {
-	let _guard = TEST_MUTEX.lock().unwrap();
 	clear_all();
 
 	let agent = DynamicAgentConfig {
@@ -110,8 +110,8 @@ fn fixture_agent(name: &str) -> DynamicAgentConfig {
 }
 
 #[test]
+#[serial]
 fn test_agent_register_validation() {
-	let _guard = TEST_MUTEX.lock().unwrap();
 	clear_all();
 
 	let err = register_agent(fixture_agent("")).expect_err("blank name must bail");
@@ -124,8 +124,8 @@ fn test_agent_register_validation() {
 }
 
 #[test]
+#[serial]
 fn test_get_all_configs_and_functions_track_enabled_only() {
-	let _guard = TEST_MUTEX.lock().unwrap();
 	clear_all();
 
 	register_agent(fixture_agent("__dynagent_a")).unwrap();
@@ -150,8 +150,8 @@ fn test_get_all_configs_and_functions_track_enabled_only() {
 }
 
 #[test]
+#[serial]
 fn test_dynamic_agent_tool_lookup_helpers() {
-	let _guard = TEST_MUTEX.lock().unwrap();
 	clear_all();
 
 	register_agent(fixture_agent("__dynagent_lookup")).unwrap();

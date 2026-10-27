@@ -124,31 +124,51 @@ impl SessionCancellation {
 							}
 						}
 					} => {},
-					_ = sigterm.recv() => {
-						// stderr: stdout carries the session's data (`--format jsonl` events,
-						// plain answers), so a human notice there corrupts the stream.
-						eprintln!("\n🛑 Termination signal received - exiting...");
-						std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-						let _ = crate::mcp::server::cleanup_servers();
-						std::process::exit(130);
-					}
+					_ = sigterm.recv() => terminate(),
 				}
 			}
 
 			#[cfg(windows)]
 			{
-				loop {
-					match signal::ctrl_c().await {
-						Ok(()) => {
+				use signal::windows::{ctrl_break, ctrl_c, ctrl_close};
+
+				let mut ctrl_c = match ctrl_c() {
+					Ok(sig) => sig,
+					Err(e) => {
+						crate::log_error!("Warning: Failed to listen for Ctrl+C: {}", e);
+						return;
+					}
+				};
+
+				let mut ctrl_break = match ctrl_break() {
+					Ok(sig) => sig,
+					Err(e) => {
+						crate::log_error!("Warning: Failed to listen for Ctrl+Break: {}", e);
+						return;
+					}
+				};
+
+				// Closing the console window. Tokio keeps the OS handler thread
+				// parked while we clean up, so Windows waits (up to its ~5s
+				// deadline) instead of killing the process mid-cleanup.
+				let mut ctrl_close = match ctrl_close() {
+					Ok(sig) => sig,
+					Err(e) => {
+						crate::log_error!("Warning: Failed to listen for console close: {}", e);
+						return;
+					}
+				};
+
+				tokio::select! {
+					_ = async {
+						while ctrl_c.recv().await.is_some() {
 							if !handle_interrupt(&first_interrupt, &op_tx) {
 								break;
 							}
 						}
-						Err(e) => {
-							crate::log_error!("Warning: Failed to listen for Ctrl+C: {}", e);
-							break;
-						}
-					}
+					} => {},
+					_ = ctrl_break.recv() => terminate(),
+					_ = ctrl_close.recv() => terminate(),
 				}
 			}
 		})
@@ -220,6 +240,17 @@ impl CancelHandle {
 	pub fn same_as(&self, other: &CancelHandle) -> bool {
 		Arc::ptr_eq(&self.0, &other.0)
 	}
+}
+
+/// Stop MCP servers and exit on a termination request (SIGTERM, or Ctrl+Break /
+/// console close on Windows).
+fn terminate() -> ! {
+	// stderr: stdout carries the session's data (`--format jsonl` events,
+	// plain answers), so a human notice there corrupts the stream.
+	eprintln!("\n🛑 Termination signal received - exiting...");
+	std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+	let _ = crate::mcp::server::cleanup_servers();
+	std::process::exit(130);
 }
 
 /// Handle interrupt signal with double-Ctrl+C detection.

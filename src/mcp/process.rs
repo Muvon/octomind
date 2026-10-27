@@ -26,6 +26,13 @@ use std::process::Child;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::kill_process_group;
+#[cfg(windows)]
+pub(crate) use windows::{is_stdio_process_alive, register_pgid};
+
 // Server health status tracking
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ServerHealth {
@@ -330,20 +337,12 @@ pub(crate) fn register_pgid(server_name: &str, pid: u32) {
 	pgids.insert(server_name.to_string(), pid as libc::pid_t);
 }
 
-#[cfg(not(unix))]
-pub(crate) fn register_pgid(_server_name: &str, _pid: u32) {}
-
 /// Check whether the OS process for a stdio server is still alive.
-/// Returns `None` when no pid is recorded (non-Unix, or server not started here).
+/// Returns `None` when no pid is recorded (server not started here).
 #[cfg(unix)]
 pub(crate) fn is_stdio_process_alive(server_name: &str) -> Option<bool> {
 	let pgids = SERVER_PGIDS.read().unwrap();
 	pgids.get(server_name).map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
-}
-
-#[cfg(not(unix))]
-pub(crate) fn is_stdio_process_alive(_server_name: &str) -> Option<bool> {
-	None
 }
 
 /// Kill a server's process group: SIGTERM first for graceful cleanup, then SIGKILL.
@@ -369,9 +368,6 @@ fn kill_process_group(server_name: &str) {
 		);
 	}
 }
-
-#[cfg(not(unix))]
-fn kill_process_group(_server_name: &str) {}
 
 // Locally-spawned HTTP server process. Stdio servers are owned by their rmcp
 // client connection and are not tracked here.
@@ -673,8 +669,9 @@ pub fn stop_all_servers() -> Result<()> {
 	processes.clear();
 	drop(processes);
 
-	// Signal every recorded process group as a final backstop (stdio children
-	// that survived transport shutdown, busy HTTP processes).
+	// Signal every recorded process group (Windows: terminate every job) as a
+	// final backstop (stdio children that survived transport shutdown, busy
+	// HTTP processes).
 	#[cfg(unix)]
 	{
 		let names: Vec<String> = {
@@ -687,6 +684,8 @@ pub fn stop_all_servers() -> Result<()> {
 		let mut pgids = SERVER_PGIDS.write().unwrap();
 		pgids.clear();
 	}
+	#[cfg(windows)]
+	windows::kill_all_process_groups();
 
 	// Clear all function cache when stopping all servers
 	crate::mcp::server::clear_all_function_cache();

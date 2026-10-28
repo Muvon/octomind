@@ -96,7 +96,11 @@ fn test_expand_context_blocks() {
 
 	assert!(has_line1, "Result should contain '1:8b|line 1'. Result: {}", result);
 	assert!(has_line2, "Result should contain '2:c8|line 2'. Result: {}", result);
-	assert!(!has_line3, "Result should not contain '3:5f|line 3'. Result: {}", result);
+	assert!(
+		!has_line3,
+		"Result should not contain '3:5f|line 3'. Result: {}",
+		result
+	);
 
 	// Original context tags should be replaced
 	assert!(

@@ -42,6 +42,7 @@ fn test_read_text_files() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_spill_write_read_clear_in_session() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("spill-test-session".to_string(), async {
 		let path = write_spill("shell", "spilled full output body").expect("spill writes");
 		assert!(path.exists());
@@ -69,6 +70,7 @@ async fn test_spill_write_read_clear_in_session() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_spill_lives_with_the_session_not_in_temp() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("spill-durability-session".to_string(), async {
 		let path = write_spill("view", "full body that must survive a resume").expect("spill");
 		let sessions_dir = crate::directories::get_sessions_dir().expect("sessions dir");
@@ -92,6 +94,7 @@ fn test_spill_without_session_context_is_none() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_spill_exists_and_references_spill() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("spill-recovery-session".to_string(), async {
 		assert!(!spill_exists("view", "cut once"));
 		let path = write_spill("view", "cut once").expect("spill");

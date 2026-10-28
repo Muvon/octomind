@@ -513,6 +513,7 @@ async fn settle_folds(session: &mut ChatSession, config: &crate::config::Config)
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_turn_boundary_folds_on_crossing_the_line() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		final_response(&xml_summary_body()),
@@ -785,6 +786,7 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_turn_end_settle_applies_only_a_finished_fold() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		final_response(&xml_summary_body()),
@@ -866,6 +868,7 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![final_response(&xml_summary_body())]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -906,6 +909,7 @@ async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![final_response(&xml_summary_body())]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -990,6 +994,7 @@ async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let length_cut = serde_json::json!({
 		"choices": [{
@@ -1147,6 +1152,7 @@ async fn verify_corroborated_deferral_holds_without_a_paid_call() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		final_response(&veto_summary_body()),
@@ -1203,6 +1209,7 @@ async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 #[serial_test::serial]
 #[tokio::test]
 async fn verify_veto_is_not_offered_without_a_plan_step_to_check_it_against() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		final_response(&veto_summary_body()),

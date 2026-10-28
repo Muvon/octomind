@@ -203,7 +203,9 @@ fn unseen_lines_are_clipped_away_not_smuggled_in() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn one_bad_verdict_does_not_cost_the_other_results() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("condense-test".into(), async {
 		let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
 		let original = ok.extract_content();

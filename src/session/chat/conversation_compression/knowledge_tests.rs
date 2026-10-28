@@ -184,6 +184,7 @@ fn select_findings_with_vectors_falls_back_to_newest_on_length_mismatch() {
 #[test]
 #[serial_test::serial]
 fn fold_critical_knowledge_dedupes_and_trims_to_the_retention_limit() {
+	let _env = crate::session::chat::test_support::EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
 	let data_dir = tempfile::tempdir().expect("temp data dir");
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 
@@ -197,7 +198,6 @@ fn fold_critical_knowledge_dedupes_and_trims_to_the_retention_limit() {
 		&config,
 		&["k0".to_string(), "k1".to_string(), "k2".to_string()],
 	);
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	// k0 is a duplicate (not re-added); the retention limit keeps the newest 2.
 	assert_eq!(session.critical_knowledge, vec!["k1".to_string(), "k2".to_string()]);

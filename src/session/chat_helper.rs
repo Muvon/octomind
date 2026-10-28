@@ -162,18 +162,16 @@ impl<'a> CommandCompleter<'a> {
 	}
 
 	/// Expand tilde (~) to home directory
-	fn expand_tilde(path: &str) -> PathBuf {
-		if let Some(stripped) = path.strip_prefix("~/") {
-			if let Some(home) = dirs::home_dir() {
-				home.join(stripped)
-			} else {
-				PathBuf::from(path)
+	fn expand_tilde(path: &str, home: Option<&Path>) -> PathBuf {
+		if let Some(home) = home {
+			if let Some(stripped) = path.strip_prefix("~/") {
+				return home.join(stripped);
 			}
-		} else if path == "~" {
-			dirs::home_dir().unwrap_or_else(|| PathBuf::from(path))
-		} else {
-			PathBuf::from(path)
+			if path == "~" {
+				return home.to_path_buf();
+			}
 		}
+		PathBuf::from(path)
 	}
 
 	fn find_at_query(line: &str, pos: usize) -> Option<(usize, &str)> {
@@ -231,7 +229,7 @@ impl<'a> CommandCompleter<'a> {
 		let dir = if prefix.is_empty() {
 			PathBuf::from(".")
 		} else {
-			Self::expand_tilde(prefix)
+			Self::expand_tilde(prefix, dirs::home_dir().as_deref())
 		};
 
 		let name_lower = name.to_lowercase();
@@ -285,14 +283,14 @@ impl<'a> CommandCompleter<'a> {
 	}
 
 	/// Custom file completion that handles absolute paths and tilde expansion
-	fn complete_file_path(file_part: &str, media: MediaKind) -> Vec<Pair> {
+	fn complete_file_path(file_part: &str, media: MediaKind, home: Option<&Path>) -> Vec<Pair> {
 		if file_part.is_empty() {
 			// Show current directory contents
 			return Self::list_directory_contents(".", media);
 		}
 
 		// Expand tilde if present
-		let expanded_path = Self::expand_tilde(file_part);
+		let expanded_path = Self::expand_tilde(file_part, home);
 		let expanded_str = expanded_path.to_string_lossy();
 
 		// If the path ends with a separator, list contents of that directory
@@ -334,8 +332,8 @@ impl<'a> CommandCompleter<'a> {
 			let is_directory = candidate.replacement.ends_with('/');
 			if file_part.starts_with("~/") {
 				// Convert back to tilde notation
-				if let Some(home) = dirs::home_dir() {
-					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(&home) {
+				if let Some(home) = home {
+					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(home) {
 						candidate.replacement = format!("~/{}", relative.to_string_lossy());
 						if is_directory && !candidate.replacement.ends_with('/') {
 							candidate.replacement.push('/');
@@ -482,7 +480,7 @@ impl<'a> CommandCompleter<'a> {
 			let file_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			// Use our custom file completion that handles absolute paths and tilde expansion
-			let candidates = Self::complete_file_path(file_part, MediaKind::Image);
+			let candidates = Self::complete_file_path(file_part, MediaKind::Image, dirs::home_dir().as_deref());
 			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
 
 			// For file completion, we want to replace from the start of the file part
@@ -493,7 +491,7 @@ impl<'a> CommandCompleter<'a> {
 
 			let file_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
-			let candidates = Self::complete_file_path(file_part, MediaKind::Video);
+			let candidates = Self::complete_file_path(file_part, MediaKind::Video, dirs::home_dir().as_deref());
 			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
 
 			(prefix_len, filtered_candidates)

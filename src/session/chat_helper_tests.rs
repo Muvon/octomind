@@ -66,10 +66,12 @@ fn test_is_media_file() {
 #[test]
 fn test_expand_tilde() {
 	let home = dirs::home_dir().expect("home dir in test env");
-	assert_eq!(CC::expand_tilde("~/x"), home.join("x"));
-	assert_eq!(CC::expand_tilde("~"), home);
-	assert_eq!(CC::expand_tilde("/abs/path"), PathBuf::from("/abs/path"));
-	assert_eq!(CC::expand_tilde("rel/path"), PathBuf::from("rel/path"));
+	assert_eq!(CC::expand_tilde("~/x", Some(&home)), home.join("x"));
+	assert_eq!(CC::expand_tilde("~", Some(&home)), home);
+	assert_eq!(CC::expand_tilde("/abs/path", Some(&home)), PathBuf::from("/abs/path"));
+	assert_eq!(CC::expand_tilde("rel/path", Some(&home)), PathBuf::from("rel/path"));
+	assert_eq!(CC::expand_tilde("~/x", None), PathBuf::from("~/x"));
+	assert_eq!(CC::expand_tilde("~", None), PathBuf::from("~"));
 }
 
 fn pair(s: &str) -> Pair {
@@ -115,18 +117,31 @@ fn test_complete_file_path_directory_listing() {
 
 	// Trailing slash lists the directory: dirs first (with trailing /),
 	// image files included, non-image files excluded
-	let listing = CC::complete_file_path(&format!("{}/", base.display()), MediaKind::Image);
+	let listing = CC::complete_file_path(
+		&format!("{}/", base.display()),
+		MediaKind::Image,
+		dirs::home_dir().as_deref(),
+	);
 	assert_eq!(listing.len(), 2);
 	assert!(listing[0].replacement.ends_with("subdir/"));
 	assert!(listing[1].replacement.ends_with("pic.png"));
 
 	// Filename prefix filtering is case-insensitive
-	let filtered = CC::complete_file_path(&format!("{}/PI", base.display()), MediaKind::Image);
+	let filtered = CC::complete_file_path(
+		&format!("{}/PI", base.display()),
+		MediaKind::Image,
+		dirs::home_dir().as_deref(),
+	);
 	assert_eq!(filtered.len(), 1);
 	assert!(filtered[0].replacement.ends_with("pic.png"));
 
 	// Non-matching prefix yields nothing
-	assert!(CC::complete_file_path(&format!("{}/zz", base.display()), MediaKind::Image).is_empty());
+	assert!(CC::complete_file_path(
+		&format!("{}/zz", base.display()),
+		MediaKind::Image,
+		dirs::home_dir().as_deref()
+	)
+	.is_empty());
 }
 
 /// Cache-dependent assertions live in ONE test: FILE_CACHE is a process
@@ -619,10 +634,15 @@ fn test_hint_role_lists_configured_roles() {
 #[test]
 fn test_complete_file_path_edge_cases() {
 	// Missing directory under ~ expands and fails to list — empty, no panic
-	assert!(CC::complete_file_path("~/definitely_missing_dir_xyz/", MediaKind::Image).is_empty());
+	assert!(CC::complete_file_path(
+		"~/definitely_missing_dir_xyz/",
+		MediaKind::Image,
+		dirs::home_dir().as_deref()
+	)
+	.is_empty());
 
 	// Empty part lists the cwd (repo root during tests) — dirs sort first
-	let cwd_listing = CC::complete_file_path("", MediaKind::Image);
+	let cwd_listing = CC::complete_file_path("", MediaKind::Image, dirs::home_dir().as_deref());
 	assert!(!cwd_listing.is_empty());
 	assert!(cwd_listing[0].replacement.ends_with('/'));
 
@@ -632,7 +652,11 @@ fn test_complete_file_path_edge_cases() {
 	let base = tmp.path();
 	std::fs::create_dir(base.join("subdir")).expect("mkdir");
 	std::fs::write(base.join("pic.png"), b"x").expect("write image");
-	let listing = CC::complete_file_path(&format!("{}/", base.display()), MediaKind::Image);
+	let listing = CC::complete_file_path(
+		&format!("{}/", base.display()),
+		MediaKind::Image,
+		dirs::home_dir().as_deref(),
+	);
 	assert_eq!(listing.len(), 2);
 	assert!(listing[0].replacement.starts_with(base.display().to_string().as_str()));
 	assert!(listing[0].replacement.ends_with("subdir/"));
@@ -647,12 +671,15 @@ fn test_complete_at_path_relative_dot_query() {
 
 #[test]
 fn test_complete_file_path_tilde_relative_and_inside_cwd() {
-	let home = dirs::home_dir().expect("home dir");
+	let temp_home = tempfile::tempdir().expect("temp home");
+	let home = temp_home.path();
 	let home_str = home.to_string_lossy().to_string();
+	let probe = home.join("octomind_complete_probe");
+	std::fs::create_dir_all(&probe).expect("mkdir probe");
 
 	// "~/" with a trailing slash lists home contents as absolute paths
 	// (the tilde rewrite only applies to non-slash input below)
-	let home_listing = CC::complete_file_path("~/", MediaKind::Image);
+	let home_listing = CC::complete_file_path("~/", MediaKind::Image, Some(home));
 	assert!(!home_listing.is_empty());
 	assert!(
 		home_listing.iter().all(|c| c.replacement.starts_with(&home_str)),
@@ -661,9 +688,7 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	);
 
 	// "~/name" without a slash converts the match back to tilde notation
-	let probe = home.join("octomind_complete_probe");
-	std::fs::create_dir_all(&probe).expect("mkdir probe");
-	let matches = CC::complete_file_path("~/octomind_complete_probe", MediaKind::Image);
+	let matches = CC::complete_file_path("~/octomind_complete_probe", MediaKind::Image, Some(home));
 	assert!(
 		matches.iter().any(|c| c.replacement == "~/octomind_complete_probe/"),
 		"{matches:?}"
@@ -671,13 +696,13 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	std::fs::remove_dir(&probe).expect("cleanup probe");
 
 	// Relative single-segment path: empty parent resolves to the cwd
-	let rel = CC::complete_file_path("sr", MediaKind::Image);
+	let rel = CC::complete_file_path("sr", MediaKind::Image, Some(home));
 	assert!(!rel.is_empty());
 	assert!(rel[0].replacement.starts_with("sr"));
 
 	// Absolute path INSIDE the cwd (no trailing slash) is rewritten relative to it
 	let cwd = std::env::current_dir().expect("cwd");
-	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()), MediaKind::Image);
+	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()), MediaKind::Image, Some(home));
 	assert!(!inside.is_empty());
 	assert!(inside.iter().all(|c| !c.replacement.starts_with('/')), "{inside:?}");
 }

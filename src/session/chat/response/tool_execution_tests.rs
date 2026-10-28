@@ -694,7 +694,67 @@ async fn test_execute_tools_in_context_orders_unannotated_tools() {
 #[serial_test::serial]
 #[cfg(unix)]
 async fn test_execute_tools_in_context_runs_reads_in_parallel() {
-	assert_eq!(slow_then_fast_order("orderread", Some(true)).await, "fast\nslow\n");
+	const BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+	let tmp = tempfile::tempdir().expect("tempdir");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(tmp.path().join("release"))
+		.status()
+		.expect("create release pipe")
+		.success());
+	write_local_tool(
+		tmp.path(),
+		"orderreadslow",
+		"#!/bin/sh\n# @description Wait for the other read.\nread -r release < release\nprintf 'slow\\n' >> order.log\n",
+	);
+	write_local_tool(
+		tmp.path(),
+		"orderreadfast",
+		"#!/bin/sh\n# @description Release the other read.\nprintf 'fast\\n' >> order.log\nprintf 'release\\n' > release\n",
+	);
+	for name in ["orderreadslow", "orderreadfast"] {
+		crate::supervisor::detect::register_tool_read_only_hint(name, Some(true));
+	}
+
+	let sid = "tool-exec-parallel-reads".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let calls = ["orderreadslow", "orderreadfast"]
+			.into_iter()
+			.map(|name| crate::mcp::McpToolCall {
+				tool_name: name.to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: name.to_string(),
+			})
+			.collect();
+		// The first read cannot finish until the second runs; serial execution times out.
+		let (results, _) = tokio::time::timeout(
+			BATCH_TIMEOUT,
+			execute_tools_in_context(
+				calls,
+				&mut context,
+				&template_config(),
+				Some(rx),
+				OutputMode::NonInteractive,
+			),
+		)
+		.await
+		.expect("reads must overlap")
+		.expect("local tool execution");
+		assert_eq!(results.len(), 2);
+		assert!(results.iter().all(|result| !result.is_error()));
+		assert_eq!(
+			std::fs::read_to_string(tmp.path().join("order.log")).expect("order log"),
+			"fast\nslow\n"
+		);
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
 }
 
 #[tokio::test]

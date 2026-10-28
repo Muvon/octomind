@@ -541,7 +541,9 @@ async fn apply_compression_validates_clamps_and_budget_drops_file_contexts() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn apply_compression_pact_live_renders_pact_entry_and_skips_legacy_folds() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let mut config = default_config();
 	config.compression.attention.enabled = true;
 	let mut session = ChatSession::for_tests(vec![
@@ -908,7 +910,9 @@ fn live_copies(session: &ChatSession, text: &str) -> usize {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn pact_fold_into_continuation_keeps_one_copy_of_the_request() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	// Attempt 1 of the failed run: the request was drained and carried by the
 	// continuation wrapper, while the summary's pinned band rendered it again —
 	// the fold grew the context 135k -> 195k tokens.
@@ -922,7 +926,9 @@ async fn pact_fold_into_continuation_keeps_one_copy_of_the_request() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn pact_fold_with_preserved_bridge_keeps_one_copy_of_the_request() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	// Attempt 2 of the failed run: the request stayed live as the preserved
 	// [assistant, request] bridge and the pinned band repeated it above.
 	let (session, request) = fold_oversized_request("apply-request-once-bridge-unit", true, true).await;
@@ -934,7 +940,9 @@ async fn pact_fold_with_preserved_bridge_keeps_one_copy_of_the_request() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn governance_only_fold_keeps_one_copy_of_the_request() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	// Default config (attention off, governance on): normalize_summary copies
 	// the pinned task into <original_request> and <current_task>, which the
 	// legacy body rendered beside the pinned band and the wrapper — four copies.

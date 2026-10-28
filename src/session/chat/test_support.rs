@@ -333,3 +333,19 @@ impl Drop for EnvGuard {
 		}
 	}
 }
+
+/// Tests using this fixture must hold `serial_test::serial` because the data
+/// directory is selected through a process-wide environment variable.
+pub(crate) struct DataDirGuard {
+	_env: EnvGuard,
+	_dir: tempfile::TempDir,
+}
+
+impl DataDirGuard {
+	pub(crate) fn new() -> Self {
+		let dir = tempfile::tempdir().expect("temp data dir");
+		let env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+		Self { _env: env, _dir: dir }
+	}
+}

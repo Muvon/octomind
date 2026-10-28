@@ -457,7 +457,9 @@ async fn extract_selecting_everything_is_treated_as_keep() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn extract_protects_diagnostics_the_selection_missed() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("condense-unit-extract-diag".to_string(), async {
 		let mut lines: Vec<String> = (1..=10).map(|i| format!("l{i}")).collect();
 		lines[7] = "error: boom".into();
@@ -478,7 +480,9 @@ async fn extract_protects_diagnostics_the_selection_missed() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn extract_retains_a_truncation_notice_and_its_spill_pointer() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("condense-unit-extract-notice".to_string(), async {
 		let notice = format!(
 			"{}: showing only the first tokens",
@@ -509,7 +513,9 @@ async fn extract_retains_a_truncation_notice_and_its_spill_pointer() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn replace_on_a_full_success_view_writes_the_factual_notice() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("condense-unit-replace".to_string(), async {
 		let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
 		let original = ok.extract_content();
@@ -534,7 +540,9 @@ async fn replace_on_a_full_success_view_writes_the_factual_notice() {
 /// `tail` exits 0): "replace" on it keeps the failure lines and their context
 /// instead of omitting the whole result.
 #[tokio::test]
+#[serial_test::serial]
 async fn replace_on_a_success_that_reports_a_failure_keeps_the_failure() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	crate::session::context::with_session_id("condense-unit-replace-failure".to_string(), async {
 		let body = (1..=20)
 			.map(|n| {

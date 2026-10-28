@@ -84,15 +84,17 @@ async fn a_silent_peer_is_dropped_after_a_missed_heartbeat() {
 
 #[tokio::test]
 async fn a_peer_answering_pings_stays_connected() {
-	let (mut reader, sender, _writer, mut client) = heartbeat_pair(Duration::from_millis(50)).await;
+	// Wide enough that scheduling jitter in a loaded test run cannot delay a pong past one interval.
+	let interval = Duration::from_millis(200);
+	let (mut reader, sender, _writer, mut client) = heartbeat_pair(interval).await;
 	// Reading makes the client answer each ping with a pong.
 	let pongs = tokio::spawn(async move { while client.next().await.is_some() {} });
-	loop {
-		match tokio::time::timeout(Duration::from_millis(500), reader.next(&sender)).await {
-			Err(_) => break,
-			Ok(Some(Ok(Message::Pong(_)))) => continue,
-			Ok(other) => panic!("expected the connection to stay open, got {other:?}"),
-		}
+	let deadline = tokio::time::Instant::now() + interval * 5;
+	while let Ok(frame) = tokio::time::timeout_at(deadline, reader.next(&sender)).await {
+		assert!(
+			matches!(frame, Some(Ok(Message::Pong(_)))),
+			"expected the connection to stay open, got {frame:?}"
+		);
 	}
 	pongs.abort();
 }

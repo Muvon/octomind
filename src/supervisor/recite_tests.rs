@@ -539,6 +539,37 @@ fn unchanged_recital_returns_once_buried() {
 }
 
 #[test]
+fn no_recital_while_the_model_waits_on_background_jobs() {
+	let waiting_reply = crate::session::Message {
+		role: "assistant".to_string(),
+		content: "Verification is still running; no completion claim yet.".to_string(),
+		..Default::default()
+	};
+	let working_reply = crate::session::Message {
+		role: "assistant".to_string(),
+		tool_calls: Some(serde_json::json!([{"id": "call_1", "function": {"name": "view"}}])),
+		..Default::default()
+	};
+	let status = user("<background_job resource=\"job-1\" state=\"status_check\">still running</background_job>");
+
+	let waiting = vec![user("Fix it."), waiting_reply.clone(), status.clone()];
+	assert!(
+		waiting_on_background_jobs(&waiting, true),
+		"the model ended its turn to wait"
+	);
+	assert!(
+		!waiting_on_background_jobs(&waiting, false),
+		"jobs settled: recitation resumes"
+	);
+
+	let working = vec![user("Fix it."), working_reply, status];
+	assert!(
+		!waiting_on_background_jobs(&working, true),
+		"a model still calling tools beside a running job is not waiting"
+	);
+}
+
+#[test]
 fn session_rules_recite_after_the_request_that_set_them_is_gone() {
 	// The gap this closes: a rule set on an earlier turn is not in the latest
 	// request, so per-turn constraints are empty and nothing re-anchors it.

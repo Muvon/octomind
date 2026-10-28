@@ -247,7 +247,8 @@ async fn builtin_annotations_drive_mutation_classification() {
 	// A delegate may write whatever its action word says.
 	assert!(is_mutation("tap", &json!({"action": "run"})));
 	assert!(is_mutation("agent_annotated_agent", &json!({"task": "summarize"})));
-	assert!(!is_mutation("recall", &json!({"ids": ["b1"]})));
+	// "update" would read as a mutation without recall's read-only annotation.
+	assert!(!is_mutation("recall", &json!({"action": "update"})));
 	// Multi-action control tools stay unannotated: the action decides.
 	assert!(!is_mutation("monitor", &json!({"action": "list"})));
 	clear_function_cache();

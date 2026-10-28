@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.66.0] - 2026-10-28
+
+### 📋 Release Summary
+
+Rendered file lines now use hashed identifiers, and MCP tools support annotations. Accepts back off and pending notifications are capped; learning recognizes standing global rules and separates scoped pairing from recurrence similarity. Websocket and embedding resources are bounded, unresponsive clients close, service survives connection errors, mutating tool calls are serialized, and supervisor/verification behavior now grounds evidence, avoids absent-action charges, and suppresses pending-job recitation.
+
+### ✨ New Features & Enhancements
+
+- **utils**: use hashed identifiers for rendered file lines `4acc932f`
+- **mcp**: support MCP tool annotations `3ac6b130`
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: update rendering and README placeholder tests `81d888ca`
+- **websocket**: stabilize heartbeat connection test `310a0dd0`
+- **supervisor**: ensure request appears in findings once `6f508f87`
+- **dependencies**: update locked dependency versions `3c0ef21b`
+
+### 🐛 Bug Fixes & Stability
+
+- back off accepts and cap pending notifications `18dbefa1`
+- **learning**: recognize standing global rules `43d8eb5c`
+- **learning**: separate scoped pairing from recurrence similarity `b39604c4`
+- **websocket**: close unresponsive websocket clients `45697756`
+- **websocket**: keep serving after connection errors `577a4bcd`
+- bound websocket and embedding resources `3c9a8d4b`
+- **tool-execution**: serialize potentially mutating tool calls `c242e7cb`
+- **supervisor**: avoid charging agents for absent actions `c8f6a25c`
+- **supervisor**: tighten supervisor evidence grounding `74f8b5ec`
+- **verification**: make completion checks evidence-grounded `bc36298f`
+- **supervisor**: suppress recitation while jobs are pending `89ed1bbf`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.65.1] - 2026-10-27
 
 ### 📋 Release Summary

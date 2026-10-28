@@ -300,6 +300,8 @@ make dev    # fmt + clippy + test
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org). Full guide, architecture overview, and code conventions: [CONTRIBUTING.md](CONTRIBUTING.md) · internals: [Architecture](doc/dev/02-architecture.md).
 
+Community participation follows our [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately using the [security policy](SECURITY.md).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).

@@ -292,7 +292,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			live_task.map(crate::session::anchor::task_sig),
 			effective_verification_policy,
 		) {
-			if crate::supervisor::recite::needs_recital(&chat_session.session.messages, &note) {
+			let waiting = crate::supervisor::recite::waiting_on_background_jobs(
+				&chat_session.session.messages,
+				crate::session::shell_jobs::has_pending(),
+			);
+			if !waiting && crate::supervisor::recite::needs_recital(&chat_session.session.messages, &note) {
 				chat_session.add_system_managed_user_message(&note)?;
 				crate::log_debug!("Supervisor recitation injected");
 			}

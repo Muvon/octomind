@@ -460,6 +460,26 @@ pub fn needs_recital(messages: &[crate::session::Message], note: &str) -> bool {
 	since > RECITE_REFRESH_TOKENS
 }
 
+/// Whether the model ended its last reply to wait for background jobs that are
+/// still running. Such a turn is re-entered by job status or completion
+/// messages, not by new work, and a recitation landing there reads as a binding
+/// instruction to keep going: the model abandons the wait to resurvey sources or
+/// rerun checks. Recitation resumes once the jobs have settled.
+pub fn waiting_on_background_jobs(messages: &[crate::session::Message], jobs_pending: bool) -> bool {
+	jobs_pending
+		&& messages
+			.iter()
+			.rev()
+			.find(|message| message.role == "assistant")
+			.is_some_and(|message| {
+				message
+					.tool_calls
+					.as_ref()
+					.and_then(serde_json::Value::as_array)
+					.is_none_or(Vec::is_empty)
+			})
+}
+
 #[cfg(test)]
 #[path = "recite_tests.rs"]
 mod tests;

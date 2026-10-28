@@ -258,6 +258,7 @@ pub async fn next_schedule_sleep() {
 pub fn get_schedule_function() -> McpFunction {
 	McpFunction {
 		name: "schedule".to_string(),
+		annotations: None,
 		description: r#"Schedule a message to be automatically injected as a user message into the current session — once at a future time, when the session becomes idle, or repeatedly on an interval (a recurring loop). The session keeps running until all scheduled messages have fired.
 
 One-shot entries fire once and are removed. Repeating entries (set via 'every') re-schedule automatically after each firing until explicitly removed — this is the loop mechanism: a periodic poll or status check ('every'='10m'), a heartbeat, or an autonomous keep-going loop ('every'='idle', fires each time the session settles). A repeating entry runs until removed, so give every loop a stop condition: the injected 'message' should check whether its goal is met and remove its own entry ('id' from list) when done, instead of looping forever.

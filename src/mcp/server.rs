@@ -74,6 +74,7 @@ pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
 			);
 			McpFunction {
 				name,
+				annotations: tool.annotations.clone(),
 				description: tool.description.as_deref().unwrap_or("").to_string(),
 				parameters,
 			}

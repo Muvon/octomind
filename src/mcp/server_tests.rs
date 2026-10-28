@@ -97,6 +97,7 @@ async fn test_cached_functions_returned_without_connecting() {
 		NAME.to_string(),
 		CachedFunctions::Shared(vec![McpFunction {
 			name: "cached_tool".to_string(),
+			annotations: None,
 			description: "from cache".to_string(),
 			parameters: serde_json::json!({"type": "object"}),
 		}]),
@@ -120,6 +121,7 @@ async fn test_private_tool_lists_are_cached_per_session() {
 	const NAME: &str = "srvtest-per-session";
 	let listed = |name: &str| McpFunction {
 		name: name.to_string(),
+		annotations: None,
 		description: String::new(),
 		parameters: serde_json::json!({"type": "object"}),
 	};
@@ -180,6 +182,7 @@ fn test_clear_function_cache_scopes() {
 		"srvtest-clear-a".to_string(),
 		CachedFunctions::Shared(vec![McpFunction {
 			name: "t".to_string(),
+			annotations: None,
 			description: String::new(),
 			parameters: serde_json::json!({}),
 		}]),
@@ -188,6 +191,7 @@ fn test_clear_function_cache_scopes() {
 		"srvtest-clear-b".to_string(),
 		CachedFunctions::Shared(vec![McpFunction {
 			name: "t".to_string(),
+			annotations: None,
 			description: String::new(),
 			parameters: serde_json::json!({}),
 		}]),

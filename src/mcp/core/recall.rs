@@ -44,6 +44,7 @@ pub const RECALL_TOOL_NAME: &str = "recall";
 pub fn get_recall_function() -> McpFunction {
 	McpFunction {
 		name: RECALL_TOOL_NAME.to_string(),
+		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(true).open_world(false)),
 		description: "Retrieve the verbatim archived messages behind compressed-context block IDs.
 
 After conversation compression, the summary's <folded_state> units cite block IDs like b:1a2b3c4d (refs attribute), and archived tool packets are listed with the same IDs. The raw messages are archived losslessly; this tool returns them exactly as they were.

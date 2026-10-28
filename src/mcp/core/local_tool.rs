@@ -278,6 +278,7 @@ impl LocalToolMeta {
 
 		McpFunction {
 			name: self.name.clone(),
+			annotations: None,
 			description: self.description.clone(),
 			parameters: json!({
 				"type": "object",

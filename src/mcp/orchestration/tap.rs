@@ -52,6 +52,8 @@ use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus, TapLiveSt
 pub fn get_tap_function() -> McpFunction {
 	McpFunction {
 		name: "tap".to_string(),
+		// The tapped agent may change anything its own tools can.
+		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
 		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Use this tool to hand off a focused task, check its status, stop it, or browse the catalog.
 
 When to use:

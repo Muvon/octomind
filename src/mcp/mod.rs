@@ -210,6 +210,11 @@ pub struct McpFunction {
 	pub name: String,
 	pub description: String,
 	pub parameters: Value,
+	/// MCP tool annotations. External servers send theirs; builtin, dynamic and
+	/// local tools declare them in code. Only `readOnlyHint` drives behaviour
+	/// (mutation classification, see `supervisor::detect::is_mutation_call`).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub annotations: Option<rmcp::model::ToolAnnotations>,
 }
 
 // Initialize all servers for a specific mode/role ONCE at startup
@@ -518,6 +523,17 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
 	functions.extend(crate::mcp::core::local_tool::get_all_functions());
 
+	// Builtin, dynamic and local tools declare their annotations in code rather
+	// than over the wire; register them the way an external inventory is.
+	for function in &functions {
+		crate::supervisor::detect::register_tool_read_only_hint(
+			&function.name,
+			function
+				.annotations
+				.as_ref()
+				.and_then(|annotations| annotations.read_only_hint),
+		);
+	}
 	functions
 }
 

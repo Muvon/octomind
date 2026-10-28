@@ -31,6 +31,9 @@ const MAX_SERVICE_CLIENTS: usize = 16;
 const MAX_SERVICE_LINE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BATCH_TEXTS: usize = 256;
 const SERVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Pause after a failed accept: errors like EMFILE persist until a client
+/// disconnects, and retrying at once would spin a core and flood the log.
+const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Endpoint descriptor written by the owner, read by clients.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -294,7 +297,11 @@ fn serve(listener: TcpListener, token: String, hello: Hello) -> Result<AbortOnDr
 				accepted = listener.accept(), if clients.len() < MAX_SERVICE_CLIENTS => {
 					let (stream, _) = match accepted {
 						Ok(accepted) => accepted,
-						Err(error) => { crate::log_error!("Embedding service accept failed: {}", error); return; }
+						Err(error) => {
+							crate::log_error!("Embedding service accept failed: {}", error);
+							tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+							continue;
+						}
 					};
 					let token = Arc::clone(&token);
 					let hello = Arc::clone(&hello);

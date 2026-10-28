@@ -61,6 +61,9 @@ const WRITER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// A client silent for a whole interval after a ping is dropped, so half-open
 /// connections cannot hold `MAX_CONNECTIONS` slots forever.
 const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// Pause after a failed accept: errors like EMFILE persist until a connection
+/// closes, and retrying at once would spin a core and flood the log.
+const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Configs committed by a `/role` switch or restored from the session log on
 /// load, keyed by session id. A tap role's servers exist only in the config its
@@ -272,6 +275,7 @@ impl WebSocketServer {
 						Ok(accepted) => accepted,
 						Err(e) => {
 							log_error!("Failed to accept connection: {}", e);
+							tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
 							continue;
 						}
 					};

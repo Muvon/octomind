@@ -796,6 +796,17 @@ impl Detectors {
 		self.identical_rounds
 	}
 
+	/// The round just recorded moved the working tree: real work its receipts may
+	/// not show (a quiet `sed -i` beside a check whose output is unchanged). Enough
+	/// to restart the hard-stop count, which must never end working turns — but
+	/// not new information for the Loop / NoProgress advisories, because a
+	/// concurrent writer (a dev server, a build) moves the tree too.
+	pub fn note_tree_moved(&mut self) {
+		self.rounds_since_progress.clear();
+		self.rounds_since_progress.extend(self.loop_window.back().copied());
+		self.identical_rounds = 1;
+	}
+
 	/// Record the artifact paths a successful mutation-shaped call touched —
 	/// the identities a later read-back can verify ([`Detectors::is_readback_call`]).
 	/// Called per successful mutation call; deduped and capped (oldest evicted).

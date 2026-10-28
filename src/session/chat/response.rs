@@ -712,6 +712,8 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						}
 					}
 
+					// Set when this write-capable round moved the working tree.
+					let mut tree_moved = false;
 					// Fold the round into the observational verification state: a round
 					// verifies only when a verifier-shaped call succeeded on a tree the
 					// round itself did not change.
@@ -748,6 +750,8 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 							// its round is write-capable regardless of the parent's calls.
 							round_write_capable || delegated_runs > 0,
 						);
+						tree_moved = (round_write_capable || delegated_runs > 0)
+							&& matches!((fp_before, fp_after), (Some(a), Some(b)) if a != b);
 					}
 
 					// One verdict per ROUND: the whole parallel batch is a single model decision,
@@ -760,6 +764,9 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						no_progress_window,
 					);
 					round_signal = round_signal.merge(batch_signal);
+					if tree_moved {
+						params.chat_session.detectors.note_tree_moved();
+					}
 
 					// Command errors are observed facts, not proof of failed verification.
 					// Keep an advisory signal even while other calls add information.

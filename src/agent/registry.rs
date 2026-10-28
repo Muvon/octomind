@@ -621,7 +621,7 @@ struct CapabilityCatalog {
 /// Reading every capability costs a file open per capability per tap, which is
 /// seconds when the data dir is a network mount. Startup, every turn's
 /// auto-activation and `capability discover` all need the same list.
-static CAPABILITY_CATALOG: parking_lot::Mutex<Option<CapabilityCatalog>> = parking_lot::const_mutex(None);
+static CAPABILITY_CATALOG: parking_lot::Mutex<Option<CapabilityCatalog>> = parking_lot::Mutex::new(None);
 
 /// Enumerate every capability installed across all configured taps.
 ///

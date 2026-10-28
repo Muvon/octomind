@@ -38,6 +38,9 @@ const STORE_MIN_DOMAINS: usize = 2;
 /// correction; verified experiences prove it through their outcome.
 const STORE_USE_COUNT_MIN: u64 = 1;
 const STORE_IMPORTANCE_MIN: f64 = 0.9;
+/// A global user rule is already cross-project by scope; this many materially
+/// used recalls prove it on its own when no second project repeats it.
+const STORE_STANDING_RULE_USES: u64 = 10;
 /// Guidance rides in every request of every session in its scope, so it stays
 /// a rule of a sentence or two; anything longer is a procedure for a skill.
 const MAX_GUIDANCE_CHARS: usize = 400;
@@ -136,13 +139,15 @@ struct ValidatorDoc {
 
 /// Recurrence evidence behind a store-sourced candidate. Scope is computed
 /// from it, never proposed by the model: two projects make the project
-/// dimension global, two domains make the domain dimension global.
+/// dimension global, two domains make the domain dimension global, and a
+/// global source record makes both global.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct ScopeBasis {
 	projects: Vec<String>,
 	domains: Vec<String>,
 	sessions: Vec<String>,
 	total_use_count: u64,
+	universal: bool,
 }
 
 impl ScopeBasis {
@@ -163,17 +168,18 @@ impl ScopeBasis {
 				.iter()
 				.map(|memory| memory.use_count)
 				.fold(0, u64::saturating_add),
+			universal: memories.iter().any(|memory| memory.scope == "global"),
 		}
 	}
 
 	pub(super) fn scope(&self) -> ArtifactScope {
 		ArtifactScope {
-			project: if self.projects.len() >= STORE_MIN_PROJECTS {
+			project: if self.universal || self.projects.len() >= STORE_MIN_PROJECTS {
 				None
 			} else {
 				self.projects.first().cloned()
 			},
-			domain: if self.domains.len() >= STORE_MIN_DOMAINS {
+			domain: if self.universal || self.domains.len() >= STORE_MIN_DOMAINS {
 				None
 			} else {
 				self.domains.first().cloned()
@@ -686,11 +692,11 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 		})
 		.collect();
 	if records.len() < 2 {
-		return Ok(Vec::new());
+		return Ok(standing_global_rule(&records));
 	}
 	let vectors = store_embeddings(&records).await;
 	let similar = |left: usize, right: usize| {
-		crate::supervisor::learning::retention::wording_signal(&records[left], &records[right])
+		crate::supervisor::learning::retention::pair_signal(&records[left], &records[right])
 			>= STORE_CLUSTER_PAIR_SIGNAL
 			|| vectors.as_ref().is_some_and(|vectors| {
 				crate::embeddings::cosine(&vectors[left], &vectors[right]) >= STORE_CLUSTER_COSINE
@@ -734,7 +740,7 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 		})
 		.max_by_key(|(projects, uses, _)| (*projects, *uses));
 	let Some((_, _, members)) = best else {
-		return Ok(Vec::new());
+		return Ok(standing_global_rule(&records));
 	};
 	let mut ranked: Vec<&Lesson> = members.iter().map(|index| &records[*index]).collect();
 	ranked.sort_by(|a, b| {
@@ -760,6 +766,21 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 		}
 	}
 	Ok(chosen)
+}
+
+/// The most-used global user rule, as a one-record source. A rule the user
+/// stated once and every session has since recalled never forms a cross-project
+/// cluster, yet is the strongest recurrence evidence the store holds.
+fn standing_global_rule(records: &[Lesson]) -> Vec<Lesson> {
+	records
+		.iter()
+		.filter(|memory| {
+			memory.scope == "global" && memory.memory_type == "learning" && memory.use_count >= STORE_STANDING_RULE_USES
+		})
+		.max_by_key(|memory| memory.use_count)
+		.cloned()
+		.into_iter()
+		.collect()
 }
 
 /// Paraphrase similarity for clustering; without a ready model, wording alone

@@ -216,15 +216,6 @@ fn pair_signal_requires_same_type_and_scope_and_weighs_tags() {
 }
 
 #[test]
-fn wording_signal_ignores_scope_but_pair_signal_does_not() {
-	let scoped = memory("shared durable procedure words", "learning");
-	let mut global = memory("shared durable procedure words", "learning");
-	global.scope = "global".to_string();
-	assert!(wording_signal(&scoped, &global) > MIN_PAIR_SIGNAL);
-	assert_eq!(pair_signal(&scoped, &global), 0.0);
-}
-
-#[test]
 fn best_pair_returns_none_without_overlap_above_the_signal_floor() {
 	let first = memory("completely unrelated alpha words", "orientation");
 	let second = memory("different topic entirely beta gamma", "orientation");

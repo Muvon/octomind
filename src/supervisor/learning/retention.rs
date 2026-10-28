@@ -418,16 +418,7 @@ pub(crate) fn jaccard(left: &HashSet<String>, right: &HashSet<String>) -> f64 {
 
 /// Similarity chooses a pair for semantic review; it never authorizes a merge.
 pub(crate) fn pair_signal(left: &Lesson, right: &Lesson) -> f64 {
-	if left.scope != right.scope {
-		return 0.0;
-	}
-	wording_signal(left, right)
-}
-
-/// Scope-blind similarity for recurrence detection: the same rule stored as a
-/// global record and as per-project records is one pattern, though never one merge.
-pub(crate) fn wording_signal(left: &Lesson, right: &Lesson) -> f64 {
-	if left.memory_type != right.memory_type {
+	if left.memory_type != right.memory_type || left.scope != right.scope {
 		return 0.0;
 	}
 	if left.memory_type == "experience" && left.outcome != right.outcome {

@@ -609,8 +609,10 @@ async fn test_interactive_mode_tool_round_renders_and_truncates() {
 /// rather than whatever tap the machine happens to have: on a bare CI runner
 /// the real list is "No skills found", which is under both thresholds.
 #[tokio::test]
+#[serial_test::serial]
 async fn test_large_tool_result_truncation_and_dedup() {
 	let _guard = ENV_LOCK.lock().await;
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let workdir = tempfile::tempdir().expect("temp workdir");
 	let skills_root = workdir.path().join(".agents").join("skills");
 	for i in 0..40 {

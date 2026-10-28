@@ -112,7 +112,34 @@ pub fn expect_session_id() -> SessionId {
 // ---------------------------------------------------------------------------
 
 /// Notification sender for WebSocket/JSONL output.
-pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>;
+#[derive(Clone)]
+pub enum NotificationSender {
+	Channel(tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>),
+	Stream(crate::websocket::stream::StreamSink),
+}
+
+impl From<tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>> for NotificationSender {
+	fn from(sender: tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>) -> Self {
+		Self::Channel(sender)
+	}
+}
+
+impl From<crate::websocket::stream::StreamSink> for NotificationSender {
+	fn from(sink: crate::websocket::stream::StreamSink) -> Self {
+		Self::Stream(sink)
+	}
+}
+
+impl NotificationSender {
+	pub fn send(&self, msg: crate::websocket::ServerMessage) -> anyhow::Result<()> {
+		match self {
+			Self::Channel(sender) => sender
+				.send(msg)
+				.map_err(|error| anyhow::anyhow!("Notification channel closed: {}", error)),
+			Self::Stream(sink) => sink.send(msg),
+		}
+	}
+}
 
 /// Registry for notification senders, keyed by session ID.
 /// Each session gets its own channel for MCP notifications.
@@ -127,10 +154,10 @@ pub fn init_notification_registry() {
 }
 
 /// Register a notification sender for a session.
-pub fn set_notification_sender_for_session(session_id: &SessionId, tx: NotificationSender) {
+pub fn set_notification_sender_for_session(session_id: &SessionId, tx: impl Into<NotificationSender>) {
 	let mut guard = NOTIFICATION_SENDERS.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
-	registry.insert(session_id.clone(), tx);
+	registry.insert(session_id.clone(), tx.into());
 }
 
 /// Remove a notification sender when a session ends.
@@ -157,7 +184,7 @@ pub fn send_notification(msg: crate::websocket::ServerMessage) {
 	}
 }
 /// Register a notification sender for a session (alias for set_notification_sender_for_session).
-pub fn register_notification_sender(session_id: SessionId, tx: NotificationSender) {
+pub fn register_notification_sender(session_id: SessionId, tx: impl Into<NotificationSender>) {
 	set_notification_sender_for_session(&session_id, tx);
 }
 

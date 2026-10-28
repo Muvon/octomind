@@ -111,7 +111,7 @@ lazy_static::lazy_static! {
 // use the session-keyed registries in crate::session::context instead.
 lazy_static::lazy_static! {
 	// CLI-mode notification sender (single session)
-	static ref CLI_NOTIFICATION_SENDER: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>>> =
+	static ref CLI_NOTIFICATION_SENDER: RwLock<Option<crate::session::context::NotificationSender>> =
 		RwLock::new(None);
 
 	// CLI-mode pending notifications (buffered before sender is registered)
@@ -210,10 +210,8 @@ pub fn init_session_context(role: &str) {
 ///
 /// For multi-session WebSocket mode, pass session_id to register in session-scoped registry.
 /// For CLI mode, pass None to use process-global storage.
-pub fn set_notification_sender(
-	session_id: Option<String>,
-	tx: tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>,
-) {
+pub fn set_notification_sender(session_id: Option<String>, tx: impl Into<crate::session::context::NotificationSender>) {
+	let tx = tx.into();
 	match session_id {
 		Some(sid) => {
 			// Session-scoped (WebSocket mode)

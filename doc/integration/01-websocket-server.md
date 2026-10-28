@@ -455,7 +455,7 @@ A valid request receives the usual `ack`, then:
 ```
 
 While the run is running in this parent's registry, `source` is `live`. Consecutive assistant or thinking chunks are
-coalesced in the snapshot. Its content buffer is capped at 4 MiB per run; oldest events are dropped when necessary and
+coalesced in the snapshot. Its buffer is capped at 4 MiB of content or 4096 events per run; oldest events are dropped when necessary and
 `truncated` becomes `true`. A terminal event frees the live buffer. A resume starts a fresh buffer for that turn.
 
 The live snapshot and its `seq` are captured atomically with event emission. While replay is outstanding, buffer
@@ -465,9 +465,10 @@ arrive before the reply. With `truncated: true`, the snapshot explicitly omits o
 
 Otherwise, `source` is `disk`: the existing session loader reads `<sessions dir>/<run_id>.jsonl.zst`. Stored user,
 assistant, thinking, tool-call, and tool-result messages map to the corresponding events; system messages and markers
-are skipped. Disk replay reflects the loader's restored conversation (including compression/restoration boundaries).
+are skipped. Disk replay reflects the loader's restored conversation (including compression/restoration boundaries),
+with the same content and event limits as live snapshots. A capped reply sets `truncated: true`.
 Persisted tool messages currently have no success field, so disk `tool_result` events omit `success`; clients must not
-interpret absence as success. `truncated` is `false`. Status comes from the parent's registry when known, otherwise
+interpret absence as success. Status comes from the parent's registry when known, otherwise
 `unknown`; `role` is omitted when unknown. `seq` is the last observed sequence for a retained run record, or 0 without
 one. `request_id` is echoed when supplied. When the session recorded usage, a final `usage` event carries its totals
 (cost includes the run's own sub-delegations); a session with no recorded usage emits none.
@@ -802,10 +803,22 @@ the same is true for validation failures, so clients can recover and keep sendin
 Separate from content validation, the transport layer enforces:
 
 - **Max frame and message size: 10MB.** Larger frames/messages are rejected by the WebSocket layer.
+- **Pending input: 256 frames or 10 MiB per connection.** Excess input receives an error with its `request_id` when
+  supplied. Already queued frames retain their order; cancellation and elicitation responses remain available.
+- **Outgoing queue: 8192 buffered frames or 16 MiB per connection**, with the byte limit also covering the frame being written. A client
+  that exceeds either limit is disconnected; its running turn continues and holds output for stream resume.
+- **64 concurrent connection handlers**, with a 10-second handshake deadline. Further connections wait for capacity.
+- **128 loaded sessions.** Existing sessions can reconnect at capacity. Loading another requires a `close` frame for
+  an idle session; disconnecting alone keeps session state and background handbacks available.
 - **Unmasked frames are rejected.** Per spec, client frames must be masked; standard clients do this automatically.
 - **Ping/Pong:** the server replies to client `Ping` frames with `Pong` to keep the connection alive — also while a
   turn is running.
 - **Close:** a client `Close` frame is answered with the server's own close frame before the socket ends.
+
+WebSocket and ACP specialist processes using the same OS runtime directory share one embedding model owner. Other
+processes connect to that owner without loading weights. Each process's vector cache holds at most 8192 vectors;
+the service admits 16 concurrent clients, bounds protocol lines to 8 MiB, and splits requests into 256-text batches.
+If an owner exits, a client re-elects on a transport failure and resubmits the read-only inference once.
 
 ## See also
 

@@ -22,6 +22,7 @@ use std::path::Path;
 use tokio_tungstenite::tungstenite::Message;
 
 const MAX_RUN_CONTENT: usize = 4 * 1024 * 1024;
+const MAX_RUN_EVENTS: usize = 4096;
 
 #[derive(Default)]
 struct EventBuffer {
@@ -43,8 +44,7 @@ impl EventBuffer {
 			| (Some(RunEvent::Thinking { content }), RunEvent::Thinking { content: chunk }) => content.push_str(chunk),
 			_ => self.events.push_back(event),
 		}
-		while self.bytes > MAX_RUN_CONTENT {
-			// bytes is the sum of queued content sizes, so positive bytes imply a nonempty queue.
+		while self.bytes > MAX_RUN_CONTENT || self.events.len() > MAX_RUN_EVENTS {
 			self.bytes -= content_size(&self.events.pop_front().expect("buffer contains oversized content"));
 			self.truncated = true;
 		}
@@ -201,6 +201,16 @@ fn replay_disk(
 				.rfind(|event| matches!(event, RunEvent::Usage { .. }))
 				.into_iter()
 				.collect();
+		} else {
+			let mut bytes: usize = events.iter().map(content_size).sum();
+			let mut first = 0;
+			while bytes > MAX_RUN_CONTENT || events.len() - first > MAX_RUN_EVENTS {
+				bytes -= content_size(&events[first]);
+				first += 1;
+			}
+			snapshot.truncated = first > 0;
+			events.drain(..first);
+			events.shrink_to_fit();
 		}
 		snapshot.events = events;
 		return Ok(snapshot);

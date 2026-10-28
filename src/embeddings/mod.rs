@@ -32,7 +32,7 @@ mod shared;
 use anyhow::{Context, Result};
 use octolib::{EmbeddingProvider, EmbeddingProviderType, InputType, Tokenizer};
 use shared::{Elected, Role};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -114,9 +114,29 @@ static MODEL: OnceLock<Model> = OnceLock::new();
 static INIT_LOCK: TokioMutex<()> = TokioMutex::const_new(());
 /// This process's membership in the machine-wide shared service: either we
 /// own the weights or we hold a client to the process that does.
-static SHARED: OnceLock<Elected> = OnceLock::new();
+static SHARED: RwLock<Option<Arc<Elected>>> = RwLock::new(None);
 static SHARED_INIT_LOCK: TokioMutex<()> = TokioMutex::const_new(());
-static CACHE: OnceLock<RwLock<HashMap<u64, Vec<f32>>>> = OnceLock::new();
+static CACHE: OnceLock<RwLock<VectorCache>> = OnceLock::new();
+const MAX_CACHED_VECTORS: usize = 8192;
+
+#[derive(Default)]
+struct VectorCache {
+	vectors: HashMap<u64, Vec<f32>>,
+	order: VecDeque<u64>,
+}
+
+impl VectorCache {
+	fn insert(&mut self, key: u64, vector: Vec<f32>) {
+		if !self.vectors.contains_key(&key) {
+			if self.vectors.len() == MAX_CACHED_VECTORS {
+				let oldest = self.order.pop_front().expect("full vector cache has an oldest entry");
+				self.vectors.remove(&oldest);
+			}
+			self.order.push_back(key);
+		}
+		self.vectors.insert(key, vector);
+	}
+}
 /// One-shot guard ensuring the on-disk cache is read in only once per process.
 static DISK_CACHE_LOADED: OnceLock<()> = OnceLock::new();
 /// Serializes concurrent writers within a single process. Cross-process
@@ -132,8 +152,8 @@ static DISK_WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// in the header (`Model::revision`). OEC2 = the layout that carries that SHA.
 const CACHE_MAGIC: &[u8; 4] = b"OEC2";
 
-fn cache() -> &'static RwLock<HashMap<u64, Vec<f32>>> {
-	CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+fn cache() -> &'static RwLock<VectorCache> {
+	CACHE.get_or_init(|| RwLock::new(VectorCache::default()))
 }
 
 /// Path to the on-disk embedding cache for the current model.
@@ -179,6 +199,9 @@ fn load_disk_cache(revision: &str) -> Result<usize> {
 	}
 
 	let model_name_len = read_u32(&mut r)? as usize;
+	if model_name_len != MODEL_NAME.len() {
+		return Ok(0);
+	}
 	let mut model_name_bytes = vec![0u8; model_name_len];
 	r.read_exact(&mut model_name_bytes)?;
 	let model_name = std::str::from_utf8(&model_name_bytes)?;
@@ -195,6 +218,9 @@ fn load_disk_cache(revision: &str) -> Result<usize> {
 	// from the one that produced these vectors, the model was swapped under
 	// the same name — drop the stale cache and re-embed.
 	let rev_len = read_u32(&mut r)? as usize;
+	if rev_len != revision.len() {
+		return Ok(0);
+	}
 	let mut rev_bytes = vec![0u8; rev_len];
 	r.read_exact(&mut rev_bytes)?;
 	if std::str::from_utf8(&rev_bytes)? != revision {
@@ -208,7 +234,7 @@ fn load_disk_cache(revision: &str) -> Result<usize> {
 	for _ in 0..count {
 		let key = read_u64(&mut r)?;
 		r.read_exact(&mut buf)?;
-		if c.contains_key(&key) {
+		if c.vectors.contains_key(&key) {
 			continue;
 		}
 		let mut vec = Vec::with_capacity(dim);
@@ -244,7 +270,7 @@ fn save_disk_cache_locked(revision: &str) {
 			return;
 		}
 	};
-	let tmp_path = path.with_extension("bin.tmp");
+	let tmp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
 	let write_result = (|| -> Result<()> {
 		let file = std::fs::File::create(&tmp_path)?;
 		let mut w = BufWriter::new(file);
@@ -258,8 +284,9 @@ fn save_disk_cache_locked(revision: &str) {
 		let rev_bytes = revision.as_bytes();
 		w.write_all(&(rev_bytes.len() as u32).to_le_bytes())?;
 		w.write_all(rev_bytes)?;
-		w.write_all(&(snapshot.len() as u32).to_le_bytes())?;
-		for (key, vec) in snapshot.iter() {
+		w.write_all(&(snapshot.vectors.len() as u32).to_le_bytes())?;
+		for key in &snapshot.order {
+			let vec = &snapshot.vectors[key];
 			w.write_all(&key.to_le_bytes())?;
 			for f in vec {
 				w.write_all(&f.to_le_bytes())?;
@@ -341,38 +368,68 @@ async fn model() -> Result<&'static Model> {
 
 /// Join the machine-wide shared embedding service.
 ///
-/// Exactly one process on the machine loads the ~90 MB of weights; the rest
-/// hold only a loopback client and the tokenizer, so running N octomind
-/// processes costs one model, not N. Clients that lose their owner re-elect
-/// on the next call — see `shared::join`.
-async fn shared() -> Result<&'static Elected> {
-	if let Some(s) = SHARED.get() {
-		return Ok(s);
+/// Processes using the same runtime directory elect one weights owner. Peers
+/// hold only a loopback client and tokenizer. Clients that lose their owner
+/// re-elect on the next inference call.
+async fn shared() -> Result<Arc<Elected>> {
+	if let Some(s) = SHARED.read().unwrap().as_ref().filter(|s| s.is_live()) {
+		return Ok(Arc::clone(s));
 	}
 	let _guard = SHARED_INIT_LOCK.lock().await;
-	if let Some(s) = SHARED.get() {
-		return Ok(s);
+	if let Some(s) = SHARED.read().unwrap().as_ref().filter(|s| s.is_live()) {
+		return Ok(Arc::clone(s));
 	}
-	let elected = shared::join().await?;
-	let _ = SHARED.set(elected);
-	Ok(SHARED.get().expect("SHARED set above"))
+	let elected = Arc::new(shared::join().await?);
+	*SHARED.write().unwrap() = Some(Arc::clone(&elected));
+	Ok(elected)
 }
 
 /// Embed via whichever side of the service this process is on: local
 /// inference for the owner, a request to the owner for everyone else.
-async fn embed_via_service(elected: &Elected, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-	match &elected.role {
-		Role::Owner => {
-			let m = model().await?;
-			// MiniLM-L6 is symmetric — embed bare, no query/document prefix.
-			let (vectors, _usage) = m
-				.provider
-				.generate_embeddings_batch(texts.to_vec(), InputType::None)
-				.await?;
-			Ok(vectors)
-		}
-		Role::Client(client) => client.embed_many(texts).await,
-	}
+async fn embed_via_service(elected: &Arc<Elected>, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+	let vectors = match &elected.role {
+		Role::Owner(_) => embed_local(texts).await?,
+		Role::Client(client) => match client.embed_many(texts).await {
+			Ok(vectors) => vectors,
+			Err(error) if shared::is_disconnected(&error) => {
+				let replacement = {
+					let _guard = SHARED_INIT_LOCK.lock().await;
+					let current = SHARED.read().unwrap().clone();
+					if let Some(current) = current.filter(|current| !Arc::ptr_eq(current, elected)) {
+						current
+					} else {
+						let replacement = Arc::new(shared::join().await?);
+						anyhow::ensure!(
+							replacement.revision == elected.revision,
+							"embedding model revision changed during owner recovery"
+						);
+						*SHARED.write().unwrap() = Some(Arc::clone(&replacement));
+						replacement
+					}
+				};
+				// Inference is read-only: after a dead owner, one resubmission is safe.
+				match &replacement.role {
+					Role::Owner(_) => embed_local(texts).await?,
+					Role::Client(client) => client.embed_many(texts).await?,
+				}
+			}
+			Err(error) => return Err(error),
+		},
+	};
+	anyhow::ensure!(
+		vectors.len() == texts.len(),
+		"embedding service returned {} vectors for {} texts",
+		vectors.len(),
+		texts.len()
+	);
+	anyhow::ensure!(
+		vectors
+			.iter()
+			.all(|vector| vector.len() == EMBED_DIM && vector.iter().all(|value| value.is_finite())),
+		"embedding service returned an invalid vector; expected {} finite dimensions",
+		EMBED_DIM
+	);
+	Ok(vectors)
 }
 
 /// Kick off model initialization in the background so the first real
@@ -438,7 +495,7 @@ pub fn prewarm(texts: Vec<String>) {
 /// Whether the embedding model is initialized and ready (no further
 /// download/load cost). Useful for status UI; not required for correctness.
 pub fn is_ready() -> bool {
-	SHARED.get().is_some()
+	SHARED.read().unwrap().as_ref().is_some_and(|shared| shared.is_live())
 }
 
 /// Embed a single text. Returns a cached vector if the same text was
@@ -453,10 +510,10 @@ pub async fn embed(text: &str) -> Result<Vec<f32>> {
 	let s = shared().await?;
 	ensure_disk_cache_loaded(&s.revision);
 	let key = cache_key(text);
-	if let Some(v) = cache().read().unwrap().get(&key) {
+	if let Some(v) = cache().read().unwrap().vectors.get(&key) {
 		return Ok(v.clone());
 	}
-	let v = embed_via_service(s, std::slice::from_ref(&text.to_string()))
+	let v = embed_via_service(&s, std::slice::from_ref(&text.to_string()))
 		.await?
 		.into_iter()
 		.next()
@@ -473,18 +530,35 @@ pub async fn embed(text: &str) -> Result<Vec<f32>> {
 /// persisted atomically (temp-write + rename). This is the path that
 /// auto-activation uses for trigger sets — tap update → some trigger texts
 /// change → those hash to new keys → only the delta is re-embedded → the
-/// fresh cache replaces the file on disk. Old entries from the previous
-/// trigger set survive harmlessly in the file until they're naturally
-/// orphaned (never queried).
+/// fresh cache replaces the file on disk. The cache evicts its oldest entries
+/// at capacity; eviction only causes inference to run again on the next miss.
 pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 	let s = shared().await?;
 	ensure_disk_cache_loaded(&s.revision);
+	embed_many_cached(texts, &s.revision, Inference::Shared(&s)).await
+}
+
+async fn embed_local(texts: &[String]) -> Result<Vec<Vec<f32>>> {
+	Ok(model()
+		.await?
+		.provider
+		.generate_embeddings_batch(texts.to_vec(), InputType::None)
+		.await?
+		.0)
+}
+
+enum Inference<'a> {
+	Shared(&'a Arc<Elected>),
+	Local,
+}
+
+async fn embed_many_cached(texts: &[String], revision: &str, inference: Inference<'_>) -> Result<Vec<Vec<f32>>> {
 	let mut result: Vec<Option<Vec<f32>>> = Vec::with_capacity(texts.len());
 	let mut to_compute: Vec<(usize, String)> = Vec::new();
 	{
 		let cache_r = cache().read().unwrap();
 		for (i, t) in texts.iter().enumerate() {
-			if let Some(v) = cache_r.get(&cache_key(t)) {
+			if let Some(v) = cache_r.vectors.get(&cache_key(t)) {
 				result.push(Some(v.clone()));
 			} else {
 				result.push(None);
@@ -506,25 +580,48 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 			}
 		}
 
-		let computed = embed_via_service(s, &unique).await?;
+		let computed = match inference {
+			Inference::Shared(elected) => embed_via_service(elected, &unique).await?,
+			Inference::Local => embed_local(&unique).await?,
+		};
+		anyhow::ensure!(
+			computed.len() == unique.len(),
+			"embedding service returned the wrong vector count"
+		);
+		anyhow::ensure!(
+			computed
+				.iter()
+				.all(|vector| vector.len() == EMBED_DIM && vector.iter().all(|value| value.is_finite())),
+			"embedding service returned an invalid vector"
+		);
+		let computed: HashMap<_, _> = unique
+			.into_iter()
+			.zip(computed)
+			.map(|(text, vector)| (cache_key(&text), vector))
+			.collect();
+		for (idx, text) in to_compute {
+			result[idx] = Some(
+				computed
+					.get(&cache_key(&text))
+					.context("computed embedding missing for input")?
+					.clone(),
+			);
+		}
 		{
 			let mut cache_w = cache().write().unwrap();
-			for (text, vec) in unique.into_iter().zip(computed) {
-				cache_w.insert(cache_key(&text), vec);
-			}
-			// Fill every slot from the now-populated cache — repeated texts
-			// resolve to the same shared vector by key, so the output stays
-			// 1-to-1 with the input by position.
-			for (idx, text) in to_compute {
-				result[idx] = cache_w.get(&cache_key(&text)).cloned();
+			for (key, vector) in computed {
+				cache_w.insert(key, vector);
 			}
 		}
 		// Persist after the write lock is released so the snapshot inside
 		// `save_disk_cache_locked` doesn't deadlock against itself.
-		save_disk_cache_locked(&s.revision);
+		save_disk_cache_locked(revision);
 	}
 
-	Ok(result.into_iter().flatten().collect())
+	result
+		.into_iter()
+		.map(|vector| vector.context("embedding result missing for input"))
+		.collect()
 }
 
 /// Cosine similarity between two equal-length vectors.
@@ -554,8 +651,8 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// serialized tokenizer from the owner at handshake, so both sides chunk
 /// identically. `None` until the service is joined; callers then fall back to
 /// a char estimate.
-fn tokenizer() -> Option<&'static Tokenizer> {
-	SHARED.get().map(|s| &*s.tokenizer)
+fn tokenizer() -> Option<Arc<Tokenizer>> {
+	SHARED.read().unwrap().as_ref().map(|s| Arc::clone(&s.tokenizer))
 }
 
 /// Split `text` into chunks that each fit MiniLM-L6's token window, cutting at

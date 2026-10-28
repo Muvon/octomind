@@ -460,7 +460,7 @@ pub fn register_tool_read_only_hint(tool: &str, read_only: Option<bool>) {
 	}
 }
 
-fn tool_read_only_hint(tool: &str) -> Option<bool> {
+pub fn tool_read_only_hint(tool: &str) -> Option<bool> {
 	tool_read_only_hints().read().ok()?.get(tool).copied()
 }
 

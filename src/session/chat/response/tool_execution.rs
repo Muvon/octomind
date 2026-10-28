@@ -362,6 +362,15 @@ async fn execute_tools_with_context(
 		return Ok((Vec::new(), 0));
 	}
 
+	// Calls that may write run one after another in the order the model emitted
+	// them; only tools declaring `readOnlyHint: true` run in parallel (a missing
+	// hint means "may write", the MCP default). Concurrent edits to one file each
+	// answer with line ids from their own snapshot, so ids returned by an
+	// earlier-finishing edit are already stale when the batch completes. Each
+	// write holds a sender that it drops when it finishes or aborts, releasing
+	// the next one.
+	let mut previous_write: Option<tokio::sync::oneshot::Receiver<()>> = None;
+
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
 		context.increment_tool_calls(&tool_call.tool_name);
@@ -397,9 +406,21 @@ async fn execute_tools_with_context(
 				))
 			})
 		} else {
+			let (previous, release) =
+				if crate::supervisor::detect::tool_read_only_hint(&tool_call.tool_name) != Some(true) {
+					let (release, finished) = tokio::sync::oneshot::channel::<()>();
+					(previous_write.replace(finished), Some(release))
+				} else {
+					(None, None)
+				};
 			match context {
 				ToolExecutionContext::MainSession { .. } => {
 					tokio::spawn(crate::supervisor::accounting::inherit(async move {
+						let _release = release;
+						if let Some(previous) = previous {
+							// Nothing is ever sent: completion and abort both arrive as the sender's drop.
+							let _ = previous.await;
+						}
 						// Propagate session ID to spawned task for session-scoped state
 						crate::session::context::with_session_id(session_id, async move {
 							let mut call_with_id = tool_call_clone.clone();
@@ -412,6 +433,10 @@ async fn execute_tools_with_context(
 				}
 				ToolExecutionContext::Layer { .. } => {
 					tokio::spawn(crate::supervisor::accounting::inherit(async move {
+						let _release = release;
+						if let Some(previous) = previous {
+							let _ = previous.await;
+						}
 						crate::session::context::with_session_id(session_id, async move {
 							let mut call_with_id = tool_call_clone.clone();
 							call_with_id.tool_id = tool_id_for_task.clone();

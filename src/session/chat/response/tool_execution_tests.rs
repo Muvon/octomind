@@ -614,6 +614,89 @@ async fn test_execute_tools_in_context_local_tool_success_then_duplicate_placeho
 	.await;
 }
 
+/// Run a slow then a fast local tool in one batch, both carrying `read_only`,
+/// and return the order their writes landed in.
+#[cfg(unix)]
+async fn slow_then_fast_order(prefix: &str, read_only: Option<bool>) -> String {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let log = tmp.path().join("order.log");
+	let slow = format!("{prefix}slow");
+	let fast = format!("{prefix}fast");
+	write_local_tool(
+		tmp.path(),
+		&slow,
+		&format!(
+			"#!/bin/sh\n# @description Slow write.\nsleep 0.3\necho slow >> '{}'\n",
+			log.display()
+		),
+	);
+	write_local_tool(
+		tmp.path(),
+		&fast,
+		&format!(
+			"#!/bin/sh\n# @description Fast write.\necho fast >> '{}'\n",
+			log.display()
+		),
+	);
+	crate::supervisor::detect::register_tool_read_only_hint(&slow, read_only);
+	crate::supervisor::detect::register_tool_read_only_hint(&fast, read_only);
+
+	let config = template_config();
+	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+
+		let call = |name: &str, id: &str| crate::mcp::McpToolCall {
+			tool_name: name.to_string(),
+			parameters: serde_json::json!({}),
+			tool_id: id.to_string(),
+		};
+		let (results, _total_ms) = execute_tools_in_context(
+			vec![call(&slow, "w1"), call(&fast, "w2")],
+			&mut context,
+			&config,
+			Some(rx),
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("local tool execution");
+		assert_eq!(results.len(), 2);
+
+		crate::session::context::cleanup_session(&TEST_SESSION.to_string());
+	})
+	.await;
+	std::fs::read_to_string(&log).expect("order log")
+}
+
+/// Concurrent writes would let the fast one land first; emitted order must win.
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_execute_tools_in_context_runs_writes_in_emitted_order() {
+	assert_eq!(slow_then_fast_order("orderwrite", Some(false)).await, "slow\nfast\n");
+}
+
+/// A tool without annotations may write (the MCP default), so it is ordered too.
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_execute_tools_in_context_orders_unannotated_tools() {
+	assert_eq!(slow_then_fast_order("orderunannotated", None).await, "slow\nfast\n");
+}
+
+/// Declared read-only tools keep running in parallel.
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_execute_tools_in_context_runs_reads_in_parallel() {
+	assert_eq!(slow_then_fast_order("orderread", Some(true)).await, "fast\nslow\n");
+}
+
 #[tokio::test]
 async fn test_execute_layer_tool_calls_parallel_unknown_tool_error_result() {
 	let config = template_config();

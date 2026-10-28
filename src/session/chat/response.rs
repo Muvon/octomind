@@ -822,8 +822,9 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						params.chat_session.last_steered_calls = None;
 					}
 
-					// The one hard limit: the same round, unchanged, `max_identical_rounds`
-					// times in a row ends the turn. Every hint below it stays advisory.
+					// The one hard limit: `max_identical_rounds` rounds in a row that repeat
+					// one already made since the last new result end the turn. Every hint
+					// below it stays advisory.
 					let max_identical = params.config.supervisor.max_identical_rounds;
 					let identical = params.chat_session.detectors.identical_rounds();
 					if max_identical > 0 && identical >= max_identical {

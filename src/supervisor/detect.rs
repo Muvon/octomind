@@ -550,9 +550,12 @@ const FAILED_COMMANDS_CAP: usize = 64;
 pub struct Detectors {
 	/// Recent result hashes (loop detection), newest at back.
 	loop_window: VecDeque<u64>,
-	/// Tool rounds in a row that repeated the previous round's calls and results,
-	/// the first of them included — what `supervisor.max_identical_rounds` caps.
+	/// Tool rounds in a row that repeated a round already made since the last
+	/// new result, the first of them included — what `supervisor.max_identical_rounds`
+	/// caps.
 	identical_rounds: usize,
+	/// Round hashes since the last novel round, newest at back. Bounded by `SEEN_CAP`.
+	rounds_since_progress: VecDeque<u64>,
 	/// Recent novelty flags (no-progress detection), newest at back.
 	novelty_window: VecDeque<bool>,
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
@@ -741,9 +744,21 @@ impl Detectors {
 			h.finish()
 		};
 
-		// Hard-stop count: the previous round again, with nothing new in it.
-		let repeated = !round_novel && self.loop_window.back() == Some(&round_hash);
+		// Hard-stop count: a round already made since the last new result, with
+		// nothing new in it. Not only the previous round: a model cycling through a
+		// few calls makes each round differ from the one before it (prod 2026-10-28:
+		// 998 rounds alternating two searches, A A B A A B, all "No matches found").
+		if round_novel {
+			self.rounds_since_progress.clear();
+		}
+		let repeated = !round_novel && self.rounds_since_progress.contains(&round_hash);
 		self.identical_rounds = if repeated { self.identical_rounds + 1 } else { 1 };
+		if !repeated {
+			self.rounds_since_progress.push_back(round_hash);
+			if self.rounds_since_progress.len() > SEEN_CAP {
+				self.rounds_since_progress.pop_front();
+			}
+		}
 
 		// Loop window: identical ROUND repeated.
 		self.loop_window.push_back(round_hash);
@@ -775,7 +790,8 @@ impl Detectors {
 		}
 	}
 
-	/// Tool rounds in a row with the same calls and results, the first included.
+	/// Tool rounds in a row that repeated a round already made since the last new
+	/// result, the first included.
 	pub fn identical_rounds(&self) -> usize {
 		self.identical_rounds
 	}
@@ -948,6 +964,7 @@ impl Detectors {
 		self.novelty_window.clear();
 		self.loop_window.clear();
 		self.identical_rounds = 0;
+		self.rounds_since_progress.clear();
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;

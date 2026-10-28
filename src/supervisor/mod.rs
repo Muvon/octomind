@@ -211,7 +211,8 @@ pub fn specialist_context(messages: &[crate::session::Message]) -> String {
 pub struct SupervisorConfig {
 	/// Master switch for the whole control plane.
 	pub enabled: bool,
-	/// Tool rounds in a row that repeat the same calls and results before the
+	/// Tool rounds in a row that repeat calls and results already seen since the
+	/// last new result (the previous round, or a cycle through a few) before the
 	/// turn is hard-stopped. `0` = off; detector hints stay advisory either way.
 	pub max_identical_rounds: usize,
 	/// One shared profile for gate, resolve, plan, and condense.

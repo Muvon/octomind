@@ -429,6 +429,55 @@ fn identical_rounds_counts_unchanged_repeats_and_resets_on_anything_new() {
 	assert_eq!(d.identical_rounds(), 1);
 }
 
+/// Prod 2026-10-28: a specialist alternated two searches (A A B A A B …) for 998
+/// rounds, every one "No matches found". Each round differed from the one before
+/// it, so a previous-round-only count never passed 2; a cycle with nothing new in
+/// it must count up just as a straight repeat does.
+#[test]
+fn identical_rounds_counts_a_cycle_that_returns_nothing_new() {
+	let mut d = Detectors::default();
+	let (a, a_novel) = d.note_call(
+		"knowledge",
+		&json!({"command": "match", "source": "/a.jsonl"}),
+		"No matches found",
+		false,
+		false,
+	);
+	let (b, b_novel) = d.note_call(
+		"knowledge",
+		&json!({"command": "match", "source": "/b.txt"}),
+		"No matches found",
+		false,
+		false,
+	);
+	assert!(a_novel && b_novel, "test premise: each target's first answer is new");
+	d.record_round_signals(&[a], true, 3, 9);
+	d.record_round_signals(&[a], false, 3, 9);
+	d.record_round_signals(&[b], true, 3, 9);
+	assert_eq!(d.identical_rounds(), 1, "a novel round restarts the count");
+	for (round, h) in [a, a, b, a, a, b].into_iter().enumerate() {
+		let novel = d
+			.note_call(
+				"knowledge",
+				&json!({"command": "match", "source": if h == a { "/a.jsonl" } else { "/b.txt" }}),
+				"No matches found",
+				false,
+				false,
+			)
+			.1;
+		assert!(!novel);
+		d.record_round_signals(&[h], false, 3, 9);
+		if round > 0 {
+			assert_eq!(
+				d.identical_rounds(),
+				round + 1,
+				"round {round} repeats one already made"
+			);
+		}
+	}
+	assert_eq!(d.identical_rounds(), 6);
+}
+
 #[test]
 fn identical_tap_delegations_with_different_run_ids_count_as_repeated_rounds() {
 	let mut d = Detectors::default();

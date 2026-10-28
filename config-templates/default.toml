@@ -726,8 +726,9 @@ supervisor = false
 enabled = true
 
 # Hard stop for runaway tool loops: when this many tool rounds in a row repeat
-# the same calls and get the same results, the turn ends with a notice instead
-# of another model request. Detector hints below this limit stay advisory.
+# calls and results already seen since the last new result (the previous round
+# again, or a cycle through a few), the turn ends with a notice instead of
+# another model request. Detector hints below this limit stay advisory.
 # Needs `enabled`. 0 = off.
 max_identical_rounds = 10
 

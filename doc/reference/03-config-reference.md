@@ -638,7 +638,7 @@ advisory; `max_identical_rounds` is the one hard stop.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
-| `max_identical_rounds` | usize | `10` | End the turn when this many tool rounds in a row repeat the same calls and get the same results. The turn's final answer becomes a notice naming the repeated call and its result, with no further model request and no verify-gate re-run. `0` = off. Needs `enabled` |
+| `max_identical_rounds` | usize | `10` | End the turn when this many tool rounds in a row repeat calls and results already seen since the last new result (the previous round again, or a cycle through a few). The turn's final answer becomes a notice naming the repeated call and its result, with no further model request and no verify-gate re-run. `0` = off. Needs `enabled` |
 
 ### `[supervisor.model]`
 

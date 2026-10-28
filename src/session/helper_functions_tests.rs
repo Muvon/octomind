@@ -158,7 +158,10 @@ async fn test_get_all_placeholders_in_git_repo() {
 	let status = &map["{{GIT_STATUS}}"];
 	assert!(status.contains("==== GIT STATUS ===="), "status: {status}");
 	assert!(map["{{GIT_TREE}}"].contains("README.md"));
-	assert!(map["{{README}}"].contains("readme body"));
+	assert_eq!(
+		map["{{README}}"],
+		"\n\n==== README ====\n\n# Repo\nreadme body\n\n==== END README ====\n"
+	);
 	assert!(map["{{CONTEXT}}"].contains("==== PROJECT CONTEXT ===="));
 }
 
@@ -182,4 +185,14 @@ async fn test_gather_system_info_shape() {
 	assert!(!info.binaries.is_empty());
 	// One line per probed binary, present or missing
 	assert!(info.binaries.lines().any(|l| l.starts_with("git:")));
+}
+
+#[tokio::test]
+async fn readme_placeholder_keeps_its_unnumbered_file_content() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	std::fs::write(dir.path().join("README.md"), "# Project\n  body\n").expect("write README");
+	assert_eq!(
+		process_placeholders_async("{{README}}", dir.path()).await,
+		"\n\n==== README ====\n\n# Project\n  body\n\n\n==== END README ====\n"
+	);
 }

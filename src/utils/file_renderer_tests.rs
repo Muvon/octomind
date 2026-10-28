@@ -94,9 +94,9 @@ fn test_expand_context_blocks() {
 	let has_line2 = result.contains("2:c8|line 2") || result.contains("2:c8|line 2\r");
 	let has_line3 = result.contains("3:5f|line 3") || result.contains("3:5f|line 3\r");
 
-	assert!(has_line1, "Result should contain '1: line 1'. Result: {}", result);
-	assert!(has_line2, "Result should contain '2: line 2'. Result: {}", result);
-	assert!(!has_line3, "Result should not contain '3: line 3'. Result: {}", result);
+	assert!(has_line1, "Result should contain '1:8b|line 1'. Result: {}", result);
+	assert!(has_line2, "Result should contain '2:c8|line 2'. Result: {}", result);
+	assert!(!has_line3, "Result should not contain '3:5f|line 3'. Result: {}", result);
 
 	// Original context tags should be replaced
 	assert!(
@@ -129,22 +129,22 @@ fn test_expand_context_blocks() {
 
 	assert!(
 		multi_has_line1,
-		"Multi result should contain '1: line 1'. Result: {}",
+		"Multi result should contain '1:8b|line 1'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line3,
-		"Multi result should contain '3: line 3'. Result: {}",
+		"Multi result should contain '3:5f|line 3'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line4,
-		"Multi result should contain '4: line 4'. Result: {}",
+		"Multi result should contain '4:7d|line 4'. Result: {}",
 		result_multi
 	);
 	assert!(
 		!multi_has_line2,
-		"Multi result should not contain '2: line 2'. Result: {}",
+		"Multi result should not contain '2:c8|line 2'. Result: {}",
 		result_multi
 	);
 
@@ -216,7 +216,7 @@ fn test_render_files_as_xml() {
 	assert!(result.contains("FILE CONTEXT:"));
 	assert!(result.contains("<content path=\"src/main.rs\" lines=\"1:3\">"));
 	assert!(result.contains("1:92|fn main() {"));
-	assert!(result.contains("2:c3|    println!(&quot;Hello&quot;);"));
+	assert!(result.contains("2:08|    println!(&quot;Hello&quot;);"));
 	assert!(result.contains("3:14|}"));
 	assert!(result.contains("</content>"));
 }

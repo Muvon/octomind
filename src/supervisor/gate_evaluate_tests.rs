@@ -28,16 +28,19 @@ use crate::supervisor::evaluate::{gate_question_id, Seam};
 use octolib::evaluation::Question;
 
 static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
-static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(RenderedEvidence::default);
+static FLAG_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(|| RenderedEvidence {
+	text: "CLI smoke check: expected --format, observed --json\nREADME still documents --json".to_string(),
+	..Default::default()
+});
 
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>"#;
-const TEST_GAP: &str = r#"<gap settles="run the suite">no test was run after the change</gap>"#;
-const README_GAP: &str = r#"<gap settles="update the README">README still documents --json</gap>"#;
-const TEST_FINDING: &str = "no test was run after the change — clear it by: run the suite";
-const README_FINDING: &str = "README still documents --json — clear it by: update the README";
+const TEST_GAP: &str = r#"<gap sources="ground_truth" settles="the CLI accepts --format">The requirement 'rename the CLI flag --json to --format' conflicts with 'CLI smoke check: expected --format, observed --json'</gap>"#;
+const README_GAP: &str = r#"<gap sources="ground_truth" settles="update the README">The requirement 'rename the CLI flag --json to --format' conflicts with 'README still documents --json'</gap>"#;
+const TEST_FINDING: &str = "The requirement 'rename the CLI flag --json to --format' conflicts with 'CLI smoke check: expected --format, observed --json' — clear it by: the CLI accepts --format";
+const README_FINDING: &str = "The requirement 'rename the CLI flag --json to --format' conflicts with 'README still documents --json' — clear it by: update the README";
 const ACTIONS: &str = "#1 [read] shell cargo test → ok";
 
 fn config(gate: bool) -> Config {
@@ -67,11 +70,10 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 		historical_actions: "",
 		grounds,
 		plan: "",
-		ground_truth: &EMPTY_EVIDENCE,
+		ground_truth: &FLAG_EVIDENCE,
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
-		first_verification: true,
 	}
 }
 
@@ -410,6 +412,7 @@ async fn a_hunk_at_the_keep_threshold_is_read_and_one_below_it_is_stubbed() {
 		"the hunk below the threshold is the stub"
 	);
 
+	drop(_fake);
 	let _fake = install_fake_evaluation(vec![hunk_answers(&[0.1, 0.1, 0.1])]).await;
 	assert!(
 		relevant_hunks(&config(true), "rename the flag", &[], &diffs)

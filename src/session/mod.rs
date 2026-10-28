@@ -173,6 +173,7 @@ pub fn is_system_managed_user_content(content: &str) -> bool {
 	trimmed.starts_with("<instructions>")
 		|| trimmed.starts_with(CONTINUATION_TAG_OPEN)
 		|| trimmed.starts_with("<system-note>")
+		|| trimmed.starts_with("<background_job ")
 		|| crate::mcp::runtime::skill::is_skill_message(content)
 		|| crate::supervisor::gate::is_supervisor_injection(content)
 }

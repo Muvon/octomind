@@ -72,8 +72,14 @@ fn latest_task_timestamp_is_the_live_request_message_timestamp() {
 		assistant,
 		user("<system-note>not a task</system-note>", 20),
 		user("newest real task", 30),
+		user(
+			"<background_job resource=\"job-1\" state=\"status_check\">still running</background_job>",
+			40,
+		),
+		user("<background_job task=\"job-1\">Tests: 12 passed</background_job>", 50),
 	];
 	assert_eq!(latest_task_timestamp(&messages), Some(30));
+	assert_eq!(latest_real_user_task_content(&messages), Some("newest real task"));
 	assert_eq!(latest_task_timestamp(&[]), None);
 }
 
@@ -159,6 +165,8 @@ fn ensure_system_managed_wraps_unmarked_content_only() {
 		"<recall>\nlessons\n</recall>",
 		"<instructions>\nrole\n</instructions>",
 		"<system-note>\nalready wrapped\n</system-note>",
+		"<background_job resource=\"job-1\" state=\"status_check\">still running</background_job>",
+		"<background_job task=\"job-1\">Tests: 12 passed</background_job>",
 	] {
 		assert_eq!(ensure_system_managed(marked), marked);
 		assert!(is_system_managed_user_content(marked));

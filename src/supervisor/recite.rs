@@ -470,13 +470,14 @@ pub fn waiting_on_background_jobs(messages: &[crate::session::Message], jobs_pen
 		&& messages
 			.iter()
 			.rev()
-			.find(|message| message.role == "assistant")
+			.find(|message| message.role == "assistant" || crate::session::is_real_user_task_message(message))
 			.is_some_and(|message| {
-				message
-					.tool_calls
-					.as_ref()
-					.and_then(serde_json::Value::as_array)
-					.is_none_or(Vec::is_empty)
+				message.role == "assistant"
+					&& message
+						.tool_calls
+						.as_ref()
+						.and_then(serde_json::Value::as_array)
+						.is_none_or(Vec::is_empty)
 			})
 }
 

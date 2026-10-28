@@ -46,18 +46,19 @@ fn zero_conditions_omit_the_condition_contract_in_both_encodings() {
 }
 
 #[test]
-fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
-	use sha2::{Digest, Sha256};
-	for count in [1, 3] {
-		let prompt = render_gate_prompt(Encoding::Text, count);
-		let original = prompt.strip_suffix(&format!("\n{OUTPUT_VISIBILITY_PROMPT}")).unwrap();
-		assert_eq!(
-			Sha256::digest(original.as_bytes())
-				.iter()
-				.map(|byte| format!("{byte:02x}"))
-				.collect::<String>(),
-			"c24cc3817a71cfc5fadc1a68a3019795b11e500e5fbd47af64691db35ebae1fa"
-		);
+fn nonempty_checklists_keep_uncertainty_nonblocking_in_both_encodings() {
+	for encoding in [Encoding::Text, Encoding::Json] {
+		for count in [1, 3] {
+			let prompt = render_gate_prompt(encoding, count);
+			assert!(
+				prompt.contains("one entry per condition")
+					|| prompt.contains("one entry per numbered evidence condition")
+			);
+			assert!(prompt.contains("report it without requesting another agent"));
+			assert!(prompt.contains("Naming a possible future check alone is not evidence of a present violation"));
+			assert!(!prompt.contains("runtime asks the agent once"));
+			assert!(!prompt.contains("a claim has no supporting evidence"));
+		}
 	}
 }
 
@@ -80,7 +81,6 @@ fn visibility_input<'a>(ledger: &'a EvidenceLedger, grounds: &'a [(u64, String)]
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
-		first_verification: true,
 	}
 }
 
@@ -376,12 +376,13 @@ fn ground_truth_visibility_tracks_only_output_bytes_surviving_final_truncation()
 	);
 	ledger.record_ground(seq, &output);
 	ledger.record_command_output("check", &output);
-	let initial = render_ground_truth(&ledger);
-	let tail_start = initial.text.find('…').unwrap();
+
 	// No tail, only the synthetic ellipsis, an incomplete UTF-8 character,
 	// and one complete character surviving the byte cap, respectively.
 	for provenance in [Some(seq), None] {
 		ledger.recent_commands[0].2 = provenance;
+		ledger.recent_commands[0].0 = "check".to_string();
+		let tail_start = render_ground_truth(&ledger).text.find('…').unwrap();
 		for (surviving_bytes, visible) in [(0, false), (3, false), (5, false), (6, true)] {
 			ledger.recent_commands[0].0 = format!("check{}", "x".repeat(GT_TOTAL_MAX - tail_start - surviving_bytes));
 			let truth = render_ground_truth(&ledger);
@@ -874,26 +875,6 @@ fn clean_json_shapes() -> Vec<serde_json::Value> {
 		.collect()
 }
 
-/// The defect this bound exists for: an unverifiable verdict used to fall
-/// through as a completed turn. It now spends the same bounded re-entry a
-/// substantive gap does — the turn may finish once the budget is out, but never
-/// as verified work.
-#[test]
-fn an_unverifiable_verdict_spends_a_bounded_re_entry() {
-	const MAX_ITERATIONS: u8 = 3;
-	let advisory = unverified_reentry(1, MAX_ITERATIONS).expect("budget remains");
-	assert!(advisory.contains("could not be completed"));
-	assert!(advisory.contains("numbered list of the conditions"));
-	assert!(advisory.contains("the observation that satisfies it"));
-	// It asks for evidence; it never charges the agent with a finding.
-	assert!(!advisory.contains("gap"));
-	assert!(unverified_reentry(MAX_ITERATIONS - 1, MAX_ITERATIONS).is_some());
-	// The bound is the gate's own iteration budget, spent like any other pass.
-	assert!(unverified_reentry(MAX_ITERATIONS, MAX_ITERATIONS).is_none());
-	assert!(unverified_reentry(MAX_ITERATIONS + 1, MAX_ITERATIONS).is_none());
-	assert!(unverified_reentry(0, 0).is_none());
-}
-
 /// The JSON path derives the verdict from the same checklist: an itemized
 /// condition left unmatched is a gap even when the answer's own verdict is PASS.
 #[test]
@@ -1215,6 +1196,9 @@ fn fold_job_completion_lands_in_ground_truth_and_readback() {
 	assert_eq!(ledger.grounds().len(), 1);
 	assert_eq!(ledger.grounds()[0].0, 4);
 	assert!(ledger.grounds()[0].1.contains(body));
+	assert!(render_ground_truth(&ledger)
+		.text
+		.contains("Action #4 (output:4):\n$ cargo test"));
 
 	ledger.fold_job_completion(None, "cargo check", "status: exited with code 1");
 	assert_eq!(
@@ -1396,7 +1380,6 @@ fn a_follow_up_without_context_sources_names_them_unspecified() {
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],
-		first_verification: true,
 	});
 	assert!(
 		rendered.contains(r#"sources="unspecified""#),
@@ -1445,7 +1428,6 @@ mod verify_round_trip {
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: conditions,
-			first_verification: true,
 		}
 	}
 
@@ -1618,14 +1600,26 @@ mod verify_round_trip {
 		let _guard = ENV_LOCK.lock().await;
 		let url = spawn_stub(vec![
 			final_response(&format!(
-				r#"{CLEAN_SHAPES}<gap settles="run the suite">no test run demonstrates the fix</gap>"#
+				r#"{CLEAN_SHAPES}<gap sources="ground_truth" settles="the feature reports Ready">Requirement 'ship the feature' conflicts with 'feature smoke check: expected Ready, observed Pending'</gap>"#
 			)),
 			final_response(r#"<finding n="1" verdict="refuted">the ledger records the suite passing</finding>"#),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let (_tx, rx) = rx();
-		let verdict = verify(&gate_config(), input(&[], &[]), rx).await;
+		let truth = RenderedEvidence {
+			text: "feature smoke check: expected Ready, observed Pending".to_string(),
+			..Default::default()
+		};
+		let verdict = verify(
+			&gate_config(),
+			GateInput {
+				ground_truth: &truth,
+				..input(&[], &[])
+			},
+			rx,
+		)
+		.await;
 		std::env::remove_var("OLLAMA_API_URL");
 		assert_eq!(
 			verdict,
@@ -1639,25 +1633,37 @@ mod verify_round_trip {
 		let _guard = ENV_LOCK.lock().await;
 		let url = spawn_stub(vec![
 			final_response(&format!(
-				r#"{CLEAN_SHAPES}<gap settles="run the suite">no test run demonstrates the fix</gap>"#
+				r#"{CLEAN_SHAPES}<gap sources="ground_truth" settles="the feature reports Ready">Requirement 'ship the feature' conflicts with 'feature smoke check: expected Ready, observed Pending'</gap>"#
 			)),
 			final_response(r#"<finding n="1" verdict="stands">nothing in the input shows a run"#),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let (_tx, rx) = rx();
-		let verdict = verify(&gate_config(), input(&[], &[]), rx).await;
+		let truth = RenderedEvidence {
+			text: "feature smoke check: expected Ready, observed Pending".to_string(),
+			..Default::default()
+		};
+		let verdict = verify(
+			&gate_config(),
+			GateInput {
+				ground_truth: &truth,
+				..input(&[], &[])
+			},
+			rx,
+		)
+		.await;
 		std::env::remove_var("OLLAMA_API_URL");
 		assert_eq!(
 			verdict,
 			GateVerdict::Gaps(vec![
-				"no test run demonstrates the fix — clear it by: run the suite".to_string()
+				"Requirement 'ship the feature' conflicts with 'feature smoke check: expected Ready, observed Pending' — clear it by: the feature reports Ready".to_string()
 			])
 		);
 	}
 
 	#[tokio::test]
-	async fn an_unknown_condition_is_requested_once_then_reported_without_blocking() {
+	async fn an_unknown_condition_stays_unverified_on_every_pass() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
 			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">the log is not retained</condition><verdict>PASS</verdict>"#
@@ -1676,25 +1682,17 @@ mod verify_round_trip {
 		let (_tx, rx1) = rx();
 		let first = verify(&gate_config(), input(&[], &conditions), rx1).await;
 		let (_tx2, rx2) = rx();
-		let again = verify(
-			&gate_config(),
-			GateInput {
-				first_verification: false,
-				..input(&[], &conditions)
-			},
-			rx2,
-		)
-		.await;
+		let again = verify(&gate_config(), input(&[], &conditions), rx2).await;
 		std::env::remove_var("OLLAMA_API_URL");
 		assert!(
-			matches!(&first, GateVerdict::Gaps(gaps) if gaps.len() == 1 && gaps[0].starts_with("Condition 1 is not demonstrated")),
-			"the first pass asks the agent once for the observation: {first:?}"
+			matches!(first, GateVerdict::Indeterminate(_)),
+			"uncertainty never creates an evidence request: {first:?}"
 		);
-		assert_eq!(
-			again,
-			GateVerdict::Pass,
-			"after that, an unsettled condition is a limit of the input, never a defect in the work"
+		assert!(
+			matches!(again, GateVerdict::Indeterminate(_)),
+			"uncertainty never becomes verified merely on a later pass: {again:?}"
 		);
+		std::env::remove_var("OLLAMA_API_URL");
 	}
 }
 
@@ -1806,7 +1804,6 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: &[],
-			first_verification: true,
 		});
 		assert!(!rendered.contains("<recorded_actions>"));
 		if scope == FollowUp {
@@ -1820,355 +1817,210 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 	}
 }
 
-/// A matched condition counts only with a citation the runtime confirms; what
-/// the verifier could not settle goes back to the agent once per turn.
-mod evidence_requests {
+/// Runtime grounding is independent of the verifier's confidence and wire format.
+mod grounding {
 	use super::*;
-	use crate::supervisor::detect::SelfReport;
 
-	const CONDITIONS: [&str; 4] = [
-		"An active fallback enters and leaves when content disappears or returns",
-		"Fallback switches respect out-in ordering",
-		"Hydrated fallbacks keep their enter hooks",
-		"A fallback that switches its own root leaves before the new root enters",
-	];
+	const CONDITION: &str = "Keep leaving elements present until the leave callback completes";
+	const FAILURE: &str = "FAIL delayed removal: expected element present, received empty DOM";
 
-	fn conditions(count: usize) -> Vec<String> {
-		CONDITIONS[..count]
-			.iter()
-			.map(|condition| condition.to_string())
-			.collect()
-	}
-
-	/// #0 edits a file, #1 runs a suite that succeeds, #2 one that fails.
-	fn edited_ledger() -> EvidenceLedger {
-		let mut ledger = EvidenceLedger::default();
-		ledger.record(
-			"text_editor",
-			&serde_json::json!({ "path": "src/fallback.ts" }),
-			true,
-			false,
-			40,
-		);
-		ledger.record(
-			"shell",
-			&serde_json::json!({ "command": "pnpm test fallback" }),
-			false,
-			false,
-			900,
-		);
-		ledger.record(
-			"shell",
-			&serde_json::json!({ "command": "pnpm test hydration" }),
-			false,
-			true,
-			300,
-		);
-		ledger
-	}
-
-	fn ground_truth() -> RenderedEvidence {
-		RenderedEvidence {
-			text: "diff --git a/src/fallback.ts b/src/fallback.ts\n+  if (fallbackActive) leave(fallbackRoot)\n+  return h(Transition, { mode: 'out-in' })\n+  <Transition mode=\"out-in\">\n".into(),
-			..Default::default()
-		}
-	}
-
-	fn input<'a>(
-		ledger: &'a EvidenceLedger,
-		ground_truth: &'a RenderedEvidence,
-		conditions: &'a [String],
-	) -> GateInput<'a> {
+	fn input<'a>(ledger: &'a EvidenceLedger, grounds: &'a [(u64, String)], conditions: &'a [String]) -> GateInput<'a> {
 		GateInput {
 			ledger,
-			original_task: "make slot fallbacks transition",
-			task: "make slot fallbacks transition",
+			original_task: CONDITION,
+			task: CONDITION,
 			task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
 			context_sources: &[],
 			resolution_evidence: &[],
-			result: "Fallbacks now transition; all 96 parity tests passed.",
+			result: "Implemented delayed removal; the transition checks passed.",
 			claim: None,
-			stop: Some(SelfReport::Done),
+			stop: Some(crate::supervisor::detect::SelfReport::Done),
 			actions: "",
 			historical_actions: "",
-			grounds: &[],
+			grounds,
 			plan: "",
-			ground_truth,
+			ground_truth: &EMPTY_EVIDENCE,
 			prior_gaps: &[],
 			role_context: "",
 			evidence_conditions: conditions,
-			first_verification: true,
 		}
 	}
 
-	fn report(conditions: &str) -> VerifierReport {
-		text_report(&format!("{conditions}\n{CLEAN_SHAPES}\n<verdict>PASS</verdict>"))
+	fn report(status: &str, basis: Option<&str>, observation: &str, sources: Option<&str>) -> VerifierReport {
+		json_report(&serde_json::json!({
+			"conditions": [{"n": 1, "status": status, "basis": basis, "observation": observation, "sources": sources}],
+			"shapes": clean_json_shapes(), "gaps": [], "verdict": "PASS", "readback": []
+		}))
 	}
 
-	fn requested(verdict: &GateVerdict) -> Vec<usize> {
-		let GateVerdict::Gaps(gaps) = verdict else {
-			return Vec::new();
-		};
-		gaps.iter()
-			.filter_map(|gap| gap.strip_prefix("Condition "))
-			.filter_map(|rest| rest.split(' ').next()?.parse().ok())
-			.collect()
-	}
-
-	#[test]
-	fn a_matched_condition_counts_only_with_an_excerpt_the_runtime_finds() {
-		let report = report(
-			r#"<condition n="1" status="matched">The implementation ensures fallbacks transition correctly.</condition>
-<condition n="2" status="matched" sources="output:1">the fallback suite ran green</condition>
-<condition n="3" status="matched" sources="output:2">the run shows "hydrated fallback keeps enter hooks"</condition>
-<condition n="4" status="matched" sources="output:1">the run shows "fallback switches respect out-in ordering"</condition>"#,
-		);
-		assert_eq!(
-			report.verdict(4, &HashSet::new()),
-			GateVerdict::Pass,
-			"the verifier's own ruling is a pass"
-		);
-		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(4));
-		let grounds = vec![
-			(1, "✓ fallback switches respect out-in ordering 3ms".to_string()),
-			(
-				2,
-				"✓ hydrated fallback keeps enter hooks 2ms\n× hydrated fallback appear 5ms".to_string(),
-			),
-		];
-		let verdict = with_evidence_requests(
-			GateVerdict::Pass,
-			&report,
-			&GateInput {
-				grounds: &grounds,
-				..input(&ledger, &truth, &conditions)
-			},
+	fn rule(report: &VerifierReport, input: &GateInput<'_>) -> GateVerdict {
+		grounded_verdict(
+			report.verdict(input.evidence_conditions.len(), &HashSet::new()),
+			report,
+			input,
 			&mut Vec::new(),
-		);
-		assert_eq!(
-			requested(&verdict),
-			vec![1, 2, 3],
-			"a restatement, a bare green action, and a quote from a failed run cite nothing; an excerpt of a successful output does"
-		);
-		let GateVerdict::Gaps(gaps) = verdict else {
-			unreachable!()
-		};
-		assert!(
-			gaps[2].contains(CONDITIONS[2]),
-			"the request names the condition: {}",
-			gaps[2]
-		);
+		)
 	}
 
 	#[test]
-	fn a_quote_cites_only_runtime_text_long_enough_to_locate_something() {
-		let report = report(
-			r#"<condition n="1" status="matched">the diff adds "if (fallbackActive) enter(fallbackRoot)"</condition>
-<condition n="2" status="matched">the diff calls "leave("</condition>
-<condition n="3" status="matched">the template renders `&lt;Transition mode="out-in"&gt;`</condition>"#,
-		);
-		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(3));
-		let verdict = with_evidence_requests(
-			GateVerdict::Pass,
-			&report,
-			&input(&ledger, &truth, &conditions),
-			&mut Vec::new(),
-		);
-		assert_eq!(
-			requested(&verdict),
-			vec![1, 2],
-			"an invented excerpt and a too-short one cite nothing; an escaped copy of the diff does"
-		);
-	}
-
-	#[test]
-	fn the_answer_is_citable_only_when_no_call_changed_state() {
-		let report =
-			report(r#"<condition n="1" status="matched">the answer states "all 96 parity tests passed"</condition>"#);
-		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
-		let edited = edited_ledger();
-		assert_eq!(
-			requested(&with_evidence_requests(
-				GateVerdict::Pass,
-				&report,
-				&input(&edited, &truth, &conditions),
-				&mut Vec::new()
-			)),
-			vec![1],
-			"after a change the answer is narrative, not evidence"
-		);
-		let mut shell_edit = EvidenceLedger::default();
-		shell_edit.record(
-			"shell",
-			&serde_json::json!({ "command": "sed -i s/enter/leave/ src/fallback.ts" }),
-			true,
-			false,
-			0,
-		);
-		assert!(
-			shell_edit.mutated_paths().is_empty(),
-			"a shell edit names no path parameter"
-		);
-		assert_eq!(
-			requested(&with_evidence_requests(
-				GateVerdict::Pass,
-				&report,
-				&input(&shell_edit, &truth, &conditions),
-				&mut Vec::new()
-			)),
-			vec![1],
-			"a state change through the shell makes the answer narrative too"
-		);
-		let mut read_only = EvidenceLedger::default();
-		read_only.record(
-			"view",
-			&serde_json::json!({ "path": "src/fallback.ts" }),
-			false,
-			false,
-			900,
-		);
-		assert_eq!(
-			with_evidence_requests(
-				GateVerdict::Pass,
-				&report,
-				&input(&read_only, &truth, &conditions),
-				&mut Vec::new()
-			),
-			GateVerdict::Pass,
-			"with nothing changed the answer is the deliverable"
-		);
-	}
-
-	#[test]
-	fn an_output_outliving_its_failed_ledger_line_cites_nothing() {
-		let mut ledger = EvidenceLedger::default();
-		let failed = ledger.record(
-			"shell",
-			&serde_json::json!({ "command": "pnpm test" }),
-			false,
-			true,
-			300,
-		);
-		for i in 0..LEDGER_CAP {
-			ledger.record(
-				"view",
-				&serde_json::json!({ "path": format!("src/{i}.ts") }),
-				false,
-				false,
-				1,
-			);
-		}
-		assert!(
-			ledger.entries.iter().all(|entry| entry.last_sequence != failed),
-			"the failed call's ledger line was dropped"
-		);
-		let grounds = vec![(failed, "Tests: 1 failed, 95 passed".to_string())];
-		let report = report(
-			r#"<condition n="1" status="matched" sources="output:0">the suite printed "Tests: 1 failed, 95 passed"</condition>"#,
-		);
-		let (truth, conditions) = (RenderedEvidence::default(), conditions(1));
-		assert_eq!(
-			requested(&with_evidence_requests(
-				GateVerdict::Pass,
-				&report,
-				&GateInput {
-					grounds: &grounds,
-					..input(&ledger, &truth, &conditions)
-				},
-				&mut Vec::new()
-			)),
-			vec![1],
-			"a retained output carries no outcome once its ledger line is gone"
-		);
-	}
-
-	#[test]
-	fn unsettled_conditions_are_requested_once_and_never_on_a_hand_back() {
-		let report = report(
-			r#"<condition n="1" status="matched">fallbacks are handled</condition>
-<condition n="2" status="unknown">the hydration run's output is not retained</condition>"#,
-		);
-		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(2));
-		let unknown = "condition 2 unsettled: the hydration run's output is not retained".to_string();
-
-		let mut reported = report.reported_findings(&HashSet::new());
-		assert_eq!(reported, vec![unknown.clone()]);
-		let verdict = with_evidence_requests(
-			GateVerdict::Pass,
-			&report,
-			&input(&ledger, &truth, &conditions),
-			&mut reported,
-		);
-		assert_eq!(requested(&verdict), vec![1, 2], "the first pass asks for both");
-		assert!(
-			reported.is_empty(),
-			"a charged unknown is no longer an unactioned finding"
-		);
-
-		let mut reported = report.reported_findings(&HashSet::new());
-		let verdict = with_evidence_requests(
-			GateVerdict::Pass,
-			&report,
-			&GateInput {
-				first_verification: false,
-				..input(&ledger, &truth, &conditions)
-			},
-			&mut reported,
-		);
-		assert_eq!(verdict, GateVerdict::Pass, "a re-verify only reports them");
-		assert_eq!(
-			reported,
-			vec![
-				unknown,
-				"condition 1 matched without a citable observation: fallbacks are handled".to_string()
-			]
-		);
-
-		for stop in [SelfReport::Blocked, SelfReport::NeedInput] {
+	fn strict_json_uncertainty_and_uncited_success_never_become_gaps() {
+		let conditions = vec![CONDITION.to_string()];
+		for (status, observation) in [
+			("unknown", "The detailed suite output is not visible"),
+			("matched", "The implementation should handle delayed removal"),
+		] {
+			let report = report(status, None, observation, None);
+			let verdict = rule(&report, &input(&EMPTY_LEDGER, &[], &conditions));
+			assert!(!matches!(verdict, GateVerdict::Gaps(_)), "{verdict:?}");
 			assert_eq!(
-				with_evidence_requests(
-					GateVerdict::Pass,
-					&report,
-					&GateInput {
-						stop: Some(stop),
-						..input(&ledger, &truth, &conditions)
-					},
-					&mut Vec::new()
-				),
-				GateVerdict::Pass,
-				"a condition waiting on the user is not the agent's to demonstrate"
+				report
+					.unsettled_conditions(&CitationEvidence::from_input(&input(&EMPTY_LEDGER, &[], &conditions)))
+					.len(),
+				1
 			);
 		}
 	}
 
 	#[test]
-	fn void_conditions_need_no_citation_and_requests_join_standing_gaps() {
-		let report = report(
-			r#"<condition n="1" status="matched">void: contradicts request</condition>
-<condition n="2" status="matched">fallbacks are handled</condition>"#,
+	fn strict_json_blocks_a_recorded_failure_but_not_an_invented_or_missing_citation() {
+		let mut ledger = EvidenceLedger::default();
+		let seq = ledger.record(
+			"shell",
+			&serde_json::json!({"command":"pnpm test transitions"}),
+			false,
+			true,
+			FAILURE.len(),
 		);
-		let (ledger, truth, conditions) = (edited_ledger(), ground_truth(), conditions(2));
-		let verdict = with_evidence_requests(
-			GateVerdict::Gaps(vec!["standing gap".to_string()]),
-			&report,
-			&input(&ledger, &truth, &conditions),
-			&mut Vec::new(),
+		let grounds = vec![(seq, FAILURE.to_string())];
+		let conditions = vec![CONDITION.to_string()];
+		let input = input(&ledger, &grounds, &conditions);
+		let observed = format!("The run printed '{FAILURE}'");
+		let report = report("unmatched", Some("recorded_output"), &observed, Some("output:0"));
+		assert!(matches!(rule(&report, &input), GateVerdict::Gaps(_)));
+		for (quote, source) in [
+			(observed.as_str(), "output:99"),
+			("'FAIL fabricated assertion never recorded'", "output:0"),
+			(observed.as_str(), "omitted:0"),
+		] {
+			let report = super::grounding::report("unmatched", Some("recorded_output"), quote, Some(source));
+			assert!(
+				matches!(rule(&report, &input), GateVerdict::Indeterminate(_)),
+				"{source}"
+			);
+		}
+	}
+
+	#[test]
+	fn superseded_failures_and_pre_edit_reproductions_do_not_describe_the_final_state() {
+		let conditions = vec![CONDITION.to_string()];
+		for changed in [false, true] {
+			let mut ledger = EvidenceLedger::default();
+			let command = serde_json::json!({"command":"pnpm test transitions"});
+			ledger.record("shell", &command, false, true, FAILURE.len());
+			if changed {
+				ledger.record(
+					"text_editor",
+					&serde_json::json!({"path":"transition.ts"}),
+					true,
+					false,
+					20,
+				);
+			} else {
+				ledger.record("shell", &command, false, false, 20);
+			}
+			let grounds = vec![(0, FAILURE.to_string())];
+			let report = report(
+				"unmatched",
+				Some("recorded_output"),
+				&format!("'{FAILURE}'"),
+				Some("output:0"),
+			);
+			assert!(matches!(
+				rule(&report, &input(&ledger, &grounds, &conditions)),
+				GateVerdict::Indeterminate(_)
+			));
+		}
+	}
+
+	#[test]
+	fn an_absent_action_or_inference_is_not_a_recorded_violation() {
+		let conditions = vec![CONDITION.to_string()];
+		for basis in ["absent_action", "inference"] {
+			let report = report(
+				"unmatched",
+				Some(basis),
+				"No separate hydration check was recorded",
+				Some("absent_action"),
+			);
+			assert!(!matches!(
+				rule(&report, &input(&EMPTY_LEDGER, &[], &conditions)),
+				GateVerdict::Gaps(_)
+			));
+		}
+	}
+
+	#[test]
+	fn gap_and_shape_findings_need_both_a_request_and_a_recorded_observation() {
+		let mut ledger = EvidenceLedger::default();
+		ledger.record(
+			"shell",
+			&serde_json::json!({"command":"pnpm test transitions"}),
+			false,
+			true,
+			FAILURE.len(),
 		);
-		let GateVerdict::Gaps(gaps) = &verdict else {
-			panic!("expected gaps, got {verdict:?}")
-		};
-		assert_eq!(gaps[0], "standing gap");
-		assert_eq!(requested(&verdict), vec![2]);
-		let unreadable = GateVerdict::Indeterminate("missing verdict markers".to_string());
-		assert_eq!(
-			with_evidence_requests(
-				unreadable.clone(),
-				&report,
-				&input(&ledger, &truth, &conditions),
-				&mut Vec::new()
-			),
-			unreadable
+		let grounds = vec![(0, FAILURE.to_string())];
+		for shape in [false, true] {
+			for requested in [false, true] {
+				let requirement = if requested {
+					CONDITION
+				} else {
+					"Also implement animations for unrelated widgets"
+				};
+				let text = format!("Requirement '{requirement}' conflicts with '{FAILURE}'");
+				let mut value = serde_json::json!({"conditions":[], "shapes":clean_json_shapes(), "gaps":[], "verdict":"GAPS", "readback":[]});
+				if shape {
+					value["shapes"][0] = serde_json::json!({"name":"circular","found":"yes","reason":text,"sources":"output:0","settles":"Keep the leaving element until its callback"});
+				} else {
+					value["gaps"] = serde_json::json!([{"gap":text,"sources":"output:0","settles":"Keep the leaving element until its callback"}]);
+				}
+				assert_eq!(
+					matches!(
+						rule(&json_report(&value), &input(&ledger, &grounds, &[])),
+						GateVerdict::Gaps(_)
+					),
+					requested
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn matched_citations_still_require_actual_successful_evidence() {
+		let mut ledger = EvidenceLedger::default();
+		ledger.record(
+			"shell",
+			&serde_json::json!({"command":"pnpm test transitions"}),
+			false,
+			false,
+			50,
 		);
+		let grounds = vec![(0, "PASS delayed removal waits for the leave callback".to_string())];
+		let conditions = vec![CONDITION.to_string()];
+		let input = input(&ledger, &grounds, &conditions);
+		let evidence = CitationEvidence::from_input(&input);
+		for (quote, unsettled) in [
+			("'delayed removal waits for the leave callback'", 0),
+			("'PASS'", 1),
+			("'delayed removal already ran but was not recorded'", 1),
+		] {
+			assert_eq!(
+				report("matched", None, quote, Some("output:0"))
+					.unsettled_conditions(&evidence)
+					.len(),
+				unsettled
+			);
+		}
 	}
 
 	#[test]
@@ -2178,9 +2030,5 @@ mod evidence_requests {
 			vec!["keeps the leaving root"]
 		);
 		assert_eq!(quoted_spans("`a()` then “b c” and \"d\""), vec!["a()", "d", "b c"]);
-		assert_eq!(
-			quoted_spans("the answer says ‘customer’s invoice was saved’ twice"),
-			vec!["customer’s invoice was saved"]
-		);
 	}
 }

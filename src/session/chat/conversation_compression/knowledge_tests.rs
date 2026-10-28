@@ -184,9 +184,7 @@ fn select_findings_with_vectors_falls_back_to_newest_on_length_mismatch() {
 #[test]
 #[serial_test::serial]
 fn fold_critical_knowledge_dedupes_and_trims_to_the_retention_limit() {
-	let _env = crate::session::chat::test_support::EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
-	let data_dir = tempfile::tempdir().expect("temp data dir");
-	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 
 	let mut config = crate::session::chat::test_support::fake_provider_config();
 	config.compression.knowledge_retention = 2;

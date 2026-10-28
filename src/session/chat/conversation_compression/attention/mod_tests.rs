@@ -1834,7 +1834,7 @@ fn write_degraded_telemetry_records_fallback_without_archive() {
 	let summary = CompressionSummary::default();
 	pact.write_degraded_telemetry(
 		"degraded-unit",
-		"c:degraded-check",
+		"degraded-check",
 		&report,
 		&summary,
 		42,
@@ -1845,7 +1845,7 @@ fn write_degraded_telemetry_records_fallback_without_archive() {
 		.expect("sessions dir")
 		.join("archive")
 		.join("degraded-unit")
-		.join("c:degraded-check.pact.json");
+		.join("degraded-check.pact.json");
 	let body = std::fs::read_to_string(&path).expect("telemetry file");
 	assert!(body.contains("\"fallback_reason\": \"archive unavailable\""));
 	let _ = std::fs::remove_file(&path);

@@ -1984,7 +1984,16 @@ mod grounding {
 					&gate_input,
 					&mut reported,
 				);
-				assert!(matches!(verdict, GateVerdict::Indeterminate(_)), "{verdict:?}");
+				// Finding details have one reporting path; the completion notice must not repeat them.
+				assert!(
+					matches!(&verdict, GateVerdict::Indeterminate(reason) if !reason.contains(REQUEST)),
+					"{verdict:?}"
+				);
+				assert_eq!(
+					reported.iter().filter(|finding| finding.contains(REQUEST)).count(),
+					1,
+					"the user's request remains in the reported finding exactly once"
+				);
 				assert!(reported
 					.iter()
 					.any(|finding| finding.starts_with("unconfirmed finding:")));

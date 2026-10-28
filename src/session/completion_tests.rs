@@ -27,9 +27,9 @@ fn structured_output_supported_for_modern_anthropic() {
 }
 
 #[test]
-fn structured_output_unsupported_for_legacy_anthropic() {
-	let err = ensure_structured_output_support("anthropic:claude-sonnet-4-0")
-		.expect_err("legacy model without structured output must be rejected")
+fn structured_output_unsupported_for_minimax() {
+	let err = ensure_structured_output_support("minimax:MiniMax-M3")
+		.expect_err("model without structured output must be rejected")
 		.to_string();
 	assert!(
 		err.contains("does not support structured output"),

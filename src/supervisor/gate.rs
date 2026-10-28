@@ -45,7 +45,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <agent_stop status="done|blocked|need_input|exploring|progressing|none"> — runtime-recorded: the status the agent ended its turn on (none when it gave none). It tells you WHAT to verify (see WHY THE AGENT STOPPED), never that the work is done or that a blocker is real.
 - <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
 - <historical_actions trust="untrusted"> — optional, for resolved follow-ups only; bounded prior-turn calls with their earlier requests. These are historical observations, NOT actions performed this turn. Their #N outputs are available through the same readback round. Use only evidence relevant to the resolved referent; unrelated historical actions neither satisfy nor violate this turn's requirements. Earlier successful checks cannot verify subsequent changes or satisfy a request to run a fresh check.
-- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
+- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs (cite each by its output:N, never as ground_truth), and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 - <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative.
 </input_format>
@@ -142,13 +142,15 @@ actually received, whatever the source. Reason first, then decide.
 Authority among evidence, highest first: <ground_truth>, then <readback_evidence> and
 <recorded_actions>, then the result text. Concretely:
 - A claim of work the agent performed (created, edited, ran, posted, sent, fixed…) is evidenced
-  only by a matching successful recorded action; narrative with no matching action is a gap.
+  only by a matching successful recorded action; narrative with no matching action is
+  unevidenced, and a gap only as an absent_action (see GAPS).
 - A claim of verification ("tests pass", "checked X") needs a matching successful recorded
   action; an ERROR outcome on the decisive check is a gap. A "tests pass" claim is judged
   against the recorded command output, not the narrative or the detector's classification.
   Ask for retained output when it would settle the claim; a heuristic that did not recognize
   verification cannot override successful recorded evidence.
-- A claimed change absent from the diff is a gap; a file reported written but MISSING is a gap.
+- A file reported written but shown MISSING is a gap. A claimed change you cannot find in the
+  diff is unknown: hunks may be cut to fit.
 - The log shows calls, arguments, and outcomes — never outputs. A successful [read] whose
   content you cannot see is still evidence the agent inspected that artifact; the invisible
   content is not a gap. When what a call RETURNED would settle a question, ask for it by its
@@ -173,8 +175,8 @@ correctness claim about an enumerated item is a verification claim, and inspecti
 ("read it, looks right") does not verify behavior. A single global green check counts for an
 item only if its recorded evidence shows that item exercised; where the domain defines the
 enumerated set in one authoritative place, evidence covering the set from that source outranks
-hand-picked instances. An enumerated item with no exercising evidence is a gap — name the item
-and the check it lacks. This bar applies only to items the request explicitly enumerates,
+hand-picked instances. An enumerated item with no exercising evidence is unknown, not a gap —
+name the item and the check it lacks. This bar applies only to items the request explicitly enumerates,
 never to surfaces you infer.
 
 {condition_checklist}THE FOUR EVIDENCE SHAPES
@@ -226,7 +228,9 @@ GAPS
 Flag a gap only when current recorded evidence shows a violation of a specific requirement.
 For every gap and yes shape, quote the requirement from the request and the contradicting
 output or artifact, each verbatim in quotation marks and at least 12 characters, name its
-source, and name the observation that would close it (its settles).
+source, and name the observation that would close it (its settles). An action the user
+explicitly requested that never ran has no output to quote: quote the user's words that
+request it and cite absent_action.
 Missing support for a claim is unknown, not evidence that the claim is false. This
 is one rule for every finding you raise: name what would close it, or do not raise it. A
 finding no available action can close gives the agent nothing to repair; the runtime reports
@@ -288,9 +292,9 @@ const GATE_TEXT_FORMAT: &str = r#"
 <output_encoding format="tags">
 Write the parts of <response_format> as tag lines, one per line, with no other text:
 - readback request: <readback seq="N">what its output would settle</readback>
-{condition_encoding}- shape: <shape name="circular|context-stripped|acceptance-only|unenumerated-category" found="yes|no|unknown" settles="the observation that would clear it">one-line reason</shape> — the settles attribute only on a yes.
+{condition_encoding}- shape: <shape name="circular|context-stripped|acceptance-only|unenumerated-category" found="yes|no|unknown" settles="the observation that would clear it" sources="output:N">one-line reason</shape> — the settles and sources attributes only on a yes.
 - verdict PASS: <verdict>PASS</verdict>
-- gaps, in place of the PASS line: <gap settles="the observation that would close it">specific observed violation</gap>, one line per gap.
+- gaps, in place of the PASS line: <gap settles="the observation that would close it" sources="output:N">specific observed violation</gap>, one line per gap.
 </output_encoding>"#;
 
 /// Output-encoding appendix for the JSON wire mode. Every judging rule above still
@@ -318,15 +322,16 @@ Every condition gets exactly one of three statuses:
   excerpt it finds counts as unknown — naming a green action alone does not show what its
   output exercised.
 - unmatched — ONLY on an observation of the violation. Quote its decisive excerpt verbatim
-  and cite output:N or ground_truth in sources; otherwise use unknown. Name its basis:
+  and cite output:N or ground_truth in sources (absent_action instead quotes the request and
+  cites absent_action); otherwise use unknown. Name its basis:
   · recorded_output — a recorded action's output shows the condition failing: a failing check,
     an ERROR outcome on the decisive call.
   · ground_truth — a current diff or artifact shows it directly: a forbidden change is
     present, or a required file is MISSING. For command output use recorded_output and its
     output:N reference, including when that output is shown in ground truth.
-  · absent_action — the condition is an action the user explicitly requested in
-    <current_user_turn>, and the log shows no such call and no "(+N earlier actions dropped)"
-    marker: a violation. Any other missing action is a verification limit; use unknown.
+  · absent_action — <current_user_turn> explicitly requests the action (quote those words) and
+    no recorded call this turn performed it. The runtime confirms this only when no recorded
+    call could have acted; any other missing action is a verification limit: use unknown.
   · inference — your own reading of the code: a defect you infer from source, a rewrite you
     would prefer, or behavior you predict without a recorded output showing it. That is a
     suspicion, not an observation: the runtime reports it to the user and does not block
@@ -456,6 +461,10 @@ struct LedgerEntry {
 	bytes: usize,
 	#[serde(default)]
 	repeats: usize,
+	/// The tool declared itself read-only, so this call cannot have performed a
+	/// requested action. False for entries restored from older sessions.
+	#[serde(default)]
+	read_only: bool,
 }
 
 /// Older sessions and detached jobs may have no addressable call sequence.
@@ -738,6 +747,7 @@ impl EvidenceLedger {
 			error,
 			bytes,
 			repeats: 1,
+			read_only: crate::supervisor::detect::is_declared_read_only(tool),
 		});
 		if self.entries.len() > LEDGER_CAP {
 			self.entries.pop_front();
@@ -1493,7 +1503,7 @@ const OUTPUT_VISIBILITY_PROMPT: &str = r#"
 For every accusation, attach sources listing ALL its evidence bases:
 output:N for an observed output (command output too) or ERROR outcome, omitted:N for an unseen
 portion of recorded action #N, ground_truth for the diff or file content in supplied ground truth,
-absent_action for an explicitly requested action not run.
+absent_action for an action <current_user_turn> explicitly requests that no recorded call performed.
 Use comma-separated references in a sources attribute (tags) or sources string field (JSON).
 These references apply to gaps, yes shapes,
 and unmatched checklist entries; a matched checklist entry names the output:N its quoted
@@ -2730,8 +2740,10 @@ impl VerifierReport {
 	}
 }
 
-/// A model's accusation is actionable only when its cited observation exists in
-/// the current evidence. Missing or stale evidence never sends the agent back.
+/// A model's accusation is actionable only when the runtime can confirm it: its
+/// cited observation exists in the current evidence, or the user's own words ask
+/// for an action no recorded call could have performed. Missing or stale
+/// evidence never sends the agent back.
 fn grounded_verdict(
 	verdict: GateVerdict,
 	report: &VerifierReport,
@@ -2741,32 +2753,64 @@ fn grounded_verdict(
 	let GateVerdict::Gaps(gaps) = verdict else {
 		return verdict;
 	};
-	let requirement = |text: &str| {
+	let quotes_any = |text: &str, sources: &[&str]| {
 		quoted_spans(text).iter().any(|quote| {
 			let quote = collapse_whitespace(&unescape_xml(quote));
 			quote.chars().count() >= CITATION_QUOTE_MIN_CHARS
-				&& [input.original_task, input.task, input.role_context]
+				&& sources
 					.iter()
-					.any(|request| collapse_whitespace(request).contains(&quote))
+					.any(|source| collapse_whitespace(source).contains(&quote))
 		})
 	};
+	// `input.task` is the resolver's rewrite, not the user's words, so it cannot
+	// state a requirement; a follow-up's source-verified excerpts can.
+	let mut requests = vec![input.original_task, input.role_context];
+	requests.extend(
+		input
+			.resolution_evidence
+			.iter()
+			.map(|evidence| evidence.excerpt.as_str()),
+	);
+	let requirement = |text: &str| quotes_any(text, requests.as_slice());
+	// Absence has no excerpt to quote, so it is proven only in a closed world: the
+	// current turn's own words ask for the action, the log holds every call of the
+	// turn, and none of those calls could have acted. A hand-back has already told
+	// the user why the action is missing.
+	let closed_world = input.ledger.dropped == 0
+		&& !matches!(
+			input.stop,
+			Some(crate::supervisor::detect::SelfReport::Blocked | crate::supervisor::detect::SelfReport::NeedInput)
+		) && input.ledger.entries.iter().all(|entry| entry.read_only);
+	let absence_proven = |text: &str| closed_world && quotes_any(text, &[input.original_task]);
+	let absence = format!(
+		"no recorded call this turn could have performed it ({} logged, all declared read-only)",
+		input.ledger.entries.len()
+	);
 	let mut grounded = HashMap::new();
 	for condition in &report.conditions {
-		if condition.status == "unmatched"
-			&& matches!(condition.basis.as_str(), "recorded_output" | "ground_truth")
-			&& CitationEvidence::observes(input, &condition.sources, &condition.observation)
-		{
-			if let Some(n) = condition.index {
-				grounded.insert(
-					format!("Unmatched condition {n}: {}", condition.observation),
-					format!(
-						"Requirement: {}. Observation: {}",
-						input.evidence_conditions[n - 1],
-						condition.observation
-					),
-				);
-			}
+		let Some(n) = condition.index else {
+			continue;
+		};
+		if condition.status != "unmatched" {
+			continue;
 		}
+		let observation = match condition.basis.as_str() {
+			"recorded_output" | "ground_truth"
+				if CitationEvidence::observes(input, &condition.sources, &condition.observation) =>
+			{
+				condition.observation.as_str()
+			}
+			"absent_action" if absence_proven(&condition.observation) => absence.as_str(),
+			_ => continue,
+		};
+		grounded.insert(
+			format!("Unmatched condition {n}: {}", condition.observation),
+			format!(
+				"Requirement: {}. Observation: {}",
+				input.evidence_conditions[n - 1],
+				observation
+			),
+		);
 	}
 	for shape in &report.shapes {
 		if shape.found == "yes"
@@ -2780,10 +2824,18 @@ fn grounded_verdict(
 		}
 	}
 	for finding in &report.gaps {
+		let Some(gap) = charged(&finding.settles, &finding.text) else {
+			continue;
+		};
 		if requirement(&finding.text) && CitationEvidence::observes(input, &finding.sources, &finding.text) {
-			if let Some(finding) = charged(&finding.settles, &finding.text) {
-				grounded.insert(finding.clone(), finding);
-			}
+			grounded.insert(gap.clone(), gap);
+		} else if finding
+			.sources
+			.split(',')
+			.any(|source| source.trim() == "absent_action")
+			&& absence_proven(&finding.text)
+		{
+			grounded.insert(gap.clone(), format!("{gap} ({absence})"));
 		}
 	}
 	let retained: Vec<String> = gaps

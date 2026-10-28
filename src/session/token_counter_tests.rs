@@ -200,6 +200,7 @@ fn message_tokens_count_thinking() {
 fn tool(name: &str) -> crate::mcp::McpFunction {
 	crate::mcp::McpFunction {
 		name: name.to_string(),
+		annotations: None,
 		description: format!("Description for {name}"),
 		parameters: serde_json::json!({"type": "object", "properties": {}}),
 	}

@@ -811,6 +811,7 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 pub fn get_skill_function() -> McpFunction {
 	McpFunction {
 		name: "skill".to_string(),
+		annotations: None,
 		description: r#"Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 
 Actions:

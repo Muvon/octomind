@@ -133,6 +133,7 @@ pub fn has_running_monitors() -> bool {
 pub fn get_monitor_function() -> McpFunction {
 	McpFunction {
 		name: "monitor".to_string(),
+		annotations: None,
 		description: r#"Run and manage a long-lived inline shell command that watches an external source and writes new events to stdout. The runtime starts the command once, accumulates stdout, and injects bounded batches into this session at a guarded interval, so the AI reacts to new events without active polling or a recurring schedule.
 
 Actions:

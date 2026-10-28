@@ -260,6 +260,7 @@ fn evict_lru_if_full(config: &Config) {
 pub fn get_capability_function() -> McpFunction {
 	McpFunction {
 		name: "capability".to_string(),
+		annotations: None,
 		description: r#"Discover and activate capabilities mid-session. Capabilities are domain bundles (e.g., database-postgres, filesystem, kubernetes) that resolve to MCP servers and tools. Use when the agent needs functionality outside its starting kit.
 
 Actions:

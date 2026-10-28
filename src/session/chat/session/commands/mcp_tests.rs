@@ -350,6 +350,7 @@ async fn test_dynamic_servers_appear_in_info_and_full() {
 			"cov-dyn-server",
 			vec![crate::mcp::McpFunction {
 				name: "cov_dyn_tool".to_string(),
+				annotations: None,
 				description: "Coverage dynamic tool".to_string(),
 				parameters: serde_json::json!({"type": "object"}),
 			}],

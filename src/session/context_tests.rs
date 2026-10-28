@@ -27,6 +27,7 @@ fn unique(label: &str) -> SessionId {
 fn func(name: &str) -> crate::mcp::McpFunction {
 	crate::mcp::McpFunction {
 		name: name.to_string(),
+		annotations: None,
 		description: "test function".to_string(),
 		parameters: serde_json::json!({}),
 	}

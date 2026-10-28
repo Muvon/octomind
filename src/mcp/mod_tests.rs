@@ -64,6 +64,7 @@ fn tool_call(name: &str, params: serde_json::Value) -> McpToolCall {
 fn fn_def(name: &str) -> McpFunction {
 	McpFunction {
 		name: name.to_string(),
+		annotations: None,
 		description: format!("description for {name}"),
 		parameters: json!({"type": "object"}),
 	}
@@ -223,6 +224,32 @@ async fn available_functions_cover_each_builtin_server_arm() {
 	let names = names_of(&get_available_functions(&agent_cfg).await);
 	assert!(names.contains(&"agent_probe_agent".to_string()), "agent: {names:?}");
 
+	clear_function_cache();
+}
+
+#[serial]
+#[tokio::test]
+async fn builtin_annotations_drive_mutation_classification() {
+	clear_function_cache();
+	let is_mutation = crate::supervisor::detect::is_mutation_call;
+	let mut agent_cfg = config_with_servers(vec![
+		McpServerConfig::builtin("orchestration", 30, vec![]),
+		McpServerConfig::builtin("agent", 30, vec![]),
+	]);
+	agent_cfg.agents.push(crate::config::agents::AgentConfig {
+		name: "annotated_agent".to_string(),
+		description: "probe agent".to_string(),
+		command: "echo".to_string(),
+		workdir: ".".to_string(),
+	});
+	get_available_functions(&agent_cfg).await;
+	get_available_functions(&core_server_config()).await;
+	// A delegate may write whatever its action word says.
+	assert!(is_mutation("tap", &json!({"action": "run"})));
+	assert!(is_mutation("agent_annotated_agent", &json!({"task": "summarize"})));
+	assert!(!is_mutation("recall", &json!({"ids": ["b1"]})));
+	// Multi-action control tools stay unannotated: the action decides.
+	assert!(!is_mutation("monitor", &json!({"action": "list"})));
 	clear_function_cache();
 }
 

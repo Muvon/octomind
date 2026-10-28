@@ -58,6 +58,9 @@ const MAX_LOADED_SESSIONS: usize = 128;
 const MAX_CONNECTIONS: usize = 64;
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const WRITER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A client silent for a whole interval after a ping is dropped, so half-open
+/// connections cannot hold `MAX_CONNECTIONS` slots forever.
+const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Configs committed by a `/role` switch or restored from the session log on
 /// load, keyed by session id. A tap role's servers exist only in the config its
@@ -351,7 +354,54 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 	a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-type WsReader = SplitStream<WebSocketStream<TcpStream>>;
+/// Read half of a connection. Pings the client every interval and ends the
+/// stream once a whole interval passes without any frame from it (a pong
+/// counts), so dead peers release their connection slot.
+struct WsReader {
+	frames: SplitStream<WebSocketStream<TcpStream>>,
+	heartbeat: tokio::time::Interval,
+	heard: bool,
+	peer_addr: SocketAddr,
+}
+
+impl WsReader {
+	fn new(
+		frames: SplitStream<WebSocketStream<TcpStream>>,
+		peer_addr: SocketAddr,
+		interval: std::time::Duration,
+	) -> Self {
+		let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+		heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+		Self {
+			frames,
+			heartbeat,
+			heard: true,
+			peer_addr,
+		}
+	}
+
+	/// Cancel-safe: both awaited futures are, and state changes are synchronous.
+	async fn next(&mut self, ws_sender: &WsSender) -> Option<Result<Message, tokio_tungstenite::tungstenite::Error>> {
+		loop {
+			tokio::select! {
+				frame = self.frames.next() => {
+					self.heard = true;
+					return frame;
+				}
+				_ = self.heartbeat.tick() => {
+					if !std::mem::replace(&mut self.heard, false) {
+						log_info!("Client {} missed its heartbeat, closing", self.peer_addr);
+						return None;
+					}
+					if let Err(error) = ws_sender.send(Message::Ping(Default::default())) {
+						log_debug!("Failed to ping {}: {}", self.peer_addr, error);
+						return None;
+					}
+				}
+			}
+		}
+	}
+}
 
 /// Client-bound half of a connection. A writer task owns the socket sink, so
 /// the frame being processed and the reader — which answers `cancel` frames and
@@ -465,7 +515,8 @@ async fn handle_connection(stream: TcpStream, peer_addr: SocketAddr, server: Ser
 	.await??;
 	log_info!("WebSocket handshake completed for {}", peer_addr);
 
-	let (sink, mut ws_receiver) = ws_stream.split();
+	let (sink, frames) = ws_stream.split();
+	let mut ws_receiver = WsReader::new(frames, peer_addr, HEARTBEAT_INTERVAL);
 	let (ws_sender, writer) = WsSender::spawn(sink);
 	let mut writer = tokio_util::task::AbortOnDropHandle::new(writer);
 
@@ -523,7 +574,7 @@ async fn serve_connection(
 		} else {
 			match tokio::select! {
 				_ = ws_sender.closed.cancelled() => None,
-				frame = ws_receiver.next() => frame,
+				frame = ws_receiver.next(ws_sender) => frame,
 			} {
 				Some(msg) => msg,
 				None => break, // stream ended
@@ -680,7 +731,7 @@ async fn read_while_processing(
 		tokio::select! {
 			result = &mut processing => return result,
 			_ = ws_sender.closed.cancelled(), if !*stream_ended => abandon(stream_ended),
-			frame = ws_receiver.next(), if !*stream_ended => match frame {
+			frame = ws_receiver.next(ws_sender), if !*stream_ended => match frame {
 				Some(Ok(Message::Text(text))) => {
 					let immediate = matches!(
 						serde_json::from_str::<ClientMessage>(&text),

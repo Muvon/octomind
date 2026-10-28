@@ -57,6 +57,46 @@ async fn unused_session_locks_are_reclaimed_without_splitting_live_locks() {
 	assert_eq!(locks.lock().await.len(), 1);
 }
 
+/// Accepts one loopback connection and returns its heartbeat reader with the
+/// given interval, plus the sender its pings go through.
+async fn heartbeat_pair(interval: Duration) -> (WsReader, WsSender, tokio::task::JoinHandle<()>, ClientWs) {
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	let (client, accepted) = tokio::join!(connect_ws(addr), async {
+		let (stream, peer) = listener.accept().await.unwrap();
+		let (sink, frames) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sender, writer) = WsSender::spawn(sink);
+		(WsReader::new(frames, peer, interval), sender, writer)
+	});
+	let (reader, sender, writer) = accepted;
+	(reader, sender, writer, client)
+}
+
+#[tokio::test]
+async fn a_silent_peer_is_dropped_after_a_missed_heartbeat() {
+	let (mut reader, sender, _writer, _client) = heartbeat_pair(Duration::from_millis(50)).await;
+	// The client never reads, so it never answers the ping.
+	let frame = tokio::time::timeout(Duration::from_secs(5), reader.next(&sender))
+		.await
+		.expect("a silent peer must be dropped");
+	assert!(frame.is_none());
+}
+
+#[tokio::test]
+async fn a_peer_answering_pings_stays_connected() {
+	let (mut reader, sender, _writer, mut client) = heartbeat_pair(Duration::from_millis(50)).await;
+	// Reading makes the client answer each ping with a pong.
+	let pongs = tokio::spawn(async move { while client.next().await.is_some() {} });
+	loop {
+		match tokio::time::timeout(Duration::from_millis(500), reader.next(&sender)).await {
+			Err(_) => break,
+			Ok(Some(Ok(Message::Pong(_)))) => continue,
+			Ok(other) => panic!("expected the connection to stay open, got {other:?}"),
+		}
+	}
+	pongs.abort();
+}
+
 #[test]
 fn session_admission_preserves_existing_sessions_and_releases_failed_loads() {
 	let server = ServerState::new(Arc::new(ws_fake_config()), "assistant".into(), Vec::new());
@@ -77,7 +117,8 @@ async fn deferred_input_limit_preserves_cancellation(content: String, count: usi
 	let addr = listener.local_addr().unwrap();
 	let handler = tokio::spawn(async move {
 		let (stream, peer) = listener.accept().await.unwrap();
-		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sink, frames) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let mut reader = WsReader::new(frames, peer, HEARTBEAT_INTERVAL);
 		let (sender, writer) = WsSender::spawn(sink);
 		let server = ServerState::new(Arc::new(ws_fake_config()), "assistant".into(), Vec::new());
 		let ctx = ConnCtx {
@@ -143,7 +184,8 @@ async fn a_failed_control_reply_does_not_drop_the_running_turn() {
 	let addr = listener.local_addr().unwrap();
 	let handler = tokio::spawn(async move {
 		let (stream, peer) = listener.accept().await.unwrap();
-		let (_, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (_, frames) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let mut reader = WsReader::new(frames, peer, HEARTBEAT_INTERVAL);
 		let (sender, receiver) = WsSender::channel();
 		drop(receiver);
 		let ctx = ConnCtx {
@@ -4417,7 +4459,8 @@ async fn elicitation_response_is_handled_while_the_session_lock_is_held() {
 	let (release_tx, release_rx) = tokio::sync::oneshot::channel();
 	let handler = tokio::spawn(async move {
 		let (stream, peer) = listener.accept().await.unwrap();
-		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sink, frames) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let mut reader = WsReader::new(frames, peer, HEARTBEAT_INTERVAL);
 		let (sender, writer) = WsSender::spawn(sink);
 		let lock = get_or_create_session_lock(session, &state.session_locks).await;
 		let processing = async {
@@ -4735,7 +4778,8 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
 	let handler = tokio::spawn(async move {
 		let (stream, peer) = listener.accept().await.unwrap();
-		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sink, frames) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let mut reader = WsReader::new(frames, peer, HEARTBEAT_INTERVAL);
 		let (sender, writer) = WsSender::spawn(sink);
 		let subscriptions = RunSubscriptions(sender.clone());
 		with_session_id(parent.to_string(), async {

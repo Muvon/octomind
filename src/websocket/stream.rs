@@ -120,6 +120,34 @@ impl StreamState {
 /// produced it.
 pub(crate) struct SessionStream(Mutex<StreamState>);
 
+/// Emits directly into the replay stream; producer output must not accumulate
+/// in a second channel while a model call is running.
+#[derive(Clone)]
+pub struct StreamSink {
+	pub(crate) stream: Arc<SessionStream>,
+	pub(crate) pending_work: bool,
+}
+
+impl StreamSink {
+	pub(crate) fn send(&self, mut frame: ServerMessage) -> Result<()> {
+		if let ServerMessage::Cost(cost) = &mut frame {
+			if !self.pending_work {
+				return Ok(());
+			}
+			cost.pending_work = true;
+		}
+		self.stream.emit(&frame)
+	}
+}
+
+impl crate::session::output::OutputSink for StreamSink {
+	fn emit(&self, frame: ServerMessage) {
+		if let Err(error) = self.send(frame) {
+			crate::log_error!("Failed to emit WebSocket session output: {}", error);
+		}
+	}
+}
+
 impl SessionStream {
 	fn new(session_id: &str) -> Self {
 		Self(Mutex::new(StreamState {

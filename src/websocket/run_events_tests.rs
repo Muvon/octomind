@@ -15,6 +15,43 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn empty_run_events_are_bounded_by_count() {
+	let mut buffer = EventBuffer::default();
+	for index in 0..MAX_RUN_EVENTS + 1 {
+		buffer.push(if index % 2 == 0 {
+			RunEvent::Assistant { content: String::new() }
+		} else {
+			RunEvent::Thinking { content: String::new() }
+		});
+	}
+	assert_eq!(buffer.events.len(), MAX_RUN_EVENTS);
+	assert_eq!(buffer.bytes, 0);
+	assert!(buffer.truncated);
+}
+
+#[test]
+fn disk_replay_bounds_events_without_merging_distinct_messages() {
+	let request = RunLogMessage {
+		session_id: "bounded-disk-replay".into(),
+		..request()
+	};
+	let snapshot = tap_runs::snapshot_run_log(&request).unwrap();
+	let replay = replay_disk(&request, snapshot, || {
+		Ok(Some(
+			(0..MAX_RUN_EVENTS + 2)
+				.map(|index| RunEvent::Assistant {
+					content: index.to_string(),
+				})
+				.collect(),
+		))
+	})
+	.unwrap();
+	assert!(replay.truncated);
+	assert_eq!(replay.events.len(), MAX_RUN_EVENTS);
+	assert_eq!(replay.events[0], RunEvent::Assistant { content: "2".into() });
+}
+
 fn request() -> RunLogMessage {
 	RunLogMessage {
 		session_id: "parent".into(),

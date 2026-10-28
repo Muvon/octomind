@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::websocket::protocol::{AssistantPayload, SessionMessage};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 fn assistant(content: &str) -> ServerMessage {
 	ServerMessage::Assistant(AssistantPayload {
@@ -39,10 +39,23 @@ fn greeting() -> ServerMessage {
 	ServerMessage::status("Session resumed: s1".to_string(), Some("s1".to_string()))
 }
 
-fn texts(rx: &mut UnboundedReceiver<Message>) -> Vec<String> {
+#[test]
+fn a_saturated_connection_keeps_the_frame_for_reconnect() {
+	let stream = SessionStream::new("s1");
+	let (sink, _receiver) = WsSender::channel();
+	stream.own(&sink);
+	while sink.send(Message::text("queued")).is_ok() {}
+	stream.emit(&assistant("held after overload")).unwrap();
+	let frames = resume(&stream, at(&stream, 0));
+	assert_eq!(frames[0]["resumed"], true);
+	assert_eq!(frames[1]["content"], "held after overload");
+	assert_eq!(frames[1]["stream_seq"], 1);
+}
+
+fn texts(rx: &mut Receiver<super::super::server::QueuedFrame>) -> Vec<String> {
 	let mut texts = Vec::new();
 	while let Ok(frame) = rx.try_recv() {
-		texts.push(frame.to_text().expect("text frame").to_string());
+		texts.push(frame.frame.to_text().expect("text frame").to_string());
 	}
 	texts
 }

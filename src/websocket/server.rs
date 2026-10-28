@@ -19,7 +19,7 @@ use super::protocol::{
 	ElicitationResponseMessage, ServerMessage, SessionMessage, StatusPayload, UserMessage, COMMANDS_CAPABILITY,
 	ELICITATION_CAPABILITY,
 };
-use super::stream::{SessionStream, Streams};
+use super::stream::{SessionStream, StreamSink, Streams};
 use crate::config::Config;
 use crate::session::cancellation::{CancelHandle, SessionCancellation};
 use crate::session::chat::session::{
@@ -27,7 +27,7 @@ use crate::session::chat::session::{
 	setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::chat::{Reach, BUILTIN_COMMANDS, RUN_COMMAND};
-use crate::session::output::{OutputMode, WebSocketSink};
+use crate::session::output::OutputMode;
 use crate::{log_debug, log_error, log_info};
 use anyhow::Result;
 use futures_util::stream::SplitStream;
@@ -35,7 +35,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::handshake::server::{Callback, ErrorResponse, Request, Response};
@@ -48,7 +48,16 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_util::sync::CancellationToken;
 
 /// Per-session processing locks to prevent concurrent access to the same session.
-type SessionLocks = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
+type SessionLocks = Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>;
+
+const MAX_QUEUED_FRAMES: usize = 8192;
+const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+const MAX_DEFERRED_FRAMES: usize = 256;
+const MAX_DEFERRED_BYTES: usize = 10 * 1024 * 1024;
+const MAX_LOADED_SESSIONS: usize = 128;
+const MAX_CONNECTIONS: usize = 64;
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const WRITER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Configs committed by a `/role` switch or restored from the session log on
 /// load, keyed by session id. A tap role's servers exist only in the config its
@@ -116,6 +125,8 @@ struct ServerState {
 	/// Output streams of the loaded sessions: what each session sends, and to
 	/// which connection.
 	streams: Streams,
+	/// Includes loads and turns while their ChatSession is outside `sessions`.
+	residents: Arc<std::sync::Mutex<HashSet<String>>>,
 	/// Browser origins permitted to open a connection. Empty = refuse every
 	/// handshake that carries an `Origin` header.
 	allow_origins: Arc<Vec<String>>,
@@ -135,8 +146,40 @@ impl ServerState {
 			turns: Arc::default(),
 			turn_started: Arc::default(),
 			streams: Streams::default(),
+			residents: Arc::default(),
 			allow_origins: Arc::new(allow_origins),
 			token: None,
+		}
+	}
+
+	fn reserve_session(&self, session_id: &str) -> Result<SessionReservation> {
+		let mut residents = self.residents.lock().unwrap();
+		let existing = residents.contains(session_id);
+		anyhow::ensure!(
+			existing || residents.len() < MAX_LOADED_SESSIONS,
+			"WebSocket loaded session limit reached; close an idle session before loading another"
+		);
+		residents.insert(session_id.to_string());
+		Ok(SessionReservation {
+			residents: Arc::clone(&self.residents),
+			session_id: session_id.to_string(),
+			committed: existing,
+		})
+	}
+}
+
+/// A failed load releases its admission slot; a loaded session keeps it until
+/// an explicit close, so reconnects never discard pending handbacks or state.
+struct SessionReservation {
+	residents: Arc<std::sync::Mutex<HashSet<String>>>,
+	session_id: String,
+	committed: bool,
+}
+
+impl Drop for SessionReservation {
+	fn drop(&mut self) {
+		if !self.committed {
+			self.residents.lock().unwrap().remove(&self.session_id);
 		}
 	}
 }
@@ -212,20 +255,22 @@ impl WebSocketServer {
 		}
 		println!("Press Ctrl+C to stop the server");
 
+		let mut connections = tokio::task::JoinSet::new();
 		loop {
-			match listener.accept().await {
-				Ok((stream, peer_addr)) => {
+			tokio::select! {
+				Some(joined) = connections.join_next() => {
+					joined?;
+				}
+				accepted = listener.accept(), if connections.len() < MAX_CONNECTIONS => {
+					let (stream, peer_addr) = accepted?;
 					log_info!("Connection accepted from {}", peer_addr);
 
 					let state = self.state.clone();
-					tokio::spawn(async move {
+					connections.spawn(async move {
 						if let Err(e) = handle_connection(stream, peer_addr, state).await {
 							log_error!("Connection handler failed for {}: {}", peer_addr, e);
 						}
 					});
-				}
-				Err(e) => {
-					log_error!("Failed to accept connection: {}", e);
 				}
 			}
 		}
@@ -304,42 +349,78 @@ type WsReader = SplitStream<WebSocketStream<TcpStream>>;
 /// pings while that frame runs — both send without sharing it. Frames keep their
 /// order; a send fails once the socket is gone, as a direct write would.
 #[derive(Clone)]
-pub(crate) struct WsSender(tokio::sync::mpsc::UnboundedSender<Message>);
+pub(crate) struct WsSender {
+	tx: tokio::sync::mpsc::Sender<QueuedFrame>,
+	bytes: Arc<tokio::sync::Semaphore>,
+	closed: CancellationToken,
+}
+
+pub(crate) struct QueuedFrame {
+	pub(crate) frame: Message,
+	_bytes: tokio::sync::OwnedSemaphorePermit,
+}
 
 impl WsSender {
 	fn spawn(
 		mut sink: futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
 	) -> (Self, tokio::task::JoinHandle<()>) {
-		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+		let (sender, mut rx) = Self::channel();
+		let closed = sender.closed.clone();
 		let writer = tokio::spawn(async move {
-			while let Some(frame) = rx.recv().await {
-				if let Err(e) = sink.send(frame).await {
-					log_debug!("WebSocket write failed, closing the writer: {}", e);
-					return;
+			loop {
+				let queued = tokio::select! {
+					_ = closed.cancelled() => return,
+					queued = rx.recv() => queued,
+				};
+				let Some(queued) = queued else { break };
+				tokio::select! {
+					_ = closed.cancelled() => return,
+					result = sink.send(queued.frame) => {
+						if let Err(e) = result {
+							log_debug!("WebSocket write failed, closing the writer: {}", e);
+							closed.cancel();
+							return;
+						}
+					}
 				}
 			}
-			let _ = sink.close().await;
+			if let Err(error) = sink.close().await {
+				log_debug!("WebSocket close failed: {}", error);
+			}
 		});
-		(Self(tx), writer)
+		(sender, writer)
 	}
 
 	pub(crate) fn same_channel(&self, other: &Self) -> bool {
-		self.0.same_channel(&other.0)
+		self.tx.same_channel(&other.tx)
 	}
 
 	pub(crate) fn send(&self, frame: Message) -> Result<()> {
-		self.0
-			.send(frame)
-			.map_err(|_| anyhow::anyhow!("WebSocket connection closed"))
+		anyhow::ensure!(!self.closed.is_cancelled(), "WebSocket connection closed");
+		let permits = u32::try_from(frame.len().max(1))
+			.ok()
+			.and_then(|size| Arc::clone(&self.bytes).try_acquire_many_owned(size).ok());
+		let Some(permits) = permits else {
+			self.closed.cancel();
+			anyhow::bail!("WebSocket outgoing byte limit exceeded");
+		};
+		if let Err(error) = self.tx.try_send(QueuedFrame { frame, _bytes: permits }) {
+			self.closed.cancel();
+			return Err(anyhow::anyhow!("WebSocket outgoing queue unavailable: {}", error));
+		}
+		Ok(())
 	}
-}
 
-#[cfg(test)]
-impl WsSender {
-	/// A sender whose frames land in the returned receiver instead of a socket.
-	pub(crate) fn channel() -> (Self, tokio::sync::mpsc::UnboundedReceiver<Message>) {
-		let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-		(Self(tx), rx)
+	pub(crate) fn channel() -> (Self, tokio::sync::mpsc::Receiver<QueuedFrame>) {
+		let (tx, rx) = tokio::sync::mpsc::channel(MAX_QUEUED_FRAMES);
+		(
+			Self {
+				tx,
+				bytes: Arc::new(tokio::sync::Semaphore::new(MAX_QUEUED_BYTES)),
+				closed: CancellationToken::new(),
+			},
+			rx,
+		)
 	}
 }
 
@@ -361,25 +442,39 @@ async fn handle_connection(stream: TcpStream, peer_addr: SocketAddr, server: Ser
 		.max_frame_size(Some(10 * 1024 * 1024)) // 10MB max frame size
 		.accept_unmasked_frames(false);
 
-	let ws_stream = tokio_tungstenite::accept_hdr_async_with_config(
-		stream,
-		HandshakeGuard {
-			origins: Arc::clone(&server.allow_origins),
-			token: server.token.clone(),
-		},
-		Some(ws_config),
+	let ws_stream = tokio::time::timeout(
+		HANDSHAKE_TIMEOUT,
+		tokio_tungstenite::accept_hdr_async_with_config(
+			stream,
+			HandshakeGuard {
+				origins: Arc::clone(&server.allow_origins),
+				token: server.token.clone(),
+			},
+			Some(ws_config),
+		),
 	)
-	.await?;
+	.await??;
 	log_info!("WebSocket handshake completed for {}", peer_addr);
 
 	let (sink, mut ws_receiver) = ws_stream.split();
 	let (ws_sender, writer) = WsSender::spawn(sink);
+	let mut writer = tokio_util::task::AbortOnDropHandle::new(writer);
 
 	let result = serve_connection(&mut ws_receiver, &ws_sender, peer_addr, server).await;
 
 	// Let the writer flush what is queued and close the socket.
 	drop(ws_sender);
-	let _ = tokio::time::timeout(std::time::Duration::from_secs(5), writer).await;
+	match tokio::time::timeout(WRITER_SHUTDOWN_TIMEOUT, &mut writer).await {
+		Ok(joined) => joined?,
+		Err(_) => {
+			writer.abort();
+			if let Err(error) = writer.await {
+				if !error.is_cancelled() {
+					return Err(error.into());
+				}
+			}
+		}
+	}
 	result
 }
 
@@ -417,7 +512,10 @@ async fn serve_connection(
 		} else if stream_ended {
 			break;
 		} else {
-			match ws_receiver.next().await {
+			match tokio::select! {
+				_ = ws_sender.closed.cancelled() => None,
+				frame = ws_receiver.next() => frame,
+			} {
 				Some(msg) => msg,
 				None => break, // stream ended
 			}
@@ -494,16 +592,12 @@ async fn serve_connection(
 		}
 	}
 
-	// Clean up notification senders for sessions used on this connection.
-	// Sessions themselves persist (can be resumed on another connection).
+	// Session notification sinks outlive connections and hold only bounded replay.
 	//
 	// INVARIANT: Do NOT call stop_all_servers() here. MCP server processes are shared
 	// across all active sessions. Killing them on disconnect would break other sessions
 	// that are still using the same servers — which is also why a role switch never
 	// stops any. stop_all_servers() is only called on process shutdown (main.rs).
-	for sid in &active_session_ids {
-		crate::session::context::clear_notification_sender_for_session(sid);
-	}
 	log_info!(
 		"Connection closed: {} (cleaned up {} session(s))",
 		peer_addr,
@@ -572,9 +666,11 @@ async fn read_while_processing(
 		ctx.hang_up(ws_sender);
 	};
 	tokio::pin!(processing);
+	let mut deferred_bytes: usize = deferred.iter().map(Message::len).sum();
 	loop {
 		tokio::select! {
 			result = &mut processing => return result,
+			_ = ws_sender.closed.cancelled(), if !*stream_ended => abandon(stream_ended),
 			frame = ws_receiver.next(), if !*stream_ended => match frame {
 				Some(Ok(Message::Text(text))) => {
 					let immediate = matches!(
@@ -582,24 +678,52 @@ async fn read_while_processing(
 						Ok(ClientMessage::Cancel(_) | ClientMessage::RunLog(_) | ClientMessage::ElicitationResponse(_))
 					);
 					if !immediate {
-						deferred.push_back(Message::Text(text));
-					} else if let Some(message) = accept_client_frame(&text, ws_sender, peer_addr).await? {
-						match message {
-							ClientMessage::Cancel(cancel) => cancel_turn(&ctx.server, &cancel),
-							ClientMessage::RunLog(request) => handle_run_log(request, ws_sender).await?,
-							ClientMessage::ElicitationResponse(response) => {
-								handle_elicitation_response(response, ws_sender).await?
+						if deferred.len() >= MAX_DEFERRED_FRAMES || text.len() > MAX_DEFERRED_BYTES - deferred_bytes {
+							let request_id = serde_json::from_str::<ClientMessage>(&text)
+								.ok().and_then(|msg| msg.request_id().map(ToOwned::to_owned));
+							let error = ServerMessage::error_for_request("WebSocket pending input limit exceeded".into(), request_id);
+							if let Err(error) = send_message(ws_sender, &error).await {
+								log_debug!("Failed to reject queued input from {}: {}", peer_addr, error);
+								abandon(stream_ended);
 							}
-							_ => unreachable!("immediate control frame"),
+						} else {
+							deferred_bytes += text.len();
+							deferred.push_back(Message::Text(text));
+						}
+					} else {
+						let handled = async {
+							if let Some(message) = accept_client_frame(&text, ws_sender, peer_addr).await? {
+								match message {
+									ClientMessage::Cancel(cancel) => cancel_turn(&ctx.server, &cancel),
+									ClientMessage::RunLog(request) => handle_run_log(request, ws_sender).await?,
+									ClientMessage::ElicitationResponse(response) => handle_elicitation_response(response, ws_sender).await?,
+									_ => unreachable!("immediate control frame"),
+								}
+							}
+							Ok::<(), anyhow::Error>(())
+						}.await;
+						if let Err(error) = handled {
+							log_debug!("WebSocket control response failed for {}: {}", peer_addr, error);
+							abandon(stream_ended);
 						}
 					}
 				}
 				Some(Ok(Message::Ping(data))) => {
-					let _ = ws_sender.send(Message::Pong(data));
+					if let Err(error) = ws_sender.send(Message::Pong(data)) {
+						log_debug!("Failed to send pong to {}: {}", peer_addr, error);
+						abandon(stream_ended);
+					}
 				}
 				Some(Ok(Message::Pong(_))) => {}
 				Some(Ok(Message::Close(_))) => abandon(stream_ended),
-				Some(Ok(other)) => deferred.push_back(other),
+				Some(Ok(Message::Binary(_))) => {
+					let error = ServerMessage::error("Unsupported WebSocket message type: send JSON text frames".into());
+					if let Err(error) = send_message(ws_sender, &error).await {
+						log_debug!("Failed to reject binary input from {}: {}", peer_addr, error);
+						abandon(stream_ended);
+					}
+				}
+				Some(Ok(_)) => {}
 				Some(Err(e)) => {
 					log_error!("WebSocket protocol error from {}: {}", peer_addr, e);
 					abandon(stream_ended);
@@ -658,7 +782,6 @@ async fn process_client_message(
 		ClientMessage::Session(msg) => Box::pin(handle_session_message(msg, ws_sender, ctx, active_session_ids)).await,
 		ClientMessage::Message(msg) => {
 			let session_id = msg.session_id.clone();
-			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
@@ -681,6 +804,9 @@ async fn process_client_message(
 				handle_user_message(msg, ws_sender, &ctx.server).await
 			})
 			.await;
+			if ctx.server.sessions.lock().await.contains_key(&session_id) {
+				active_session_ids.insert(session_id.clone());
+			}
 
 			drop(guard);
 			wake_inbox_monitor(session_id).await;
@@ -688,7 +814,6 @@ async fn process_client_message(
 		}
 		ClientMessage::Command(msg) => {
 			let session_id = msg.session_id.clone();
-			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
@@ -711,6 +836,11 @@ async fn process_client_message(
 				handle_command_message(msg, ws_sender, &ctx.server).await
 			})
 			.await;
+			if ctx.server.sessions.lock().await.contains_key(&session_id) {
+				active_session_ids.insert(session_id.clone());
+			} else {
+				active_session_ids.remove(&session_id);
+			}
 
 			drop(guard);
 			wake_inbox_monitor(session_id).await;
@@ -742,8 +872,6 @@ async fn handle_close_message(
 ) -> Result<()> {
 	let session_id = msg.session_id;
 	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
-	// The lock entry itself stays: removing it would let a frame that already
-	// cloned it and one that creates a fresh entry run the session concurrently.
 	let Ok(guard) = lock.try_lock() else {
 		let error = ServerMessage::error_for_request(
 			format!(
@@ -758,6 +886,7 @@ async fn handle_close_message(
 
 	let was_loaded = server.sessions.lock().await.remove(&session_id).is_some();
 	server.role_configs.lock().await.remove(&session_id);
+	server.residents.lock().unwrap().remove(&session_id);
 	// A later bind loads the session anew, under a new stream.
 	server.streams.close(&session_id);
 	let inbox_notify = crate::session::context::with_session_id(session_id.clone(), async {
@@ -788,10 +917,13 @@ async fn handle_close_message(
 /// Get or create a per-session processing lock.
 async fn get_or_create_session_lock(session_id: &str, session_locks: &SessionLocks) -> Arc<tokio::sync::Mutex<()>> {
 	let mut locks = session_locks.lock().await;
-	locks
-		.entry(session_id.to_string())
-		.or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-		.clone()
+	locks.retain(|_, lock| lock.strong_count() > 0);
+	if let Some(lock) = locks.get(session_id).and_then(Weak::upgrade) {
+		return lock;
+	}
+	let lock = Arc::new(tokio::sync::Mutex::new(()));
+	locks.insert(session_id.to_string(), Arc::downgrade(&lock));
+	lock
 }
 
 /// Re-fire the session's inbox wake-up once a client frame has released the
@@ -961,28 +1093,11 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						continue;
 					}
 
-					// Stream results through a channel that feeds the session's stream.
-					let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
-					let ws_sink = WebSocketSink::new(ws_tx.clone());
-
-					crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
-
-					let forward_stream = Arc::clone(&stream);
-					let forward_session = session_id.clone();
-					let forward_task = tokio::spawn(async move {
-						while let Some(msg) = ws_rx.recv().await {
-							if matches!(msg, ServerMessage::Cost(_)) {
-								continue;
-							}
-							if let Err(e) = forward_stream.emit(&msg) {
-								log_error!(
-									"WS monitor: failed to emit a frame of session {}: {}",
-									forward_session,
-									e
-								);
-							}
-						}
-					});
+					let ws_sink = StreamSink {
+						stream: Arc::clone(&stream),
+						pending_work: false,
+					};
+					crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_sink.clone());
 
 					let result = crate::supervisor::accounting::background(execute_api_call_and_process_response(
 						&mut chat_session,
@@ -993,9 +1108,6 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						ws_sink,
 					))
 					.await;
-
-					crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
-					forward_task.await.expect("WebSocket forwarding task must not panic");
 
 					if let Err(e) = result {
 						log_debug!("WS monitor: error processing inbox message: {}", e);
@@ -1105,19 +1217,32 @@ async fn handle_session_message(
 
 	// A requested role is resolved and pinned under the session's id before the
 	// session exists, so an auto-named bind that asks for one is named now.
-	let requested_id = match (&msg.session_id, &msg.role) {
-		(Some(id), _) => Some(id.clone()),
-		(None, Some(_)) => Some(crate::session::chat::session::generate_session_name()),
-		(None, None) => None,
-	};
-
-	let Some(session_id) = requested_id.clone() else {
-		return bind_session(&msg, cwd, None, ack, ws_sender, ctx, active_session_ids).await;
-	};
+	let session_id = msg
+		.session_id
+		.clone()
+		.unwrap_or_else(crate::session::chat::session::generate_session_name);
 	let Some(guard) = lock_for_bind(&session_id, &ctx.server).await else {
 		return attach_to_running_turn(&msg, session_id, ack, ws_sender, ctx, active_session_ids).await;
 	};
-	let bound = bind_session(&msg, cwd, requested_id, ack, ws_sender, ctx, active_session_ids).await;
+	let mut reservation = match ctx.server.reserve_session(&session_id) {
+		Ok(reservation) => reservation,
+		Err(error) => return refuse_bind(ws_sender, ack, &ServerMessage::error(error.to_string())).await,
+	};
+	crate::mcp::process::set_notification_sender(
+		Some(session_id.clone()),
+		StreamSink {
+			stream: ctx.server.streams.open(&session_id),
+			pending_work: false,
+		},
+	);
+	let bound = bind_session(&msg, cwd, session_id.clone(), ack, ws_sender, ctx, active_session_ids).await;
+	if ctx.server.sessions.lock().await.contains_key(&session_id) {
+		reservation.committed = true;
+	} else if !reservation.committed {
+		ctx.server.role_configs.lock().await.remove(&session_id);
+		ctx.server.streams.close(&session_id);
+		crate::session::context::cleanup_session(&session_id);
+	}
 	// Bound or refused, nothing sets the session up any more: a frame that drove it
 	// meanwhile was answered busy, and an inbox monitor that tried waits to be woken.
 	drop(guard);
@@ -1157,92 +1282,75 @@ async fn lock_for_bind(session_id: &str, server: &ServerState) -> Option<tokio::
 async fn bind_session(
 	msg: &SessionMessage,
 	cwd: Option<PathBuf>,
-	requested_id: Option<String>,
+	requested_id: String,
 	ack: AckPayload,
 	ws_sender: &WsSender,
 	ctx: &ConnCtx,
 	active_session_ids: &mut HashSet<String>,
 ) -> Result<()> {
-	let (mut chat_session, config_for_role, session_role, is_new) = match &requested_id {
-		Some(session_id) => {
-			// session_id present: create-or-resume
-			// Check memory first
-			let existing = ctx.server.sessions.lock().await.remove(session_id);
-			if let Some(session) = existing {
-				log_debug!("Resumed session from memory: {}", session_id);
-				let cfg = session_config(&ctx.server.config, &ctx.server.role_configs, &session).await;
-				let role = session.role.clone();
-				(session, cfg, role, false)
+	let (mut chat_session, config_for_role, session_role, is_new) = {
+		let session_id = &requested_id;
+		// session_id present: create-or-resume
+		// Check memory first
+		let existing = ctx.server.sessions.lock().await.remove(session_id);
+		if let Some(session) = existing {
+			log_debug!("Resumed session from memory: {}", session_id);
+			let cfg = session_config(&ctx.server.config, &ctx.server.role_configs, &session).await;
+			let role = session.role.clone();
+			(session, cfg, role, false)
+		} else {
+			// Try disk: resume if exists, create with this name if not
+			let (args, config) = if crate::session::get_sessions_dir()
+				.map(|d| d.join(format!("{}.jsonl.zst", session_id)).exists())
+				.unwrap_or(false)
+			{
+				log_debug!("Resuming session from disk: {}", session_id);
+				let (config, role) = match resume_role_config(session_id, &ctx.server).await {
+					Ok(restored) => restored,
+					Err(e) => {
+						return refuse_bind(ws_sender, ack, &ServerMessage::error(e.to_string())).await;
+					}
+				};
+				let args = GenericSessionArgs {
+					resume: Some(session_id.clone()),
+					role,
+					mode: "websocket".into(),
+					..Default::default()
+				};
+				(args, config)
 			} else {
-				// Try disk: resume if exists, create with this name if not
-				let (args, config) = if crate::session::get_sessions_dir()
-					.map(|d| d.join(format!("{}.jsonl.zst", session_id)).exists())
-					.unwrap_or(false)
-				{
-					log_debug!("Resuming session from disk: {}", session_id);
-					let (config, role) = match resume_role_config(session_id, &ctx.server).await {
-						Ok(restored) => restored,
-						Err(e) => {
-							return refuse_bind(ws_sender, ack, &ServerMessage::error(e.to_string())).await;
-						}
-					};
-					let args = GenericSessionArgs {
-						resume: Some(session_id.clone()),
-						role,
-						mode: "websocket".into(),
-						..Default::default()
-					};
-					(args, config)
-				} else {
-					log_debug!("Creating named session: {}", session_id);
-					let (config, role) = match msg.role.as_deref() {
-						Some(role) if role != ctx.server.role => {
-							match pin_role_config(session_id, role, &ctx.server).await {
-								Ok(resolved) => resolved,
-								Err(e) => {
-									let error = ServerMessage::error_for_request(
-										format!("Failed to resolve role '{}': {}", role, e),
-										msg.request_id.clone(),
-									);
-									return refuse_bind(ws_sender, ack, &error).await;
-								}
+				log_debug!("Creating named session: {}", session_id);
+				let (config, role) = match msg.role.as_deref() {
+					Some(role) if role != ctx.server.role => {
+						match pin_role_config(session_id, role, &ctx.server).await {
+							Ok(resolved) => resolved,
+							Err(e) => {
+								let error = ServerMessage::error_for_request(
+									format!("Failed to resolve role '{}': {}", role, e),
+									msg.request_id.clone(),
+								);
+								return refuse_bind(ws_sender, ack, &error).await;
 							}
 						}
-						_ => (Arc::clone(&ctx.server.config), ctx.server.role.clone()),
-					};
-					let args = GenericSessionArgs {
-						name: Some(session_id.clone()),
-						role,
-						mode: "websocket".into(),
-						..Default::default()
-					};
-					(args, config)
+					}
+					_ => (Arc::clone(&ctx.server.config), ctx.server.role.clone()),
 				};
-
-				match setup_and_initialize_session(&args, &config, false).await {
-					Ok((session, cfg, role_name, _, _)) => {
-						let is_new = !session.was_resumed;
-						(session, cfg, role_name, is_new)
-					}
-					Err(e) => {
-						let error = ServerMessage::error(format!("Failed to initialize session: {}", e));
-						return refuse_bind(ws_sender, ack, &error).await;
-					}
-				}
-			}
-		}
-		None => {
-			// No session_id: create new auto-named session
-			log_debug!("Creating new auto-named session with role: {}", ctx.server.role);
-			let args = GenericSessionArgs {
-				role: ctx.server.role.clone(),
-				mode: "websocket".into(),
-				..Default::default()
+				let args = GenericSessionArgs {
+					name: Some(session_id.clone()),
+					role,
+					mode: "websocket".into(),
+					..Default::default()
+				};
+				(args, config)
 			};
-			match setup_and_initialize_session(&args, &ctx.server.config, false).await {
-				Ok((session, cfg, role_name, _, _)) => (session, cfg, role_name, true),
+
+			match setup_and_initialize_session(&args, &config, false).await {
+				Ok((session, cfg, role_name, _, _)) => {
+					let is_new = !session.was_resumed;
+					(session, cfg, role_name, is_new)
+				}
 				Err(e) => {
-					let error = ServerMessage::error(format!("Failed to create session: {}", e));
+					let error = ServerMessage::error(format!("Failed to initialize session: {}", e));
 					return refuse_bind(ws_sender, ack, &error).await;
 				}
 			}
@@ -1250,12 +1358,6 @@ async fn bind_session(
 	};
 
 	let session_id = chat_session.session.info.name.clone();
-	// A client may bind the same session more than once on one connection
-	// (octomind-api re-sends the `session` frame ahead of every turn). Only the
-	// FIRST bind gets a monitor: they all serve this one connection, so the
-	// extras are pure duplicates that park forever on the session's Notify.
-	let first_bind_here = active_session_ids.insert(session_id.clone());
-
 	// Wrap in session context so all session-scoped registries route correctly
 	let role_for_pool = session_role.clone();
 	let setup = crate::session::context::with_session_id(session_id.clone(), async {
@@ -1285,26 +1387,29 @@ async fn bind_session(
 		log_info!("{}", status_msg);
 
 		chat_session.save()?;
-		ctx.server
-			.sessions
-			.lock()
-			.await
-			.insert(session_id.clone(), chat_session);
 		Ok::<String, anyhow::Error>(status_msg)
 	})
 	.await;
 	let greeting = match setup {
 		Ok(status_msg) => ServerMessage::status(status_msg, Some(session_id.clone())),
 		Err(e) => {
+			if !is_new {
+				ctx.server.sessions.lock().await.insert(session_id, chat_session);
+			}
 			send_message(ws_sender, &ServerMessage::Ack(ack)).await?;
 			return Err(e);
 		}
 	};
+	ctx.server
+		.sessions
+		.lock()
+		.await
+		.insert(session_id.clone(), chat_session);
 	bind_stream(msg, &session_id, ack, &greeting, &config_for_role, ws_sender, ctx)?;
 
-	// Spawn independent background task that monitors schedules/inbox
-	// and processes messages automatically without waiting for user prompts.
-	if first_bind_here {
+	// Repeated binds on one connection share a monitor; duplicates would park
+	// on the same inbox Notify for the rest of the connection's lifetime.
+	if active_session_ids.insert(session_id.clone()) {
 		spawn_ws_inbox_monitor(session_id, ctx.clone());
 	}
 
@@ -1459,28 +1564,49 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 		log_debug!("Resumed session from memory: {}", session_id);
 		return Ok(session);
 	}
+	let mut reservation = server.reserve_session(session_id).map_err(|error| error.to_string())?;
+	crate::mcp::process::set_notification_sender(
+		Some(session_id.to_string()),
+		StreamSink {
+			stream: server.streams.open(session_id),
+			pending_work: false,
+		},
+	);
 
 	log_debug!("Loading session from disk: {}", session_id);
-	let (config, role) = resume_role_config(session_id, server)
-		.await
-		.map_err(|e| e.to_string())?;
-	let mut args = GenericSessionArgs::resume(session_id.to_string(), role);
-	args.mode = "websocket".to_string();
-	match setup_and_initialize_session(&args, &config, false).await {
-		Ok((mut session, config_for_role, session_role, _, _)) => {
-			crate::session::context::init_session_services(&session_role);
-			crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
-			if let Err(e) = setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await {
-				return Err(format!("Failed to setup session {}: {}", session_id, e));
+	let loaded = async {
+		let (config, role) = resume_role_config(session_id, server)
+			.await
+			.map_err(|e| e.to_string())?;
+		let mut args = GenericSessionArgs::resume(session_id.to_string(), role);
+		args.mode = "websocket".to_string();
+		match setup_and_initialize_session(&args, &config, false).await {
+			Ok((mut session, config_for_role, session_role, _, _)) => {
+				crate::session::context::init_session_services(&session_role);
+				crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
+				if let Err(e) =
+					setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await
+				{
+					return Err(format!("Failed to setup session {}: {}", session_id, e));
+				}
+				log_info!("Session loaded from disk: {}", session_id);
+				Ok(session)
 			}
-			log_info!("Session loaded from disk: {}", session_id);
-			Ok(session)
+			Err(_) => Err(format!(
+				"Session not found: {}. Send a \"session\" message first to create or resume a session.",
+				session_id
+			)),
 		}
-		Err(_) => Err(format!(
-			"Session not found: {}. Send a \"session\" message first to create or resume a session.",
-			session_id
-		)),
 	}
+	.await;
+	if loaded.is_ok() {
+		reservation.committed = true;
+	} else {
+		server.role_configs.lock().await.remove(session_id);
+		server.streams.close(session_id);
+		crate::session::context::cleanup_session(&session_id.to_string());
+	}
+	loaded
 }
 
 /// The stream a client frame's turn emits on, as that turn begins. The client
@@ -1661,6 +1787,10 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 				return Ok(());
 			}
 			stream.emit(&status)?;
+			server.role_configs.lock().await.remove(&session_id);
+			server.residents.lock().unwrap().remove(&session_id);
+			server.streams.close(&session_id);
+			crate::session::context::cleanup_session(&session_id);
 			return Ok(());
 		}
 		CommandResult::TreatAsUserInput => {
@@ -1882,8 +2012,10 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 				)))?;
 				continue;
 			}
-			let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-			let sink = WebSocketSink::new(tx);
+			let sink = StreamSink {
+				stream: Arc::clone(&stream),
+				pending_work: true,
+			};
 			let result = execute_api_call_and_process_response(
 				&mut chat_session,
 				&config_for_role,
@@ -1893,14 +2025,6 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 				sink,
 			)
 			.await;
-			while let Ok(mut msg) = rx.try_recv() {
-				// This cost closes an injected turn, not the client's: the message
-				// that drained it runs next, on this same connection.
-				if let ServerMessage::Cost(cost) = &mut msg {
-					cost.pending_work = true;
-				}
-				stream.emit(&msg)?;
-			}
 			// A `cancel` read while the drain runs stops this frame, not just the
 			// injected turn in flight: no further batch, and no user turn below.
 			if cancellation.is_cancelled() {
@@ -1975,51 +2099,20 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		return Ok(());
 	}
 
-	// Create channel for WebSocket sink to stream messages
-	let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel();
-	let ws_sink = WebSocketSink::new(ws_tx.clone());
-
-	// Forward MCP server notifications through the WebSocket channel
-	crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
-
-	// Execute the API call while concurrently forwarding sink events to the
-	// session's stream, so chunks stream in real-time. Draining only after the call
-	// returned (the previous behavior) buffered a whole multi-minute turn and
-	// delivered it as one burst — the "real-time" claim was false. ws_rx.recv()
-	// stays open for the call's duration (ws_tx clone + notification sender hold
-	// senders), so its branch only yields real messages; the api future is what
-	// ends the loop.
-	// Scope the future so its `&mut chat_session` borrow is released the moment
-	// the loop ends — otherwise the pinned future lives to end-of-fn and blocks
-	// every later use of chat_session (cost read, save, move back into the map).
-	let api_result = {
-		let api_fut = execute_api_call_and_process_response(
-			&mut chat_session,
-			&config_for_role,
-			&server.role,
-			operation_rx.clone(),
-			OutputMode::WebSocket,
-			ws_sink,
-		);
-		tokio::pin!(api_fut);
-		loop {
-			tokio::select! {
-				res = &mut api_fut => break res,
-				Some(msg) = ws_rx.recv() => {
-					if matches!(msg, ServerMessage::Cost(_)) { continue; }
-					stream.emit(&msg)?;
-				}
-			}
-		}
+	let ws_sink = StreamSink {
+		stream: Arc::clone(&stream),
+		pending_work: false,
 	};
-
-	// Drain any messages queued between the last poll and completion.
-	while let Ok(msg) = ws_rx.try_recv() {
-		if matches!(msg, ServerMessage::Cost(_)) {
-			continue;
-		}
-		stream.emit(&msg)?;
-	}
+	crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_sink.clone());
+	let api_result = execute_api_call_and_process_response(
+		&mut chat_session,
+		&config_for_role,
+		&server.role,
+		operation_rx.clone(),
+		OutputMode::WebSocket,
+		ws_sink,
+	)
+	.await;
 
 	// Save session
 	log_debug!("Saving session: {}", session_id);
@@ -2030,9 +2123,6 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	cost.cancelled = cancelled;
 	cost.request_id = msg.request_id.clone();
 	let cost_msg = ServerMessage::Cost(cost);
-
-	// Clear the notification sender now that this request is done
-	crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
 
 	// Store session back and wake inbox monitor if it has pending messages.
 	server.sessions.lock().await.insert(session_id.clone(), chat_session);

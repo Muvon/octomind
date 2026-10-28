@@ -15,6 +15,23 @@
 use super::*;
 
 #[test]
+fn vector_cache_stays_bounded_and_updates_do_not_grow_eviction_metadata() {
+	let mut cache = VectorCache::default();
+	for key in 0..MAX_CACHED_VECTORS as u64 {
+		cache.insert(key, vec![0.0; EMBED_DIM]);
+	}
+	for _ in 0..MAX_CACHED_VECTORS {
+		cache.insert(1, vec![1.0; EMBED_DIM]);
+	}
+	assert_eq!(cache.order.len(), MAX_CACHED_VECTORS);
+	cache.insert(MAX_CACHED_VECTORS as u64, vec![2.0; EMBED_DIM]);
+	assert_eq!(cache.vectors.len(), MAX_CACHED_VECTORS);
+	assert_eq!(cache.order.len(), MAX_CACHED_VECTORS);
+	assert!(!cache.vectors.contains_key(&0));
+	assert_eq!(cache.vectors[&1], vec![1.0; EMBED_DIM]);
+}
+
+#[test]
 fn chunk_by_chars_windows_and_preserves() {
 	assert_eq!(chunk_by_chars("short", 100), vec!["short".to_string()]);
 	let blob = "x".repeat(50);

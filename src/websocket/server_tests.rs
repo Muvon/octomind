@@ -14,6 +14,175 @@
 
 use super::*;
 
+#[test]
+fn slow_client_output_is_bounded_by_count_and_closes_on_overflow() {
+	let (sender, receiver) = WsSender::channel();
+	for _ in 0..MAX_QUEUED_FRAMES {
+		sender.send(Message::text("x")).unwrap();
+	}
+	assert!(sender.send(Message::text("overflow")).is_err());
+	assert_eq!(receiver.len(), MAX_QUEUED_FRAMES);
+	assert!(sender.closed.is_cancelled());
+	assert!(sender.send(Message::text("later")).is_err());
+}
+
+#[test]
+fn outgoing_byte_budget_covers_queued_and_in_flight_frames() {
+	let (sender, mut receiver) = WsSender::channel();
+	sender.send(Message::text("x".repeat(MAX_QUEUED_BYTES))).unwrap();
+	let in_flight = receiver.try_recv().unwrap();
+	assert_eq!(sender.bytes.available_permits(), 0);
+	drop(in_flight);
+	assert_eq!(sender.bytes.available_permits(), MAX_QUEUED_BYTES);
+	sender.send(Message::text("x".repeat(MAX_QUEUED_BYTES))).unwrap();
+	assert!(sender.send(Message::text("overflow")).is_err());
+	assert_eq!(receiver.len(), 1);
+}
+
+#[tokio::test]
+async fn unused_session_locks_are_reclaimed_without_splitting_live_locks() {
+	let locks = SessionLocks::default();
+	let first = get_or_create_session_lock("live", &locks).await;
+	let guard = Arc::clone(&first).lock_owned().await;
+	drop(first);
+	for index in 0..1000 {
+		drop(get_or_create_session_lock(&format!("missing-{index}"), &locks).await);
+	}
+	let same = get_or_create_session_lock("live", &locks).await;
+	assert!(same.try_lock().is_err());
+	assert_eq!(locks.lock().await.len(), 1);
+	drop(guard);
+	drop(same);
+	get_or_create_session_lock("next", &locks).await;
+	assert_eq!(locks.lock().await.len(), 1);
+}
+
+#[test]
+fn session_admission_preserves_existing_sessions_and_releases_failed_loads() {
+	let server = ServerState::new(Arc::new(ws_fake_config()), "assistant".into(), Vec::new());
+	let failed = server.reserve_session("failed-load").unwrap();
+	assert_eq!(server.residents.lock().unwrap().len(), 1);
+	drop(failed);
+	assert!(server.residents.lock().unwrap().is_empty());
+	for index in 0..MAX_LOADED_SESSIONS {
+		server.reserve_session(&format!("session-{index}")).unwrap().committed = true;
+	}
+	assert!(server.reserve_session("extra").is_err());
+	assert!(server.reserve_session("session-0").is_ok());
+	assert_eq!(server.residents.lock().unwrap().len(), MAX_LOADED_SESSIONS);
+}
+
+async fn deferred_input_limit_preserves_cancellation(content: String, count: usize) {
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	let handler = tokio::spawn(async move {
+		let (stream, peer) = listener.accept().await.unwrap();
+		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sender, writer) = WsSender::spawn(sink);
+		let server = ServerState::new(Arc::new(ws_fake_config()), "assistant".into(), Vec::new());
+		let ctx = ConnCtx {
+			server,
+			closed: CancellationToken::new(),
+		};
+		let mut cancellation = SessionCancellation::new();
+		let mut operation = cancellation.new_operation();
+		let _turn = TurnGuard::register(&ctx.server, "limited-input", &cancellation);
+		let processing = async {
+			operation.changed().await?;
+			assert!(*operation.borrow());
+			Ok(())
+		};
+		let mut deferred = VecDeque::new();
+		read_while_processing(processing, &mut reader, &sender, &ctx, &mut deferred, &mut false, peer)
+			.await
+			.unwrap();
+		assert!(deferred.len() <= MAX_DEFERRED_FRAMES);
+		assert!(deferred.iter().map(Message::len).sum::<usize>() <= MAX_DEFERRED_BYTES);
+		drop(sender);
+		writer.await.unwrap();
+	});
+	let mut client = connect_ws(addr).await;
+	for _ in 0..count {
+		send_json(
+			&mut client,
+			serde_json::json!({
+				"type":"message", "session_id":"limited-input", "content":content, "request_id":"queued"
+			}),
+		)
+		.await;
+	}
+	let error = read_json(&mut client).await;
+	assert_eq!(error["type"], "error");
+	assert_eq!(error["request_id"], "queued");
+	assert!(error["message"].as_str().unwrap().contains("pending input limit"));
+	send_json(
+		&mut client,
+		serde_json::json!({"type":"cancel", "session_id":"limited-input"}),
+	)
+	.await;
+	assert_eq!(read_json(&mut client).await["message_type"], "cancel");
+	tokio::time::timeout(Duration::from_secs(5), handler)
+		.await
+		.unwrap()
+		.unwrap();
+}
+
+#[tokio::test]
+async fn deferred_input_count_is_bounded_while_cancel_still_works() {
+	deferred_input_limit_preserves_cancellation("queued".into(), MAX_DEFERRED_FRAMES + 1).await;
+}
+
+#[tokio::test]
+async fn deferred_input_bytes_are_bounded_while_cancel_still_works() {
+	deferred_input_limit_preserves_cancellation("x".repeat(MAX_DEFERRED_BYTES / 2), 2).await;
+}
+
+#[tokio::test]
+async fn a_failed_control_reply_does_not_drop_the_running_turn() {
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	let handler = tokio::spawn(async move {
+		let (stream, peer) = listener.accept().await.unwrap();
+		let (_, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sender, receiver) = WsSender::channel();
+		drop(receiver);
+		let ctx = ConnCtx {
+			server: ServerState::new(Arc::new(ws_fake_config()), "assistant".into(), Vec::new()),
+			closed: CancellationToken::new(),
+		};
+		let mut completed = false;
+		let processing = async {
+			ctx.closed.cancelled().await;
+			completed = true;
+			Ok(())
+		};
+		let mut ended = false;
+		read_while_processing(
+			processing,
+			&mut reader,
+			&sender,
+			&ctx,
+			&mut VecDeque::new(),
+			&mut ended,
+			peer,
+		)
+		.await
+		.unwrap();
+		assert!(completed);
+		assert!(ended);
+	});
+	let mut client = connect_ws(addr).await;
+	send_json(
+		&mut client,
+		serde_json::json!({"type":"cancel", "session_id":"still-running"}),
+	)
+	.await;
+	tokio::time::timeout(Duration::from_secs(5), handler)
+		.await
+		.unwrap()
+		.unwrap();
+}
+
 fn handshake(origin: Option<&str>, allow_origins: &[&str]) -> Result<Response, Box<ErrorResponse>> {
 	handshake_with(origin, None, allow_origins, None)
 }
@@ -4676,13 +4845,13 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 	use crate::session::tap_runs;
 	let parent = "ws-unmappable-tap-update".to_string();
 	let run_id = "tap-developer-cto-abcdef";
-	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-	let sender = WsSender(sender);
+	let (sender, mut receiver) = WsSender::channel();
 	crate::session::context::with_session_id(parent.clone(), async {
 		crate::session::context::init_session_services("developer:cto");
 		tap_runs::enable_run_events(Some(sender)).unwrap();
 		register_streaming_tap(run_id);
-		let running: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		let running: serde_json::Value =
+			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		assert_eq!(running["seq"], 1);
 
 		crate::mcp::agent::functions::route_child_update(
@@ -4701,7 +4870,8 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 		assert_eq!(job.live.last_action.as_deref(), Some("read file.rs"));
 
 		crate::mcp::agent::functions::route_child_update(&child_text("still working"), Some(run_id), true);
-		let next: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		let next: serde_json::Value =
+			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		assert_eq!(
 			next,
 			serde_json::json!({
@@ -4750,8 +4920,7 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 	use crate::session::tap_runs;
 	let parent = "ws-run-disconnect".to_string();
 	let run_id = "tap-developer-cto-abcdef";
-	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-	let sender = WsSender(tx);
+	let (sender, mut rx) = WsSender::channel();
 	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
 	crate::session::context::with_session_id(parent.clone(), async {
 		crate::session::context::init_session_services("developer:cto");
@@ -4804,8 +4973,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 		.unwrap(),
 	)
 	.unwrap();
-	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-	let sender = WsSender(sender);
+	let (sender, mut receiver) = WsSender::channel();
 	let request = RunLogMessage {
 		session_id: "disk-parent".into(),
 		run_id: run_id.into(),
@@ -4813,7 +4981,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 		summary: false,
 	};
 	handle_run_log(request.clone(), &sender).await.unwrap();
-	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 	assert_eq!(
 		reply,
 		serde_json::json!({
@@ -4830,7 +4998,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 	)
 	.await
 	.unwrap();
-	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 	assert_eq!(
 		reply,
 		serde_json::json!({
@@ -4867,7 +5035,8 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 			Some("child failed to start".into()),
 		)
 		.unwrap();
-		let live: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		let live: serde_json::Value =
+			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		handle_run_log(
 			RunLogMessage {
 				run_id: failed_id.into(),
@@ -4877,7 +5046,8 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 		)
 		.await
 		.unwrap();
-		let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		let reply: serde_json::Value =
+			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		assert_eq!(
 			reply,
 			serde_json::json!({

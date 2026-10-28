@@ -412,3 +412,18 @@ async fn recall_gate_end_to_end_empties_the_pack_or_falls_through_when_unavailab
 
 	cleanup(proj);
 }
+
+#[test]
+fn decoded_memory_pack_keeps_memory_ids_without_source_line_ids() {
+	let record = lesson(
+		"hash-rendering",
+		"Keep the first rule.\n  Keep the second rule.",
+		"learning",
+		&[],
+	);
+	let rendered = render_item("M1", &record, false, Some("/tmp/memory.md"), &[]);
+	assert_eq!(
+		rendered,
+		"- [M1 scope=scoped confidence=high ref=/tmp/memory.md] Keep the first rule.\n  Keep the second rule.\n"
+	);
+}

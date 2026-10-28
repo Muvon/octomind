@@ -20,6 +20,7 @@
 //! - Handling errors gracefully for missing files and invalid ranges
 
 use anyhow::{Context, Result};
+use octolib::utils::line_hash::format_line;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
@@ -247,14 +248,9 @@ fn read_file_lines_with_range(filepath: &str, range: &LineRange) -> Result<Vec<S
 			break;
 		}
 
-		match line_result {
-			Ok(line_content) => {
-				lines.push(format!("{}: {}", line_number, line_content));
-			}
-			Err(e) => {
-				lines.push(format!("{}: // Error reading line: {}", line_number, e));
-			}
-		}
+		let line_content =
+			line_result.with_context(|| format!("Failed to read line {} of {}", line_number, filepath))?;
+		lines.push(format_line(line_number, &line_content));
 	}
 
 	Ok(lines)

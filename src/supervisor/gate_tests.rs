@@ -1960,6 +1960,44 @@ mod grounding {
 	}
 
 	#[test]
+	fn an_explicitly_requested_action_blocks_only_when_no_logged_call_could_have_acted() {
+		const REQUEST: &str = "Back up the database before the upgrade";
+		let conditions = vec![REQUEST.to_string()];
+		let observed = format!("The user asked '{REQUEST}' and no call performed it");
+		let condition = report("unmatched", Some("absent_action"), &observed, Some("absent_action"));
+		let gap = json_report(&serde_json::json!({
+			"conditions": [], "shapes": clean_json_shapes(), "verdict": "GAPS", "readback": [],
+			"gaps": [{"gap": observed, "settles": "a recorded backup", "sources": "absent_action"}]
+		}));
+		let blocks = |ledger: &EvidenceLedger, original_task: &str, stop| {
+			let mut gate_input = input(ledger, &[], &conditions);
+			gate_input.original_task = original_task;
+			gate_input.stop = stop;
+			[&condition, &gap].map(|report| match rule(report, &gate_input) {
+				GateVerdict::Gaps(gaps) => gaps.iter().all(|gap| gap.contains("all declared read-only")),
+				_ => false,
+			})
+		};
+		let done = Some(crate::supervisor::detect::SelfReport::Done);
+		assert_eq!(blocks(&*EMPTY_LEDGER, REQUEST, done), [true, true]);
+
+		let read_only_tool = "groundingLookupForTest";
+		crate::supervisor::detect::register_tool_read_only_hint(read_only_tool, Some(true));
+		let mut reads = EvidenceLedger::default();
+		reads.record(read_only_tool, &serde_json::json!({"q": "backup"}), false, false, 1);
+		assert_eq!(blocks(&reads, REQUEST, done), [true, true]);
+
+		// A call that could have acted, a hand-back, or a requirement the current
+		// turn never stated leaves the absence unproven.
+		let mut acted = EvidenceLedger::default();
+		acted.record("shell", &serde_json::json!({"command": "pg_dump app"}), false, false, 1);
+		assert_eq!(blocks(&acted, REQUEST, done), [false, false]);
+		let blocked = Some(crate::supervisor::detect::SelfReport::Blocked);
+		assert_eq!(blocks(&*EMPTY_LEDGER, REQUEST, blocked), [false, false]);
+		assert_eq!(blocks(&*EMPTY_LEDGER, "Upgrade the database", done), [false, false]);
+	}
+
+	#[test]
 	fn gap_and_shape_findings_need_both_a_request_and_a_recorded_observation() {
 		let mut ledger = EvidenceLedger::default();
 		ledger.record(

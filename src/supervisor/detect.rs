@@ -464,6 +464,13 @@ fn tool_read_only_hint(tool: &str) -> Option<bool> {
 	tool_read_only_hints().read().ok()?.get(tool).copied()
 }
 
+/// Can a call to this tool change nothing? Only the tool's own `readOnlyHint`
+/// says so: a command runner can run anything, and a tool without the
+/// annotation is assumed able to act.
+pub fn is_declared_read_only(tool: &str) -> bool {
+	!executes_free_form_command(tool) && tool_read_only_hint(tool) == Some(true)
+}
+
 fn tool_command_shapes() -> &'static std::sync::RwLock<std::collections::HashMap<String, bool>> {
 	static SHAPES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
 		std::sync::OnceLock::new();

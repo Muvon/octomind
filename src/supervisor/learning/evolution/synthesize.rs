@@ -690,7 +690,7 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 	}
 	let vectors = store_embeddings(&records).await;
 	let similar = |left: usize, right: usize| {
-		crate::supervisor::learning::retention::pair_signal(&records[left], &records[right])
+		crate::supervisor::learning::retention::wording_signal(&records[left], &records[right])
 			>= STORE_CLUSTER_PAIR_SIGNAL
 			|| vectors.as_ref().is_some_and(|vectors| {
 				crate::embeddings::cosine(&vectors[left], &vectors[right]) >= STORE_CLUSTER_COSINE

@@ -1960,41 +1960,36 @@ mod grounding {
 	}
 
 	#[test]
-	fn an_explicitly_requested_action_blocks_only_when_no_logged_call_could_have_acted() {
-		const REQUEST: &str = "Back up the database before the upgrade";
+	fn an_alleged_absent_action_is_reported_never_charged() {
+		const REQUEST: &str = "Read README.md and summarize the installation steps";
 		let conditions = vec![REQUEST.to_string()];
 		let observed = format!("The user asked '{REQUEST}' and no call performed it");
 		let condition = report("unmatched", Some("absent_action"), &observed, Some("absent_action"));
 		let gap = json_report(&serde_json::json!({
 			"conditions": [], "shapes": clean_json_shapes(), "verdict": "GAPS", "readback": [],
-			"gaps": [{"gap": observed, "settles": "a recorded backup", "sources": "absent_action"}]
+			"gaps": [{"gap": observed, "settles": "a recorded read of README.md", "sources": "absent_action"}]
 		}));
-		let blocks = |ledger: &EvidenceLedger, original_task: &str, stop| {
+		// The completed read is itself the requested action, and no log can prove
+		// an absence, so even an empty one never turns the allegation into a gap.
+		let mut read = EvidenceLedger::default();
+		read.record("view", &serde_json::json!({"path": "README.md"}), false, false, 512);
+		for ledger in [&read, &*EMPTY_LEDGER] {
 			let mut gate_input = input(ledger, &[], &conditions);
-			gate_input.original_task = original_task;
-			gate_input.stop = stop;
-			[&condition, &gap].map(|report| match rule(report, &gate_input) {
-				GateVerdict::Gaps(gaps) => gaps.iter().all(|gap| gap.contains("all declared read-only")),
-				_ => false,
-			})
-		};
-		let done = Some(crate::supervisor::detect::SelfReport::Done);
-		assert_eq!(blocks(&*EMPTY_LEDGER, REQUEST, done), [true, true]);
-
-		let read_only_tool = "groundingLookupForTest";
-		crate::supervisor::detect::register_tool_read_only_hint(read_only_tool, Some(true));
-		let mut reads = EvidenceLedger::default();
-		reads.record(read_only_tool, &serde_json::json!({"q": "backup"}), false, false, 1);
-		assert_eq!(blocks(&reads, REQUEST, done), [true, true]);
-
-		// A call that could have acted, a hand-back, or a requirement the current
-		// turn never stated leaves the absence unproven.
-		let mut acted = EvidenceLedger::default();
-		acted.record("shell", &serde_json::json!({"command": "pg_dump app"}), false, false, 1);
-		assert_eq!(blocks(&acted, REQUEST, done), [false, false]);
-		let blocked = Some(crate::supervisor::detect::SelfReport::Blocked);
-		assert_eq!(blocks(&*EMPTY_LEDGER, REQUEST, blocked), [false, false]);
-		assert_eq!(blocks(&*EMPTY_LEDGER, "Upgrade the database", done), [false, false]);
+			gate_input.original_task = REQUEST;
+			for (report, expected_conditions) in [(&condition, 1), (&gap, 0)] {
+				let mut reported = Vec::new();
+				let verdict = grounded_verdict(
+					report.verdict(expected_conditions, &HashSet::new()),
+					report,
+					&gate_input,
+					&mut reported,
+				);
+				assert!(matches!(verdict, GateVerdict::Indeterminate(_)), "{verdict:?}");
+				assert!(reported
+					.iter()
+					.any(|finding| finding.starts_with("unconfirmed finding:")));
+			}
+		}
 	}
 
 	#[test]

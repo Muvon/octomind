@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.66.1] - 2026-10-28
+
+### 📋 Release Summary
+
+The supervisor now resets stall tracking after tree changes and detects repeated supervisor cycles. Chat handles unavailable home-directory paths safely.
+
+### 🔧 Improvements & Optimizations
+
+- **session**: serialize tool result truncation test `63f453d0`
+- **tests**: configure test data directory handling `b9439ecc`
+- **session**: isolate tool truncation test state `52a2f68a`
+- **session**: test structured output rejection for minimax `04cf60d8`
+- **tests**: adjust Anthropic support test cases `748632f4`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: reset stall count after tree changes `741624d7`
+- **supervisor**: detect repeated supervisor cycles `601bbfc8`
+- **chat**: handle unavailable home paths safely `7081cc71`
+
+### 📚 Documentation & Examples
+
+- **community**: document contribution and security policies `3e3d86e2`
+
 ## [0.66.0] - 2026-10-28
 
 ### 📋 Release Summary

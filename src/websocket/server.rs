@@ -259,10 +259,19 @@ impl WebSocketServer {
 		loop {
 			tokio::select! {
 				Some(joined) = connections.join_next() => {
-					joined?;
+					// A panicking handler ends only its own connection.
+					if let Err(e) = joined {
+						log_error!("Connection handler task failed: {}", e);
+					}
 				}
 				accepted = listener.accept(), if connections.len() < MAX_CONNECTIONS => {
-					let (stream, peer_addr) = accepted?;
+					let (stream, peer_addr) = match accepted {
+						Ok(accepted) => accepted,
+						Err(e) => {
+							log_error!("Failed to accept connection: {}", e);
+							continue;
+						}
+					};
 					log_info!("Connection accepted from {}", peer_addr);
 
 					let state = self.state.clone();

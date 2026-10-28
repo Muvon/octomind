@@ -567,6 +567,12 @@ fn no_recital_while_the_model_waits_on_background_jobs() {
 		!waiting_on_background_jobs(&working, true),
 		"a model still calling tools beside a running job is not waiting"
 	);
+	let mut steered = waiting;
+	steered.push(user("Stop testing; inspect the source only."));
+	assert!(
+		!waiting_on_background_jobs(&steered, true),
+		"a new user instruction must be recited even while an earlier job is pending"
+	);
 }
 
 #[test]

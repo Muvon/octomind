@@ -759,7 +759,7 @@ fn verifier_pass() -> serde_json::Value {
 
 fn verifier_gap() -> serde_json::Value {
 	final_response(&format!(
-		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
+		"{CLEAN_SHAPES}\n<gap sources=\"output:0\" settles=\"the counter increments to 2\">The requirement 'verify the counter' conflicts with 'counter increment: expected 2, observed 1'</gap>"
 	))
 }
 
@@ -1022,6 +1022,12 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 		let config = supervised_config();
 		let mut session = fake_session("verify the counter");
 		session.completion_gate_eligible = true;
+		let seq = session
+			.evidence
+			.record("shell", &serde_json::json!({"command":"counter-test"}), false, true, 44);
+		session
+			.evidence
+			.record_ground(seq, "counter increment: expected 2, observed 1");
 		// Missing detector clearance must neither bypass nor replace a real gap.
 		session
 			.detectors
@@ -1036,9 +1042,9 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 			.session
 			.messages
 			.iter()
-			.find(|m| m.content.contains("verification pass found gaps"))
+			.find(|m| m.content.contains("evidence-backed review findings"))
 			.expect("gap advisory injected");
-		assert!(advisory.content.contains("the counter is unverified"));
+		assert!(advisory.content.contains("counter increment: expected 2, observed 1"));
 		assert_eq!(session.session.info.total_api_calls, 2);
 
 		std::env::remove_var("OLLAMA_API_URL");
@@ -1062,7 +1068,7 @@ async fn test_verify_gate_second_finding_gets_its_own_rerun() {
 			final_response("no finding was refuted"),
 			final_response("The counter is verified now."),
 			final_response(&format!(
-				"{CLEAN_SHAPES}\n<gap settles=\"a passing run of the suite\">the suite run after the fix failed</gap>"
+				"{CLEAN_SHAPES}\n<gap sources=\"output:1\" settles=\"the suite passes\">The requirement 'verify the counter' conflicts with 'counter overflow: expected error, observed wraparound'</gap>"
 			)),
 			final_response("no finding was refuted"),
 			final_response("Fixed the failing suite."),
@@ -1074,6 +1080,10 @@ async fn test_verify_gate_second_finding_gets_its_own_rerun() {
 		let config = supervised_config();
 		let mut session = fake_session("verify the counter");
 		session.completion_gate_eligible = true;
+		let seq = session.evidence.record("shell", &serde_json::json!({"command":"counter-test"}), false, true, 44);
+		session.evidence.record_ground(seq, "counter increment: expected 2, observed 1");
+		let seq = session.evidence.record("shell", &serde_json::json!({"command":"counter-overflow-test"}), false, true, 57);
+		session.evidence.record_ground(seq, "counter overflow: expected error, observed wraparound");
 
 		run_turn(&mut session, &config).await.expect("second re-run completes");
 
@@ -1087,55 +1097,40 @@ async fn test_verify_gate_second_finding_gets_its_own_rerun() {
 	.await;
 }
 
-/// A verifier response with no parseable verdict is Indeterminate: completion
-/// is NOT accepted, the failure is recorded, and the bounded re-entry advisory
-/// asks for a checkable restatement.
+/// An unavailable verdict must preserve the answer without creating correction work.
 #[tokio::test]
-async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
+async fn test_verify_gate_indeterminate_ends_turn_unverified() {
 	let _guard = ENV_LOCK.lock().await;
 	let sid = "api-exec-gate-indeterminate".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::init_session_services("assistant");
-		// Two garbage bodies: the parser may retry once before giving up; both
-		// are interchangeable so the stub order does not matter. The re-run's
-		// stop is verified too and fails the same way, spending the last budget
-		// slot — same two interchangeable bodies for that pass.
-		let url = spawn_stub(vec![
-			done_response("Done, no evidence needed."),
-			final_response("certainly! here is no protocol at all"),
-			final_response("still no protocol"),
-			final_response("Second pass with a proper answer."),
-			final_response("third pass, still no protocol"),
-			final_response("fourth pass, no protocol either"),
+		let (url, requests) = spawn_recording_stub(vec![
+			done_response("Done, the artifact is saved."),
+			final_response("no verdict was provided"),
+			final_response("still no verdict"),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
-
 		let config = supervised_config();
-		let mut session = fake_session("close the task");
+		let mut session = fake_session("save the artifact");
 		session.completion_gate_eligible = true;
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("indeterminate re-entry completes");
-
-		assert!(session.gate_failed, "unreadable verdict must not pass silently");
-		assert!(matches!(
+		run_turn(&mut session, &config).await.expect("unverified stop");
+		assert!(session.gate_failed);
+		assert_eq!(
 			session.learning_outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Unknown
-		));
-		assert_eq!(session.gate_iterations, 2, "both stops verified, budget spent");
-		session
+		);
+		assert_eq!(session.session.info.total_api_calls, 1, "no correction turn");
+		assert_eq!(
+			requests.lock().unwrap().len(),
+			3,
+			"agent, verifier and its bounded retry only"
+		);
+		assert!(!session
 			.session
 			.messages
 			.iter()
-			.find(|m| {
-				m.content
-					.contains("independent verification pass could not be completed")
-			})
-			.expect("unverified re-entry advisory injected");
-		assert_eq!(session.session.info.total_api_calls, 2);
-
+			.any(|m| m.content.contains("not accepted yet")));
 		std::env::remove_var("OLLAMA_API_URL");
 		crate::session::context::cleanup_session(&sid);
 	})
@@ -1486,4 +1481,180 @@ async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
 	);
 
 	std::env::remove_var("OLLAMA_API_URL");
+}
+
+fn structured_verifier_response(value: serde_json::Value) -> serde_json::Value {
+	serde_json::json!({
+		"id": format!("resp_{}", uuid::Uuid::new_v4()),
+		"output": [{"type":"message", "content":[{"type":"output_text", "text":value.to_string()}]}],
+		"usage":{"input_tokens":20,"output_tokens":20,"total_tokens":40}
+	})
+}
+
+fn clean_structured_shapes() -> serde_json::Value {
+	serde_json::json!([
+		"circular",
+		"context-stripped",
+		"acceptance-only",
+		"unenumerated-category"
+	])
+	.as_array()
+	.expect("shape names")
+	.iter()
+	.map(|name| {
+		serde_json::json!({
+			"name":name,"found":"no","reason":"No observed violation","settles":null,"sources":null
+		})
+	})
+	.collect()
+}
+
+/// The real HTTP/provider/session stack receives a schema-constrained verdict
+/// after a recorded successful suite. Missing proof must not start another agent turn.
+#[tokio::test]
+async fn strict_json_uncertainty_preserves_the_answer_without_an_agent_rerun() {
+	let _guard = ENV_LOCK.lock().await;
+	let previous_url = std::env::var_os("OPENAI_API_URL");
+	let previous_key = std::env::var_os("OPENAI_API_KEY");
+	std::env::set_var("OPENAI_API_KEY", "test-key");
+	for (status, basis, observation, sources) in [
+		("unknown", None, "The output does not enumerate hydration cases", None),
+		("matched", None, "All requested behavior should work", None),
+		(
+			"unmatched",
+			Some("recorded_output"),
+			"The run printed 'FAIL invented hydration failure'",
+			Some("output:0"),
+		),
+	] {
+		let sid = format!("strict-json-no-false-correction-{status}");
+		crate::session::context::with_session_id(sid.clone(), async {
+			crate::session::context::init_session_services("assistant");
+			let answer = "Implemented transitions. Unit suite: 281 files and 7,935 tests passed.";
+			let (agent_url, agent_requests) = spawn_recording_stub(vec![done_response(answer)]).await;
+			std::env::set_var("OLLAMA_API_URL", agent_url);
+			let report = serde_json::json!({
+				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources}],
+				"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]
+			});
+			let (supervisor_url, supervisor_requests) =
+				crate::session::chat::test_support::spawn_recording_stub(vec![structured_verifier_response(report)])
+					.await;
+			std::env::set_var("OPENAI_API_URL", supervisor_url);
+			let mut config = supervised_config();
+			config.supervisor.model.model = Some("openai:gpt-4.1".to_string());
+			config.decision.supervisor = false;
+			let task = "Preserve transition behavior after server rendering and hydration";
+			let mut session = fake_session(task);
+			session.completion_gate_eligible = true;
+			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
+			resolved.evidence_conditions = vec![task.to_string()];
+			session.gate_task = Some(resolved);
+			let seq = session.evidence.record(
+				"shell",
+				&serde_json::json!({"command":"pnpm test --project unit"}),
+				false,
+				false,
+				50,
+			);
+			session
+				.evidence
+				.record_ground(seq, "Test Files 281 passed; Tests 7935 passed");
+			session
+				.evidence
+				.record_command_output("pnpm test --project unit", "Test Files 281 passed; Tests 7935 passed");
+			run_turn(&mut session, &config)
+				.await
+				.expect("uncertainty ends the turn");
+			assert_eq!(session.session.info.total_api_calls, 1);
+			assert_eq!(
+				agent_requests.lock().unwrap().len(),
+				1,
+				"no generic follow-up, edits or test reruns"
+			);
+			assert!(session.last_response.contains(answer));
+			assert!(matches!(
+				session.learning_outcome,
+				crate::supervisor::learning::TrajectoryOutcome::Unknown
+			));
+			let requests = supervisor_requests.lock().unwrap();
+			assert_eq!(requests.len(), 1, "one independent verification");
+			assert_eq!(requests[0]["text"]["format"]["type"], "json_schema");
+			let wire = requests[0].to_string();
+			assert!(
+				wire.contains("7935 passed"),
+				"the verifier sees the actual successful output"
+			);
+			assert!(!session
+				.session
+				.messages
+				.iter()
+				.any(|m| m.content.contains("not accepted yet")));
+			crate::session::context::cleanup_session(&sid);
+		})
+		.await;
+	}
+	std::env::remove_var("OLLAMA_API_URL");
+	for (name, previous) in [("OPENAI_API_URL", previous_url), ("OPENAI_API_KEY", previous_key)] {
+		match previous {
+			Some(value) => std::env::set_var(name, value),
+			None => std::env::remove_var(name),
+		}
+	}
+}
+
+/// A grounded observation can still be misinterpreted. The coding agent may
+/// rebut the finding without edits or rerunning the command it already observed.
+#[tokio::test]
+async fn strict_json_review_allows_rebuttal_without_repeating_unchanged_findings() {
+	let _guard = ENV_LOCK.lock().await;
+	let previous_url = std::env::var_os("OPENAI_API_URL");
+	let previous_key = std::env::var_os("OPENAI_API_KEY");
+	std::env::set_var("OPENAI_API_KEY", "test-key");
+	for repeated in [false, true] {
+		let sid = format!("strict-json-evidence-rebuttal-{repeated}");
+		crate::session::context::with_session_id(sid.clone(),async {
+		crate::session::context::init_session_services("assistant");
+		let (agent_url,agent_requests) = spawn_recording_stub(vec![
+			done_response("The counter test fails: expected 2, observed 1. No code changed."),
+			done_response("The request was to report whether the test passes. The existing failing output answers that request; no fix or rerun is required."),
+		]).await;
+		std::env::set_var("OLLAMA_API_URL",agent_url);
+		let gap = serde_json::json!({"conditions":[],"shapes":clean_structured_shapes(),"readback":[],"verdict":"GAPS",
+			"gaps":[{"gap":"The requirement 'Report whether the counter test passes' conflicts with 'counter increment: expected 2, observed 1'", "sources":"output:0", "settles":"a passing counter test"}]});
+		let pass = serde_json::json!({"conditions":[],"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]});
+		let refutation = serde_json::json!({"findings":[{"n":1,"verdict":"stands","citation":"The counter test failed"}]});
+		let mut responses = vec![structured_verifier_response(gap.clone()), structured_verifier_response(refutation.clone()),
+			structured_verifier_response(if repeated { gap } else { pass })];
+		if repeated { responses.push(structured_verifier_response(refutation)); }
+		let (supervisor_url,_) = crate::session::chat::test_support::spawn_recording_stub(responses).await;
+		std::env::set_var("OPENAI_API_URL",supervisor_url);
+		let mut config = supervised_config();
+		config.supervisor.model.model=Some("openai:gpt-4.1".to_string());
+		config.decision.supervisor=false;
+		let mut session=fake_session("Report whether the counter test passes. Do not change code.");
+		session.completion_gate_eligible=true;
+		let seq=session.evidence.record("shell",&serde_json::json!({"command":"counter-test"}),false,true,44);
+		session.evidence.record_ground(seq,"counter increment: expected 2, observed 1");
+		run_turn(&mut session,&config).await.expect("rebuttal is accepted");
+		assert_eq!(session.session.info.total_api_calls,2);
+		assert_eq!(session.gate_failed, repeated);
+		assert!(matches!(session.learning_outcome, crate::supervisor::learning::TrajectoryOutcome::Unknown));
+		assert!(session.evidence.mutated_paths().is_empty());
+		let requests=agent_requests.lock().unwrap();
+		assert_eq!(requests.len(),2,"answer and evidence-based rebuttal only");
+		let request:serde_json::Value=serde_json::from_str(&requests[1]).expect("agent request");
+		let wire=request.to_string();
+		assert!(wire.contains("If already satisfied, stale, or outside scope"));
+		assert!(!wire.contains("not accepted yet"));
+		crate::session::context::cleanup_session(&sid);
+	}).await;
+	}
+	std::env::remove_var("OLLAMA_API_URL");
+	for (name, previous) in [("OPENAI_API_URL", previous_url), ("OPENAI_API_KEY", previous_key)] {
+		match previous {
+			Some(value) => std::env::set_var(name, value),
+			None => std::env::remove_var(name),
+		}
+	}
 }

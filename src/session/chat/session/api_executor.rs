@@ -25,7 +25,7 @@ use tokio::sync::watch;
 
 use crate::session::output::{OutputMode, OutputSink};
 
-const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
+const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nAdvisory: your last response reported work in progress without a tool call, and this session has no pending asynchronous work to resume it. If work remains, take the next concrete action. If the request is already satisfied, report the result with its existing evidence; if proceeding requires user input, state what is needed. Do not invent extra work to answer this note; what the user explicitly asked for is still owed when it is absent.\n</pay-attention>";
 
 /// Read the admission-time task resolution used by both verifier-backed and
 /// trusted no-gate completion. A missing/mismatched cache stays conservative,
@@ -680,7 +680,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			prior_gaps: &prior_gaps,
 			role_context: &crate::supervisor::role_context(&chat_session.session.messages),
 			evidence_conditions: &resolved_task.evidence_conditions,
-			first_verification: chat_session.gate_iterations == 0,
 		};
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
@@ -690,17 +689,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		crate::supervisor::stats::gate_run();
 		let verdict = crate::supervisor::gate::verify(config, gate_input, operation_rx.clone()).await;
 		animation_manager.clear_phase();
-		// Did the trajectory gain anything since the pass that produced
-		// `prior_gaps`? A finding that survives new evidence is diagnostic (see
-		// the Gaps arm); one that survives a re-run with nothing new is not.
-		let new_evidence = chat_session.evidence.actions_since_gate() > 0;
 		chat_session.evidence.mark_gate_checkpoint();
 		crate::supervisor::hindsight::record_gate(
 			config,
 			match &verdict {
 				crate::supervisor::gate::GateVerdict::Pass => "pass",
 				crate::supervisor::gate::GateVerdict::Gaps(gaps)
-					if new_evidence && crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
+					if crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
 				{
 					"stall"
 				}
@@ -761,29 +756,25 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
-				// The same finding twice, across a re-run that DID gather new
-				// evidence, is a check the loop cannot converge on — the agent
-				// answered it and the verdict did not move. Repeating the advisory
-				// only spends the budget to arrive here again, so hand the finding
-				// to the user instead of blocking on it. The trajectory stays
-				// unverified; learning may retain only a failure-labelled experience.
-				if new_evidence && crate::supervisor::gate::gaps_unchanged(&prior_gaps, &gaps) {
+				// Repeating a finding the agent already assessed cannot resolve the
+				// disagreement. Surface it without another correction or correctness credit.
+				if crate::supervisor::gate::gaps_unchanged(&prior_gaps, &gaps) {
 					chat_session.gate_iterations = 0;
 					chat_session.last_gate_gaps.clear();
 					chat_session.gate_failed = true;
-					chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
+					chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 					crate::supervisor::stats::gate_stall();
-					let mut msg = String::from("verification did not converge — unchanged after new evidence");
+					let mut msg = String::from("verification did not converge — unchanged after review");
 					for g in &gaps {
 						msg.push_str("\n- ");
 						msg.push_str(g);
 					}
 					crate::supervisor::notify(&msg);
 					crate::log_debug!(
-						"Verify-gate: {} gap(s) unchanged after new evidence; not re-running",
+						"Verify-gate: {} gap(s) unchanged after review; not re-running",
 						gaps.len()
 					);
-					reinforce_recalled(chat_session, config, -0.15).await;
+					reinforce_recalled(chat_session, config, 0.0).await;
 					chat_session.finish_turn_timing();
 					return Ok(());
 				}
@@ -830,43 +821,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
 				chat_session.pending_plan_signal = None;
-				// A verdict the verifier could not produce is not verified work: the
-				// trajectory stays labelled unverified whatever the re-entry below
-				// does, and only a later PASS clears the label. Nor is it evidence of
-				// failure: learning records it as Unknown, never as a proven failure.
 				chat_session.gate_failed = true;
 				chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
-				chat_session.gate_iterations += 1;
-				crate::log_debug!(
-					"Verify-gate: indeterminate: {} (iter {})",
-					reason,
-					chat_session.gate_iterations
-				);
-				// The same bounded budget a substantive gap spends: an unreadable
-				// verdict that fell through here was completion accepted without
-				// verification.
-				if let Some(note) = crate::supervisor::gate::unverified_reentry(
-					chat_session.gate_iterations,
-					crate::supervisor::gate::MAX_ITERATIONS,
-				) {
-					chat_session.add_system_managed_user_message(&note)?;
-					chat_session.last_self_report = None; // force the re-run to re-evaluate
-					crate::supervisor::notify(&format!("completion could not be verified ({reason}) — re-running"));
-					return Box::pin(execute_api_call_and_process_response(
-						chat_session,
-						config,
-						role,
-						operation_rx,
-						mode,
-						sink,
-					))
-					.await;
-				}
 				crate::supervisor::stats::gate_fail();
-				crate::log_debug!("Verify-gate: iterations exhausted; completion unverified");
+				crate::log_debug!("Verify-gate: indeterminate: {}; completion unverified", reason);
 				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
-				// No verdict means no correctness credit either way; recorded use
-				// still counts for retention.
 				reinforce_recalled(chat_session, config, 0.0).await;
 			}
 		}

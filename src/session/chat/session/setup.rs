@@ -17,7 +17,6 @@
 use super::core::{ChatSession, SessionInitParams};
 use super::params::GenericSessionArgs;
 use crate::config::Config;
-use crate::log_info;
 use crate::providers::ProviderFactory;
 use anyhow::Result;
 use colored::*;
@@ -103,30 +102,6 @@ pub async fn setup_and_initialize_session(
 		));
 	}
 
-	// Validate provider credentials before starting — fail fast with a clear error
-	// Priority: runtime model > role model profile > main model profile.
-	let role_profile = config.get_model_profile_for_role(&role);
-	let effective_model = model.clone().unwrap_or_else(|| role_profile.model.clone());
-
-	// Fail fast: --schema enforcement needs a model that supports structured output.
-	// Checked before the spinner starts so the error surfaces cleanly.
-	if args.schema.is_some() {
-		crate::session::ensure_structured_output_support(&effective_model)?;
-	}
-
-	// Print startup banner before the spinner so the icon stays visible above the
-	// transient spinner line. Interactive TTY + plain output mode only.
-	let banner_printed = is_interactive
-		&& !crate::session::output::OutputMode::from_runtime_mode(&output_mode).should_suppress_cli_output();
-	if banner_printed {
-		let cwd = crate::mcp::get_thread_working_directory();
-		let extra = vec![
-			format!("{}", display_random_tip().bright_yellow()),
-			format!("{}", "? for shortcuts • /help for commands".bright_black()),
-		];
-		crate::branding::print_startup_banner(&role, &effective_model, &cwd, &extra);
-	}
-
 	// Show loading spinner in interactive mode
 	let spinner = if is_interactive {
 		let sp = ProgressBar::new_spinner();
@@ -142,15 +117,6 @@ pub async fn setup_and_initialize_session(
 	} else {
 		None
 	};
-
-	if let Err(e) = validate_provider_credentials(&effective_model) {
-		if let Some(sp) = spinner {
-			sp.finish_and_clear();
-			print!("\x1B[2K\r");
-			std::io::Write::flush(&mut std::io::stdout()).ok();
-		}
-		return Err(e);
-	}
 
 	// Get current directory - use thread-local if set (ACP sessions), otherwise process cwd
 	let current_dir = crate::mcp::get_thread_working_directory();
@@ -231,51 +197,42 @@ pub async fn setup_and_initialize_session(
 		ChatSession::initialize(session_params).await?
 	};
 
-	// Tip + shortcuts line are shown inline next to the icon as part of
-	// `print_startup_banner` above; suppress the duplicate here.
+	// Resume resolves the saved model before validating credentials or capabilities.
+	let validation = validate_provider_credentials(&chat_session.model).and_then(|()| {
+		if args.schema.is_some() {
+			crate::session::ensure_structured_output_support(&chat_session.model)?;
+		}
+		Ok(())
+	});
+	if let Err(error) = validation {
+		if let Some(sp) = spinner {
+			sp.finish_and_clear();
+		}
+		return Err(error);
+	}
+	chat_session.schema = args.schema.clone();
+
 	let suppress =
 		crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check).should_suppress_cli_output();
-	if !chat_session.was_resumed && !suppress && !banner_printed {
+	if is_interactive && !suppress {
+		let cwd = crate::mcp::get_thread_working_directory();
+		let extra = vec![
+			format!("{}", display_random_tip().bright_yellow()),
+			format!("{}", "? for shortcuts • /help for commands".bright_black()),
+		];
+		let print_banner = || {
+			crate::branding::print_startup_banner(&chat_session.role, &chat_session.model, &cwd, &extra);
+		};
 		if let Some(ref sp) = spinner {
-			sp.println(format!("{}", display_random_tip().bright_yellow()));
-			sp.println(format!("{}", "? for shortcuts • /help for commands".bright_black()));
+			sp.suspend(print_banner);
 		} else {
-			println!("{}", display_random_tip().bright_yellow());
-			println!("{}", "? for shortcuts • /help for commands".bright_black());
+			print_banner();
 		}
 		chat_session.initial_status_shown = true;
-	} else if banner_printed && !chat_session.was_resumed {
+	} else if !chat_session.was_resumed && !suppress {
+		println!("{}", display_random_tip().bright_yellow());
+		println!("{}", "? for shortcuts • /help for commands".bright_black());
 		chat_session.initial_status_shown = true;
-	}
-
-	// Apply runtime overrides (these override the session initialization values)
-	if let Some(runtime_model) = &model {
-		chat_session.model = runtime_model.clone();
-		log_info!("Using runtime model override: {}", runtime_model);
-	}
-
-	// Apply runtime temperature override if provided via CLI
-	if let Some(runtime_temperature) = temperature {
-		chat_session.temperature = runtime_temperature;
-		log_info!("Using runtime temperature override: {}", runtime_temperature);
-	}
-
-	// Apply runtime max_tokens override if provided via CLI
-	if let Some(runtime_max_tokens) = max_tokens {
-		chat_session.max_tokens = runtime_max_tokens;
-		log_info!("Using runtime_max_tokens override: {}", runtime_max_tokens);
-	}
-
-	// Apply runtime max_retries override if provided via CLI
-	if let Some(runtime_max_retries) = max_retries {
-		chat_session.max_retries = runtime_max_retries;
-		log_info!("Using runtime max_retries override: {}", runtime_max_retries);
-	}
-
-	// Apply structured-output schema override (from `run --schema <path>`). The
-	// model's capability was already validated above before the session started.
-	if let Some(schema) = &args.schema {
-		chat_session.schema = Some(schema.clone());
 	}
 
 	// Track if the first message has been processed through layers

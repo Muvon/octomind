@@ -31,7 +31,6 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 		})));
 	}
 
-	// Change to a new model (runtime only)
 	let new_model = params.join(" ");
 
 	// Reject anything config validation would reject before touching the session —
@@ -51,20 +50,17 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 
 	let old_model = session.model.clone();
 
-	// Log the command execution
-	if let Some(session_file) = &session.session.session_file {
-		if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
-			let command_line = format!("/model {}", new_model);
-			let _ = crate::session::logger::log_session_command(session_name, &command_line);
-		}
-	}
-
-	// Update session model (runtime only - don't update config)
+	// The selection belongs to this session, not the shared configuration.
 	session.model = new_model.clone();
 	session.session.info.model = new_model.clone();
 
-	// Build JSON output
-	let saved = match session.save() {
+	let save_result = if session.session.session_file.is_some() {
+		crate::session::logger::log_session_command(&session.session.info.name, &format!("/model {}", new_model))
+			.and_then(|()| session.save())
+	} else {
+		session.save()
+	};
+	let saved = match save_result {
 		Ok(_) => Some(true),
 		Err(e) => {
 			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Model {

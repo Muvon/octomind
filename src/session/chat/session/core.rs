@@ -592,10 +592,25 @@ impl ChatSession {
 
 			// Try to load session
 			match load_session(&session_file) {
-				Ok(session) => {
+				Ok(mut session) => {
 					// Extract runtime state from session log
-					let runtime_state =
-						crate::session::extract_runtime_state_from_log(&session_file).unwrap_or_default();
+					let runtime_state = crate::session::extract_runtime_state_from_log(&session_file)?;
+					let role = match runtime_state.role.as_deref() {
+						Some(role) if !params.role_explicit => role,
+						_ => params.role,
+					};
+					if !params.config.has_role(role) {
+						anyhow::bail!("Cannot resume session '{}': role '{}' not found", session_name, role);
+					}
+					let mut role_profile = params.config.get_model_profile_for_role(role);
+					// Restoring a role must preserve the session's model; explicitly
+					// selecting a role instead adopts its configured profile.
+					if !params.role_explicit {
+						role_profile.model = session.info.model.clone();
+					}
+					let effective_profile = runtime_profile.resolve(&role_profile);
+					session.info.model = effective_profile.model.clone();
+					session.info.role = role.to_string();
 
 					if !suppress_cli_output {
 						// When session is loaded successfully, show its info
@@ -650,8 +665,8 @@ impl ChatSession {
 						last_response: String::new(),
 						turn_started_at: None,
 						turn_answers: Vec::new(),
-						model: restored_model,         // Use restored model from session
-						role: params.role.to_string(), // Add role from params
+						model: restored_model, // Use restored model from session
+						role: role.to_string(),
 						temperature: effective_profile.temperature,
 						top_p: effective_profile.top_p,
 						top_k: effective_profile.top_k,
@@ -706,23 +721,6 @@ impl ChatSession {
 						specialist_brief: None,
 						system_prompt_built: false,
 					};
-					// Keep session.info.role in sync with the active role
-					chat_session.session.info.role = params.role.to_string();
-
-					// Apply restored role if available. An explicitly named role is a
-					// deliberate switch and outranks whatever `/role` the session
-					// last logged — otherwise `run reviewer --resume x` would snap
-					// straight back to the old role.
-					if let Some(restored_role) = runtime_state.role.filter(|_| !params.role_explicit) {
-						// Validate that the restored role still exists in config
-						if params.config.roles.iter().any(|r| r.name == restored_role) {
-							chat_session.role = restored_role;
-							// Update temperature and model from the restored role config
-							let role_profile = params.config.get_model_profile_for_role(&chat_session.role);
-							chat_session.apply_model_profile(&role_profile);
-						}
-					}
-
 					// Restore critical knowledge entries from session log
 					if !runtime_state.critical_knowledge.is_empty() {
 						chat_session.critical_knowledge = runtime_state.critical_knowledge;

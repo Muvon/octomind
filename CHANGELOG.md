@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.66.4] - 2026-10-29
+
+### 📋 Release Summary
+
+Session resume restores model and role state, provider retries preserve context, and escaped placeholders remain intact across agent passes.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update agent-client-protocol to 3.6.0 `e2f2c90a`
+- **session**: highlight displayed costs in yellow `0c649513`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: restore model and role state on resume `55b8ed87`
+- **providers**: preserve context across provider retries `63953887`
+- **agent**: preserve escaped placeholders across passes `b907fa08`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.66.3] - 2026-10-29
 
 ### 📋 Release Summary

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Tool execution module - handles parallel tool execution, display, and error handling
+// Tool execution module - handles ordered tool execution, display, and error handling
 // Unified interface for both main sessions and layers
 
 use crate::config::Config;
@@ -78,7 +78,7 @@ impl ToolExecutionContext<'_> {
 	}
 }
 
-/// Execute all tool calls in parallel for given execution context
+/// Execute tools in emitted order, allowing consecutive read-only calls to overlap.
 pub async fn execute_tools_in_context(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
@@ -113,7 +113,7 @@ pub async fn execute_tools_in_context(
 	execute_tools_with_context(allowed_tool_calls, context, config, operation_cancelled, mode).await
 }
 
-// Execute all tool calls in parallel and collect results (legacy interface for main session)
+// Legacy main-session interface; execution order follows the same barriers as layers.
 pub async fn execute_tools_parallel(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	tool_round_intent: &str,
@@ -362,14 +362,11 @@ async fn execute_tools_with_context(
 		return Ok((Vec::new(), 0));
 	}
 
-	// Calls that may write run one after another in the order the model emitted
-	// them; only tools declaring `readOnlyHint: true` run in parallel (a missing
-	// hint means "may write", the MCP default). Concurrent edits to one file each
-	// answer with line ids from their own snapshot, so ids returned by an
-	// earlier-finishing edit are already stale when the batch completes. Each
-	// write holds a sender that it drops when it finishes or aborts, releasing
-	// the next one.
-	let mut previous_write: Option<tokio::sync::oneshot::Receiver<()>> = None;
+	// A write is a barrier on both sides: reads must not observe an unfinished
+	// earlier write, and a later write must not overtake earlier reads. Closing
+	// a watch channel releases every dependent, including when a task panics.
+	let mut previous_write: Option<tokio::sync::watch::Receiver<()>> = None;
+	let mut pending_reads = Vec::new();
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
@@ -396,58 +393,45 @@ async fn execute_tools_with_context(
 		// Guardrail decided this tool is denied — return the error result
 		// directly without spawning the underlying executor.
 		let block_msg = block_messages.get(index).cloned().unwrap_or(None);
-		let task = if let Some(msg) = block_msg {
-			let tool_name_for_err = tool_name.clone();
-			let tool_id_for_err = original_tool_id.clone();
-			tokio::spawn(async move {
-				Ok::<_, anyhow::Error>((
-					crate::mcp::McpToolResult::error(tool_name_for_err, tool_id_for_err, msg),
-					0u64,
-				))
-			})
+		let read_only = crate::supervisor::detect::tool_read_only_hint(&tool_name) == Some(true);
+		let mut predecessors = if read_only {
+			Vec::new()
 		} else {
-			let (previous, release) =
-				if crate::supervisor::detect::tool_read_only_hint(&tool_call.tool_name) != Some(true) {
-					let (release, finished) = tokio::sync::oneshot::channel::<()>();
-					(previous_write.replace(finished), Some(release))
-				} else {
-					(None, None)
-				};
-			match context {
-				ToolExecutionContext::MainSession { .. } => {
-					tokio::spawn(crate::supervisor::accounting::inherit(async move {
-						let _release = release;
-						if let Some(previous) = previous {
-							// Nothing is ever sent: completion and abort both arrive as the sender's drop.
-							let _ = previous.await;
-						}
-						// Propagate session ID to spawned task for session-scoped state
-						crate::session::context::with_session_id(session_id, async move {
-							let mut call_with_id = tool_call_clone.clone();
-							// CRITICAL: Use the original tool_id, don't change it
-							call_with_id.tool_id = tool_id_for_task.clone();
-							crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
-						})
-						.await
-					}))
-				}
-				ToolExecutionContext::Layer { .. } => {
-					tokio::spawn(crate::supervisor::accounting::inherit(async move {
-						let _release = release;
-						if let Some(previous) = previous {
-							let _ = previous.await;
-						}
-						crate::session::context::with_session_id(session_id, async move {
-							let mut call_with_id = tool_call_clone.clone();
-							call_with_id.tool_id = tool_id_for_task.clone();
-							crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task)
-								.await
-						})
-						.await
-					}))
-				}
-			}
+			std::mem::take(&mut pending_reads)
 		};
+		if let Some(previous) = &previous_write {
+			predecessors.push(previous.clone());
+		}
+		let (release, finished) = tokio::sync::watch::channel(());
+		if read_only {
+			pending_reads.push(finished);
+		} else {
+			previous_write = Some(finished);
+		}
+		let layer = matches!(context, ToolExecutionContext::Layer { .. });
+		let task = tokio::spawn(crate::supervisor::accounting::inherit(async move {
+			let _release = release;
+			for mut predecessor in predecessors {
+				let _ = predecessor.changed().await;
+			}
+			if let Some(msg) = block_msg {
+				return Ok((
+					crate::mcp::McpToolResult::error(tool_call_clone.tool_name, tool_id_for_task, msg),
+					0u64,
+				));
+			}
+			// Queueing precedes the executor's timer and cancellation check.
+			crate::session::context::with_session_id(session_id, async move {
+				let mut call_with_id = tool_call_clone;
+				call_with_id.tool_id = tool_id_for_task;
+				if layer {
+					crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
+				} else {
+					crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
+				}
+			})
+			.await
+		}));
 
 		tool_tasks.push((tool_name, task, original_tool_id, tool_index));
 	}

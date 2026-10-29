@@ -450,13 +450,15 @@ fn tool_read_only_hints() -> &'static std::sync::RwLock<std::collections::HashMa
 
 /// Register the standard MCP read-only hint when an external tool inventory is
 /// received. Per the MCP specification this is a hint, not an authorization or
-/// safety boundary; it is used only for progress/evidence classification.
+/// safety boundary; it drives progress classification and execution ordering.
 pub fn register_tool_read_only_hint(tool: &str, read_only: Option<bool>) {
-	let Some(read_only) = read_only else {
-		return;
-	};
 	if let Ok(mut hints) = tool_read_only_hints().write() {
-		hints.insert(tool.to_string(), read_only);
+		if let Some(read_only) = read_only {
+			hints.insert(tool.to_string(), read_only);
+		} else {
+			// A refreshed inventory without a hint must not inherit an old read-only promise.
+			hints.remove(tool);
+		}
 	}
 }
 

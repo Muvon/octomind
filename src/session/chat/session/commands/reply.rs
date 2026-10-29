@@ -71,7 +71,7 @@ pub fn assistant_replies(session: &ChatSession) -> Vec<Reply> {
 		.rev()
 		.filter(|message| message.role == "assistant")
 		.map(|message| Reply {
-			text: message.content.trim().to_string(),
+			text: crate::session::output::visible_assistant_content(message.content.trim()),
 			timestamp: message.timestamp,
 		})
 		.filter(|reply| !reply.text.is_empty())

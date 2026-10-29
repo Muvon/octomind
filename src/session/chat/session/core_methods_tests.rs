@@ -226,6 +226,28 @@ async fn initialize_named_existing_session_resumes_transcript() {
 
 #[serial_test::serial]
 #[tokio::test]
+async fn initialize_resume_keeps_raw_notes_but_restores_visible_answers() {
+	let _data = DataDirGuard::new();
+	let mut first = initialized_named_session("core-init-internal-notes").await;
+	let config = test_config();
+	let answer = "Final answer.\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	let notes = "<system>internal only</system>\n<sup>done</sup>";
+	first.add_assistant_message(answer, None, &config, "assistant").unwrap();
+	first.add_assistant_message(notes, None, &config, "assistant").unwrap();
+	first.save().unwrap();
+
+	let params = SessionInitParams::new(&config, "assistant").with_name("core-init-internal-notes".to_string());
+	let resumed = ChatSession::initialize(params).await.expect("resume session");
+	assert!(resumed.was_resumed);
+	assert!(resumed.last_response.is_empty());
+	assert_eq!(resumed.turn_answers, vec!["first answer", "Final answer."]);
+	let messages = &resumed.session.messages;
+	assert_eq!(messages[messages.len() - 2].content, answer);
+	assert_eq!(messages.last().expect("stored notes").content, notes);
+}
+
+#[serial_test::serial]
+#[tokio::test]
 async fn initialize_explicit_resume_of_corrupted_file_errors() {
 	let _data = DataDirGuard::new();
 	let sessions_dir = crate::session::persistence::get_sessions_dir().unwrap();

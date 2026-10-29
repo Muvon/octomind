@@ -931,3 +931,12 @@ mod tests {
 		crate::session::context::cleanup_session(&sid);
 	}
 }
+
+#[test]
+fn skill_instruction_body_keeps_its_unnumbered_rendering() {
+	let source = "---\nname: rules\ndescription: Conventions\n---\n\n# Rules\n  preserve indentation\n";
+	assert_eq!(
+		crate::mcp::runtime::skill::strip_frontmatter(source),
+		"# Rules\n  preserve indentation\n"
+	);
+}

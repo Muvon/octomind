@@ -25,7 +25,18 @@
 //! All sinks are zero-sized types (ZST) that compile down to direct function calls.
 
 use crate::websocket::ServerMessage;
+use regex::Regex;
 use std::io::IsTerminal;
+use std::sync::LazyLock;
+
+static SYSTEM_TAG_REGEX: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?is)\s*<system>.*?(?:</system>|$)\s*").expect("valid system-tag regex"));
+
+/// Project assistant text for display without changing the stored transcript.
+pub(crate) fn visible_assistant_content(content: &str) -> String {
+	let content = SYSTEM_TAG_REGEX.replace_all(content, "\n");
+	crate::supervisor::detect::strip_self_report(content.trim_start_matches(['\r', '\n']))
+}
 
 /// Output mode determines behavior and output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

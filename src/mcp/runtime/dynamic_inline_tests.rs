@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::chat::test_support::DataDirGuard;
 use serial_test::serial;
 
 #[tokio::test]
@@ -33,6 +34,7 @@ fn test_mcp_function_definition() {
 #[tokio::test]
 #[serial]
 async fn test_persist_enabled_server_stores_auto_bind() {
+	let _data = DataDirGuard::new();
 	clear_all();
 
 	// Set the current role (uses global RwLock, survives across threads)
@@ -81,6 +83,7 @@ async fn test_persist_enabled_server_stores_auto_bind() {
 #[tokio::test]
 #[serial]
 async fn test_persist_disabled_server_clears_auto_bind() {
+	let _data = DataDirGuard::new();
 	clear_all();
 
 	crate::config::set_thread_role("developer");
@@ -106,32 +109,6 @@ async fn test_persist_disabled_server_clears_auto_bind() {
 	let _ = std::fs::remove_file(&result.path);
 	clear_all();
 }
-/// Point `OCTOMIND_DATA_DIR` at a tempdir so persist/unpersist hit a sandbox
-/// config dir, never the developer machine's real one. Tests using it must be
-/// `#[serial]` (env is process-global).
-struct DataDirGuard {
-	previous: Option<std::ffi::OsString>,
-	_dir: tempfile::TempDir,
-}
-
-impl DataDirGuard {
-	fn new() -> Self {
-		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
-		let dir = tempfile::tempdir().expect("tempdir");
-		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self { previous, _dir: dir }
-	}
-}
-
-impl Drop for DataDirGuard {
-	fn drop(&mut self) {
-		match self.previous.take() {
-			Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
-			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
-		}
-	}
-}
-
 fn template_config() -> crate::config::Config {
 	toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template")
 }

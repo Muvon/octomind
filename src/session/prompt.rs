@@ -70,7 +70,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 
 	prompt.push_str(
 		"\n<use_parallel_tool_calls>\n\
-		Batch independent tool calls in one response: reading 3 files is 3 calls at once, not 3 turns. Chain calls only when one's arguments depend on another's result. Never guess or use placeholders for missing parameters.\n\
+		Batch tool calls in one response: calls run in the given order, with consecutive read-only calls running together. Never guess or use placeholders for missing parameters.\n\
 		</use_parallel_tool_calls>",
 	);
 

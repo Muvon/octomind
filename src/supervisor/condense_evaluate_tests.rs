@@ -273,7 +273,9 @@ async fn scored_state_carries_only_the_documented_fields_per_candidate() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial_test::serial]
 async fn kept_chunks_keep_their_neighbours_and_diagnostics_verbatim() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let mut lines: Vec<String> = body(400).lines().map(str::to_string).collect();
 	let last = lines.len();
 	lines[last - 1] = "error: boom at the very end".to_string();
@@ -328,7 +330,9 @@ async fn all_chunks_relevant_leaves_the_result_untouched() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn nothing_relevant_omits_an_ok_result_and_never_an_error_result() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _fake = install_fake_evaluation(vec![chunk_answers(64, |_| 0.1), chunk_answers(64, |_| 0.1)]).await;
 	let text = body(150);
 	let results = vec![
@@ -433,6 +437,7 @@ async fn with_spill_reader<F: std::future::Future<Output = ()>>(config: &Config,
 #[tokio::test]
 #[serial_test::serial]
 async fn a_scored_round_condenses_and_counts_applied() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let fake = install_fake_evaluation(vec![
 		chunk_answers(64, |slot| if slot == 0 { 0.9 } else { 0.1 }),
 		chunk_answers(64, |_| 0.1),

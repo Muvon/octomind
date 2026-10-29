@@ -2,6 +2,9 @@
 
 Thank you for your interest in contributing. This document covers everything you need to ship correct, maintainable code.
 
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately using the
+[security policy](SECURITY.md); use [Discussions](https://github.com/Muvon/octomind/discussions) for questions and ideas.
+
 ---
 
 ## Table of Contents

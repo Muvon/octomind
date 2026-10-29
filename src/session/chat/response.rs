@@ -28,7 +28,7 @@ use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 
-use crate::session::output::{OutputMode, OutputSink};
+use crate::session::output::{visible_assistant_content, OutputMode, OutputSink};
 use crate::websocket::{
 	AssistantPayload, CostPayload, ServerMessage, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
@@ -134,10 +134,10 @@ fn handle_final_response(
 	};
 
 	chat_session.session.messages.push(assistant_message.clone());
-	chat_session.last_response = content.to_string();
+	chat_session.last_response = visible_assistant_content(content);
 	// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
-	if !content.trim().is_empty() {
-		chat_session.turn_answers.push(content.to_string());
+	if !chat_session.last_response.is_empty() {
+		chat_session.turn_answers.push(chat_session.last_response.clone());
 	}
 
 	// Persist to session file so the message survives session close/resume
@@ -360,11 +360,11 @@ fn add_assistant_message_with_tool_calls(
 	chat_session.session.messages.push(assistant_message);
 
 	// Update last response - no cost tracking here as it will be handled by follow-up processing
-	chat_session.last_response = current_content.to_string();
+	chat_session.last_response = visible_assistant_content(current_content);
 	// Turn-answer ledger: only a FINAL (no tool calls) is part of the turn's
 	// deliverable — a message that carries tool calls is work in progress.
-	if original_tool_calls.is_none() && !current_content.trim().is_empty() {
-		chat_session.turn_answers.push(current_content.to_string());
+	if original_tool_calls.is_none() && !chat_session.last_response.is_empty() {
+		chat_session.turn_answers.push(chat_session.last_response.clone());
 	}
 
 	// CRITICAL FIX: DO NOT track cost/tokens here - already tracked by CostTracker::track_exchange_cost()
@@ -373,9 +373,8 @@ fn add_assistant_message_with_tool_calls(
 	Ok(())
 }
 
-/// Supervisor: capture the agent's self-report (state + reason) from a freshly
-/// produced assistant message and strip the token from its `content`, so it is
-/// never shown. Captured provider items keep the output as returned, for replay.
+/// Capture supervisor metadata from the original response and return its display
+/// text. The transcript and provider items retain the original for logs and replay.
 /// Each call overwrites `last_self_report`, so across a multi-round turn it
 /// converges on the final message's state (None when no token was emitted).
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
@@ -405,8 +404,6 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 			_ => None,
 		};
 		crate::session::chat::get_animation_manager().set_label(label);
-
-		crate::supervisor::detect::strip_self_report(content)
 	} else {
 		// Configuration can be reloaded mid-session. Never let a report captured
 		// while self-reporting was enabled survive after the feature is disabled.
@@ -414,19 +411,16 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		chat_session.last_self_report_reason = None;
 		chat_session.last_self_report_handoff = None;
 		chat_session.pending_plan_signal = None;
-		content.to_string()
 	}
+	visible_assistant_content(content)
 }
 
 // Function to process response, handling tool calls recursively
-pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParams<'_, S>) -> Result<()> {
+pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_, S>) -> Result<()> {
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
 
-	// Supervisor: capture + strip the agent's self-report. Re-run for every
-	// response in the turn (here and after each tool round), so `last_self_report`
-	// reflects the final message and no token leaks to display or `content`.
-	params.content = capture_self_report(&mut *params.chat_session, params.config, &params.content);
+	let mut current_content = capture_self_report(&mut *params.chat_session, params.config, &params.content);
 
 	// Note: No explicit stop needed here. The spinner-aware print macros in
 	// src/lib.rs use pb.suspend() around every println!/print!, which is
@@ -454,7 +448,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 	let mut thinking_displayed = false;
 
 	// Process original content first, then any follow-up tool calls
-	let mut current_content = params.content.clone();
+	let mut current_raw_content = params.content.clone();
 	let mut current_exchange = params.exchange.clone(); // Clone to avoid moving params
 	let mut current_provider_items = current_exchange.response.get("output_items").cloned();
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
@@ -712,6 +706,8 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						}
 					}
 
+					// Set when this write-capable round moved the working tree.
+					let mut tree_moved = false;
 					// Fold the round into the observational verification state: a round
 					// verifies only when a verifier-shaped call succeeded on a tree the
 					// round itself did not change.
@@ -748,6 +744,8 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 							// its round is write-capable regardless of the parent's calls.
 							round_write_capable || delegated_runs > 0,
 						);
+						tree_moved = (round_write_capable || delegated_runs > 0)
+							&& matches!((fp_before, fp_after), (Some(a), Some(b)) if a != b);
 					}
 
 					// One verdict per ROUND: the whole parallel batch is a single model decision,
@@ -760,6 +758,9 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						no_progress_window,
 					);
 					round_signal = round_signal.merge(batch_signal);
+					if tree_moved {
+						params.chat_session.detectors.note_tree_moved();
+					}
 
 					// Command errors are observed facts, not proof of failed verification.
 					// Keep an advisory signal even while other calls add information.
@@ -822,8 +823,9 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 						params.chat_session.last_steered_calls = None;
 					}
 
-					// The one hard limit: the same round, unchanged, `max_identical_rounds`
-					// times in a row ends the turn. Every hint below it stays advisory.
+					// The one hard limit: `max_identical_rounds` rounds in a row that repeat
+					// one already made since the last new result end the turn. Every hint
+					// below it stays advisory.
 					let max_identical = params.config.supervisor.max_identical_rounds;
 					let identical = params.chat_session.detectors.identical_rounds();
 					if max_identical > 0 && identical >= max_identical {
@@ -866,7 +868,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 				// ONLY add assistant message if tools were NOT cancelled
 				add_assistant_message_with_tool_calls(
 					params.chat_session,
-					&current_content,
+					&current_raw_content,
 					&current_exchange,
 					current_response_id.clone(), // CRITICAL FIX: Use current_response_id from loop, not params.response_id
 					&current_thinking,
@@ -882,6 +884,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 				if let Some(note) = loop_stop {
 					params.chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
 					tool_result_processor::add_tool_results(&tool_results, params.chat_session, params.config)?;
+					current_raw_content = note.clone();
 					current_content = note;
 					current_response_id = None;
 					current_thinking = None;
@@ -904,6 +907,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 					{
 						// Update current content for next iteration
 						current_content = capture_self_report(&mut *params.chat_session, params.config, &new_content);
+						current_raw_content = new_content;
 						current_provider_items = new_exchange.response.get("output_items").cloned();
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
@@ -965,7 +969,7 @@ pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParam
 	}));
 
 	handle_final_response(
-		&current_content,
+		&current_raw_content,
 		&thinking_for_final,
 		current_provider_items,
 		current_response_id, // Use current_response_id (updated from follow-up responses)

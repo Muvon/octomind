@@ -114,10 +114,14 @@ lazy_static::lazy_static! {
 	static ref CLI_NOTIFICATION_SENDER: RwLock<Option<crate::session::context::NotificationSender>> =
 		RwLock::new(None);
 
-	// CLI-mode pending notifications (buffered before sender is registered)
-	static ref CLI_PENDING_NOTIFICATIONS: RwLock<Vec<crate::websocket::ServerMessage>> =
-		RwLock::new(Vec::new());
+	// CLI-mode pending notifications (buffered before sender is registered).
+	// Daemons never register a CLI sender, so session-less notifications would
+	// pile up here for the process lifetime: keep only the newest.
+	static ref CLI_PENDING_NOTIFICATIONS: RwLock<std::collections::VecDeque<crate::websocket::ServerMessage>> =
+		RwLock::new(std::collections::VecDeque::new());
 }
+
+const MAX_PENDING_NOTIFICATIONS: usize = 256;
 
 // Session context (role + project + workdir) sent to MCP servers during initialization.
 // NOTE: This is process-global for CLI mode. For multi-session WebSocket mode,
@@ -310,7 +314,11 @@ pub(crate) fn emit_notification(
 		// No sender yet (e.g. notification arrived during server init before session started).
 		// Buffer it so it gets flushed when set_notification_sender() is called.
 		drop(sender); // release read lock before taking write lock on PENDING
-		CLI_PENDING_NOTIFICATIONS.write().unwrap().push(msg);
+		let mut pending = CLI_PENDING_NOTIFICATIONS.write().unwrap();
+		if pending.len() == MAX_PENDING_NOTIFICATIONS {
+			pending.pop_front();
+		}
+		pending.push_back(msg);
 	}
 }
 

@@ -18,28 +18,11 @@ use crate::config::Config;
 use crate::providers::ThinkingBlock;
 use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
 use colored::Colorize;
-use regex::Regex;
-use std::sync::LazyLock;
-
-// Match <system>...</system> (multiline, lazy) including surrounding blank lines.
-static SYSTEM_TAG_REGEX: LazyLock<Regex> =
-	LazyLock::new(|| Regex::new(r"(?is)\s*<system>.*?</system>\s*").expect("valid system-tag regex"));
-
-/// Strip `<system>...</system>` blocks (and surrounding blank lines) from
-/// content intended for user-facing display. Used for welcome messages that
-/// embed AI-only context inside `<system>` tags.
-pub fn strip_system_tags(content: &str) -> String {
-	SYSTEM_TAG_REGEX.replace_all(content, "\n").trim().to_string()
-}
 
 /// Check if assistant content was already displayed in thinking block
 /// Returns the content to display (either full content or trimmed content)
 pub fn get_content_to_display(content: &str, thinking: &Option<ThinkingBlock>) -> String {
-	// Defense in depth: strip the supervisor's internal status token
-	// (`<sup>state…</sup>`) so it can never reach the screen from any display
-	// path, independent of the parse/strip in process_response. It stays in the
-	// stored message — only the rendering drops it.
-	let content_owned = crate::supervisor::detect::strip_self_report(content);
+	let content_owned = crate::session::output::visible_assistant_content(content);
 	let content = content_owned.as_str();
 	if let Some(ref thinking_block) = thinking {
 		// Check if thinking content is a prefix of the full content

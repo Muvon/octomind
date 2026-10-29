@@ -239,10 +239,9 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Option<Vec<RunEven
 						content: thinking.to_string(),
 					});
 				}
-				if !message.content.is_empty() {
-					events.push(RunEvent::Assistant {
-						content: message.content,
-					});
+				let content = crate::session::output::visible_assistant_content(&message.content);
+				if !content.is_empty() {
+					events.push(RunEvent::Assistant { content });
 				}
 				if let Some(calls) = message.tool_calls {
 					// Same reader the provider path uses: the log stores octolib's unified

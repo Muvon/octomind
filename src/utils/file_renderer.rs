@@ -23,6 +23,7 @@
 use crate::utils::file_parser::{
 	parse_file_references, read_multiple_files, FileContent, LineRange, LINE_RANGE_SPAN_MAX,
 };
+use octolib::utils::line_hash::format_line;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -108,7 +109,7 @@ pub fn expand_at_file_refs(text: &str) -> String {
 			.lines()
 			.take(line_count)
 			.enumerate()
-			.map(|(i, line)| format!("{}: {}", i + 1, line))
+			.map(|(i, line)| format_line(i + 1, line))
 			.collect();
 
 		file_contents.insert(

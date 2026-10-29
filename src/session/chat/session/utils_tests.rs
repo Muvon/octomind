@@ -99,7 +99,10 @@ async fn get_initial_messages_wraps_agents_file_as_user_instructions() {
 		messages[1].content
 	);
 	assert!(messages[1].content.ends_with("\n</instructions>"));
-	assert!(messages[1].content.contains("Do things carefully."));
+	assert_eq!(
+		messages[1].content,
+		"<instructions>\nDo things carefully.\n</instructions>"
+	);
 }
 
 #[tokio::test]

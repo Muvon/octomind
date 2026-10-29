@@ -3090,8 +3090,7 @@ fn briefing_fold_job(ctx: super::FoldContext) -> super::FoldJob {
 #[tokio::test]
 #[serial_test::serial]
 async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
-	let data_dir = tempfile::tempdir().expect("temp data dir");
-	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let mut config = fold_config();
 	config.compression.attention.governance.enabled = true;
 	config.compression.attention.governance.verify_hash = true;
@@ -3103,7 +3102,6 @@ async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
 	let applied = super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
 		.await
 		.expect("a fold that outlived its turn commits");
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	assert!(applied);
 	let messages = &session.session.messages;
@@ -3345,7 +3343,9 @@ async fn finish_fold_forced_with_pact_applies_compacted_state() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn finish_fold_governance_only_applies_with_populated_evidence() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let mut config = fold_config();
 	config.compression.attention.enabled = false;
 	config.compression.attention.governance.enabled = true;

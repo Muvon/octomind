@@ -805,6 +805,40 @@ fn scope_basis_derives_global_dimensions_from_recurrence() {
 	);
 }
 
+#[test]
+fn global_source_makes_both_scope_dimensions_global() {
+	let mut rule = memory("global");
+	rule.project = "synx".to_string();
+	rule.role = "developer:general".to_string();
+	assert_eq!(
+		ScopeBasis::from_memories(&[rule]).scope(),
+		ArtifactScope {
+			project: None,
+			domain: None,
+		}
+	);
+}
+
+#[test]
+fn standing_global_rule_needs_global_learning_with_enough_uses() {
+	let mut rule = memory("global");
+	rule.use_count = STORE_STANDING_RULE_USES;
+	let mut busier = rule.clone();
+	busier.title = "busier".to_string();
+	busier.use_count = STORE_STANDING_RULE_USES + 5;
+	let mut scoped = memory("scoped");
+	scoped.use_count = STORE_STANDING_RULE_USES * 10;
+	let mut orientation = rule.clone();
+	orientation.memory_type = "orientation".to_string();
+	let mut unproven = rule.clone();
+	unproven.use_count = STORE_STANDING_RULE_USES - 1;
+
+	assert!(standing_global_rule(&[scoped, orientation, unproven]).is_empty());
+	let chosen = standing_global_rule(&[rule, busier.clone()]);
+	assert_eq!(chosen.len(), 1);
+	assert_eq!(chosen[0].title, busier.title);
+}
+
 #[serial_test::serial]
 #[tokio::test]
 async fn recurring_store_cluster_requires_two_projects_and_demonstrated_value() {

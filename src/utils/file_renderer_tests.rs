@@ -90,13 +90,17 @@ fn test_expand_context_blocks() {
 	);
 
 	// Check for line content with more flexible matching (handle different line endings)
-	let has_line1 = result.contains("1: line 1") || result.contains("1: line 1\r");
-	let has_line2 = result.contains("2: line 2") || result.contains("2: line 2\r");
-	let has_line3 = result.contains("3: line 3") || result.contains("3: line 3\r");
+	let has_line1 = result.contains("1:8b|line 1") || result.contains("1:8b|line 1\r");
+	let has_line2 = result.contains("2:c8|line 2") || result.contains("2:c8|line 2\r");
+	let has_line3 = result.contains("3:5f|line 3") || result.contains("3:5f|line 3\r");
 
-	assert!(has_line1, "Result should contain '1: line 1'. Result: {}", result);
-	assert!(has_line2, "Result should contain '2: line 2'. Result: {}", result);
-	assert!(!has_line3, "Result should not contain '3: line 3'. Result: {}", result);
+	assert!(has_line1, "Result should contain '1:8b|line 1'. Result: {}", result);
+	assert!(has_line2, "Result should contain '2:c8|line 2'. Result: {}", result);
+	assert!(
+		!has_line3,
+		"Result should not contain '3:5f|line 3'. Result: {}",
+		result
+	);
 
 	// Original context tags should be replaced
 	assert!(
@@ -122,29 +126,29 @@ fn test_expand_context_blocks() {
 	assert!(result_multi.contains("Text3"));
 
 	// Check for line content with flexible matching
-	let multi_has_line1 = result_multi.contains("1: line 1") || result_multi.contains("1: line 1\r");
-	let multi_has_line2 = result_multi.contains("2: line 2") || result_multi.contains("2: line 2\r");
-	let multi_has_line3 = result_multi.contains("3: line 3") || result_multi.contains("3: line 3\r");
-	let multi_has_line4 = result_multi.contains("4: line 4") || result_multi.contains("4: line 4\r");
+	let multi_has_line1 = result_multi.contains("1:8b|line 1") || result_multi.contains("1:8b|line 1\r");
+	let multi_has_line2 = result_multi.contains("2:c8|line 2") || result_multi.contains("2:c8|line 2\r");
+	let multi_has_line3 = result_multi.contains("3:5f|line 3") || result_multi.contains("3:5f|line 3\r");
+	let multi_has_line4 = result_multi.contains("4:7d|line 4") || result_multi.contains("4:7d|line 4\r");
 
 	assert!(
 		multi_has_line1,
-		"Multi result should contain '1: line 1'. Result: {}",
+		"Multi result should contain '1:8b|line 1'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line3,
-		"Multi result should contain '3: line 3'. Result: {}",
+		"Multi result should contain '3:5f|line 3'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line4,
-		"Multi result should contain '4: line 4'. Result: {}",
+		"Multi result should contain '4:7d|line 4'. Result: {}",
 		result_multi
 	);
 	assert!(
 		!multi_has_line2,
-		"Multi result should not contain '2: line 2'. Result: {}",
+		"Multi result should not contain '2:c8|line 2'. Result: {}",
 		result_multi
 	);
 
@@ -184,8 +188,8 @@ fn test_expand_at_file_refs() {
 	assert!(result.starts_with(&input));
 	assert!(result.contains("FILE CONTEXT:"));
 	assert!(result.contains(&format!("<content path=\"{}\" lines=\"1:2\">", temp_path)));
-	assert!(result.contains("1: line 1"));
-	assert!(result.contains("2: line 2"));
+	assert!(result.contains("1:8b|line 1"));
+	assert!(result.contains("2:c8|line 2"));
 
 	// Nonexistent path and bare @ are left untouched
 	let untouched = "see @nonexistent/file.rs and a lone @ here";
@@ -204,7 +208,7 @@ fn test_render_files_as_xml() {
 		"src/main.rs",
 		1,
 		3,
-		vec!["1: fn main() {", "2:     println!(\"Hello\");", "3: }"],
+		vec!["1:92|fn main() {", "2:08|    println!(\"Hello\");", "3:14|}"],
 		None,
 	);
 	file_contents.insert("src/main.rs".to_string(), vec![content]);
@@ -215,9 +219,9 @@ fn test_render_files_as_xml() {
 
 	assert!(result.contains("FILE CONTEXT:"));
 	assert!(result.contains("<content path=\"src/main.rs\" lines=\"1:3\">"));
-	assert!(result.contains("1: fn main() {"));
-	assert!(result.contains("2:     println!(&quot;Hello&quot;);"));
-	assert!(result.contains("3: }"));
+	assert!(result.contains("1:92|fn main() {"));
+	assert!(result.contains("2:08|    println!(&quot;Hello&quot;);"));
+	assert!(result.contains("3:14|}"));
 	assert!(result.contains("</content>"));
 }
 
@@ -228,7 +232,7 @@ fn test_render_files_as_text() {
 		"src/main.rs",
 		1,
 		3,
-		vec!["1: fn main() {", "2:     println!(\"Hello\");", "3: }"],
+		vec!["1:92|fn main() {", "2:08|    println!(\"Hello\");", "3:14|}"],
 		None,
 	);
 	file_contents.insert("src/main.rs".to_string(), vec![content]);
@@ -237,15 +241,15 @@ fn test_render_files_as_text() {
 
 	assert!(result.contains("FILE CONTEXT:"));
 	assert!(result.contains("=== src/main.rs (lines 1-3) ==="));
-	assert!(result.contains("1: fn main() {"));
-	assert!(result.contains("2:     println!(\"Hello\");"));
-	assert!(result.contains("3: }"));
+	assert!(result.contains("1:92|fn main() {"));
+	assert!(result.contains("2:08|    println!(\"Hello\");"));
+	assert!(result.contains("3:14|}"));
 }
 
 #[test]
 fn test_xml_escaping() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content("src/test.rs", 1, 1, vec!["1: let x = \"<test>\" & 'value';"], None);
+	let content = create_test_file_content("src/test.rs", 1, 1, vec!["1:58|let x = \"<test>\" & 'value';"], None);
 	file_contents.insert("src/test.rs".to_string(), vec![content]);
 
 	let result = render_files_as_xml(&file_contents);
@@ -285,8 +289,8 @@ fn test_render_error_text() {
 fn test_multiple_files_sorted() {
 	let mut file_contents = HashMap::new();
 
-	let content1 = create_test_file_content("z_file.rs", 1, 1, vec!["1: last"], None);
-	let content2 = create_test_file_content("a_file.rs", 1, 1, vec!["1: first"], None);
+	let content1 = create_test_file_content("z_file.rs", 1, 1, vec!["1:43|last"], None);
+	let content2 = create_test_file_content("a_file.rs", 1, 1, vec!["1:50|first"], None);
 
 	file_contents.insert("z_file.rs".to_string(), vec![content1]);
 	file_contents.insert("a_file.rs".to_string(), vec![content2]);
@@ -302,7 +306,7 @@ fn test_multiple_files_sorted() {
 #[test]
 fn test_single_line_range() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content("test.rs", 5, 5, vec!["5: single line"], None);
+	let content = create_test_file_content("test.rs", 5, 5, vec!["5:3e|single line"], None);
 	file_contents.insert("test.rs".to_string(), vec![content]);
 
 	let result = render_files_as_xml(&file_contents);
@@ -331,7 +335,7 @@ fn test_merge_line_ranges() {
 #[test]
 fn test_render_with_custom_options() {
 	let mut file_contents = HashMap::new();
-	let content = create_test_file_content("test.rs", 1, 2, vec!["1: line1", "2: line2"], None);
+	let content = create_test_file_content("test.rs", 1, 2, vec!["1:26|line1", "2:8d|line2"], None);
 	file_contents.insert("test.rs".to_string(), vec![content]);
 
 	let options = RenderOptions {
@@ -352,4 +356,30 @@ fn test_empty_file_contents() {
 	let result = render_files_as_xml(&file_contents);
 
 	assert_eq!(result, "No specific file context requested.");
+}
+
+#[test]
+fn numbered_file_injections_share_physical_hashes_before_xml_escaping() {
+	let dir = tempfile::tempdir().unwrap();
+	for ending in ["\n", "\r\n"] {
+		let path = dir.path().join("memory.md");
+		let source = ["# Memory", "\t  let value = \"<Δ&>\";", "", "\tkeep();"].join(ending) + ending;
+		std::fs::write(&path, source).unwrap();
+		let path = path.to_str().unwrap();
+		let at_input = format!("Read @{path}");
+		let at_file = expand_at_file_refs(&at_input);
+		let context = expand_context_blocks(&format!("<context>{path}:2:4</context>"));
+		let compressed = crate::session::chat::file_context::generate_file_context_content(&[(path.to_string(), 2, 4)]);
+		let expected = "2:0c|\t  let value = &quot;&lt;Δ&amp;&gt;&quot;;\n3:c5|\n4:2f|\tkeep();\n";
+		for rendered in [&at_file, &context, &compressed] {
+			assert!(rendered.contains(expected), "{rendered}");
+			assert!(!rendered.contains("2: \t  let value"));
+		}
+		assert!(at_file.starts_with(&at_input));
+		assert!(at_file.contains("1:90|# Memory"));
+		assert!(!context.contains("1:90|# Memory"));
+		let file = crate::utils::file_parser::read_file_lines(path, &LineRange::new(2, 4).unwrap());
+		let text = render_files_as_text(&HashMap::from([(path.to_string(), vec![file])]));
+		assert!(text.contains("2:0c|\t  let value = \"<Δ&>\";\n3:c5|\n4:2f|\tkeep();"));
+	}
 }

@@ -310,12 +310,10 @@ async fn test_skill_use_silent_round_trip() {
 
 		// Silent mode stashes the wrapped body for the caller to inject.
 		let content = take_silent_skill_content().expect("silent content stored");
-		assert!(
-			content.contains(&format!("<skill name=\"{SKILL_NAME}\"")),
-			"got: {content}"
+		assert_eq!(
+			content,
+			format!("<skill name=\"{SKILL_NAME}\" description=\"Testing widget skills end to end\">\n# Widget skill\n{INSTRUCTIONS_MARKER}: always widget carefully.\n\n</skill>")
 		);
-		assert!(content.contains(INSTRUCTIONS_MARKER), "got: {content}");
-		assert!(content.contains("</skill>"), "got: {content}");
 		// Taking is destructive — a second take returns None.
 		assert!(take_silent_skill_content().is_none());
 

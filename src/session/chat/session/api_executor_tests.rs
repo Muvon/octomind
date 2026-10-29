@@ -609,8 +609,10 @@ async fn test_interactive_mode_tool_round_renders_and_truncates() {
 /// rather than whatever tap the machine happens to have: on a bare CI runner
 /// the real list is "No skills found", which is under both thresholds.
 #[tokio::test]
+#[serial_test::serial]
 async fn test_large_tool_result_truncation_and_dedup() {
 	let _guard = ENV_LOCK.lock().await;
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let workdir = tempfile::tempdir().expect("temp workdir");
 	let skills_root = workdir.path().join(".agents").join("skills");
 	for i in 0..40 {
@@ -624,55 +626,65 @@ async fn test_large_tool_result_truncation_and_dedup() {
 		)
 		.expect("write SKILL.md");
 	}
-	crate::mcp::workdir::set_session_working_directory(workdir.path().to_path_buf());
+	let sid = "api-exec-large-tool-result".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(workdir.path().to_path_buf());
 
-	let url = spawn_stub(vec![
-		tool_calls_response(&[("call_s1", "skill", serde_json::json!({"action": "list"}))]),
-		tool_calls_response(&[("call_s2", "skill", serde_json::json!({"action": "list"}))]),
-		final_response("spill round done"),
-	])
+		let url = spawn_stub(vec![
+			tool_calls_response(&[("call_s1", "skill", serde_json::json!({"action": "list"}))]),
+			tool_calls_response(&[("call_s2", "skill", serde_json::json!({"action": "list"}))]),
+			final_response("spill round done"),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = fake_provider_config();
+		config.mcp_response_tokens_threshold = 50;
+		crate::mcp::tool_map::initialize_tool_map(&config)
+			.await
+			.expect("init tool map");
+
+		let mut session = fake_session("list every skill twice");
+		session.session.info.name = sid.clone();
+		run_turn(&mut session, &config).await.expect("double skill round");
+
+		let tool_contents: Vec<(&str, &str)> = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| m.role == "tool")
+			.map(|m| (m.tool_call_id.as_deref().unwrap_or(""), m.content.as_str()))
+			.collect();
+		assert_eq!(tool_contents.len(), 2, "both rounds must record results");
+
+		// First round: hard cap applied — the result cannot exceed the threshold
+		// by more than the truncation notice itself.
+		let first = tool_contents[0].1;
+		assert!(
+			first.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG),
+			"truncation notice missing: {first}"
+		);
+		assert!(
+			crate::session::token_counter::estimate_tokens(first) < 400,
+			"oversized result was not capped ({} chars)",
+			first.len()
+		);
+
+		// Second round: identical call → dedup placeholder, not a re-send
+		let second = tool_contents[1].1;
+		assert!(
+			second.contains("duplicate tool call"),
+			"dedup placeholder missing: {second}"
+		);
+
+		let last = session.session.messages.last().expect("final message");
+		assert!(last.content.contains("spill round done"));
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
 	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let mut config = fake_provider_config();
-	config.mcp_response_tokens_threshold = 50;
-	crate::mcp::tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
-
-	let mut session = fake_session("list every skill twice");
-	run_turn(&mut session, &config).await.expect("double skill round");
-
-	let tool_contents: Vec<(&str, &str)> = session
-		.session
-		.messages
-		.iter()
-		.filter(|m| m.role == "tool")
-		.map(|m| (m.tool_call_id.as_deref().unwrap_or(""), m.content.as_str()))
-		.collect();
-	assert_eq!(tool_contents.len(), 2, "both rounds must record results");
-
-	// First round: hard cap applied — the result cannot exceed the threshold
-	// by more than the truncation notice itself.
-	let first = tool_contents[0].1;
-	assert!(
-		crate::session::token_counter::estimate_tokens(first) < 400,
-		"oversized result was not capped ({} chars)",
-		first.len()
-	);
-
-	// Second round: identical call → dedup placeholder, not a re-send
-	let second = tool_contents[1].1;
-	assert!(
-		second.contains("duplicate tool call"),
-		"dedup placeholder missing: {second}"
-	);
-
-	let last = session.session.messages.last().expect("final message");
-	assert!(last.content.contains("spill round done"));
-
-	crate::mcp::workdir::set_session_working_directory(std::env::current_dir().expect("cwd"));
-	std::env::remove_var("OLLAMA_API_URL");
 }
 
 /// Full supervised turn at the unit level: task classification, orientation,

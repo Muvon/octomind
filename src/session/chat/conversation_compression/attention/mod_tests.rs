@@ -1820,7 +1820,9 @@ async fn a_resolved_checklist_is_pinned_in_place_of_request_excerpts() {
 }
 
 #[test]
+#[serial_test::serial]
 fn write_degraded_telemetry_records_fallback_without_archive() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
 	let report = ValidationReport {
 		attribution_valid: false,
@@ -1832,7 +1834,7 @@ fn write_degraded_telemetry_records_fallback_without_archive() {
 	let summary = CompressionSummary::default();
 	pact.write_degraded_telemetry(
 		"degraded-unit",
-		"c:degraded-check",
+		"degraded-check",
 		&report,
 		&summary,
 		42,
@@ -1843,7 +1845,7 @@ fn write_degraded_telemetry_records_fallback_without_archive() {
 		.expect("sessions dir")
 		.join("archive")
 		.join("degraded-unit")
-		.join("c:degraded-check.pact.json");
+		.join("degraded-check.pact.json");
 	let body = std::fs::read_to_string(&path).expect("telemetry file");
 	assert!(body.contains("\"fallback_reason\": \"archive unavailable\""));
 	let _ = std::fs::remove_file(&path);
@@ -2259,7 +2261,9 @@ async fn prune_without_summarize_tool_packets_makes_no_call() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn prune_leaves_archive_verification_and_validation_intact() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _fake = install_fake_evaluation(vec![unit_answers(1, |_| 0.1)]).await;
 	// A user turn right after the tool round keeps the checkpoint from
 	// depending on it, and a trailing user turn empties the exact frontier,

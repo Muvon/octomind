@@ -614,10 +614,10 @@ async fn test_execute_tools_in_context_local_tool_success_then_duplicate_placeho
 	.await;
 }
 
-/// Run a slow then a fast local tool in one batch, both carrying `read_only`,
+/// Run a slow then a fast local tool in one batch with the supplied metadata,
 /// and return the order their writes landed in.
 #[cfg(unix)]
-async fn slow_then_fast_order(prefix: &str, read_only: Option<bool>) -> String {
+async fn slow_then_fast_order(prefix: &str, read_only: [Option<bool>; 2]) -> String {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let log = tmp.path().join("order.log");
 	let slow = format!("{prefix}slow");
@@ -638,8 +638,8 @@ async fn slow_then_fast_order(prefix: &str, read_only: Option<bool>) -> String {
 			log.display()
 		),
 	);
-	crate::supervisor::detect::register_tool_read_only_hint(&slow, read_only);
-	crate::supervisor::detect::register_tool_read_only_hint(&fast, read_only);
+	crate::supervisor::detect::register_tool_read_only_hint(&slow, read_only[0]);
+	crate::supervisor::detect::register_tool_read_only_hint(&fast, read_only[1]);
 
 	let config = template_config();
 	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
@@ -678,7 +678,10 @@ async fn slow_then_fast_order(prefix: &str, read_only: Option<bool>) -> String {
 #[serial_test::serial]
 #[cfg(unix)]
 async fn test_execute_tools_in_context_runs_writes_in_emitted_order() {
-	assert_eq!(slow_then_fast_order("orderwrite", Some(false)).await, "slow\nfast\n");
+	assert_eq!(
+		slow_then_fast_order("orderwrite", [Some(false); 2]).await,
+		"slow\nfast\n"
+	);
 }
 
 /// A tool without annotations may write (the MCP default), so it is ordered too.
@@ -686,7 +689,40 @@ async fn test_execute_tools_in_context_runs_writes_in_emitted_order() {
 #[serial_test::serial]
 #[cfg(unix)]
 async fn test_execute_tools_in_context_orders_unannotated_tools() {
-	assert_eq!(slow_then_fast_order("orderunannotated", None).await, "slow\nfast\n");
+	assert_eq!(
+		slow_then_fast_order("orderunannotated", [None; 2]).await,
+		"slow\nfast\n"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_read_waits_for_an_earlier_write() {
+	assert_eq!(
+		slow_then_fast_order("orderwritebeforead", [Some(false), Some(true)]).await,
+		"slow\nfast\n"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_write_waits_for_an_earlier_read() {
+	assert_eq!(
+		slow_then_fast_order("orderreadbeforewrite", [Some(true), Some(false)]).await,
+		"slow\nfast\n"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_removing_read_only_metadata_restores_ordering() {
+	for name in ["orderremovedslow", "orderremovedfast"] {
+		crate::supervisor::detect::register_tool_read_only_hint(name, Some(true));
+	}
+	assert_eq!(slow_then_fast_order("orderremoved", [None; 2]).await, "slow\nfast\n");
 }
 
 /// Declared read-only tools keep running in parallel.
@@ -694,7 +730,218 @@ async fn test_execute_tools_in_context_orders_unannotated_tools() {
 #[serial_test::serial]
 #[cfg(unix)]
 async fn test_execute_tools_in_context_runs_reads_in_parallel() {
-	assert_eq!(slow_then_fast_order("orderread", Some(true)).await, "fast\nslow\n");
+	const BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+	let tmp = tempfile::tempdir().expect("tempdir");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(tmp.path().join("release"))
+		.status()
+		.expect("create release pipe")
+		.success());
+	write_local_tool(
+		tmp.path(),
+		"orderreadslow",
+		"#!/bin/sh\n# @description Wait for the other read.\nread -r release < release\nprintf 'slow\\n' >> order.log\n",
+	);
+	write_local_tool(
+		tmp.path(),
+		"orderreadfast",
+		"#!/bin/sh\n# @description Release the other read.\nprintf 'fast\\n' >> order.log\nprintf 'release\\n' > release\n",
+	);
+	for name in ["orderreadslow", "orderreadfast"] {
+		crate::supervisor::detect::register_tool_read_only_hint(name, Some(true));
+	}
+
+	let sid = "tool-exec-parallel-reads".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let calls = ["orderreadslow", "orderreadfast"]
+			.into_iter()
+			.map(|name| crate::mcp::McpToolCall {
+				tool_name: name.to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: name.to_string(),
+			})
+			.collect();
+		// The first read cannot finish until the second runs; serial execution times out.
+		let (results, _) = tokio::time::timeout(
+			BATCH_TIMEOUT,
+			execute_tools_in_context(
+				calls,
+				&mut context,
+				&template_config(),
+				Some(rx),
+				OutputMode::NonInteractive,
+			),
+		)
+		.await
+		.expect("reads must overlap")
+		.expect("local tool execution");
+		assert_eq!(results.len(), 2);
+		assert!(results.iter().all(|result| !result.is_error()));
+		assert_eq!(
+			std::fs::read_to_string(tmp.path().join("order.log")).expect("order log"),
+			"fast\nslow\n"
+		);
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_read_groups_overlap_on_each_side_of_a_write() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	for group in ["before", "after"] {
+		assert!(std::process::Command::new("mkfifo")
+			.arg(tmp.path().join(group))
+			.status()
+			.expect("create release pipe")
+			.success());
+		for (suffix, command) in [
+			(
+				"slow",
+				format!("read -r release < {group}\necho {group}-slow >> order.log"),
+			),
+			(
+				"fast",
+				format!("echo {group}-fast >> order.log\necho release > {group}"),
+			),
+		] {
+			let name = format!("group{group}{suffix}");
+			write_local_tool(
+				tmp.path(),
+				&name,
+				&format!("#!/bin/sh\n# @description Test read group.\n{command}\n"),
+			);
+			crate::supervisor::detect::register_tool_read_only_hint(&name, Some(true));
+		}
+	}
+	write_local_tool(
+		tmp.path(),
+		"groupwrite",
+		"#!/bin/sh\n# @description Test state barrier.\necho write >> order.log\n",
+	);
+	crate::supervisor::detect::register_tool_read_only_hint("groupwrite", Some(false));
+	let names = [
+		"groupbeforeslow",
+		"groupbeforefast",
+		"groupwrite",
+		"groupafterslow",
+		"groupafterfast",
+	];
+	let sid = "tool-exec-read-groups".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let calls = names
+			.iter()
+			.map(|name| crate::mcp::McpToolCall {
+				tool_name: (*name).to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: (*name).to_string(),
+			})
+			.collect();
+		let (results, _) = tokio::time::timeout(
+			std::time::Duration::from_secs(10),
+			execute_tools_in_context(
+				calls,
+				&mut context,
+				&template_config(),
+				None,
+				OutputMode::NonInteractive,
+			),
+		)
+		.await
+		.expect("both read groups must overlap")
+		.expect("tool execution");
+		assert!(results.iter().all(|result| !result.is_error()));
+		assert_eq!(
+			results.iter().map(|result| result.tool_id.as_str()).collect::<Vec<_>>(),
+			names
+		);
+		assert_eq!(
+			std::fs::read_to_string(tmp.path().join("order.log")).expect("order log"),
+			"before-fast\nbefore-slow\nwrite\nafter-fast\nafter-slow\n"
+		);
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn test_cancellation_does_not_start_later_calls() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(tmp.path().join("release"))
+		.status()
+		.expect("create release pipe")
+		.success());
+	write_local_tool(
+		tmp.path(),
+		"cancelbarrier",
+		"#!/bin/sh\n# @description Wait until cancelled.\ntouch started\nread -r release < release\n",
+	);
+	for (name, read_only) in [("cancelread", true), ("cancelwrite", false)] {
+		write_local_tool(
+			tmp.path(),
+			name,
+			&format!("#!/bin/sh\n# @description Must remain queued.\ntouch {name}\n"),
+		);
+		crate::supervisor::detect::register_tool_read_only_hint(name, Some(read_only));
+	}
+	let sid = "tool-exec-cancel-sequence".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let calls = ["cancelbarrier", "cancelread", "cancelwrite"]
+			.into_iter()
+			.map(|name| crate::mcp::McpToolCall {
+				tool_name: name.to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: name.to_string(),
+			})
+			.collect();
+		let (tx, rx) = tokio::sync::watch::channel(false);
+		let config = template_config();
+		let execute = execute_tools_in_context(calls, &mut context, &config, Some(rx), OutputMode::NonInteractive);
+		let cancel = async {
+			while !tmp.path().join("started").exists() {
+				tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+			}
+			tx.send(true).expect("cancel running batch");
+		};
+		let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+			tokio::join!(execute, cancel)
+		})
+		.await
+		.expect("cancellation must not wait for the blocked tool");
+		let (results, elapsed) = result.expect("cancellation returns normally");
+		assert!(results.is_empty());
+		assert_eq!(elapsed, 0);
+		// Let queued tasks observe the cancellation after the active call releases them.
+		tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+		assert!(!tmp.path().join("cancelread").exists());
+		assert!(!tmp.path().join("cancelwrite").exists());
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
 }
 
 #[tokio::test]

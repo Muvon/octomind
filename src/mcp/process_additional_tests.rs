@@ -258,6 +258,33 @@ async fn test_emit_notification_buffers_until_sender_registered() {
 	clear_notification_sender(None);
 }
 
+#[serial]
+#[tokio::test]
+async fn test_pending_notifications_keep_only_the_newest() {
+	clear_notification_sender(None);
+	for index in 0..=MAX_PENDING_NOTIFICATIONS {
+		emit_notification(
+			"proc-add-cap",
+			"notifications/message",
+			&serde_json::json!(index),
+			None,
+			None,
+		);
+	}
+
+	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+	set_notification_sender(None, tx);
+	let mut flushed = Vec::new();
+	while let Ok(crate::websocket::ServerMessage::McpNotification(p)) = rx.try_recv() {
+		flushed.push(p.params);
+	}
+	clear_notification_sender(None);
+
+	assert_eq!(flushed.len(), MAX_PENDING_NOTIFICATIONS);
+	assert_eq!(flushed.first(), Some(&serde_json::json!(1)));
+	assert_eq!(flushed.last(), Some(&serde_json::json!(MAX_PENDING_NOTIFICATIONS)));
+}
+
 #[cfg(unix)]
 #[test]
 fn test_register_pgid_overwrites_latest_pid() {

@@ -82,6 +82,23 @@ fn replies_are_trimmed_assistant_prose_newest_first() {
 }
 
 #[test]
+fn replies_hide_internal_notes_and_skip_internal_only_messages() {
+	let content = "Answer.\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	let session = ChatSession::for_tests(vec![
+		message("assistant", content, 100),
+		message("assistant", "<system>internal only</system>", 200),
+	]);
+	assert_eq!(
+		assistant_replies(&session),
+		vec![Reply {
+			text: "Answer.".into(),
+			timestamp: 100,
+		}]
+	);
+	assert_eq!(session.session.messages[0].content, content);
+}
+
+#[test]
 fn preview_is_one_line_of_prose() {
 	let reply = Reply {
 		text: "## Summary\n\nFixed it.\n```rust\nfn a() {}\n```\n- next step".to_string(),

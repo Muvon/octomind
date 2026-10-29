@@ -22,9 +22,14 @@ fn structured_output_supported_for_openai() {
 }
 
 #[test]
-fn structured_output_unsupported_for_anthropic() {
-	let err = ensure_structured_output_support("anthropic:claude-sonnet-4-6")
-		.expect_err("anthropic must be rejected")
+fn structured_output_supported_for_modern_anthropic() {
+	assert!(ensure_structured_output_support("anthropic:claude-sonnet-4-6").is_ok());
+}
+
+#[test]
+fn structured_output_unsupported_for_minimax() {
+	let err = ensure_structured_output_support("minimax:MiniMax-M3")
+		.expect_err("model without structured output must be rejected")
 		.to_string();
 	assert!(
 		err.contains("does not support structured output"),

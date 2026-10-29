@@ -43,10 +43,10 @@ fn packet(id: &str, start: usize, end: usize) -> super::super::attention::Eviden
 #[serial_test::serial]
 fn archive_messages_writes_under_the_sessions_archive_directory() {
 	let data_dir = tempfile::tempdir().expect("temp data dir");
+	let _env = crate::session::chat::test_support::EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 	let messages = vec![msg("user", "fix the parser"), msg("tool", "error at line 42")];
 	let written = archive_messages("archive-env-test", "cid-1", &messages);
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	let path = written.expect("archive writes");
 	let expected = data_dir
@@ -64,9 +64,9 @@ fn archive_messages_writes_under_the_sessions_archive_directory() {
 #[serial_test::serial]
 fn archive_messages_handles_an_empty_range() {
 	let data_dir = tempfile::tempdir().expect("temp data dir");
+	let _env = crate::session::chat::test_support::EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 	let written = archive_messages("archive-env-empty", "cid-empty", &[]);
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	let path = written.expect("an empty archive still writes a file");
 	assert!(path.is_file());

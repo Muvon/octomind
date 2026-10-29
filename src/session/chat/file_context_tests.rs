@@ -104,9 +104,9 @@ fn test_generate_file_context_content() {
 
 	let content = generate_file_context_content(&[(path.clone(), 1, 2)]);
 	assert!(content.contains("<content path="));
-	assert!(content.contains("1: line 1"));
-	assert!(content.contains("2: line 2"));
-	assert!(!content.contains("3: line 3"));
+	assert!(content.contains("1:8b|line 1"));
+	assert!(content.contains("2:c8|line 2"));
+	assert!(!content.contains("3:5f|line 3"));
 
 	// Invalid range (start 0) is skipped entirely
 	assert_eq!(

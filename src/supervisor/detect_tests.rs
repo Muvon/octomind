@@ -120,6 +120,49 @@ fn strip_keeps_json_without_state_key_unclosed_and_plain_text() {
 }
 
 #[test]
+fn handoff_and_display_share_report_boundaries_with_malformed_framing() {
+	let body =
+		r#"{"state":"progressing","focus":"working","next":"check result","carry":[],"plan":null,"memories":[]}"#;
+	for (open, close) in [
+		("<sup>", "</sup>"),
+		("<sub>", "</sup>"),
+		("<sup>", "</sub>"),
+		("<sub>", "</sub>"),
+		("<sup>", ""),
+		("<sub>", ""),
+		("", ""),
+	] {
+		let text = format!("Answer.\n{open}{body}{close}");
+		let report = parse_self_report_handoff(&text).expect("report body is valid");
+		assert_eq!(report.state, SelfReport::Progressing);
+		assert_eq!(report.handoff.focus, "working");
+		assert_eq!(strip_self_report(&text), "Answer.");
+	}
+}
+
+#[test]
+fn truncated_or_invalid_reports_are_hidden_without_accepting_metadata() {
+	for body in [
+		r#"{"state":"progressing","focus":"private detail""#,
+		r#"{"state":"unknown","focus":"private detail","next":null,"carry":[]}"#,
+		r#"{"state":"done","focus":"private detail","next":null,"carry":[],"unexpected":true}"#,
+	] {
+		for (open, close) in [("<sup>", ""), ("<sub>", "</sup>")] {
+			let text = format!("Answer.\n{open}{body}{close}");
+			assert!(parse_self_report_handoff(&text).is_none());
+			assert_eq!(strip_self_report(&text), "Answer.");
+		}
+	}
+}
+
+#[test]
+fn report_tag_mentions_do_not_swallow_prose_before_mismatched_report() {
+	let text = "Mention `<sup>` and `<sub>` in prose.\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	assert_eq!(strip_self_report(text), "Mention `<sup>` and `<sub>` in prose.");
+	assert_eq!(parse_self_report_handoff(text).expect("report").state, SelfReport::Done);
+}
+
+#[test]
 fn should_steer_decision_table() {
 	for report in [
 		None,
@@ -427,6 +470,61 @@ fn identical_rounds_counts_unchanged_repeats_and_resets_on_anything_new() {
 	assert_eq!(d.identical_rounds(), 0);
 	d.record_round_signals(&[b], false, 3, 9);
 	assert_eq!(d.identical_rounds(), 1);
+}
+
+/// Prod 2026-10-28: a specialist alternated two searches (A A B A A B …) for 998
+/// rounds, every one "No matches found". Each B differed from the round before it,
+/// so a previous-round-only count never passed 2; a cycle with nothing new in it
+/// must count up just as a straight repeat does. Every round runs through
+/// `note_call` as in the tool loop, so novelty is the detector's own verdict.
+#[test]
+fn identical_rounds_counts_a_cycle_that_returns_nothing_new() {
+	let mut d = Detectors::default();
+	let mut counts = Vec::new();
+	for source in ["/a.jsonl", "/a.jsonl", "/b.txt"].repeat(4) {
+		let (hash, novel) = d.note_call(
+			"knowledge",
+			&json!({"command": "match", "source": source}),
+			"No matches found",
+			false,
+			false,
+		);
+		d.record_round_signals(&[hash], novel, 3, 9);
+		counts.push(d.identical_rounds());
+	}
+	assert_eq!(counts, [1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+}
+
+/// A round that moved the working tree restarts the hard-stop count — quiet
+/// `sed -i` + unchanged check rounds are work, not a stall — while the Loop
+/// advisory still reads receipts only, since a concurrent writer moves the tree
+/// as well.
+#[test]
+fn a_tree_move_restarts_the_hard_stop_but_not_the_loop_advisory() {
+	let mut d = Detectors::default();
+	let mut signals = Vec::new();
+	for _ in 0..3 {
+		let (hash, novel) = d.note_call(
+			"shell",
+			&json!({"command": "./fix && ./check"}),
+			"1 failed",
+			false,
+			false,
+		);
+		signals.push(d.record_round_signals(&[hash], novel, 3, 9));
+		d.note_tree_moved();
+		assert_eq!(d.identical_rounds(), 1);
+	}
+	assert_eq!(signals.last(), Some(&DetectorSignal::Loop));
+	let (hash, novel) = d.note_call(
+		"shell",
+		&json!({"command": "./fix && ./check"}),
+		"1 failed",
+		false,
+		false,
+	);
+	d.record_round_signals(&[hash], novel, 3, 9);
+	assert_eq!(d.identical_rounds(), 2, "an unmoved repeat counts on from the restart");
 }
 
 #[test]

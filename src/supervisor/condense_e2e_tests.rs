@@ -183,6 +183,7 @@ fn verdict_json(body: &str) -> String {
 #[tokio::test]
 #[serial_test::serial]
 async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let mut config = condense_config();
 	config.supervisor.condense.adaptive = true;
@@ -291,6 +292,7 @@ async fn a_failed_condenser_call_leaves_results_as_is() {
 #[tokio::test]
 #[serial_test::serial]
 async fn a_missing_verdict_costs_only_the_result_it_omits() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let config = condense_config();
 	let mut results = vec![tool_result("t1", &big_body()), tool_result("t2", &big_body())];
@@ -344,6 +346,7 @@ async fn a_selection_that_cannot_shrink_the_result_is_left_inline() {
 #[tokio::test]
 #[serial_test::serial]
 async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let config = condense_config();
 	let session = "__condense_e2e_recovery";
@@ -428,6 +431,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 #[tokio::test]
 #[serial_test::serial]
 async fn reads_of_a_whole_task_target_are_left_in_full() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let config = condense_config();
 	let session = "__condense_e2e_whole_target";

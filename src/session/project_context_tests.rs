@@ -56,3 +56,14 @@ fn format_for_prompt_omits_absent_sections() {
 	assert!(!out.contains("# Git Status"));
 	assert!(!out.contains("# Project File Structure"));
 }
+
+#[test]
+fn project_files_keep_their_unnumbered_prompt_rendering() {
+	let mut context = ProjectContext::new();
+	context.readme_content = Some("# Project\n  readme body".to_string());
+	context.changes_content = Some("# Changes\n  release body".to_string());
+	assert_eq!(
+		context.format_for_prompt(),
+		"# Project README\n\n# Project\n  readme body\n\n# Project CHANGES\n\n# Changes\n  release body\n\n"
+	);
+}

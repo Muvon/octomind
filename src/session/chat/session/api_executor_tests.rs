@@ -809,7 +809,7 @@ async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budg
 					.session
 					.messages
 					.iter()
-					.filter(|m| m.content.contains("Completion evidence advisory"))
+					.filter(|m| m.content.contains("Completion check (not a failure or a block)"))
 					.count(),
 				expected_calls - 1
 			);

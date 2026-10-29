@@ -155,7 +155,7 @@ fn config_overrides_do_not_write_or_migrate_an_existing_config() {
 
 	let config = loaded.expect("override load");
 	assert!(!config.supervisor.enabled);
-	assert_eq!(config.version, 23, "automatic migration must not run");
+	assert_eq!(config.version, 24, "automatic migration must not run");
 	assert_eq!(
 		std::fs::read_to_string(path).expect("read config"),
 		contents,

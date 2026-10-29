@@ -321,8 +321,8 @@ Every condition gets exactly one of three statuses:
   name, output line, or diff line that shows THIS condition — from the ground truth or a
   readback output, and name its action as output:N in the condition's sources. The runtime
   checks every quote against the recorded evidence; a matched condition without a verbatim
-  excerpt it finds counts as unknown — naming a green action alone does not show what its
-  output exercised.
+  excerpt it finds is sent back for repair — if you cannot quote, use unknown. Naming a green
+  action alone does not show what its output exercised.
   When execution prints a summary rather than individual observations, connect two citable
   pieces: the supplied artifact defining the specific assertions or observations, and the
   current recorded execution that demonstrably includes them. Quote both and explain that
@@ -352,9 +352,9 @@ Every condition gets exactly one of three statuses:
   an already-recorded output would decide it. Give its confidence: how sure you are, from 0 to
   1, that it is still NOT demonstrated (1 = no supporting evidence, 0.5 = partial, near 0 =
   almost shown). This scores missing evidence, not whether the work is wrong; matched and
-  unmatched conditions carry no confidence. The runtime may offer one nonblocking advisory
-  opportunity to supply evidence or a fix; this score never turns uncertainty into a
-  violation. Score each condition independently.
+  unmatched conditions carry no confidence. The runtime may offer one
+  nonblocking advisory opportunity to supply evidence or a fix; this score never turns
+  uncertainty into a violation. Score each condition independently.
 A condition that contradicts <current_user_turn> is void — mark it matched with the reason
 "void: contradicts request"; so is one whose only demonstration would require an action the
 request or standing instructions forbid. Satisfying every condition does not excuse a
@@ -449,7 +449,7 @@ pub fn take_unsettled_advisory(verdict: &GateVerdict, config: &super::GateConfig
 		return None;
 	}
 	let mut note = String::from(
-		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found no direct evidence for the conditions below. For each one, decide whether it is a real gap. If it is, close it: check that exact case and fix what fails. If it is already covered or out of scope, ignore it. Then finish normally; completion will be checked again.\n",
+		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below; each number is its confidence that the condition is still not demonstrated, not that your work is wrong. For each one, decide whether it is a real gap. If it is, close it: check that exact case and fix what fails. If it is already covered or out of scope, ignore it. Then finish normally; completion will be checked again, without another note.\n",
 	);
 	for condition in selected {
 		note.push_str(&format!(

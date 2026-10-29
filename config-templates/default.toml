@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 24
+version = 25
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -777,6 +777,11 @@ max_trial_uses = 40
 # (loop / no-progress) are fixed constants.
 [supervisor.gate]
 enabled = true
+# Offer one nonblocking evidence advisory per genuine user turn, then re-gate.
+unsettled_advisory = true
+# Confidence that a condition is NOT demonstrated (0..1), not that work is wrong.
+# Keep in sync with DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD.
+unsettled_confidence_threshold = 0.8
 
 # Check role + user intent after native pre-call guards. Allow when uncertain.
 # Uses the shared supervisor model; only independently confirmed conflicts block.

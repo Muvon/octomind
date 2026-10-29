@@ -19,6 +19,100 @@
 
 use super::*;
 
+#[test]
+fn unsettled_advisory_is_scored_bounded_and_switchable() {
+	let template: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("template");
+	let mut config = template.supervisor.gate;
+	assert_eq!(
+		config.unsettled_confidence_threshold,
+		super::super::DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD
+	);
+	let condition = |number, confidence| UnsettledCondition {
+		number,
+		requirement: format!("requirement {number}"),
+		observation: "No direct observation available".to_string(),
+		confidence,
+	};
+	let verdict = GateVerdict::Unsettled(vec![condition(1, 0.79), condition(2, 0.8), condition(3, 0.95)]);
+	let mut sent = false;
+	config.unsettled_advisory = false;
+	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+	assert!(!sent);
+	config.unsettled_advisory = true;
+	config.unsettled_confidence_threshold = 0.96;
+	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+	assert!(!sent);
+	config.unsettled_confidence_threshold = 0.8;
+	let note = take_unsettled_advisory(&verdict, &config, &mut sent).expect("advisory at inclusive threshold");
+	assert!(!note.contains("requirement 1"));
+	assert!(note.contains("requirement 2") && note.contains("requirement 3"));
+	assert!(note.contains("not a failure or a block"));
+	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+	assert!(sent);
+	for verdict in [
+		GateVerdict::Pass,
+		GateVerdict::Gaps(vec!["observed violation".into()]),
+		GateVerdict::Indeterminate("transport failed".into()),
+		GateVerdict::Unsettled(vec![]),
+	] {
+		let mut sent = false;
+		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+		assert!(!sent);
+	}
+	for invalid in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+		let mut sent = false;
+		assert!(
+			take_unsettled_advisory(&GateVerdict::Unsettled(vec![condition(1, invalid)]), &config, &mut sent).is_none()
+		);
+		config.unsettled_confidence_threshold = invalid;
+		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+		config.unsettled_confidence_threshold = 0.8;
+	}
+}
+
+#[test]
+fn condition_confidence_and_citations_have_the_same_contract_in_both_encodings() {
+	let evidence = CitationEvidence {
+		corpus: "The independent check passed".into(),
+	};
+	for (status, observation, score, valid) in [
+		("unknown", "Output unavailable", Some(0.9), true),
+		("unknown", "Output unavailable", None, false),
+		("unknown", "Output unavailable", Some(1.1), false),
+		("matched", "The independent check passed", Some(0.0), false),
+		("matched", "\"The independent check passed\"", Some(0.0), true),
+	] {
+		let confidence = score.map(|n| format!(" confidence=\"{n}\"")).unwrap_or_default();
+		let text = text_report(&format!(
+			"<condition n=\"1\" status=\"{status}\"{confidence}>{observation}</condition>"
+		));
+		let json = json_report(
+			&serde_json::json!({"conditions":[{"n":1,"status":status,"observation":observation,"confidence":score}]}),
+		);
+		for report in [text, json] {
+			assert_eq!(report.evidence_format_issue(&evidence).is_none(), valid, "{report:?}");
+		}
+	}
+}
+
+#[test]
+fn advisory_budget_survives_resume_and_resets_only_for_a_new_task() {
+	let ledger = EvidenceLedger {
+		unsettled_advisory_sent: true,
+		..Default::default()
+	};
+	let encoded = serde_json::to_string(&ledger).expect("serialize");
+	let mut resumed: EvidenceLedger = serde_json::from_str(&encoded).expect("resume");
+	assert!(resumed.unsettled_advisory_sent);
+	resumed.mark_gate_checkpoint();
+	assert!(resumed.unsettled_advisory_sent);
+	resumed.begin_turn("previous request");
+	assert!(!resumed.unsettled_advisory_sent);
+	let old: EvidenceLedger = serde_json::from_str("{}").expect("legacy evidence");
+	assert!(!old.unsettled_advisory_sent);
+}
+
 static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(RenderedEvidence::default);
 
 static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
@@ -54,7 +148,10 @@ fn nonempty_checklists_keep_uncertainty_nonblocking_in_both_encodings() {
 				prompt.contains("one entry per condition")
 					|| prompt.contains("one entry per numbered evidence condition")
 			);
-			assert!(prompt.contains("report it without requesting another agent"));
+			assert!(prompt.contains("nonblocking advisory opportunity"));
+			assert!(prompt.contains("Quote both and explain that"));
+			assert!(prompt.contains("A global green"));
+			assert!(prompt.contains("combination and ordering"));
 			assert!(prompt.contains("Naming a possible future check alone is not evidence of a present violation"));
 			assert!(!prompt.contains("runtime asks the agent once"));
 			assert!(!prompt.contains("a claim has no supporting evidence"));
@@ -1033,10 +1130,11 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 		assert_eq!(branch["additionalProperties"], false);
 		assert_eq!(
 			branch["required"],
-			serde_json::json!(["n", "status", "observation", "basis", "sources"])
+			serde_json::json!(["n", "status", "observation", "basis", "sources", "confidence"])
 		);
 		let properties = &branch["properties"];
-		assert_eq!(properties.as_object().unwrap().len(), 5);
+		assert_eq!(properties.as_object().unwrap().len(), 6);
+		assert_eq!(properties["confidence"]["type"], serde_json::json!(["number", "null"]));
 		assert_eq!(
 			properties["status"],
 			serde_json::json!({"type": "string", "enum": statuses})
@@ -1436,6 +1534,29 @@ mod verify_round_trip {
 	}
 
 	#[tokio::test]
+	async fn uncitable_match_gets_one_format_repair_without_weakening_evidence() {
+		let _guard = ENV_LOCK.lock().await;
+		let original = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched" confidence="0">The feature is shipped and tested</condition><verdict>PASS</verdict>"#
+		);
+		let repaired = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched" confidence="0">"the feature is shipped and tested"</condition><verdict>PASS</verdict>"#
+		);
+		for (retry, passes) in [(&repaired, true), (&original, false)] {
+			let url = spawn_stub(vec![final_response(&original), final_response(retry)]).await;
+			std::env::set_var("OLLAMA_API_URL", url);
+			let conditions = vec!["describe the feature".into()];
+			let (_tx, receiver) = rx();
+			let verdict = verify(&gate_config(), input(&[], &conditions), receiver).await;
+			assert_eq!(matches!(verdict, GateVerdict::Pass), passes, "{verdict:?}");
+			if !passes {
+				assert!(matches!(verdict, GateVerdict::Indeterminate(_)));
+			}
+			std::env::remove_var("OLLAMA_API_URL");
+		}
+	}
+
+	#[tokio::test]
 	async fn an_empty_task_or_result_never_reaches_a_model() {
 		let (_tx, rx1) = rx();
 		let mut empty_task = input(&[], &[]);
@@ -1666,7 +1787,7 @@ mod verify_round_trip {
 	async fn an_unknown_condition_stays_unverified_on_every_pass() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">the log is not retained</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="0.9">the log is not retained</condition><verdict>PASS</verdict>"#
 		);
 		// Distinguish protocol parsing from provider-fixture isolation. A valid
 		// answer must pass before transport as well as after the round trip.
@@ -1674,7 +1795,7 @@ mod verify_round_trip {
 		assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
 		assert_eq!(
 			report.reported_findings(&HashSet::new()),
-			vec!["condition 1 unsettled: the log is not retained"]
+			vec!["condition 1 unsettled: the log is not retained (confidence not demonstrated: 0.90)"]
 		);
 		let url = spawn_stub(vec![final_response(&answer), final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -1685,11 +1806,11 @@ mod verify_round_trip {
 		let again = verify(&gate_config(), input(&[], &conditions), rx2).await;
 		std::env::remove_var("OLLAMA_API_URL");
 		assert!(
-			matches!(first, GateVerdict::Indeterminate(_)),
-			"uncertainty never creates an evidence request: {first:?}"
+			matches!(first, GateVerdict::Unsettled(_)),
+			"uncertainty is not an observed violation: {first:?}"
 		);
 		assert!(
-			matches!(again, GateVerdict::Indeterminate(_)),
+			matches!(again, GateVerdict::Unsettled(_)),
 			"uncertainty never becomes verified merely on a later pass: {again:?}"
 		);
 		std::env::remove_var("OLLAMA_API_URL");

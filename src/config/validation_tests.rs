@@ -20,6 +20,24 @@ use super::*;
 use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
 use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
+#[test]
+fn unsettled_confidence_threshold_requires_a_finite_probability() {
+	for threshold in [0.0, crate::supervisor::DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD, 1.0] {
+		let mut config = template_config();
+		config.supervisor.gate.unsettled_confidence_threshold = threshold;
+		config.validate().expect("valid confidence threshold");
+	}
+	for threshold in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+		let mut config = template_config();
+		config.supervisor.gate.unsettled_confidence_threshold = threshold;
+		assert!(config
+			.validate()
+			.expect_err("invalid threshold")
+			.to_string()
+			.contains("unsettled_confidence_threshold"));
+	}
+}
+
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }

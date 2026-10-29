@@ -459,7 +459,8 @@ async fn execute_tools_with_context(
 	let all_tasks = futures::future::join_all(tasks);
 	tokio::pin!(all_tasks);
 	let task_results: Vec<_> = tokio::select! {
-		results = &mut all_tasks => results,
+		// Cancelled executors can finish in the same poll as the cancellation signal.
+		biased;
 		_ = async {
 			if let Some(ref cancel_rx) = operation_cancelled {
 				let mut cancel_rx_clone = cancel_rx.clone();
@@ -497,6 +498,7 @@ async fn execute_tools_with_context(
 			crate::session::context::bump_context_epoch();
 			return Ok((Vec::new(), total_tool_time_ms));
 		}
+		results = &mut all_tasks => results,
 	};
 
 	// Note: No explicit stop needed before printing tool results.

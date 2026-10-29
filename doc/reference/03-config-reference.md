@@ -76,7 +76,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 24
+version = 25
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
@@ -712,6 +712,12 @@ only if those pass.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
+| `unsettled_advisory` | bool | `true` | Offer one nonblocking evidence advisory per genuine user turn, then re-gate normally |
+| `unsettled_confidence_threshold` | float | `0.8` | Inclusive threshold (0..1) for confidence that a condition is not demonstrated; not confidence the work is wrong |
+
+The advisory names only unsettled conditions meeting the threshold. Repeated uncertainty does not send another advisory
+within the same turn, and it never certifies success or becomes a blocking failure. Matched findings missing a verbatim
+citation receive one bounded protocol repair before any advisory decision; this shares the existing format-repair budget.
 
 With `[decision] supervisor = true`, a working-tree diff larger than the gate's size cut is not cut by size: the evaluation
 model scores every hunk in batched windows, as the condense seam scores tool-output chunks, and the verifier reads in full

@@ -40,6 +40,12 @@ impl Config {
 		self.validate_model_profiles()?;
 
 		self.validate_evaluate_model()?;
+		let confidence = self.supervisor.gate.unsettled_confidence_threshold;
+		if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+			return Err(anyhow!(
+				"supervisor.gate.unsettled_confidence_threshold must be between 0 and 1"
+			));
+		}
 
 		Ok(())
 	}

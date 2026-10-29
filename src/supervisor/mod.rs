@@ -258,7 +258,14 @@ pub struct CondenseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateConfig {
 	pub enabled: bool,
+	/// One advisory opportunity per user turn; never a blocking finding.
+	pub unsettled_advisory: bool,
+	/// Confidence that fulfillment is not demonstrated, in the inclusive range 0..1.
+	pub unsettled_confidence_threshold: f64,
 }
+
+/// Default documented in config-templates/default.toml.
+pub const DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD: f64 = 0.8;
 
 /// External plan-manager configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

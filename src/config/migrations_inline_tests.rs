@@ -1055,3 +1055,35 @@ fn v24_adds_the_loop_stop_and_keeps_existing_supervisor_values() {
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(value["supervisor"]["max_identical_rounds"].as_integer(), Some(0));
 }
+
+#[test]
+fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
+	let migration = plan()
+		.migrate(
+			"version = 24\n[supervisor.gate]\nenabled = false\n",
+			DEFAULT_CONFIG_TEMPLATE,
+		)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(migration.from_version, 24);
+	let gate = &value["supervisor"]["gate"];
+	assert_eq!(gate["enabled"].as_bool(), Some(false));
+	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(true));
+	assert_eq!(
+		gate["unsettled_confidence_threshold"].as_float(),
+		Some(crate::supervisor::DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD)
+	);
+
+	let migration = plan()
+		.migrate(
+			"version = 24\n[supervisor.gate]\nenabled = true\nunsettled_advisory = false\nunsettled_confidence_threshold = 0.9\n",
+			DEFAULT_CONFIG_TEMPLATE,
+		)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	let gate = &value["supervisor"]["gate"];
+	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(false));
+	assert_eq!(gate["unsettled_confidence_threshold"].as_float(), Some(0.9));
+}

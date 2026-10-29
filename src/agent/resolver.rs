@@ -51,9 +51,9 @@ pub async fn resolve_config_and_role(
 		// Resolve capabilities before input/env/dep resolution
 		let (resolved_toml, dep_entries) = registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
 			.context("Failed to resolve agent capabilities")?;
-		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
-		let resolved_toml = inputs::resolve_inputs(&resolved_toml).await?;
-		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
+		// INPUT first (persistent credential store), then ENV (environment / .env
+		// fallback), under one escape scope so `{{{{ENV:KEY}}}}` stays literal.
+		let resolved_toml = inputs::resolve_manifest_placeholders(&resolved_toml).await?;
 		// Run dep scripts before MCP init — idempotent, exit 0 if already installed.
 		// Grouped by owning tap: a capability reached through the `octomind/`
 		// prefix keeps its dep scripts in the baseline tap, not the agent's.

@@ -191,10 +191,9 @@ async fn acp_stdio_serves_initialize_new_session_prompt_and_eof() {
 	assert!(status.success(), "clean exit expected: {status}");
 }
 
-/// A client may pipeline `initialize` + `session/new` and close stdin at
-/// once (a one-shot script, `printf … | octomind acp`). EOF must not cut off
-/// requests that were already accepted: both responses have to reach stdout
-/// before the process exits.
+/// After initialization, a client may pipeline requests and close stdin at
+/// once. EOF must not cut off accepted requests: every response has to reach
+/// stdout before the process exits, in any order.
 #[tokio::test(flavor = "current_thread")]
 async fn acp_stdio_answers_requests_pipelined_before_eof() {
 	let data = tempfile::tempdir().expect("tempdir");
@@ -205,20 +204,44 @@ async fn acp_stdio_answers_requests_pipelined_before_eof() {
 		.await;
 	let mut child = spawn_fixture("pipelined_eof", data.path(), &[("OLLAMA_API_URL", &stub_url)]);
 
+	child.send(&rpc_line(1, "initialize", initialize_params())).await;
+	let response = child.wait_for_id(1).await;
+	assert!(response["result"]["agentInfo"].is_object(), "got: {response}");
+
 	let new_session =
 		serde_json::to_value(NewSessionRequest::new(data.path().to_path_buf())).expect("serialize session/new");
-	child.send(&rpc_line(1, "initialize", initialize_params())).await;
-	child.send(&rpc_line(2, "session/new", new_session)).await;
+	child.send(&rpc_line(2, "session/new", new_session.clone())).await;
+	child.send(&rpc_line(3, "session/new", new_session)).await;
+	child.close_stdin().await;
+
+	let mut pending = std::collections::HashSet::from([2, 3]);
+	while !pending.is_empty() {
+		let response = child.next_rpc().await;
+		if let Some(id) = response["id"].as_u64() {
+			assert!(pending.remove(&id), "unexpected or duplicate response: {response}");
+			assert!(
+				response["result"]["sessionId"].is_string(),
+				"session/new must be answered after EOF: {response}"
+			);
+		}
+	}
+
+	let status = child.wait_exit().await;
+	assert!(status.success(), "clean exit expected: {status}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn acp_stdio_rejects_session_requests_before_initialize() {
+	let data = tempfile::tempdir().expect("tempdir");
+	let mut child = spawn_fixture("uninitialized", data.path(), &[]);
+	let new_session =
+		serde_json::to_value(NewSessionRequest::new(data.path().to_path_buf())).expect("serialize session/new");
+	child.send(&rpc_line(1, "session/new", new_session)).await;
 	child.close_stdin().await;
 
 	let response = child.wait_for_id(1).await;
-	assert!(response["result"]["agentInfo"].is_object(), "got: {response}");
-	let response = child.wait_for_id(2).await;
-	assert!(
-		response["result"]["sessionId"].is_string(),
-		"session/new must be answered after EOF: {response}"
-	);
-
+	assert_eq!(response["error"]["code"], -32600, "got: {response}");
+	assert!(response.get("result").is_none(), "got: {response}");
 	let status = child.wait_exit().await;
 	assert!(status.success(), "clean exit expected: {status}");
 }

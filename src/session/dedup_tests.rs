@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::context::with_session_id;
 
 #[test]
 fn separator_prevents_concatenation_collision() {
@@ -63,60 +64,74 @@ fn placeholder_truncated_repeat_redirects_without_echoing_body() {
 }
 
 #[test]
-fn record_then_is_duplicate_via_global_bucket() {
-	// In tests there is no session context, so session_key() returns
-	// "_global_". Use a unique tool name per test run so we don't collide
-	// with other tests sharing the same bucket.
-	let tool = "test_view_42";
-	let sid = "_global_".to_string();
-	let args = "{\"path\":\"a.rs\"}";
-	let content = "hello\n".repeat(100); // above MIN_DEDUP_CONTENT_LEN
-	let other = "different\n".repeat(100);
-	assert!(!is_duplicate(tool, args, &content));
-	record(tool, args, &content);
-	assert!(is_duplicate(tool, args, &content));
-	assert!(!is_duplicate(tool, args, &other));
-	assert!(!is_duplicate("shell_test_42", args, &content));
-	// Cleanup so re-runs of the test do not see stale state.
-	clear_session(&sid);
+fn session_key_without_context_uses_the_fallback_bucket() {
+	assert_eq!(session_key(), "_global_");
 }
 
-#[test]
-fn different_args_same_content_not_deduplicated() {
-	// The reported bug: two views of the same file at different ranges
-	// return identical bytes; they must NOT collide.
-	let tool = "test_view_ranges";
-	let content = "x\n".repeat(300); // above MIN_DEDUP_CONTENT_LEN
-	record(tool, "{\"start\":1,\"end\":100}", &content);
-	assert!(is_duplicate(tool, "{\"start\":1,\"end\":100}", &content));
-	assert!(!is_duplicate(tool, "{\"start\":100,\"end\":200}", &content));
-	clear_session("_global_");
+#[tokio::test]
+async fn record_then_is_duplicate_in_session() {
+	let sid = "dedup-record";
+	with_session_id(sid.to_string(), async {
+		let tool = "test_view_42";
+		let args = "{\"path\":\"a.rs\"}";
+		let content = "hello\n".repeat(100); // above MIN_DEDUP_CONTENT_LEN
+		let other = "different\n".repeat(100);
+		assert!(!is_duplicate(tool, args, &content));
+		record(tool, args, &content);
+		assert!(is_duplicate(tool, args, &content));
+		assert!(!is_duplicate(tool, args, &other));
+		assert!(!is_duplicate("shell_test_42", args, &content));
+		// Cleanup so re-runs of the test do not see stale state.
+		clear_session(sid);
+	})
+	.await;
 }
 
-#[test]
-fn same_args_changed_content_not_deduplicated() {
-	// Re-reading a file after editing it: same args, different bytes must
-	// reach the model — no stale elision.
-	let tool = "test_view_edited";
-	let args = "{\"path\":\"a.rs\"}";
-	let before = "old\n".repeat(300);
-	let after = "new\n".repeat(300);
-	record(tool, args, &before);
-	assert!(is_duplicate(tool, args, &before));
-	assert!(!is_duplicate(tool, args, &after));
-	clear_session("_global_");
+#[tokio::test]
+async fn different_args_same_content_not_deduplicated() {
+	with_session_id("dedup-ranges".to_string(), async {
+		// The reported bug: two views of the same file at different ranges
+		// return identical bytes; they must NOT collide.
+		let tool = "test_view_ranges";
+		let content = "x\n".repeat(300); // above MIN_DEDUP_CONTENT_LEN
+		record(tool, "{\"start\":1,\"end\":100}", &content);
+		assert!(is_duplicate(tool, "{\"start\":1,\"end\":100}", &content));
+		assert!(!is_duplicate(tool, "{\"start\":100,\"end\":200}", &content));
+		clear_current_session();
+	})
+	.await;
 }
 
-#[test]
-fn short_content_is_never_deduplicated() {
-	// Verdict-style outputs ("[OK] No errors") must always reach the
-	// model verbatim — eliding them causes re-verification loops.
-	let tool = "test_shell_short";
-	let content = "[OK] No errors";
-	assert!(content.len() < MIN_DEDUP_CONTENT_LEN);
-	record(tool, "{}", content);
-	assert!(!is_duplicate(tool, "{}", content));
-	clear_session("_global_");
+#[tokio::test]
+async fn same_args_changed_content_not_deduplicated() {
+	with_session_id("dedup-edited".to_string(), async {
+		// Re-reading a file after editing it: same args, different bytes must
+		// reach the model — no stale elision.
+		let tool = "test_view_edited";
+		let args = "{\"path\":\"a.rs\"}";
+		let before = "old\n".repeat(300);
+		let after = "new\n".repeat(300);
+		record(tool, args, &before);
+		assert!(is_duplicate(tool, args, &before));
+		assert!(!is_duplicate(tool, args, &after));
+		clear_current_session();
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn short_content_is_never_deduplicated() {
+	with_session_id("dedup-short".to_string(), async {
+		// Verdict-style outputs ("[OK] No errors") must always reach the
+		// model verbatim — eliding them causes re-verification loops.
+		let tool = "test_shell_short";
+		let content = "[OK] No errors";
+		assert!(content.len() < MIN_DEDUP_CONTENT_LEN);
+		record(tool, "{}", content);
+		assert!(!is_duplicate(tool, "{}", content));
+		clear_current_session();
+	})
+	.await;
 }
 
 #[test]
@@ -132,19 +147,22 @@ fn content_hash_is_deterministic_and_sensitive_to_tool_name() {
 	assert_ne!(content_hash("view", "{}", "body"), content_hash("shell", "{}", "body"));
 }
 
-#[test]
-fn min_length_boundary_is_exactly_500_chars() {
-	// 499 chars: below the gate, never recorded → never a duplicate.
-	let short = "a".repeat(MIN_DEDUP_CONTENT_LEN - 1);
-	record("test_gate_short", "{}", &short);
-	assert!(!is_duplicate("test_gate_short", "{}", &short));
+#[tokio::test]
+async fn min_length_boundary_is_exactly_500_chars() {
+	with_session_id("dedup-boundary".to_string(), async {
+		// 499 chars: below the gate, never recorded → never a duplicate.
+		let short = "a".repeat(MIN_DEDUP_CONTENT_LEN - 1);
+		record("test_gate_short", "{}", &short);
+		assert!(!is_duplicate("test_gate_short", "{}", &short));
 
-	// Exactly 500 chars: at the gate, eligible for dedup.
-	let exact = "b".repeat(MIN_DEDUP_CONTENT_LEN);
-	assert!(!is_duplicate("test_gate_exact", "{}", &exact));
-	record("test_gate_exact", "{}", &exact);
-	assert!(is_duplicate("test_gate_exact", "{}", &exact));
-	clear_session("_global_");
+		// Exactly 500 chars: at the gate, eligible for dedup.
+		let exact = "b".repeat(MIN_DEDUP_CONTENT_LEN);
+		assert!(!is_duplicate("test_gate_exact", "{}", &exact));
+		record("test_gate_exact", "{}", &exact);
+		assert!(is_duplicate("test_gate_exact", "{}", &exact));
+		clear_current_session();
+	})
+	.await;
 }
 
 #[test]
@@ -214,28 +232,41 @@ fn placeholder_snippets_overlong_fingerprint_lines() {
 	);
 }
 
-#[test]
-fn clear_current_session_empties_the_fallback_bucket() {
-	// Without a session context the state lives in "_global_";
-	// clear_current_session must drop exactly that bucket.
-	let tool = "test_clear_current";
-	let content = "z\n".repeat(300);
-	record(tool, "{}", &content);
-	assert!(is_duplicate(tool, "{}", &content));
-	clear_current_session();
-	assert!(!is_duplicate(tool, "{}", &content));
+#[tokio::test]
+async fn clear_current_session_empties_its_bucket() {
+	with_session_id("dedup-clear-current".to_string(), async {
+		let tool = "test_clear_current";
+		let content = "z\n".repeat(300);
+		record(tool, "{}", &content);
+		assert!(is_duplicate(tool, "{}", &content));
+		clear_current_session();
+		assert!(!is_duplicate(tool, "{}", &content));
+	})
+	.await;
 }
 
-#[test]
-fn clearing_one_session_leaves_the_fallback_bucket_intact() {
-	let tool = "test_isolation_other_session";
-	let content = "w\n".repeat(300);
-	record(tool, "{}", &content);
-	assert!(is_duplicate(tool, "{}", &content));
-	clear_session("some-other-session-id");
-	assert!(
-		is_duplicate(tool, "{}", &content),
-		"unrelated session clear must not touch our state"
-	);
-	clear_session("_global_");
+#[tokio::test]
+async fn clearing_one_session_leaves_another_intact() {
+	with_session_id("dedup-isolation".to_string(), async {
+		let tool = "test_isolation_other_session";
+		let content = "w\n".repeat(300);
+		record(tool, "{}", &content);
+		assert!(is_duplicate(tool, "{}", &content));
+		clear_session("some-other-session-id");
+		assert!(
+			is_duplicate(tool, "{}", &content),
+			"unrelated session clear must not touch our state"
+		);
+		with_session_id("some-other-session-id".to_string(), async {
+			assert!(!is_duplicate(tool, "{}", &content));
+			record(tool, "{}", &content);
+			assert!(is_duplicate(tool, "{}", &content));
+			clear_current_session();
+			assert!(!is_duplicate(tool, "{}", &content));
+		})
+		.await;
+		assert!(is_duplicate(tool, "{}", &content));
+		clear_current_session();
+	})
+	.await;
 }

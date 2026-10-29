@@ -700,9 +700,36 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					"stall"
 				}
 				crate::supervisor::gate::GateVerdict::Gaps(_) => "gaps",
+				crate::supervisor::gate::GateVerdict::Unsettled(_) => "unsettled",
 				crate::supervisor::gate::GateVerdict::Indeterminate(_) => "indeterminate",
 			},
 		);
+		if let Some(note) = crate::supervisor::gate::take_unsettled_advisory(
+			&verdict,
+			&config.supervisor.gate,
+			&mut chat_session.evidence.unsettled_advisory_sent,
+		) {
+			chat_session.add_system_managed_user_message(&note)?;
+			chat_session.last_self_report = None;
+			chat_session.pending_plan_signal = None;
+			chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
+			if chat_session.session.session_file.is_some() {
+				// Checkpoint the consumed budget before another provider call, so
+				// resuming an interrupted advisory cannot issue it a second time.
+				chat_session.save()?;
+			}
+			crate::log_debug!("Verify-gate: one unsettled-condition advisory; continuing normally");
+			crate::supervisor::notify("completion evidence unsettled — offering one advisory review");
+			return Box::pin(execute_api_call_and_process_response(
+				chat_session,
+				config,
+				role,
+				operation_rx,
+				mode,
+				sink,
+			))
+			.await;
+		}
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
 				if plan_applies && !hand_back {
@@ -819,7 +846,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::notify(&msg);
 				reinforce_recalled(chat_session, config, -0.15).await;
 			}
-			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
+			verdict @ (crate::supervisor::gate::GateVerdict::Unsettled(_)
+			| crate::supervisor::gate::GateVerdict::Indeterminate(_)) => {
+				let reason = if let crate::supervisor::gate::GateVerdict::Indeterminate(reason) = verdict {
+					reason
+				} else {
+					"available evidence does not settle every condition".to_string()
+				};
 				chat_session.pending_plan_signal = None;
 				chat_session.gate_failed = true;
 				chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;

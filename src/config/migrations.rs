@@ -164,9 +164,30 @@ fn plan() -> MigrationPlan {
 				to: 24,
 				apply: add_v24_loop_stop,
 			},
+			VersionMigration {
+				from: 24,
+				to: 25,
+				apply: add_v25_unsettled_advisory,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required unsettled-evidence advisory switch and threshold to
+/// `supervisor.gate`; existing values are kept.
+fn add_v25_unsettled_advisory(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let template_gate = required_table(template_supervisor, "gate", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	let gate = ensure_table(supervisor, template_supervisor, "gate", "user config")?;
+	merge_missing(gate, template_gate, "unsettled_advisory")?;
+	merge_missing(gate, template_gate, "unsettled_confidence_threshold")
 }
 
 /// Add the required `supervisor.max_identical_rounds` loop hard stop; an existing

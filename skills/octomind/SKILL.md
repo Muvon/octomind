@@ -54,6 +54,10 @@ terminal(command="echo 'Refactor the auth module' | octomind run developer:gener
 
 Restrict file writes to the working directory with `--sandbox`.
 
+Completion verification may offer one evidence advisory per user turn and then check completion again. Configure
+`[supervisor.gate] unsettled_advisory` (default `true`) and `unsettled_confidence_threshold` (default `0.8`, range 0..1).
+The score measures confidence that fulfillment is not demonstrated; the advisory is not a failure or a block.
+
 ## Iterative Work (Daemon + send)
 
 For multi-step work, keep one named session alive and inject follow-ups from separate commands:

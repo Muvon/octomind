@@ -758,6 +758,73 @@ fn progressing_response(text: &str) -> serde_json::Value {
 	final_response(&format!("{text}{}", sup_tag("progressing")))
 }
 
+#[tokio::test]
+async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budget() {
+	let _guard = ENV_LOCK.lock().await;
+	for (enabled, threshold, settled, expected_calls) in [
+		(true, 0.8, false, 2),
+		(false, 0.8, false, 1),
+		(true, 0.9, false, 1),
+		(true, 0.8, true, 1),
+	] {
+		let sid = format!("unsettled-advisory-{enabled}-{threshold}-{settled}");
+		crate::session::context::with_session_id(sid.clone(), async {
+			crate::session::context::init_session_services("assistant");
+			let answer = "The protocol preserves the original request.";
+			let condition = if settled {
+				format!(r#"<condition n="1" status="matched" confidence="0">"{answer}"</condition>"#)
+			} else {
+				String::from(
+					r#"<condition n="1" status="unknown" confidence="0.8">The requested observation is unavailable.</condition>"#,
+				)
+			};
+			let verifier = final_response(&format!("{CLEAN_SHAPES}{condition}<verdict>PASS</verdict>"));
+			let mut responses = vec![done_response(answer), verifier.clone()];
+			if expected_calls == 2 {
+				responses.extend([done_response(answer), verifier]);
+			}
+			let (url, requests) = spawn_recording_stub(responses).await;
+			std::env::set_var("OLLAMA_API_URL", url);
+			let mut config = supervised_config();
+			config.supervisor.plan.enabled = false;
+			config.decision.supervisor = false;
+			config.supervisor.gate.unsettled_advisory = enabled;
+			config.supervisor.gate.unsettled_confidence_threshold = threshold;
+			let task = "Explain how the protocol preserves the original request.";
+			let mut session = fake_session(task);
+			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
+			resolved.evidence_conditions = vec![task.into()];
+			session.gate_task = Some(resolved);
+			session.completion_gate_eligible = true;
+			run_turn(&mut session, &config)
+				.await
+				.expect("bounded advisory completes");
+			assert_eq!(session.session.info.total_api_calls, expected_calls);
+			assert_eq!(requests.lock().expect("requests").len(), expected_calls * 2);
+			assert_eq!(session.gate_iterations, 0, "advisory does not spend hard-gap retries");
+			assert_eq!(session.evidence.unsettled_advisory_sent, expected_calls == 2);
+			assert_eq!(session.gate_failed, !settled);
+			assert_eq!(
+				session
+					.session
+					.messages
+					.iter()
+					.filter(|m| m.content.contains("Completion evidence advisory"))
+					.count(),
+				expected_calls - 1
+			);
+			// A genuine new user turn starts a new cycle, unlike the managed advisory.
+			session
+				.add_user_message("Explain the next protocol step.")
+				.expect("new task");
+			assert!(!session.evidence.unsettled_advisory_sent);
+			std::env::remove_var("OLLAMA_API_URL");
+			crate::session::context::cleanup_session(&sid);
+		})
+		.await;
+	}
+}
+
 /// The four clean-shape declarations the verifier parser expects alongside a
 /// verdict (see gate.rs's own parser tests).
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
@@ -1546,15 +1613,18 @@ async fn strict_json_uncertainty_preserves_the_answer_without_an_agent_rerun() {
 			let (agent_url, agent_requests) = spawn_recording_stub(vec![done_response(answer)]).await;
 			std::env::set_var("OLLAMA_API_URL", agent_url);
 			let report = serde_json::json!({
-				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources}],
+				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources,"confidence":0.9}],
 				"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]
 			});
-			let (supervisor_url, supervisor_requests) =
-				crate::session::chat::test_support::spawn_recording_stub(vec![structured_verifier_response(report)])
-					.await;
+			let (supervisor_url, supervisor_requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
+				structured_verifier_response(report.clone()),
+				structured_verifier_response(report),
+			])
+			.await;
 			std::env::set_var("OPENAI_API_URL", supervisor_url);
 			let mut config = supervised_config();
 			config.supervisor.model.model = Some("openai:gpt-4.1".to_string());
+			config.supervisor.gate.unsettled_advisory = false;
 			config.decision.supervisor = false;
 			let task = "Preserve transition behavior after server rendering and hydration";
 			let mut session = fake_session(task);
@@ -1590,7 +1660,11 @@ async fn strict_json_uncertainty_preserves_the_answer_without_an_agent_rerun() {
 				crate::supervisor::learning::TrajectoryOutcome::Unknown
 			));
 			let requests = supervisor_requests.lock().unwrap();
-			assert_eq!(requests.len(), 1, "one independent verification");
+			assert_eq!(
+				requests.len(),
+				if status == "matched" { 2 } else { 1 },
+				"only uncitable matches need format repair"
+			);
 			assert_eq!(requests[0]["text"]["format"]["type"], "json_schema");
 			let wire = requests[0].to_string();
 			assert!(

@@ -124,3 +124,12 @@ async fn test_resolve_env_vars_no_prompt_for_escaped() {
 	let result = resolve_env_vars(raw).await.unwrap();
 	assert_eq!(result, "Example: {{ENV:URL}}");
 }
+
+#[tokio::test]
+async fn test_manifest_placeholders_keep_escaped_across_both_passes() {
+	// The INPUT pass must not unescape `{{{{ENV:KEY}}}}` into a live key that
+	// the ENV pass would then prompt for.
+	let raw = "Use {{{{ENV:EXACT_VAR_NAME}}}} and {{{{INPUT:KEY}}}}";
+	let result = resolve_manifest_placeholders(raw).await.unwrap();
+	assert_eq!(result, "Use {{ENV:EXACT_VAR_NAME}} and {{INPUT:KEY}}");
+}

@@ -168,6 +168,19 @@ fn prompt_user(key: &str, remedy: &str) -> Result<String> {
 	Ok(value.trim().to_string())
 }
 
+/// Resolve `{{INPUT:KEY}}` then `{{ENV:KEY}}` placeholders in one escape scope.
+///
+/// Escaped `{{{{…}}}}` literals are protected once before both passes and
+/// restored once after them. Resolving the two separately would let the INPUT
+/// pass unescape `{{{{ENV:KEY}}}}` into a live `{{ENV:KEY}}`, which the ENV
+/// pass would then prompt for — e.g. placeholder syntax quoted in prose.
+pub async fn resolve_manifest_placeholders(raw: &str) -> Result<String> {
+	let protected = protect_escaped_braces(raw);
+	let resolved = substitute_inputs(protected)?;
+	let resolved = substitute_env_vars(resolved)?;
+	Ok(restore_escaped_braces(&resolved))
+}
+
 /// Resolve all `{{INPUT:KEY}}` placeholders in `raw`.
 ///
 /// For each key:
@@ -176,10 +189,15 @@ fn prompt_user(key: &str, remedy: &str) -> Result<String> {
 pub async fn resolve_inputs(raw: &str) -> Result<String> {
 	// Protect escaped braces BEFORE extracting keys so that
 	// `{{{{INPUT:KEY}}}}` (escaped literal) is not mistaken for `{{INPUT:KEY}}`.
-	let mut result = protect_escaped_braces(raw);
+	let resolved = substitute_inputs(protect_escaped_braces(raw))?;
+	Ok(restore_escaped_braces(&resolved))
+}
+
+/// INPUT substitution on text whose escaped braces are already protected.
+fn substitute_inputs(mut result: String) -> Result<String> {
 	let keys = extract_input_keys(&result);
 	if keys.is_empty() {
-		return Ok(restore_escaped_braces(&result));
+		return Ok(result);
 	}
 
 	let mut stored = load_inputs()?;
@@ -208,7 +226,7 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 		result = result.replace(&placeholder, &value);
 	}
 
-	Ok(restore_escaped_braces(&result))
+	Ok(result)
 }
 
 /// Fail with every missing key at once when nobody can answer a prompt, so the
@@ -289,14 +307,20 @@ fn save_env_to_dotenv(key: &str, value: &str) -> Result<()> {
 /// - If already set in the environment (and non-empty), use it directly.
 /// - Otherwise prompt the user, persist to `./.env`, then substitute.
 ///
-/// Call this **after** `resolve_inputs()` so INPUT prompts come first.
+/// Manifest loading uses [`resolve_manifest_placeholders`], which runs INPUT
+/// and ENV under a single escape scope.
 pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 	// Protect escaped braces BEFORE extracting keys so that
 	// `{{{{ENV:KEY}}}}` (escaped literal) is not mistaken for `{{ENV:KEY}}`.
-	let mut result = protect_escaped_braces(raw);
+	let resolved = substitute_env_vars(protect_escaped_braces(raw))?;
+	Ok(restore_escaped_braces(&resolved))
+}
+
+/// ENV substitution on text whose escaped braces are already protected.
+fn substitute_env_vars(mut result: String) -> Result<String> {
 	let keys = extract_env_keys(&result);
 	if keys.is_empty() {
-		return Ok(restore_escaped_braces(&result));
+		return Ok(result);
 	}
 	refuse_missing_when_non_interactive(
 		keys.iter().filter(|key| std::env::var_os(key).is_none()),
@@ -328,7 +352,7 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 		result = result.replace(&placeholder, &value);
 	}
 
-	Ok(restore_escaped_braces(&result))
+	Ok(result)
 }
 
 #[cfg(test)]

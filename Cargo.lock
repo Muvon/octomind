@@ -3323,9 +3323,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.47.1"
+version = "0.47.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0139ceac3eaa268963094153b36a2295c47886647fdc4a3a03e51011ad9965f7"
+checksum = "be27159901e0855ccda39ce1b41c20cfbaad75ea86fa014010f9c724bb7ca022"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4966,7 +4966,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",

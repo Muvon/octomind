@@ -412,15 +412,19 @@ pub fn display_info(output: &CommandOutput) {
 				.and_then(|v| v.as_f64())
 				.unwrap_or(0.0);
 		if external_cost > 0.0 {
-			let total_str = format!("${:.5}", total_cost).bright_white();
-			let main_str = format!("${:.5}", (total_cost - external_cost).max(0.0));
+			let total_str = format!("${:.5}", total_cost).bright_yellow();
+			let main_str = format!("${:.5}", (total_cost - external_cost).max(0.0)).bright_yellow();
 			block_row(
 				"cost",
 				&format!("{} total {} {} main", total_str, dot, main_str),
 				kw_sess,
 			);
 		} else {
-			block_row("cost", &format!("${:.5}", total_cost), kw_sess);
+			block_row(
+				"cost",
+				&format!("${:.5}", total_cost).bright_yellow().to_string(),
+				kw_sess,
+			);
 		}
 		if *tokens_per_second > 0.0 {
 			let model_time = if timing.model_time_ms > 0 {

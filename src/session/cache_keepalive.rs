@@ -202,7 +202,7 @@ async fn send_ping(
 		));
 
 	let octolib_params = chat_params
-		.to_octolib_params()
+		.to_octolib_params(provider.name())
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to convert keepalive ping parameters: {}", e))?;
 

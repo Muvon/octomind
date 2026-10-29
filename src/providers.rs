@@ -53,7 +53,8 @@ pub const MODEL_PURPOSE_HEADER: &str = "X-Model-Purpose";
 /// This set is a CONTRACT with the control plane. Internal mechanics sharing a
 /// profile also share one purpose, so a proxy cannot silently reintroduce
 /// per-mechanic model routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelPurpose {
 	/// The session's own conversation turns — also cache keepalive pings,
 	/// which must hit the same model they are keeping warm.
@@ -208,7 +209,10 @@ impl<'a> ChatCompletionParams<'a> {
 	}
 
 	/// Convert to octolib ChatCompletionParams with MCP tools
-	pub async fn to_octolib_params(&self) -> Result<octolib::llm::ChatCompletionParams, octolib::MessageError> {
+	pub async fn to_octolib_params(
+		&self,
+		provider_name: &str,
+	) -> Result<octolib::llm::ChatCompletionParams, octolib::MessageError> {
 		let octolib_messages: Result<Vec<octolib::llm::Message>, _> =
 			self.messages.iter().map(convert_message_to_octolib).collect();
 
@@ -285,16 +289,28 @@ impl<'a> ChatCompletionParams<'a> {
 		// line, stderr, JSONL) — with the session captured here because the call
 		// may run outside the task-local scope.
 		let retry_session_id = session_id.clone();
+		let retry_provider = provider_name.to_string();
+		let retry_model = self.model.to_string();
+		let retry_purpose = self.purpose;
 		params = params.with_retry_observer(octolib::llm::RetryObserver::new(move |event| {
 			tracing::warn!(
-				"provider call failed ({}), retry {}/{} in {:?}",
+				"{} model {}:{} request failed ({}), retry {}/{} in {:?}",
+				retry_purpose.as_str(),
+				retry_provider,
+				retry_model,
 				event.reason,
 				event.attempt,
 				event.max_retries,
 				event.delay
 			);
 			crate::mcp::process::send_notification_message_for(
-				crate::websocket::ServerMessage::retry(event, retry_session_id.clone()),
+				crate::websocket::ServerMessage::retry(
+					event,
+					&retry_provider,
+					&retry_model,
+					retry_purpose,
+					retry_session_id.clone(),
+				),
 				retry_session_id.as_ref(),
 			);
 		}));

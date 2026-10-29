@@ -374,7 +374,7 @@ pub async fn chat_completion_with_validation(
 			tokio::time::sleep(std::time::Duration::from_millis(EMPTY_COMPLETION_RETRY_DELAY_MS)).await;
 		}
 		let octolib_params = chat_params
-			.to_octolib_params()
+			.to_octolib_params(provider.name())
 			.await
 			.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
 		let octolib_response = provider.chat_completion(octolib_params).await?;
@@ -458,7 +458,7 @@ pub async fn chat_completion_with_provider(params: ChatCompletionProviderParams<
 
 	// Convert to octolib params and call provider
 	let octolib_params = chat_params
-		.to_octolib_params()
+		.to_octolib_params(provider.name())
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
 

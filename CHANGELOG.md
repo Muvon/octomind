@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.66.3] - 2026-10-29
+
+### 📋 Release Summary
+
+The supervisor now supports unsettled evidence advisories, and completion evidence advisories are clearer.
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: support unsettled evidence advisories `c3f726f3`
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: test ACP initialization and dedup isolation `357dfded`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: clarify completion evidence advisories `21bc591b`
+
 ## [0.66.2] - 2026-10-29
 
 ### 📋 Release Summary

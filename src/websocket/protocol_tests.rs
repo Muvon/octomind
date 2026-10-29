@@ -654,17 +654,27 @@ fn test_server_message_retry_is_its_own_non_terminal_frame() {
 		delay: std::time::Duration::from_secs(60),
 		reason: "HTTP 503".to_string(),
 	};
-	let value = serde_json::to_value(ServerMessage::retry(&event, Some("sess_123".to_string()))).unwrap();
+	let value = serde_json::to_value(ServerMessage::retry(
+		&event,
+		"openrouter",
+		"anthropic/claude-haiku-4.5",
+		crate::providers::ModelPurpose::Supervisor,
+		Some("sess_123".to_string()),
+	))
+	.unwrap();
 	// Clients end a turn on `cost`, `error` and data-carrying `status`: a retry
 	// notice must never reuse one of those types.
 	assert_eq!(value["type"], "retry");
+	assert_eq!(value["purpose"], "supervisor");
+	assert_eq!(value["provider"], "openrouter");
+	assert_eq!(value["model"], "anthropic/claude-haiku-4.5");
 	assert_eq!(value["attempt"], 2);
 	assert_eq!(value["max_retries"], 3);
 	assert_eq!(value["delay_ms"], 60_000);
 	assert_eq!(value["reason"], "HTTP 503");
 	assert_eq!(
 		value["message"],
-		"Model provider unavailable (HTTP 503) — retrying in 60s, attempt 2/3"
+		"Model request failed [supervisor, openrouter:anthropic/claude-haiku-4.5] (HTTP 503) — retrying in 60s, retry 2/3"
 	);
 	assert_eq!(value["session_id"], "sess_123");
 	assert!(value.get("data").is_none());
@@ -681,12 +691,22 @@ fn test_server_message_retry_without_session_omits_it_and_rounds_sub_second_dela
 		delay: std::time::Duration::from_millis(1500),
 		reason: "connection error".to_string(),
 	};
-	let value = serde_json::to_value(ServerMessage::retry(&event, None)).unwrap();
+	let value = serde_json::to_value(ServerMessage::retry(
+		&event,
+		"octohub",
+		"auto",
+		crate::providers::ModelPurpose::Compression,
+		None,
+	))
+	.unwrap();
+	assert_eq!(value["purpose"], "compression");
+	assert_eq!(value["provider"], "octohub");
+	assert_eq!(value["model"], "auto");
 	assert!(value.get("session_id").is_none());
 	assert_eq!(value["delay_ms"], 1500);
 	assert_eq!(
 		value["message"],
-		"Model provider unavailable (connection error) — retrying in 2s, attempt 1/1"
+		"Model request failed [compression, octohub:auto] (connection error) — retrying in 2s, retry 1/1"
 	);
 }
 

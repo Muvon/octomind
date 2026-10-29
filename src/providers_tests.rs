@@ -475,7 +475,10 @@ async fn test_octolib_params_defaults_and_passthrough() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "test-model", 0.5, 0.9, 7, 1234, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 
 	assert_eq!(octo.model, "test-model");
 	assert_eq!(octo.temperature, 0.5);
@@ -504,7 +507,10 @@ async fn test_octolib_params_carry_provider_items() {
 	let messages = vec![msg("user", "go"), assistant, msg("user", "again")];
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 
 	assert_eq!(octo.messages[1].provider_items.as_ref(), Some(&items));
 }
@@ -514,7 +520,10 @@ async fn test_octolib_params_builder_overrides() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_max_retries(7);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.max_retries, 7);
 }
 
@@ -523,10 +532,16 @@ async fn test_octolib_params_key_prompt_cache_by_session() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let outside = params.to_octolib_params().await.expect("conversion succeeds");
+	let outside = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(outside.prompt_cache_key, None);
 	let inside = crate::session::context::with_session_id("s-1".to_string(), async {
-		params.to_octolib_params().await.expect("conversion succeeds")
+		params
+			.to_octolib_params("test-provider")
+			.await
+			.expect("conversion succeeds")
 	})
 	.await;
 	assert_eq!(inside.prompt_cache_key.as_deref(), Some("s-1"));
@@ -543,7 +558,10 @@ async fn test_octolib_params_cached_system_message_gets_one_hour_ttl() {
 		msg("user", "hi"),
 	];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.messages[0].role, "system");
 	assert!(octo.messages[0].cached);
 	assert_eq!(octo.messages[0].cache_ttl.as_deref(), Some("1h"));
@@ -554,7 +572,10 @@ async fn test_octolib_params_appends_synthetic_user_after_assistant() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi"), msg("assistant", "hello")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.messages.len(), 3, "synthetic continuation must be appended");
 	let last = octo.messages.last().expect("non-empty");
 	assert_eq!(last.role, "user");
@@ -572,7 +593,10 @@ async fn test_octolib_params_no_synthetic_user_after_user_message() {
 		msg("user", "hi"),
 	];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.messages.len(), 2, "no synthetic message expected");
 	assert_eq!(octo.messages.last().expect("non-empty").role, "user");
 }
@@ -582,7 +606,10 @@ async fn test_octolib_params_system_only_messages_get_no_synthetic_user() {
 	let config = test_config();
 	let messages = vec![msg("system", "sysprompt")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.messages.len(), 1, "no non-system message → no synthetic append");
 }
 
@@ -592,7 +619,10 @@ async fn test_octolib_params_purpose_header_sent_on_every_request() {
 	let messages = vec![msg("user", "hi")];
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(
 		octo.extra_headers.as_ref().and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
 		Some(&"main".to_string()),
@@ -601,7 +631,10 @@ async fn test_octolib_params_purpose_header_sent_on_every_request() {
 
 	let params =
 		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_purpose(ModelPurpose::Compression);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(
 		octo.extra_headers.as_ref().and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
 		Some(&"compression".to_string())
@@ -614,13 +647,19 @@ async fn test_octolib_params_reasoning_effort_override_beats_config() {
 	let messages = vec![msg("user", "hi")];
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	// Config template default is "medium".
 	assert_eq!(octo.reasoning_effort, Some(octolib::llm::ReasoningEffort::Medium));
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
 		.with_reasoning_effort(crate::config::ReasoningEffortConfig::High);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.reasoning_effort, Some(octolib::llm::ReasoningEffort::High));
 }
 
@@ -634,7 +673,10 @@ async fn test_octolib_params_schema_becomes_strict_structured_output() {
 		"required": ["answer"]
 	});
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_schema(schema.clone());
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	let rf = octo.response_format.expect("schema must set response_format");
 	assert!(matches!(rf.format, octolib::llm::OutputFormat::JsonSchema));
 	assert!(matches!(rf.mode, octolib::llm::ResponseMode::Strict));
@@ -647,7 +689,10 @@ async fn test_octolib_params_zero_request_timeout_disables_deadline() {
 	config.request_timeout_seconds = 0;
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert_eq!(octo.request_timeout, None, "0 must mean no per-request timeout");
 }
 
@@ -657,7 +702,10 @@ async fn test_octolib_params_cancellation_token_attached() {
 	let messages = vec![msg("user", "hi")];
 	let (_tx, rx) = watch::channel(false);
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_cancellation_token(rx);
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert!(octo.cancellation_token.is_some(), "token must be forwarded");
 }
 
@@ -669,34 +717,42 @@ async fn test_octolib_params_retry_observer_reaches_the_session_that_built_the_c
 	let sid = "providers-retry-notice".to_string();
 	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 	crate::mcp::process::set_notification_sender(Some(sid.clone()), tx);
-	// Built inside the session's scope, as every turn's provider call is...
-	let octo = crate::session::context::with_session_id(sid.clone(), async {
-		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
-			.to_octolib_params()
-			.await
-			.expect("conversion succeeds")
-	})
-	.await;
+	for (purpose, provider, model) in [
+		(ModelPurpose::Main, "openai", "gpt-4"),
+		(ModelPurpose::Supervisor, "openrouter", "anthropic/claude-haiku-4.5"),
+		(ModelPurpose::Compression, "octohub", "auto"),
+	] {
+		let octo = crate::session::context::with_session_id(sid.clone(), async {
+			ChatCompletionParams::new(&messages, model, 0.1, 1.0, 0, 10, &config)
+				.with_purpose(purpose)
+				.to_octolib_params(provider)
+				.await
+				.expect("conversion succeeds")
+		})
+		.await;
 
-	// ...but told about the retry outside it: octolib's backoff loop owns no
-	// task-local, so the observer must carry the session itself.
-	let observer = octo.retry_observer.expect("every provider call observes its retries");
-	observer.notify(&octolib::llm::RetryEvent {
-		attempt: 1,
-		max_retries: 3,
-		delay: std::time::Duration::from_secs(30),
-		reason: "HTTP 503".to_string(),
-	});
-	crate::mcp::process::clear_notification_sender(Some(sid.clone()));
+		// The callback runs outside the session scope and must retain the call's identity.
+		let observer = octo.retry_observer.expect("every provider call observes its retries");
+		observer.notify(&octolib::llm::RetryEvent {
+			attempt: 1,
+			max_retries: 3,
+			delay: std::time::Duration::from_secs(30),
+			reason: "HTTP 503".to_string(),
+		});
 
-	match rx.try_recv().expect("the session's sender receives the notice") {
-		crate::websocket::ServerMessage::Retry(p) => {
-			assert_eq!(p.session_id.as_deref(), Some(sid.as_str()));
-			assert_eq!(p.reason, "HTTP 503");
-			assert_eq!(p.delay_ms, 30_000);
+		match rx.try_recv().expect("the session's sender receives the notice") {
+			crate::websocket::ServerMessage::Retry(p) => {
+				assert_eq!(p.session_id.as_deref(), Some(sid.as_str()));
+				assert_eq!(p.purpose, purpose);
+				assert_eq!(p.provider, provider);
+				assert_eq!(p.model, model);
+				assert_eq!(p.reason, "HTTP 503");
+				assert_eq!(p.delay_ms, 30_000);
+			}
+			other => panic!("expected a retry frame, got {other:?}"),
 		}
-		other => panic!("expected a retry frame, got {other:?}"),
 	}
+	crate::mcp::process::clear_notification_sender(Some(sid));
 }
 
 #[tokio::test]
@@ -704,7 +760,10 @@ async fn test_octolib_params_without_tools_keeps_tools_empty() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).without_tools();
-	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let octo = params
+		.to_octolib_params("test-provider")
+		.await
+		.expect("conversion succeeds");
 	assert!(octo.tools.is_none(), "text-only calls must not attach tools");
 }
 
@@ -733,7 +792,7 @@ async fn test_octolib_params_without_vision_strips_prompt_and_tool_images() {
 	for vision in [true, false] {
 		let octo = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
 			.with_vision(vision)
-			.to_octolib_params()
+			.to_octolib_params("test-provider")
 			.await
 			.expect("conversion succeeds");
 		assert_eq!(octo.messages.len(), 2);

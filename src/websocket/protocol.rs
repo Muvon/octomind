@@ -702,6 +702,12 @@ pub struct ElicitationPayload {
 /// succeeds or the last one fails. Clients show it until the next real frame.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RetryPayload {
+	/// The model profile used by this call: main, supervisor or compression.
+	pub purpose: crate::providers::ModelPurpose,
+	/// Provider selected for this request.
+	pub provider: String,
+	/// Model sent to the provider; a proxy alias may be resolved upstream.
+	pub model: String,
 	/// The retry about to run, 1-based (`1..=max_retries`).
 	pub attempt: u32,
 	/// Retries allowed for this call.
@@ -881,16 +887,31 @@ impl ServerMessage {
 	}
 
 	/// The notice for one provider retry (see [`RetryPayload`]).
-	pub fn retry(event: &octolib::llm::RetryEvent, session_id: Option<String>) -> Self {
+	pub fn retry(
+		event: &octolib::llm::RetryEvent,
+		provider: &str,
+		model: &str,
+		purpose: crate::providers::ModelPurpose,
+		session_id: Option<String>,
+	) -> Self {
 		let delay_secs = event.delay.as_secs_f64().round() as u64;
 		ServerMessage::Retry(RetryPayload {
+			purpose,
+			provider: provider.to_string(),
+			model: model.to_string(),
 			attempt: event.attempt,
 			max_retries: event.max_retries,
 			delay_ms: event.delay.as_millis() as u64,
 			reason: event.reason.clone(),
 			message: format!(
-				"Model provider unavailable ({}) — retrying in {}s, attempt {}/{}",
-				event.reason, delay_secs, event.attempt, event.max_retries
+				"Model request failed [{}, {}:{}] ({}) — retrying in {}s, retry {}/{}",
+				purpose.as_str(),
+				provider,
+				model,
+				event.reason,
+				delay_secs,
+				event.attempt,
+				event.max_retries
 			),
 			session_id,
 		})

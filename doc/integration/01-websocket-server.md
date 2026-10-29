@@ -355,6 +355,19 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
 {"type":"ack","message_type":"session","session_id":"my-session","status":"received","capabilities":["…","commands_v1"],"commands":[{"name":"help","description":"Show this help message"},{"name":"model","description":"View or change current AI model","hint":"[provider:model]"}],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":0}
 ```
 
+#### Provider retries
+
+A `retry` frame identifies a failed model request while the turn waits to try again. `purpose` is `main`,
+`supervisor`, or `compression` (compression decisions and summaries). `provider` and `model` identify the request
+sent by Octomind; proxy aliases such as `octohub:auto` are resolved upstream. `attempt` counts retries, starting
+at 1, and `max_retries` excludes the original request. `reason` is a short cause such as `HTTP 503`,
+`connection error`, or the generic `request failed`; it contains no response body or credentials.
+Clients can display `message` directly. A retry frame does not end the turn.
+
+```json
+{"type":"retry","purpose":"compression","provider":"octohub","model":"auto","attempt":1,"max_retries":1,"delay_ms":30000,"reason":"request failed","message":"Model request failed [compression, octohub:auto] (request failed) — retrying in 30s, retry 1/1","session_id":"my-session","stream_seq":7}
+```
+
 #### Stream position and resume
 
 A session loaded in the server process owns one output **stream**, identified by an opaque hex id that changes when the

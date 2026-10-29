@@ -22,6 +22,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
+use std::ops::Range;
 
 /// The agent's self-reported state for a turn, parsed from its `<sup>…</sup>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -114,17 +115,12 @@ struct WireSelfReport {
 /// Field names a structured self-report may carry ([`WireSelfReport`]).
 const SELF_REPORT_FIELDS: &[&str] = &["state", "focus", "next", "carry", "plan", "memories", "behaviors"];
 
-/// A report the model wrote without its closed tag — bare JSON, or an opening
-/// `<sup>` never closed — as the response's last line: its byte offset and its
-/// JSON body. Models drop the tag (prod 2026-10-22..25, the bare object reached
-/// users), so the report is recognised by its own fields instead: an object
-/// with a `state` and a `focus` and nothing but report fields. JSON the user
-/// asked for lacks one of them or carries other keys, and is never taken for one.
+/// A bare JSON report on the last line, identified by its own fields when the
+/// model omits the framing. Other JSON objects must remain visible.
 fn untagged_trailing_report(text: &str) -> Option<(usize, &str)> {
 	let trimmed = text.trim_end();
 	let start = trimmed.rfind('\n').map_or(0, |newline| newline + 1);
-	let line = trimmed[start..].trim();
-	let body = line.strip_prefix("<sup>").unwrap_or(line).trim();
+	let body = trimmed[start..].trim();
 	let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_str(body).ok()?;
 	let is_report = fields.contains_key("state")
 		&& fields.contains_key("focus")
@@ -132,11 +128,47 @@ fn untagged_trailing_report(text: &str) -> Option<(usize, &str)> {
 	is_report.then_some((start, body))
 }
 
-/// The body of the last `<sup>…</sup>` pair.
+const SELF_REPORT_OPEN_TAGS: &[&str] = &["<sup>", "<sub>"];
+const SELF_REPORT_CLOSE_TAGS: &[&str] = &["</sup>", "</sub>"];
+
+fn find_self_report_tag(text: &str, tags: &[&str]) -> Option<(usize, usize)> {
+	tags.iter()
+		.filter_map(|tag| text.find(tag).map(|start| (start, tag.len())))
+		.min_by_key(|(start, _)| *start)
+}
+
+/// Parsing and display use the same report boundaries. Models can mismatch
+/// superscript/subscript tags or truncate a structured report; neither should
+/// expose runtime notes. Ordinary HTML and prose mentions of the tags survive.
+fn tagged_self_reports(text: &str) -> impl Iterator<Item = (Range<usize>, &str)> {
+	let mut offset = 0;
+	std::iter::from_fn(move || {
+		while let Some((start, len)) = find_self_report_tag(&text[offset..], SELF_REPORT_OPEN_TAGS) {
+			let start = offset + start;
+			let body_start = start + len;
+			offset = body_start;
+			let closing = find_self_report_tag(&text[body_start..], SELF_REPORT_CLOSE_TAGS);
+			let (body_end, end) = match closing {
+				Some((relative, len)) => (body_start + relative, body_start + relative + len),
+				None => (text.len(), text.len()),
+			};
+			let inner = text[body_start..body_end].trim();
+			// An earlier prose mention must not consume a later report's closing tag.
+			if find_self_report_tag(inner, SELF_REPORT_OPEN_TAGS).is_some()
+				|| !is_self_report_body(inner)
+				|| (closing.is_none() && !inner.starts_with('{'))
+			{
+				continue;
+			}
+			offset = end;
+			return Some((start..end, inner));
+		}
+		None
+	})
+}
+
 fn last_tagged_report(text: &str) -> Option<&str> {
-	let end = text.rfind("</sup>")?;
-	let start = text[..end].rfind("<sup>")? + "<sup>".len();
-	Some(text[start..end].trim())
+	tagged_self_reports(text).last().map(|(_, body)| body)
 }
 
 pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
@@ -188,9 +220,7 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 /// [`parse_self_report_handoff`]'s fallback.
 #[cfg(test)]
 fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
-	let end = text.rfind("</sup>")?;
-	let start = text[..end].rfind("<sup>")? + "<sup>".len();
-	let inner = text[start..end].trim();
+	let inner = last_tagged_report(text)?;
 	if inner.starts_with('{') {
 		let parsed = parse_self_report_handoff(text)?;
 		let reason = (!parsed.handoff.focus.is_empty()).then_some(parsed.handoff.focus);
@@ -249,40 +279,16 @@ fn is_self_report_body(inner: &str) -> bool {
 		|| inner.contains('|')
 }
 
-/// Remove `<sup>…</sup>` tokens that look like a self-report (see
-/// [`is_self_report_body`]), leaving legitimate superscript markup untouched.
-/// Only clean pairs — inner text free of another `<sup>` — are candidates,
-/// so a prose mention of the tag never swallows a later real report. A last
-/// line that is a report written without its closed tag goes too (see
-/// [`untagged_trailing_report`]).
+/// Remove internal reports while leaving legitimate HTML untouched. A trailing
+/// bare report is recognized by its fields instead of its framing.
 pub fn strip_self_report(text: &str) -> String {
 	let mut out = String::with_capacity(text.len());
-	let mut rest = text;
-	while let Some(start) = rest.find("<sup>") {
-		match rest[start..].find("</sup>") {
-			Some(rel_end) => {
-				let inner = &rest[start + "<sup>".len()..start + rel_end];
-				// A self-report pair is clean: no other opening tag inside. When
-				// the inner text contains a `<sup>`, this opening tag is a prose
-				// mention and the found `</sup>` closes a later report — pairing
-				// them judges the merged span, leaking the real report when the
-				// shape check fails or eating the prose between when it passes.
-				// Resume right after this opening tag instead.
-				if !inner.contains("<sup>") && is_self_report_body(inner) {
-					// Drop this token; keep text before it.
-					out.push_str(&rest[..start]);
-					rest = &rest[start + rel_end + "</sup>".len()..];
-				} else {
-					// Not ours — keep the opening tag; the remainder is re-scanned
-					// as plain text, so legitimate superscript survives intact.
-					out.push_str(&rest[..start + "<sup>".len()]);
-					rest = &rest[start + "<sup>".len()..];
-				}
-			}
-			None => break,
-		}
+	let mut offset = 0;
+	for (range, _) in tagged_self_reports(text) {
+		out.push_str(&text[offset..range.start]);
+		offset = range.end;
 	}
-	out.push_str(rest);
+	out.push_str(&text[offset..]);
 	let out = out.trim_end();
 	match untagged_trailing_report(out) {
 		Some((start, _)) => out[..start].trim_end().to_string(),

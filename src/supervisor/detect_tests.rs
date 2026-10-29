@@ -120,6 +120,49 @@ fn strip_keeps_json_without_state_key_unclosed_and_plain_text() {
 }
 
 #[test]
+fn handoff_and_display_share_report_boundaries_with_malformed_framing() {
+	let body =
+		r#"{"state":"progressing","focus":"working","next":"check result","carry":[],"plan":null,"memories":[]}"#;
+	for (open, close) in [
+		("<sup>", "</sup>"),
+		("<sub>", "</sup>"),
+		("<sup>", "</sub>"),
+		("<sub>", "</sub>"),
+		("<sup>", ""),
+		("<sub>", ""),
+		("", ""),
+	] {
+		let text = format!("Answer.\n{open}{body}{close}");
+		let report = parse_self_report_handoff(&text).expect("report body is valid");
+		assert_eq!(report.state, SelfReport::Progressing);
+		assert_eq!(report.handoff.focus, "working");
+		assert_eq!(strip_self_report(&text), "Answer.");
+	}
+}
+
+#[test]
+fn truncated_or_invalid_reports_are_hidden_without_accepting_metadata() {
+	for body in [
+		r#"{"state":"progressing","focus":"private detail""#,
+		r#"{"state":"unknown","focus":"private detail","next":null,"carry":[]}"#,
+		r#"{"state":"done","focus":"private detail","next":null,"carry":[],"unexpected":true}"#,
+	] {
+		for (open, close) in [("<sup>", ""), ("<sub>", "</sup>")] {
+			let text = format!("Answer.\n{open}{body}{close}");
+			assert!(parse_self_report_handoff(&text).is_none());
+			assert_eq!(strip_self_report(&text), "Answer.");
+		}
+	}
+}
+
+#[test]
+fn report_tag_mentions_do_not_swallow_prose_before_mismatched_report() {
+	let text = "Mention `<sup>` and `<sub>` in prose.\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	assert_eq!(strip_self_report(text), "Mention `<sup>` and `<sub>` in prose.");
+	assert_eq!(parse_self_report_handoff(text).expect("report").state, SelfReport::Done);
+}
+
+#[test]
 fn should_steer_decision_table() {
 	for report in [
 		None,

@@ -241,7 +241,7 @@ fn test_add_assistant_message_without_tool_calls_records_turn_answer() {
 }
 
 #[test]
-fn test_capture_self_report_disabled_returns_content_verbatim_and_clears_state() {
+fn test_capture_self_report_disabled_hides_report_and_clears_state() {
 	let mut config = template_config();
 	config.supervisor.enabled = false;
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
@@ -252,8 +252,7 @@ fn test_capture_self_report_disabled_returns_content_verbatim_and_clears_state()
 	let content = "answer\n<sup>{\"state\":\"done\",\"focus\":\"f\",\"next\":null,\"carry\":[],\"plan\":null,\"memories\":[],\"behaviors\":[]}</sup>";
 	let visible = capture_self_report(&mut session, &config, content);
 
-	// Disabled supervisor: no stripping, and stale report state is wiped
-	assert_eq!(visible, content);
+	assert_eq!(visible, "answer");
 	assert!(session.last_self_report.is_none());
 	assert!(session.last_self_report_reason.is_none());
 	assert!(session.last_self_report_handoff.is_none());
@@ -435,6 +434,105 @@ async fn test_process_response_final_answer_emits_thinking_assistant_and_cost() 
 }
 
 #[tokio::test]
+async fn test_process_response_hides_internal_notes_in_all_modes_but_preserves_session_log() {
+	let content = "Answer.\n<system>private context</system>\n<sub>{\"state\":\"progressing\",\"focus\":\"checking result\",\"next\":\"report result\",\"carry\":[],\"plan\":null,\"memories\":[]}</sup>";
+	let provider_items = json!([
+		{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": content}]}
+	]);
+	for supervisor_enabled in [false, true] {
+		for mode in [
+			OutputMode::Interactive,
+			OutputMode::NonInteractive,
+			OutputMode::Jsonl,
+			OutputMode::WebSocket,
+		] {
+			let mut session = fake_session("hello");
+			let dir = tempfile::tempdir().expect("session directory");
+			let path = dir.path().join("test.jsonl.zst");
+			session.session.session_file = Some(path.clone());
+			session.session.save().expect("initialize session log");
+			let mut config = fake_provider_config();
+			config.supervisor.enabled = supervisor_enabled;
+			let (_tx, rx) = tokio::sync::watch::channel(false);
+			let sink = recording_sink();
+			process_response(ResponseProcessingParams {
+				content: content.to_string(),
+				exchange: ProviderExchange::new(json!({}), json!({"output_items": provider_items}), None, "test"),
+				tool_calls: None,
+				thinking: None,
+				finish_reason: Some("stop".into()),
+				response_id: Some("resp_internal".into()),
+				chat_session: &mut session,
+				config: &config,
+				role: "assistant",
+				operation_cancelled: rx,
+				sink: sink.clone(),
+				mode,
+			})
+			.await
+			.expect("response processing");
+
+			let messages = sink.0.lock().expect("sink lock");
+			let answers: Vec<_> = messages
+				.iter()
+				.filter_map(|message| match message {
+					ServerMessage::Assistant(answer) => Some(answer.content.as_str()),
+					_ => None,
+				})
+				.collect();
+			assert_eq!(answers, vec!["Answer."], "{mode:?}, supervisor={supervisor_enabled}");
+			assert!(matches!(messages.last(), Some(ServerMessage::Cost(_))));
+			assert_eq!(session.last_response, "Answer.");
+			assert_eq!(session.turn_answers, vec!["Answer."]);
+			assert_eq!(
+				session.last_self_report,
+				supervisor_enabled.then_some(crate::supervisor::detect::SelfReport::Progressing)
+			);
+			let stored = crate::session::load_session(&path).expect("reload session log");
+			let answer = stored.messages.last().expect("stored response");
+			assert_eq!(answer.content, content);
+			assert_eq!(answer.provider_items.as_ref(), Some(&provider_items));
+			assert_eq!(answer.id.as_deref(), Some("resp_internal"));
+			assert_eq!(session.session.messages.last().expect("response").content, content);
+		}
+	}
+}
+
+#[tokio::test]
+async fn test_process_response_internal_only_reply_preserves_log_and_emits_empty_answer() {
+	let content = "<system>private context</system>\n<sup>{\"state\":\"done\"}</sup>";
+	let mut session = fake_session("hello");
+	let config = fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let sink = recording_sink();
+	process_response(ResponseProcessingParams {
+		content: content.to_string(),
+		exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+		tool_calls: None,
+		thinking: None,
+		finish_reason: Some("stop".into()),
+		response_id: None,
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink: sink.clone(),
+		mode: OutputMode::WebSocket,
+	})
+	.await
+	.expect("response processing");
+	let messages = sink.0.lock().expect("sink lock");
+	assert!(matches!(&messages[0], ServerMessage::Assistant(answer) if answer.content.is_empty()));
+	assert!(matches!(messages.last(), Some(ServerMessage::Cost(_))));
+	assert!(session.turn_answers.is_empty());
+	assert!(session.last_response.is_empty());
+	assert_eq!(
+		session.session.messages.last().expect("stored response").content,
+		content
+	);
+}
+
+#[tokio::test]
 async fn test_process_response_terminal_mode_warns_when_last_message_is_not_user() {
 	// Empty session + terminal mode: the edge-case warning prints, then the
 	// final answer is still recorded normally.
@@ -500,7 +598,9 @@ async fn test_process_response_cancelled_at_start_returns_cancelled_error() {
 #[tokio::test]
 async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer() {
 	let _guard = ENV_LOCK.lock().await;
-	let url = spawn_stub(vec![final_response("All done")]).await;
+	let initial_content = "Working\n<system>private context</system>\n<sup>progressing</sup>";
+	let final_content = "All done\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	let url = spawn_stub(vec![final_response(final_content)]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = config_with_core_server(fake_provider_config());
@@ -515,7 +615,7 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 		"test",
 	);
 	let params = ResponseProcessingParams {
-		content: String::new(),
+		content: initial_content.to_string(),
 		exchange,
 		tool_calls: Some(vec![crate::mcp::McpToolCall {
 			tool_name: "zzz_missing_tool".to_string(),
@@ -560,7 +660,10 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 
 	let roles: Vec<&str> = session.session.messages.iter().map(|m| m.role.as_str()).collect();
 	assert_eq!(roles, vec!["user", "assistant", "tool", "assistant"]);
-	assert_eq!(session.session.messages[3].content, "All done");
+	assert_eq!(session.session.messages[1].content, initial_content);
+	assert_eq!(session.session.messages[3].content, final_content);
+	assert_eq!(session.last_response, "All done");
+	assert_eq!(session.turn_answers, vec!["All done"]);
 }
 
 #[tokio::test]

@@ -64,7 +64,7 @@ fn scope_names_round_trip() {
 }
 
 #[test]
-fn last_is_byte_identical_to_the_raw_response() {
+fn last_is_the_visible_response() {
 	let session = transcript();
 	assert_eq!(build_payload(&session, CopyScope::Last).as_deref(), Some("Tests pass."));
 }
@@ -124,6 +124,22 @@ fn assistant_prose_riding_tool_calls_is_kept() {
 		build_payload(&session, CopyScope::All).as_deref(),
 		Some("**Assistant:**\n\nChecking the file.")
 	);
+}
+
+#[test]
+fn copied_assistant_text_hides_internal_notes_without_changing_history() {
+	let content = "Answer.\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	let session = session_with(vec![
+		message("assistant", content),
+		message("assistant", "<system>internal only</system>"),
+	]);
+	for scope in [CopyScope::Assistant, CopyScope::All] {
+		assert_eq!(
+			build_payload(&session, scope).as_deref(),
+			Some("**Assistant:**\n\nAnswer.")
+		);
+	}
+	assert_eq!(session.session.messages[0].content, content);
 }
 
 #[tokio::test]

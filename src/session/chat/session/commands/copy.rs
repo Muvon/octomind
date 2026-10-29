@@ -56,7 +56,7 @@ impl CopyScope {
 /// nothing, so the caller reports "nothing to copy" instead of silently
 /// clearing the clipboard.
 ///
-/// `Last` is the raw last response — byte-identical to the pre-scope `/copy`.
+/// `Last` is the visible last response.
 /// The other scopes emit markdown-labelled blocks in session order, keeping
 /// only user turns and assistant prose: tool calls, tool results and
 /// system-managed injections are left out. An assistant message that also
@@ -68,12 +68,17 @@ pub fn build_payload(session: &ChatSession, scope: CopyScope) -> Option<String> 
 
 	let mut blocks = Vec::new();
 	for message in &session.session.messages {
-		let label = match message.role.as_str() {
-			"assistant" if scope != CopyScope::User => "Assistant",
-			"user" if scope != CopyScope::Assistant && crate::session::is_real_user_task_message(message) => "User",
+		let (label, content) = match message.role.as_str() {
+			"assistant" if scope != CopyScope::User => (
+				"Assistant",
+				crate::session::output::visible_assistant_content(&message.content),
+			),
+			"user" if scope != CopyScope::Assistant && crate::session::is_real_user_task_message(message) => {
+				("User", message.content.clone())
+			}
 			_ => continue,
 		};
-		let content = message.content.trim();
+		let content = content.trim();
 		if content.is_empty() {
 			continue;
 		}

@@ -353,15 +353,12 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 
 			for msg in last_messages.iter().rev() {
 				if msg.role == "assistant" {
-					let visible = crate::session::chat::assistant_output::strip_system_tags(&msg.content);
-					if !visible.is_empty() {
-						crate::session::chat::assistant_output::print_assistant_response(
-							&visible,
-							&config_for_role,
-							&role,
-							&None,
-						);
-					}
+					crate::session::chat::assistant_output::print_assistant_response(
+						&msg.content,
+						&config_for_role,
+						&role,
+						&None,
+					);
 				} else if msg.role == "tool" {
 					log_debug!(msg.content);
 				} else if msg.role == "user" {
@@ -373,15 +370,12 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 			// user-facing AI output, stripping any <system>...</system> AI-only
 			// blocks and rendering markdown when applicable.
 			if let Some(welcome_msg) = chat_session.session.messages.iter().find(|m| m.role == "assistant") {
-				let visible = crate::session::chat::assistant_output::strip_system_tags(&welcome_msg.content);
-				if !visible.is_empty() {
-					crate::session::chat::assistant_output::print_assistant_response(
-						&visible,
-						&config_for_role,
-						&role,
-						&None,
-					);
-				}
+				crate::session::chat::assistant_output::print_assistant_response(
+					&welcome_msg.content,
+					&config_for_role,
+					&role,
+					&None,
+				);
 			}
 		}
 

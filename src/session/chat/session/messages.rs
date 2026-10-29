@@ -494,10 +494,10 @@ impl ChatSession {
 		// The prompt this reply answers is the transcript as it stands here.
 		let prompt_estimate = self.raw_context_estimate();
 		self.session.messages.push(message);
-		self.last_response = content.to_string();
+		self.last_response = crate::session::output::visible_assistant_content(content);
 		// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
-		if !content.trim().is_empty() {
-			self.turn_answers.push(content.to_string());
+		if !self.last_response.is_empty() {
+			self.turn_answers.push(self.last_response.clone());
 		}
 
 		// Update token counts and estimated costs if we have usage data

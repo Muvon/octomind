@@ -306,7 +306,8 @@ fn last_action_from_message(msg: &Message) -> Option<String> {
 			}
 		}
 	}
-	let text = msg.content.trim();
+	let content = crate::session::output::visible_assistant_content(&msg.content);
+	let text = content.trim();
 	if text.is_empty() {
 		None
 	} else {

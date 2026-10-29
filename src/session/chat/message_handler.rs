@@ -81,7 +81,7 @@ impl MessageHandler {
 		chat_session.session.messages.push(assistant_message);
 
 		// Update last response
-		chat_session.last_response = content.to_string();
+		chat_session.last_response = crate::session::output::visible_assistant_content(content);
 
 		// CRITICAL FIX: Track API call and tokens (same logic as add_assistant_message)
 		// This was missing, causing api_calls=0 in compression analysis

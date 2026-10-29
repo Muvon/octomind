@@ -32,35 +32,6 @@ fn thinking(content: &str) -> Option<ThinkingBlock> {
 }
 
 #[test]
-fn strip_system_tags_removes_block_and_surrounding_whitespace() {
-	let content = "before\n\n<system>hidden context</system>\n\nafter";
-	assert_eq!(strip_system_tags(content), "before\nafter");
-}
-
-#[test]
-fn strip_system_tags_removes_multiple_blocks() {
-	let content = "a<system>one</system>b<system>two</system>c";
-	assert_eq!(strip_system_tags(content), "a\nb\nc");
-}
-
-#[test]
-fn strip_system_tags_leaves_content_without_tags() {
-	assert_eq!(strip_system_tags("plain text"), "plain text");
-	assert_eq!(strip_system_tags("  trimmed  "), "trimmed");
-}
-
-#[test]
-fn strip_system_tags_handles_multiline_and_case_insensitive_tags() {
-	let content = "Keep\n<SYSTEM>\nline one\nline two\n</SYSTEM>\nTail";
-	assert_eq!(strip_system_tags(content), "Keep\nTail");
-}
-
-#[test]
-fn strip_system_tags_content_of_only_a_block_becomes_empty() {
-	assert_eq!(strip_system_tags("<system>everything hidden</system>"), "");
-}
-
-#[test]
 fn get_content_to_display_without_thinking_returns_content() {
 	assert_eq!(get_content_to_display("Hello world", &None), "Hello world");
 }
@@ -87,6 +58,12 @@ fn get_content_to_display_returns_full_content_when_thinking_is_not_a_prefix() {
 #[test]
 fn get_content_to_display_strips_supervisor_self_report_token() {
 	let content = "Answer here <sup>{\"state\":\"done\"}</sup>";
+	assert_eq!(get_content_to_display(content, &None), "Answer here");
+}
+
+#[test]
+fn get_content_to_display_hides_system_context_and_mismatched_report() {
+	let content = "Answer here\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
 	assert_eq!(get_content_to_display(content, &None), "Answer here");
 }
 

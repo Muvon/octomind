@@ -217,3 +217,61 @@ fn test_websocket_sink_clone_shares_the_channel() {
 	assert!(matches!(&first, ServerMessage::Assistant(p) if p.content == "from-original"));
 	assert!(matches!(&second, ServerMessage::Assistant(p) if p.content == "from-clone"));
 }
+
+#[test]
+fn visible_assistant_content_removes_block_and_surrounding_whitespace() {
+	let content = "before\n\n<system>hidden context</system>\n\nafter";
+	assert_eq!(visible_assistant_content(content), "before\nafter");
+}
+
+#[test]
+fn visible_assistant_content_removes_multiple_blocks() {
+	let content = "a<system>one</system>b<system>two</system>c";
+	assert_eq!(visible_assistant_content(content), "a\nb\nc");
+}
+
+#[test]
+fn visible_assistant_content_leaves_content_without_tags() {
+	assert_eq!(visible_assistant_content("plain text"), "plain text");
+	assert_eq!(visible_assistant_content("    indented code"), "    indented code");
+}
+
+#[test]
+fn visible_assistant_content_handles_multiline_and_case_insensitive_tags() {
+	let content = "Keep\n<SYSTEM>\nline one\nline two\n</SYSTEM>\nTail";
+	assert_eq!(visible_assistant_content(content), "Keep\nTail");
+}
+
+#[test]
+fn visible_assistant_content_content_of_only_a_block_becomes_empty() {
+	assert_eq!(visible_assistant_content("<system>everything hidden</system>"), "");
+}
+
+#[test]
+fn visible_assistant_content_hides_system_notes_and_reports_together() {
+	let content = "Answer.\n<system>private context</system>\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	assert_eq!(visible_assistant_content(content), "Answer.");
+	assert_eq!(
+		visible_assistant_content(&visible_assistant_content(content)),
+		"Answer."
+	);
+}
+
+#[test]
+fn visible_assistant_content_hides_unclosed_system_notes() {
+	assert_eq!(
+		visible_assistant_content("Answer.\n<system>internal note cut short"),
+		"Answer."
+	);
+}
+
+#[test]
+fn visible_assistant_content_preserves_ordinary_html_and_json() {
+	for content in [
+		"H<sub>2</sub>O and x<sup>2</sup>",
+		r#"{"state":"done","focus":"widget","result":42}"#,
+		"The `<sup>` token is internal.",
+	] {
+		assert_eq!(visible_assistant_content(content), content);
+	}
+}

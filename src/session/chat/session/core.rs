@@ -757,7 +757,8 @@ impl ChatSession {
 					// Get last assistant response if any
 					for msg in chat_session.session.messages.iter().rev() {
 						if msg.role == "assistant" {
-							chat_session.last_response = msg.content.clone();
+							chat_session.last_response =
+								crate::session::output::visible_assistant_content(&msg.content);
 							break;
 						}
 					}
@@ -770,8 +771,9 @@ impl ChatSession {
 						.unwrap_or(chat_session.session.messages.len());
 					chat_session.turn_answers = chat_session.session.messages[turn_start..]
 						.iter()
-						.filter(|m| m.role == "assistant" && m.tool_calls.is_none() && !m.content.trim().is_empty())
-						.map(|m| m.content.clone())
+						.filter(|m| m.role == "assistant" && m.tool_calls.is_none())
+						.map(|m| crate::session::output::visible_assistant_content(&m.content))
+						.filter(|content| !content.is_empty())
 						.collect();
 
 					Ok(chat_session)

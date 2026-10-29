@@ -274,7 +274,7 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 		},
 		crate::session::Message {
 			role: "assistant".into(),
-			content: "working".into(),
+			content: "working\n<system>private context</system>\n<sub>{\"state\":\"progressing\",\"focus\":\"working\",\"next\":\"continue\",\"carry\":[]}</sup>".into(),
 			thinking: Some(json!({"content": "reason"})),
 			// What message_handler actually persists: octolib's unified GenericToolCall
 			// JSON. The OpenAI `function` shape here once hid a replay that failed on
@@ -292,6 +292,7 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 	for message in messages {
 		crate::session::append_to_session_file(&path, &serde_json::to_string(&message).unwrap()).unwrap();
 	}
+	let log_before_display = std::fs::read(&path).unwrap();
 	let events = disk_events(dir.path(), id).unwrap().unwrap();
 	// The session never recorded stats (all-zero totals), so no usage event is claimed.
 	assert_eq!(
@@ -304,6 +305,15 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 			{"kind":"tool_result", "tool_id":"call-1", "content":"file content"}
 		])
 	);
+	assert_eq!(std::fs::read(&path).unwrap(), log_before_display);
+	let stored = crate::session::load_session(&path).unwrap();
+	let answer = stored
+		.messages
+		.iter()
+		.find(|message| message.role == "assistant")
+		.unwrap();
+	assert!(answer.content.contains("<system>private context</system>"));
+	assert!(answer.content.contains("<sub>"));
 	assert!(disk_events(dir.path(), "tap-missing-000000").unwrap().is_none());
 }
 

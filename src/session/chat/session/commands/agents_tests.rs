@@ -17,11 +17,29 @@
 //! used by `/info`.
 
 use super::*;
+
 use crate::session::chat::test_support::EnvGuard;
 use crate::session::tap_runs::{TapJob, TapJobStatus, TapLiveState, TapLiveUsage};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 use tokio::sync::watch;
+
+#[test]
+fn last_action_hides_internal_notes_without_changing_history() {
+	let content = "<system>private context</system>\nAnswer.\n<sub>{\"state\":\"done\",\"focus\":\"finished\",\"next\":null,\"carry\":[]}</sup>";
+	let message = Message {
+		role: "assistant".into(),
+		content: content.into(),
+		..Default::default()
+	};
+	assert_eq!(last_action_from_message(&message).as_deref(), Some("Answer."));
+	assert_eq!(message.content, content);
+	let internal_only = Message {
+		content: "<system>internal only</system>".into(),
+		..message
+	};
+	assert!(last_action_from_message(&internal_only).is_none());
+}
 
 #[test]
 fn test_agents_list_view() {

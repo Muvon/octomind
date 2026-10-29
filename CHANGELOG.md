@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.66.2] - 2026-10-29
+
+### 📋 Release Summary
+
+Read-only tools can now be scheduled concurrently. Assistant output no longer includes internal metadata.
+
+### ✨ New Features & Enhancements
+
+- **tool-execution**: schedule read-only tools concurrently `f1978774`
+
+### 🐛 Bug Fixes & Stability
+
+- **output**: filter internal metadata from assistant output `825d3e6c`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.66.1] - 2026-10-28
 
 ### 📋 Release Summary

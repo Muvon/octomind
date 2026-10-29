@@ -47,6 +47,31 @@ fn test_runtime_state_replays_commands_across_restoration_point() {
 }
 
 #[test]
+fn model_and_role_replay_respects_newer_snapshots_and_commands() {
+	let tmp = tempfile::NamedTempFile::new().expect("tmp");
+	let path = tmp.path().to_path_buf();
+	append(&path, json!({"type": "COMMAND", "command": "/model ollama:old"}));
+	append(&path, json!({"type": "COMMAND", "command": "/role old-role"}));
+	let info = SessionInfo {
+		model: "ollama:saved".to_string(),
+		role: "saved-role".to_string(),
+		..Default::default()
+	};
+	append(&path, summary_log_entry(&info));
+	let state = extract_runtime_state_from_log(&path).expect("extract snapshot");
+	assert_eq!(state.model.as_deref(), Some("ollama:saved"));
+	assert_eq!(state.role.as_deref(), Some("saved-role"));
+	assert_eq!(load_session(&path).expect("load snapshot").info.model, "ollama:saved");
+
+	append(&path, json!({"type": "COMMAND", "command": "/model ollama:latest"}));
+	append(&path, json!({"type": "COMMAND", "command": "/role latest-role"}));
+	let state = extract_runtime_state_from_log(&path).expect("extract commands after snapshot");
+	assert_eq!(state.model.as_deref(), Some("ollama:latest"));
+	assert_eq!(state.role.as_deref(), Some("latest-role"));
+	assert_eq!(load_session(&path).expect("load command").info.model, "ollama:latest");
+}
+
+#[test]
 fn test_load_session_missing_file_errors() {
 	let path = std::path::PathBuf::from("/definitely/not/here/session.log");
 	assert!(load_session(&path).is_err());

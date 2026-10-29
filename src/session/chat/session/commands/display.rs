@@ -142,7 +142,9 @@ pub fn display_model(output: &CommandOutput) {
 			} else {
 				block_row("set to", &new_model.bright_green().to_string(), kw);
 			}
-			block_row("note", &"runtime only — not saved".dimmed().to_string(), kw);
+			if *saved == Some(true) {
+				block_row("note", &"saved to session; config unchanged".dimmed().to_string(), kw);
+			}
 			if let Some(false) = saved {
 				if let Some(err) = save_error {
 					block_row("warning", &err.bright_red().to_string(), kw);

@@ -797,7 +797,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	Ok(session)
 }
 
-/// Runtime state extracted from session commands
+/// Runtime state extracted from session snapshots and commands
 #[derive(Debug, Default)]
 pub struct SessionRuntimeState {
 	pub model: Option<String>,
@@ -816,6 +816,17 @@ pub fn extract_runtime_state_from_log(session_file: &Path) -> Result<SessionRunt
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
 				match log_type {
+					"SUMMARY" => {
+						if let Some(info) = json_value.get("session_info") {
+							let info: SessionInfo = serde_json::from_value(info.clone())?;
+							// A saved snapshot supersedes earlier model and role commands.
+							state.model = Some(info.model);
+							// Legacy snapshots may predate persisted role metadata.
+							if !info.role.is_empty() {
+								state.role = Some(info.role);
+							}
+						}
+					}
 					"RESTORATION_POINT" => {
 						// Reset state tracking after restoration point
 						state = SessionRuntimeState::default();
@@ -846,8 +857,7 @@ pub fn extract_runtime_state_from_log(session_file: &Path) -> Result<SessionRunt
 /// back to the config default silently switches the agent (and its model, tools
 /// and system prompt) out from under a conversation already in progress.
 ///
-/// Prefers the last `/role` switch recorded in the log over the role the session
-/// was created with — that switch is the more recent expression of intent.
+/// Uses the latest saved role or subsequent `/role` switch recorded in the log.
 /// `None` when the session file is missing, unreadable, or records no role, in
 /// which case the caller keeps its own default.
 pub fn resume_role(session_name: &str) -> Option<String> {

@@ -313,7 +313,10 @@ async fn initialize_resume_recent_finds_project_session() {
 		.expect("cwd basename")
 		.to_string();
 	let crafted_name = format!("991231-{basename}-2359-abcd");
-	let first = initialized_named_session(&crafted_name).await;
+	let mut first = initialized_named_session(&crafted_name).await;
+	first.model = "ollama:resume-recent".to_string();
+	first.session.info.model = first.model.clone();
+	first.save().expect("persist selected model");
 	assert_eq!(first.session.info.name, crafted_name);
 
 	let config = test_config();
@@ -324,6 +327,8 @@ async fn initialize_resume_recent_finds_project_session() {
 
 	assert!(session.was_resumed);
 	assert_eq!(session.session.info.name, crafted_name);
+	assert_eq!(session.model, "ollama:resume-recent");
+	assert_eq!(session.session.info.model, "ollama:resume-recent");
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +715,146 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 		session.session.messages.iter().any(|m| m.content == "resumed question"),
 		"transcript messages must be restored"
 	);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn resume_preserves_saved_model_and_honors_explicit_overrides() {
+	let _data = DataDirGuard::new();
+	let mut config = test_config();
+	for role_model in [None, Some("ollama:role-model".to_string())] {
+		let role = config
+			.roles
+			.iter_mut()
+			.find(|role| role.name == "task_refiner")
+			.unwrap();
+		role.config.model.model = role_model;
+		role.config.model.temperature = Some(0.25);
+		config.build_role_map();
+		seed_session_log(
+			"resume-model",
+			vec![serde_json::json!({"type": "COMMAND", "command": "/role task_refiner"})],
+		);
+		for named in [false, true] {
+			for (explicit_role, model, expected_model) in [
+				(false, None, "anthropic:claude-3-5-sonnet".to_string()),
+				(false, Some("ollama:cli-model"), "ollama:cli-model".to_string()),
+				(true, None, config.get_model_profile_for_role("assistant").model),
+				(true, Some("ollama:cli-model"), "ollama:cli-model".to_string()),
+			] {
+				let mut params = SessionInitParams::new(&config, "assistant").with_role_explicit(explicit_role);
+				params = if named {
+					params.with_name("resume-model".to_string())
+				} else {
+					params.with_resume("resume-model".to_string())
+				};
+				if let Some(model) = model {
+					params = params.with_model(model.to_string());
+				}
+				let session = ChatSession::initialize(params)
+					.await
+					.expect("resume with model precedence");
+				assert!(session.was_resumed);
+				assert_eq!(session.model, expected_model);
+				assert_eq!(session.session.info.model, expected_model);
+				assert_eq!(session.role, if explicit_role { "assistant" } else { "task_refiner" });
+				assert_eq!(session.session.info.role, session.role);
+				if !explicit_role {
+					assert_eq!(session.temperature, 0.25);
+				}
+			}
+		}
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn model_command_survives_resume_and_later_cli_override() {
+	use crate::session::chat::session::commands::{process_command, CommandOutput, CommandResult};
+
+	let _data = DataDirGuard::new();
+	let mut config = test_config();
+	seed_session_log(
+		"model-roundtrip",
+		vec![serde_json::json!({"type": "COMMAND", "command": "/role task_refiner"})],
+	);
+	let mut session = ChatSession::initialize(
+		SessionInitParams::new(&config, "assistant").with_resume("model-roundtrip".to_string()),
+	)
+	.await
+	.expect("resume initial session");
+	let result = process_command(
+		&mut session,
+		"/model ollama:selected",
+		&mut config,
+		"task_refiner",
+		tokio::sync::watch::channel(false).1,
+	)
+	.await
+	.expect("switch model");
+	assert!(matches!(result, CommandResult::HandledWithOutput(output)
+		if matches!(*output, CommandOutput::Model { saved: Some(true), .. })));
+	let file = session.session.session_file.as_ref().unwrap();
+	let log = crate::session::persistence::SessionLog::open(file)
+		.expect("read session log")
+		.collect::<Result<Vec<_>, _>>()
+		.expect("read records");
+	assert!(log.iter().any(|line| line.contains("/model ollama:selected")));
+	assert!(!file.with_file_name("model-roundtrip.jsonl.jsonl.zst").exists());
+
+	let resumed = ChatSession::initialize(
+		SessionInitParams::new(&config, "assistant").with_resume("model-roundtrip".to_string()),
+	)
+	.await
+	.expect("resume selected model");
+	assert_eq!(resumed.model, "ollama:selected");
+	assert_eq!(resumed.session.info.model, "ollama:selected");
+
+	let mut overridden = ChatSession::initialize(
+		SessionInitParams::new(&config, "assistant")
+			.with_resume("model-roundtrip".to_string())
+			.with_model("ollama:override".to_string()),
+	)
+	.await
+	.expect("resume with override");
+	overridden.save().expect("persist override");
+	let resumed = ChatSession::initialize(
+		SessionInitParams::new(&config, "assistant").with_resume("model-roundtrip".to_string()),
+	)
+	.await
+	.expect("resume latest saved model");
+	assert_eq!(resumed.model, "ollama:override");
+	assert_eq!(resumed.session.info.model, "ollama:override");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn setup_validates_resumed_model_instead_of_configured_model() {
+	use crate::session::chat::session::{setup_and_initialize_session, GenericSessionArgs};
+
+	let _data = DataDirGuard::new();
+	let mut config = test_config();
+	config.max_session_tokens_threshold = 0;
+	config.model_profile.model = "missing-provider:configured".to_string();
+	config.model = config.model_profile.model.clone();
+	seed_session_log(
+		"setup-resume-model",
+		vec![serde_json::json!({"type": "COMMAND", "command": "/model ollama:selected"})],
+	);
+	let mut args = GenericSessionArgs::resume("setup-resume-model".to_string(), "assistant".to_string());
+	args.mode = "jsonl".to_string();
+	let (session, _, _, _, _) = setup_and_initialize_session(&args, &config, false)
+		.await
+		.expect("configured provider is not used when resuming");
+	assert_eq!(session.model, "ollama:selected");
+	assert_eq!(session.session.info.model, "ollama:selected");
+
+	args.model = Some("missing-provider:override".to_string());
+	let error = setup_and_initialize_session(&args, &config, false)
+		.await
+		.err()
+		.expect("the actual override provider must be validated");
+	assert!(error.to_string().contains("missing-provider"));
 }
 
 #[tokio::test]

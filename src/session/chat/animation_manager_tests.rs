@@ -88,3 +88,46 @@ fn test_set_phase_if_running_needs_a_live_spinner() {
 	assert!(!manager.is_running());
 	assert!(manager.phase.lock().unwrap().is_none());
 }
+
+#[test]
+fn stop_clears_spinner_before_yielding_to_tick_cleanup() {
+	use std::future::Future;
+	use std::task::Poll;
+
+	let runtime = tokio::runtime::Builder::new_current_thread()
+		.enable_time()
+		.max_blocking_threads(1)
+		.build()
+		.unwrap();
+	runtime.block_on(async {
+		let manager = AnimationManager::new();
+		let pb = ProgressBar::hidden();
+		pb.enable_steady_tick(Duration::from_millis(100));
+		manager.install_test_spinner(Some(pb.clone()));
+
+		// Hold the blocking worker so cleanup cannot race this observation.
+		let (release_tx, release_rx) = std::sync::mpsc::channel();
+		let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+		let blocker = tokio::task::spawn_blocking(move || {
+			started_tx.send(()).unwrap();
+			release_rx.recv().unwrap();
+		});
+		started_rx.await.unwrap();
+
+		let mut stop = std::pin::pin!(manager.stop_current());
+		let pending = std::future::poll_fn(|cx| Poll::Ready(stop.as_mut().poll(cx).is_pending())).await;
+		let finished_before_yield = pb.is_finished();
+		let running_before_yield = manager.is_running();
+		release_tx.send(()).unwrap();
+		blocker.await.unwrap();
+		if pending {
+			stop.await;
+		}
+
+		assert!(
+			finished_before_yield,
+			"the spinner must be cleared before other output can run"
+		);
+		assert!(!running_before_yield);
+	});
+}

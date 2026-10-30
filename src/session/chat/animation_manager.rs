@@ -437,8 +437,14 @@ impl AnimationManager {
 	/// BEFORE this function returns so no ghost draw can race with
 	/// subsequent output.
 	pub async fn stop_current(&self) {
-		// Take the bar out of shared state first so print macros don't use it.
-		let pb = self.spinner.lock().unwrap().take();
+		// Keep output coordinated with the bar until its terminal line is clear.
+		let pb = {
+			let mut spinner = self.spinner.lock().unwrap();
+			if let Some(pb) = spinner.as_ref() {
+				pb.finish_and_clear();
+			}
+			spinner.take()
+		};
 
 		// A new working period starts with a clean label/phase slate.
 		*self.label.lock().unwrap() = None;
@@ -456,20 +462,12 @@ impl AnimationManager {
 			return;
 		};
 
-		// Join indicatif's steady-tick thread in spawn_blocking.  We AWAIT
-		// this so no ghost tick can draw after we return.  Bound with a
-		// timeout so a hung tick thread can't block the runtime forever.
-		let join = tokio::task::spawn_blocking(move || {
-			pb.finish_and_clear();
+		// Teardown must finish before the caller renders an error or prompt.
+		tokio::task::spawn_blocking(move || {
 			pb.disable_steady_tick();
-		});
-
-		match tokio::time::timeout(Duration::from_millis(500), join).await {
-			Ok(_) => {}
-			Err(_) => {
-				log_debug!("stop_current: disable_steady_tick timed out — leaving detached");
-			}
-		}
+		})
+		.await
+		.expect("spinner tick thread cleanup failed");
 	}
 
 	/// True if a spinner is currently live.

@@ -157,13 +157,16 @@ pub fn format_provider_error(provider_name: &str, error: &anyhow::Error) -> Stri
 }
 
 // Helper function to handle API errors with provider-specific messages
-pub fn handle_api_error(
+pub async fn handle_api_error(
 	chat_session: &mut ChatSession,
 	user_message_index: usize,
 	model: &str,
 	error: &anyhow::Error,
 	mode: OutputMode,
 ) {
+	if mode.is_interactive() {
+		crate::session::chat::get_animation_manager().suspend().await;
+	}
 	crate::telemetry::record_api_error(error);
 
 	// Remove user message on API failure
@@ -245,7 +248,10 @@ fn credential_hint(provider_name: &str, error: &anyhow::Error, error_message: &s
 // at this point the history already contains a valid assistant(tool_calls) +
 // tool_results sequence. Truncating would discard completed tool work. The session
 // is in a state where the same API call can simply be retried.
-pub fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: OutputMode) {
+pub async fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: OutputMode) {
+	if mode.is_interactive() {
+		crate::session::chat::get_animation_manager().suspend().await;
+	}
 	crate::telemetry::record_api_error(error);
 
 	let provider_name = if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {

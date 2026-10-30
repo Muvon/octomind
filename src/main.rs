@@ -112,6 +112,13 @@ async fn main() -> Result<(), anyhow::Error> {
 	// Identify this app in every upstream LLM request (some providers reject
 	// anonymous clients); must run before the first request builds the client.
 	octolib::set_user_agent(concat!("Octomind/", env!("CARGO_PKG_VERSION")));
+	let args = CliArgs::parse();
+	// Internal workers inherit the caller's resolved environment; loading
+	// project config again could redirect their model or runtime paths.
+	if let Some(Commands::HindsightWorker { model }) = &args.command {
+		octomind::proctitle::set_process_title("octomind-hindsight");
+		return octomind::supervisor::hindsight::shared::serve(model).await;
+	}
 
 	// Initialize environment tracker before loading .env
 	let _tracker = octomind::config::get_env_tracker();
@@ -133,7 +140,6 @@ async fn main() -> Result<(), anyhow::Error> {
 	let launch_cwd = std::env::current_dir().unwrap_or_default();
 	octomind::mcp::set_session_working_directory(launch_cwd);
 
-	let args = CliArgs::parse();
 	let config_overrides = args.config_overrides;
 
 	// Bare `octomind` (no subcommand) behaves like `octomind run`: drop into
@@ -142,10 +148,6 @@ async fn main() -> Result<(), anyhow::Error> {
 	let command = args
 		.command
 		.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
-	if let Commands::HindsightWorker { model } = &command {
-		octomind::proctitle::set_process_title("octomind-hindsight");
-		return octomind::supervisor::hindsight::shared::serve(model).await;
-	}
 	if !config_overrides.is_empty() && matches!(&command, Commands::Config(_)) {
 		anyhow::bail!("--config overrides cannot be used with the config subcommand");
 	}

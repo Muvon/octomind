@@ -128,6 +128,24 @@ async fn exercise(fixture: &Path) -> Result<()> {
 		"owner did not survive client exit"
 	);
 	let token = first["token"].as_str().context("token missing")?;
+	// Loss of the discovery file must not create a second owner.
+	std::fs::remove_file(&path)?;
+	let error = octomind::supervisor::hindsight::shared::score(spec, "missing-endpoint", events())
+		.await
+		.unwrap_err();
+	anyhow::ensure!(
+		error.to_string().contains("no second model"),
+		"owner lease was ignored: {error}"
+	);
+	std::fs::write(&path, serde_json::to_vec(&first)?)?;
+	let alias = fixture.join(".");
+	octomind::supervisor::hindsight::shared::score(alias.to_str().context("alias is not UTF-8")?, "alias", events())
+		.await?;
+	anyhow::ensure!(
+		endpoint()?.1["pid"] == first["pid"],
+		"canonical path alias loaded another model"
+	);
+
 	anyhow::ensure!(
 		rpc(&first, json!({"op":"ping"}), "wrong-token").await.is_err(),
 		"unauthenticated request accepted"

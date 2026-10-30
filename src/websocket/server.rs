@@ -112,6 +112,28 @@ impl Drop for TurnGuard {
 	}
 }
 
+/// Marks only inbox-driven work, so client frames wait for it rather than being refused.
+struct BackgroundTurnGuard {
+	turns: Arc<std::sync::Mutex<HashSet<String>>>,
+	session_id: String,
+}
+
+impl BackgroundTurnGuard {
+	fn register(server: &ServerState, session_id: &str) -> Self {
+		server.background_turns.lock().unwrap().insert(session_id.to_string());
+		Self {
+			turns: Arc::clone(&server.background_turns),
+			session_id: session_id.to_string(),
+		}
+	}
+}
+
+impl Drop for BackgroundTurnGuard {
+	fn drop(&mut self) {
+		self.turns.lock().unwrap().remove(&self.session_id);
+	}
+}
+
 /// Server-wide state every connection shares, cloned into each connection as one
 /// value instead of a parameter per field.
 #[derive(Clone)]
@@ -125,6 +147,7 @@ struct ServerState {
 	session_locks: SessionLocks,
 	role_configs: RoleConfigs,
 	turns: ActiveTurns,
+	background_turns: Arc<std::sync::Mutex<HashSet<String>>>,
 	/// Fired as a turn registers: a bind waiting on the session's lock learns the
 	/// wait is a turn's ([`lock_for_bind`]).
 	turn_started: Arc<tokio::sync::Notify>,
@@ -150,6 +173,7 @@ impl ServerState {
 			session_locks: Arc::default(),
 			role_configs: Arc::default(),
 			turns: Arc::default(),
+			background_turns: Arc::default(),
 			turn_started: Arc::default(),
 			streams: Streams::default(),
 			residents: Arc::default(),
@@ -851,6 +875,8 @@ async fn process_client_message(
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
+				// Queue behind background work; FIFO gives this frame priority over its next batch.
+				Err(_) if ctx.server.background_turns.lock().unwrap().contains(&session_id) => lock.lock().await,
 				Err(_) => {
 					let error = ServerMessage::error_for_request(
 						format!(
@@ -883,6 +909,7 @@ async fn process_client_message(
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
+				Err(_) if ctx.server.background_turns.lock().unwrap().contains(&session_id) => lock.lock().await,
 				Err(_) => {
 					let error = ServerMessage::error_for_request(
 						format!(
@@ -1079,6 +1106,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					if batch.is_empty() {
 						break;
 					}
+					let _background = BackgroundTurnGuard::register(&ctx.server, &session_id);
 
 					for inbox_msg in &batch {
 						log_debug!(
@@ -1136,6 +1164,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
+						if cancellation.is_cancelled() {
+							return false;
+						}
 						continue;
 					}
 
@@ -1154,6 +1185,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
+						if cancellation.is_cancelled() {
+							return false;
+						}
 						continue;
 					}
 
@@ -1207,6 +1241,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						.lock()
 						.await
 						.insert(session_id.clone(), chat_session);
+					if cancellation.is_cancelled() {
+						return false;
+					}
 				}
 
 				false // don't exit
@@ -2037,7 +2074,7 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		crate::mcp::orchestration::flush_due_to_inbox();
 		crate::mcp::orchestration::flush_idle_to_inbox();
 		loop {
-			let batch = crate::session::inbox::drain_inbox_batch();
+			let batch = crate::session::inbox::drain_inbox_batch_before_user();
 			if batch.is_empty() {
 				break;
 			}

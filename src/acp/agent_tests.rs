@@ -1608,6 +1608,49 @@ async fn prompt_api_failure_maps_to_an_internal_error() {
 		.await;
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn pre_user_drain_leaves_monitor_output_queued() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("USER-FIRST")]).await;
+	let agent = acp_agent();
+	tokio::task::LocalSet::new()
+		.run_until(async {
+			let session_id = "acp-monitor-before-user";
+			let mut session = ChatSession::for_tests(Vec::new());
+			session.model = "ollama:fake-model".into();
+			install_session(&agent, session_id, session).await;
+			push_inbox_message_for_session(
+				session_id,
+				InboxMessage {
+					source: InboxSource::Monitor {
+						id: "pending".into(),
+						description: "pending output".into(),
+					},
+					content: "monitor must wait".into(),
+				},
+			);
+			let response = agent
+				.prompt(PromptRequest::new(session_id, vec!["hello".into()]))
+				.await
+				.expect("user prompt");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			assert!(inbox_has_messages(session_id).await);
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions.get(session_id).unwrap();
+			let first_user = session
+				.session
+				.messages
+				.iter()
+				.find(|message| message.role == "user")
+				.unwrap();
+			assert_eq!(first_user.content, "hello");
+			drop(sessions);
+			context::cleanup_session(&session_id.to_string());
+		})
+		.await;
+}
+
 // ---- inbox monitor ----
 
 #[tokio::test(flavor = "current_thread")]

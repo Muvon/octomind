@@ -388,6 +388,16 @@ pub fn try_pop_system_managed_message() -> Option<InboxMessage> {
 /// it carries its own task and owns its own turn — so it either heads a batch
 /// alone or waits for the next drain. Order is preserved.
 pub fn drain_inbox_batch() -> Vec<InboxMessage> {
+	drain_inbox_batch_with_monitors(true)
+}
+
+/// Drain a pre-user batch without letting periodic monitor output delay the user.
+/// Monitor messages stay queued in their original order for the idle inbox loop.
+pub fn drain_inbox_batch_before_user() -> Vec<InboxMessage> {
+	drain_inbox_batch_with_monitors(false)
+}
+
+fn drain_inbox_batch_with_monitors(include_monitors: bool) -> Vec<InboxMessage> {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return Vec::new();
 	};
@@ -395,16 +405,17 @@ pub fn drain_inbox_batch() -> Vec<InboxMessage> {
 	let Some(queue) = guard.as_mut().and_then(|registry| registry.get_mut(&session_id)) else {
 		return Vec::new();
 	};
-	let Some(head) = queue.messages.pop_front() else {
-		return Vec::new();
-	};
-	let head_is_system_managed = head.source.is_system_managed();
-	let mut batch = vec![head];
-	if head_is_system_managed {
-		while queue.messages.front().is_some_and(|msg| msg.source.is_system_managed()) {
-			if let Some(msg) = queue.messages.pop_front() {
-				batch.push(msg);
-			}
+	let eligible = |msg: &InboxMessage| include_monitors || !matches!(msg.source, InboxSource::Monitor { .. });
+	let mut batch = Vec::new();
+	while let Some(index) = queue.messages.iter().position(eligible) {
+		if !batch.is_empty() && !queue.messages[index].source.is_system_managed() {
+			break;
+		}
+		let msg = queue.messages.remove(index).expect("eligible inbox message exists");
+		let system_managed = msg.source.is_system_managed();
+		batch.push(msg);
+		if !system_managed {
+			break;
 		}
 	}
 	batch

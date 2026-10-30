@@ -1308,7 +1308,7 @@ impl OctomindAgent {
 			{
 				crate::mcp::orchestration::flush_due_to_inbox();
 				loop {
-					let batch = crate::session::inbox::drain_inbox_batch();
+					let batch = crate::session::inbox::drain_inbox_batch_before_user();
 					if batch.is_empty() {
 						break;
 					}

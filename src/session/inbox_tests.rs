@@ -149,10 +149,65 @@ async fn test_drain_batches_results_and_stops_at_a_user_message() {
 	.await;
 }
 
+#[tokio::test]
+async fn pre_user_batches_skip_monitors_without_changing_other_batch_boundaries() {
+	crate::session::context::with_session_id("inbox-test-before-user".to_string(), async {
+		init_inbox_for_session();
+		assert!(drain_inbox_batch_before_user().is_empty());
+		let sources = [
+			InboxSource::Monitor {
+				id: "first".into(),
+				description: "first monitor".into(),
+			},
+			InboxSource::Schedule { id: "schedule".into() },
+			InboxSource::Monitor {
+				id: "second".into(),
+				description: "second monitor".into(),
+			},
+			InboxSource::BackgroundAgent { name: "agent".into() },
+			InboxSource::BackgroundJob { id: "job".into() },
+			InboxSource::Inject,
+			InboxSource::Monitor {
+				id: "third".into(),
+				description: "third monitor".into(),
+			},
+			InboxSource::Webhook { hook: "hook".into() },
+			InboxSource::Schedule { id: "last".into() },
+		];
+		for (index, source) in sources.into_iter().enumerate() {
+			push_inbox_message(InboxMessage {
+				source,
+				content: index.to_string(),
+			});
+		}
+		for expected in [vec!["1", "3", "4"], vec!["5"], vec!["7"], vec!["8"]] {
+			let batch = drain_inbox_batch_before_user();
+			assert_eq!(
+				batch.iter().map(|msg| msg.content.as_str()).collect::<Vec<_>>(),
+				expected
+			);
+		}
+		assert!(drain_inbox_batch_before_user().is_empty());
+		assert!(has_inbox_messages(), "monitors must remain queued");
+		let monitors = drain_inbox_batch();
+		assert_eq!(
+			monitors.iter().map(|msg| msg.content.as_str()).collect::<Vec<_>>(),
+			["0", "2", "6"]
+		);
+		assert!(monitors
+			.iter()
+			.all(|msg| matches!(msg.source, InboxSource::Monitor { .. })));
+		assert!(!has_inbox_messages());
+		clear_inbox_for_session(&crate::session::context::expect_session_id());
+	})
+	.await;
+}
+
 #[test]
 fn test_drain_outside_a_session_context_is_empty() {
 	// Producers can run before a session exists; draining must not panic there.
 	assert!(drain_inbox_batch().is_empty());
+	assert!(drain_inbox_batch_before_user().is_empty());
 	assert!(try_pop_system_managed_message().is_none());
 }
 

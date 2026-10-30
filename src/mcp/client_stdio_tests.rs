@@ -670,6 +670,59 @@ async fn drive_task_cancels_the_server_task_when_the_call_is_cancelled() {
 	disconnect(&name);
 }
 
+#[serial]
+#[tokio::test]
+async fn drive_task_does_not_reconnect_after_session_teardown() {
+	let name = unique_server("task-teardown");
+	let InMemoryPeer {
+		service,
+		incoming,
+		mut outgoing,
+	} = serve_in_memory(&name);
+	let service = register(&name, service);
+	let server = stdin_config(&name, "octomind-test-no-such-binary", Vec::new(), 1);
+	let task = Task::new(
+		"task-teardown",
+		TaskStatus::Working,
+		"2026-01-01T00:00:00Z",
+		"2026-01-01T00:00:00Z",
+	)
+	.with_poll_interval_ms(50);
+	let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+	let poller = tokio::spawn(async move {
+		drive_task(
+			service,
+			&server,
+			CreateTaskResult::new(task),
+			&mut Some(stop_rx),
+			|_| {},
+		)
+		.await
+	});
+	tokio::time::timeout(WAIT, async {
+		loop {
+			if let JsonRpcMessage::Request(request) = outgoing.next().await.expect("poller connection must stay open") {
+				if matches!(request.request, ClientRequest::GetTaskRequest(_)) {
+					break;
+				}
+			}
+		}
+	})
+	.await
+	.expect("poller must send tasks/get");
+
+	// Both become ready before the poller resumes on this single-thread runtime.
+	drop(stop_tx);
+	disconnect(&name);
+	drop(incoming);
+	let error = tokio::time::timeout(WAIT, poller).await.unwrap().unwrap().unwrap_err();
+	assert!(crate::session::cancellation::is_cancelled(&error));
+	assert_eq!(
+		super::super::process::get_server_restart_info(&name).consecutive_failures,
+		0
+	);
+}
+
 // ---------------------------------------------------------------------------
 // watch_resource_links — no-session early return
 // ---------------------------------------------------------------------------

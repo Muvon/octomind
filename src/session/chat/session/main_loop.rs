@@ -40,12 +40,18 @@ const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_
 
 /// RAII bundle of per-session listeners that must outlive the session loop.
 ///
-/// Dropping this releases the inject-listener socket and all webhook listeners
-/// in one go. Callers bind to a `_guards` local to keep both alive for the
-/// session's lifetime.
+/// Dropping this ends session-owned work before process-wide MCP shutdown,
+/// so background task pollers cannot reconnect servers that are being stopped.
 struct SessionRuntimeGuards {
+	session_id: crate::session::context::SessionId,
 	_inject: crate::session::inject_listener::InjectListenerGuard,
 	_webhooks: Vec<crate::session::webhook_listener::WebhookListenerGuard>,
+}
+
+impl Drop for SessionRuntimeGuards {
+	fn drop(&mut self) {
+		crate::session::context::cleanup_session(&self.session_id);
+	}
 }
 
 impl SessionRuntimeGuards {
@@ -76,6 +82,7 @@ async fn init_session_runtime(
 	let inject = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 	Ok(SessionRuntimeGuards {
+		session_id: chat_session.session.info.name.clone(),
 		_inject: inject,
 		_webhooks: webhooks,
 	})

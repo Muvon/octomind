@@ -1249,7 +1249,16 @@ async fn drive_task(
 				failed_polls += 1;
 				// A fresh connection may be a fresh server process; the next poll
 				// learns whether it still knows the task.
-				match get_or_connect(server).await {
+				// Teardown closes both the transport and the task's stop channel.
+				// Cancellation must win that race before reconnect can spawn a server.
+				let reconnected = tokio::select! {
+					biased;
+					_ = wait_cancelled(cancellation_token) => {
+						return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+					}
+					result = get_or_connect(server) => result,
+				};
+				match reconnected {
 					Ok(fresh) => service = fresh,
 					Err(error) => {
 						crate::log_debug!(format!("reconnecting for MCP task '{task_id}' failed: {error}"))

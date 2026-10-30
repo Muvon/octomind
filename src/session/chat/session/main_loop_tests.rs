@@ -1040,6 +1040,37 @@ async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn runtime_guard_drop_cancels_only_its_session_tasks() {
+	let _data = DataDirGuard::new();
+	let config = template_config();
+	let args = session_args();
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.name = uuid::Uuid::new_v4().to_string();
+	let session_id = session.session.info.name.clone();
+	let other_id = uuid::Uuid::new_v4().to_string();
+	let guards = crate::session::context::with_session_id(session_id.clone(), async {
+		init_session_runtime(&args, &config, &session, "assistant")
+			.await
+			.unwrap()
+	})
+	.await;
+	let stop = crate::session::shell_jobs::register_task_for_session(&session_id, "server", "task", "build");
+	let other_stop = crate::session::shell_jobs::register_task_for_session(&other_id, "server", "task", "test");
+
+	// Drop outside the task-local scope: the guard must retain its owner's ID.
+	drop(guards);
+	assert!(
+		stop.has_changed().is_err(),
+		"session teardown must close the poller's stop channel"
+	);
+	assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+	assert!(crate::session::shell_jobs::has_pending_for_session(&other_id));
+	assert!(!other_stop.has_changed().expect("other session must remain active"));
+	crate::session::shell_jobs::clear_for_session(&other_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn new_session_releases_active_fixed_port_hook_before_runtime_init() {
 	let _data = DataDirGuard::new();
 	let script_dir = tempfile::tempdir().unwrap();

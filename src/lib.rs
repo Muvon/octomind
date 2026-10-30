@@ -93,6 +93,7 @@ pub mod branding;
 pub mod config;
 pub mod directories;
 pub mod embeddings;
+mod local_inference;
 pub mod logging;
 pub mod mcp;
 pub mod proctitle;

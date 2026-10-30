@@ -39,6 +39,13 @@ struct CliArgs {
 
 #[derive(Subcommand)]
 enum Commands {
+	/// Internal shared Hindsight inference worker.
+	#[command(hide = true)]
+	HindsightWorker {
+		#[arg(long)]
+		model: String,
+	},
+
 	/// Generate a default configuration file
 	Config(commands::ConfigArgs),
 
@@ -135,6 +142,10 @@ async fn main() -> Result<(), anyhow::Error> {
 	let command = args
 		.command
 		.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
+	if let Commands::HindsightWorker { model } = &command {
+		octomind::proctitle::set_process_title("octomind-hindsight");
+		return octomind::supervisor::hindsight::shared::serve(model).await;
+	}
 	if !config_overrides.is_empty() && matches!(&command, Commands::Config(_)) {
 		anyhow::bail!("--config overrides cannot be used with the config subcommand");
 	}
@@ -226,6 +237,7 @@ fn command_name(command: &Commands) -> &'static str {
 		Commands::Completion { .. } => "completion",
 		Commands::Complete(_) => "complete",
 		Commands::Distill(_) => "distill",
+		Commands::HindsightWorker { .. } => "hindsight-worker",
 	}
 }
 
@@ -296,6 +308,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 		}
 		Commands::Complete(complete_args) => commands::complete::execute(&complete_args, &config)?,
 		Commands::Distill(distill_args) => commands::distill::execute(&distill_args, &config).await?,
+		Commands::HindsightWorker { model } => octomind::supervisor::hindsight::shared::serve(&model).await?,
 	}
 
 	Ok(())

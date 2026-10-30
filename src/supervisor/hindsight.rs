@@ -21,19 +21,20 @@
 //! verify-gate verdict of the same turn is appended so the two can be
 //! compared offline.
 //!
-//! The model loads once per process (a second or two for the graphs) and the
-//! trace is encoded incrementally: events already encoded for this session are
+//! A shared local worker owns the model across processes. Each session trace
+//! is encoded incrementally: events already encoded for this session are
 //! reused as long as the message prefix they came from is unchanged, so a turn
 //! end costs the new events only (~30 ms each on CPU).
 
 use crate::session::Message;
 use octolib::hindsight::trace::{op_for, Event, Op, Status};
-use octolib::hindsight::{Hindsight, Scores, Session};
+use octolib::hindsight::{Scores, Session};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+
+pub mod shared;
 
 /// `[supervisor.hindsight]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +48,6 @@ pub struct HindsightConfig {
 /// per line, in the data directory.
 pub const RECORD_FILE: &str = "hindsight.jsonl";
 
-static MODEL: tokio::sync::OnceCell<Arc<Hindsight>> = tokio::sync::OnceCell::const_new();
 /// The "unavailable" notice is shown once per process; a failed load (a
 /// download that broke, a lock held by a parallel session) is retried at the
 /// next turn end without repeating it.
@@ -61,38 +61,12 @@ struct Cached {
 	fingerprint: u64,
 }
 
-static TRACES: Mutex<Option<HashMap<String, Cached>>> = Mutex::new(None);
 /// `(session, events)` of the last scored boundary, so the gate verdict that
 /// follows can be recorded against it.
 static LAST: Mutex<Option<(String, usize)>> = Mutex::new(None);
 
 pub fn enabled(config: &crate::config::Config) -> bool {
 	config.supervisor.enabled && config.supervisor.hindsight.enabled
-}
-
-async fn model(spec: &str) -> Option<Arc<Hindsight>> {
-	let started = std::time::Instant::now();
-	let loaded = MODEL
-		.get_or_try_init(|| async {
-			let model = Hindsight::load(spec).await?;
-			crate::log_debug!(
-				"hindsight: loaded {} in {} ms",
-				model.config().model,
-				started.elapsed().as_millis()
-			);
-			Ok::<_, anyhow::Error>(Arc::new(model))
-		})
-		.await;
-	match loaded {
-		Ok(model) => Some(model.clone()),
-		Err(error) => {
-			crate::log_debug!("hindsight unavailable: {:#}", error);
-			if !NOTIFIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-				super::notify(&format!("hindsight unavailable: {error}"));
-			}
-			None
-		}
-	}
 }
 
 /// Score the boundary at the end of `messages`. `None` when the seam is off,
@@ -102,20 +76,19 @@ pub async fn observe(config: &crate::config::Config, session_name: &str, message
 		return None;
 	}
 	let _timing = super::accounting::WallTimer::start(super::stats::CallKind::Hindsight);
-	let model = model(&config.supervisor.hindsight.model).await?;
 	let events = trace(messages);
 	if events.is_empty() {
 		return None;
 	}
-	let name = session_name.to_string();
 	let started = std::time::Instant::now();
-	let scored = tokio::task::spawn_blocking(move || score_cached(model, &name, events))
-		.await
-		.unwrap_or_else(|join| Err(anyhow::anyhow!("hindsight task: {join}")));
+	let scored = shared::score(&config.supervisor.hindsight.model, session_name, events).await;
 	let (scores, events) = match scored {
 		Ok(scored) => scored,
 		Err(error) => {
 			crate::log_debug!("hindsight: {:#}", error);
+			if !NOTIFIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+				super::notify(&format!("hindsight unavailable: {error}"));
+			}
 			return None;
 		}
 	};
@@ -177,34 +150,12 @@ fn record(line: serde_json::Value) {
 	}
 }
 
-fn score_cached(model: Arc<Hindsight>, name: &str, events: Vec<Event>) -> anyhow::Result<(Scores, usize)> {
-	let mut traces = TRACES.lock().unwrap_or_else(|p| p.into_inner());
-	let traces = traces.get_or_insert_with(HashMap::new);
-	let cached = traces.entry(name.to_string()).or_insert_with(|| Cached {
-		session: Session::new(model.clone()),
-		consumed: 0,
-		fingerprint: 0,
-	});
-	// Compression rewrites the message list; a changed prefix means the cached
-	// vectors no longer describe this trace.
-	if cached.consumed > events.len() || fingerprint(&events[..cached.consumed]) != cached.fingerprint {
-		cached.session = Session::new(model);
-		cached.consumed = 0;
-	}
-	for event in &events[cached.consumed..] {
-		cached.session.push(event)?;
-	}
-	cached.consumed = events.len();
-	cached.fingerprint = fingerprint(&events);
-	Ok((cached.session.score()?, events.len()))
-}
-
-fn fingerprint(events: &[Event]) -> u64 {
+fn fingerprint(events: &[Event]) -> anyhow::Result<u64> {
 	let mut hasher = std::hash::DefaultHasher::new();
 	for event in events {
-		serde_json::to_string(event).unwrap_or_default().hash(&mut hasher);
+		serde_json::to_string(event)?.hash(&mut hasher);
 	}
-	hasher.finish()
+	Ok(hasher.finish())
 }
 
 /// The canonical trace of a message list: genuine user turns, assistant

@@ -22,6 +22,10 @@ use serial_test::serial;
 
 const WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
+fn test_config() -> crate::config::Config {
+	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("default config")
+}
+
 fn call(params: serde_json::Value) -> McpToolCall {
 	McpToolCall {
 		tool_name: "schedule".to_string(),
@@ -172,13 +176,13 @@ async fn test_flush_idle_waits_for_idle_then_consumes_and_reschedules() {
 
 		// Busy session: flush is a no-op, entries stay queued, inbox stays empty.
 		register_running_tap_job("sched-idle-flush-tap", true);
-		flush_idle_to_inbox();
+		flush_idle_to_inbox(&test_config());
 		assert!(has_pending_idle_schedules(), "busy session must not flush");
 		assert!(!crate::session::inbox::has_inbox_messages());
 		crate::session::tap_runs::clear_for_session(&"sched-idle-flush".to_string());
 
 		// Idle session: both entries fire; the repeating one is re-added.
-		flush_idle_to_inbox();
+		flush_idle_to_inbox(&test_config());
 		assert!(
 			has_pending_idle_schedules(),
 			"repeating idle entry must be re-added after firing"
@@ -193,7 +197,7 @@ async fn test_flush_idle_waits_for_idle_then_consumes_and_reschedules() {
 		assert_eq!(second.content, "every idle");
 
 		// A later idle transition fires the surviving repeating entry again.
-		flush_idle_to_inbox();
+		flush_idle_to_inbox(&test_config());
 		let repeated = crate::session::inbox::try_pop_inbox_message().expect("repeating idle message fires again");
 		assert_eq!(repeated.content, "every idle");
 		assert!(!crate::session::inbox::has_inbox_messages());
@@ -230,7 +234,7 @@ async fn test_flush_due_pushes_into_session_inbox_and_persists_snapshot() {
 		.expect("add due entry");
 		assert!(!added.is_error());
 
-		flush_due_to_inbox();
+		flush_due_to_inbox(&test_config());
 		assert!(!has_pending_schedules(), "one-shot due entry is consumed");
 		let msg = crate::session::inbox::try_pop_inbox_message().expect("due message injected");
 		assert_eq!(msg.content, "due now");
@@ -254,14 +258,16 @@ async fn test_flush_due_to_inbox_outside_session_uses_global_store() {
 	let store = get_store();
 	let entry = ScheduleEntry::new(
 		"global one-shot".to_string(),
-		"fire and forget".to_string(),
+		ScheduleAction::Message {
+			message: "fire and forget".to_string(),
+		},
 		chrono::Local::now(),
 		None,
 	);
 	store.lock().unwrap().add(entry);
 	assert!(has_pending_schedules());
 
-	flush_due_to_inbox();
+	flush_due_to_inbox(&test_config());
 	assert!(!has_pending_schedules(), "global due entry must be consumed");
 	drain_global_store();
 }
@@ -277,7 +283,9 @@ async fn test_next_schedule_sleep_timer_and_notify_arms_in_session() {
 		let store = crate::session::context::get_schedule_storage(&"sched-sleep".to_string());
 		store.lock().unwrap().add(ScheduleEntry::new(
 			String::new(),
-			"due".to_string(),
+			ScheduleAction::Message {
+				message: "due".to_string(),
+			},
 			chrono::Local::now(),
 			None,
 		));
@@ -308,7 +316,9 @@ async fn test_next_schedule_sleep_no_session_arms() {
 	// (Some(d), None): a due global entry resolves via plain sleep.
 	get_store().lock().unwrap().add(ScheduleEntry::new(
 		String::new(),
-		"global due".to_string(),
+		ScheduleAction::Message {
+			message: "global due".to_string(),
+		},
 		chrono::Local::now(),
 		None,
 	));
@@ -338,11 +348,19 @@ async fn test_restore_schedule_round_trip_through_session_log() {
 	let entries = vec![
 		ScheduleEntry::new(
 			"poll ci".to_string(),
-			"check the build".to_string(),
+			ScheduleAction::Message {
+				message: "check the build".to_string(),
+			},
 			chrono::Local::now() + chrono::Duration::seconds(300),
 			Some(600),
 		),
-		ScheduleEntry::new_idle("wrap up".to_string(), "finish the task".to_string(), false),
+		ScheduleEntry::new_idle(
+			"wrap up".to_string(),
+			ScheduleAction::Message {
+				message: "finish the task".to_string(),
+			},
+			false,
+		),
 	];
 	crate::session::logger::log_schedule_snapshot(&session, &entries).expect("write snapshot");
 
@@ -373,7 +391,9 @@ async fn test_restore_skips_malformed_lines_and_takes_latest_snapshot() {
 	let mut encoder = zstd::stream::write::Encoder::new(file, 0).expect("zstd encoder");
 	let good_entry = ScheduleEntry::new(
 		"latest".to_string(),
-		"only this one survives".to_string(),
+		ScheduleAction::Message {
+			message: "only this one survives".to_string(),
+		},
 		chrono::Local::now() + chrono::Duration::seconds(60),
 		None,
 	);

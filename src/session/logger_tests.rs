@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::mcp::orchestration::schedule::storage::ScheduleAction;
 use std::io::BufRead;
 
 /// Point `OCTOMIND_DATA_DIR` at a fresh tempdir for the duration of a test,
@@ -166,7 +167,9 @@ fn schedule_snapshot_writes_entries() {
 	let _guard = DataDirGuard::new();
 	let entry = ScheduleEntry::new(
 		"check builds".to_string(),
-		"run cargo check".to_string(),
+		ScheduleAction::Message {
+			message: "run cargo check".to_string(),
+		},
 		chrono::Local::now(),
 		None,
 	);

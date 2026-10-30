@@ -28,9 +28,8 @@
 
 use crate::session::Message;
 use octolib::hindsight::trace::{op_for, Event, Op, Status};
-use octolib::hindsight::{Scores, Session};
+use octolib::hindsight::Scores;
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -52,14 +51,6 @@ pub const RECORD_FILE: &str = "hindsight.jsonl";
 /// download that broke, a lock held by a parallel session) is retried at the
 /// next turn end without repeating it.
 static NOTIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// The encoded trace of each session seen by this process, keyed by session
-/// name, with the message prefix it was built from.
-struct Cached {
-	session: Session,
-	consumed: usize,
-	fingerprint: u64,
-}
 
 /// `(session, events)` of the last scored boundary, so the gate verdict that
 /// follows can be recorded against it.
@@ -148,14 +139,6 @@ fn record(line: serde_json::Value) {
 	if let Err(error) = written {
 		crate::log_debug!("hindsight record {}: {}", path.display(), error);
 	}
-}
-
-fn fingerprint(events: &[Event]) -> anyhow::Result<u64> {
-	let mut hasher = std::hash::DefaultHasher::new();
-	for event in events {
-		serde_json::to_string(event)?.hash(&mut hasher);
-	}
-	Ok(hasher.finish())
 }
 
 /// The canonical trace of a message list: genuine user turns, assistant

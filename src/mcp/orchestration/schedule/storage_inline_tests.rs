@@ -87,7 +87,9 @@ fn test_store_pop_due() {
 	let entry = ScheduleEntry {
 		id: "test0001".to_string(),
 		description: "test".to_string(),
-		message: "hello".to_string(),
+		action: ScheduleAction::Message {
+			message: "hello".to_string(),
+		},
 		trigger_at: past,
 		created_at: Local::now(),
 		interval_secs: None,
@@ -105,7 +107,9 @@ fn test_store_not_due_yet() {
 	let entry = ScheduleEntry {
 		id: "test0002".to_string(),
 		description: "test".to_string(),
-		message: "hello".to_string(),
+		action: ScheduleAction::Message {
+			message: "hello".to_string(),
+		},
 		trigger_at: future,
 		created_at: Local::now(),
 		interval_secs: None,
@@ -124,7 +128,9 @@ fn test_store_sorted_by_trigger() {
 	store.add(ScheduleEntry {
 		id: "late0001".to_string(),
 		description: "later".to_string(),
-		message: "b".to_string(),
+		action: ScheduleAction::Message {
+			message: "b".to_string(),
+		},
 		trigger_at: later,
 		created_at: Local::now(),
 		interval_secs: None,
@@ -133,7 +139,9 @@ fn test_store_sorted_by_trigger() {
 	store.add(ScheduleEntry {
 		id: "soon0001".to_string(),
 		description: "sooner".to_string(),
-		message: "a".to_string(),
+		action: ScheduleAction::Message {
+			message: "a".to_string(),
+		},
 		trigger_at: sooner,
 		created_at: Local::now(),
 		interval_secs: None,

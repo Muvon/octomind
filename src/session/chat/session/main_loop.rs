@@ -580,10 +580,10 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 
 					// Flush any due schedule entries into the inbox so all injection sources
 					// are unified — the loop only needs to drain the inbox from here on.
-					crate::mcp::orchestration::flush_due_to_inbox();
+					crate::mcp::orchestration::flush_due_to_inbox(&current_config);
 					// Now that the response loop is back to idle, fire any idle-mode entries
 					// (only if no taps / background jobs are still running).
-					crate::mcp::orchestration::flush_idle_to_inbox();
+					crate::mcp::orchestration::flush_idle_to_inbox(&current_config);
 
 					// Get a new operation token for this iteration
 					let operation_rx = cancellation.new_operation();
@@ -633,6 +633,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						let slot_for_notify = inbox_pending.clone();
 						let session_name_for_peek = chat_session.session.info.name.clone();
 						let session_id_for_task = chat_session.session.info.name.clone();
+						let schedule_config = current_config.clone();
 						let notify_task = tokio::spawn(async move {
 							crate::session::context::with_session_id(session_id_for_task, async move {
 								loop {
@@ -649,7 +650,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 										} => {}
 									}
 									// Flush any due schedule entries into the inbox.
-									crate::mcp::orchestration::flush_due_to_inbox();
+									crate::mcp::orchestration::flush_due_to_inbox(&schedule_config);
 									// Publish a preview if the inbox now has a message.
 									if let Some(preview) =
 										crate::session::inbox::peek_inbox_preview(&session_name_for_peek)
@@ -888,7 +889,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					if input.trim().is_empty() {
 						// User pressed Enter on empty prompt. Check if an inbox
 						// message arrived while they were at the prompt.
-						crate::mcp::orchestration::flush_due_to_inbox();
+						crate::mcp::orchestration::flush_due_to_inbox(&current_config);
 						if crate::session::inbox::has_inbox_messages() {
 							if let Some(msg) =
 								pop_inbox_message(&chat_session, &current_config, operation_rx.clone()).await?
@@ -1790,10 +1791,10 @@ pub async fn run_interactive_session_with_input(
 		let mut background_job_deadline: Option<tokio::time::Instant> = None;
 		loop {
 			// Flush any due schedule entries into the inbox first.
-			crate::mcp::orchestration::flush_due_to_inbox();
+			crate::mcp::orchestration::flush_due_to_inbox(&current_config);
 			// Idle-mode entries fire here too — non-interactive is "idle" between turns
 			// as long as nothing is in flight.
-			crate::mcp::orchestration::flush_idle_to_inbox();
+			crate::mcp::orchestration::flush_idle_to_inbox(&current_config);
 
 			// Process everything currently in the inbox. Each drain takes the batch the
 			// model can answer in one turn, so results that piled up while it worked cost

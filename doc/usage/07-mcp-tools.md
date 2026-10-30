@@ -27,7 +27,7 @@ server for project scripts:
 | Server | Type | Description |
 |--------|------|-------------|
 | `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) |
-| `orchestration` | builtin | Delegation (`tap`), scheduled messages (`schedule`), and event streams (`monitor`) |
+| `orchestration` | builtin | Delegation (`tap`), scheduled messages/tool calls (`schedule`), and event streams (`monitor`) |
 | `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
@@ -258,21 +258,22 @@ environment variables before delegation:
 octomind run developer:general
 ```
 
-The other orchestration tools are [`schedule`](#schedule-tool-scheduled-message-injection) and `monitor`. `monitor` runs an
+The other orchestration tools are [`schedule`](#schedule-tool-scheduled-messages-and-tool-calls) and `monitor`. `monitor` runs an
 event-stream command, bounds and coalesces output injections, and is inspected through `/status monitors`.
 
-### `schedule` tool: Scheduled Message Injection
+### `schedule` tool: Scheduled Messages and Tool Calls
 
-Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes
-idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for
-direct user control.
+The agent's MCP `schedule` tool schedules either a message for future injection or a direct MCP tool call in the current
+session — at a specific time or the next idle. The user-facing
+[`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command remains message-only.
 
 **Parameters:**
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
 | `command` | string, required | `"add"`, `"list"`, `"remove"`, `"edit"` |
-| `message` | string, required for `add` | exact text injected as a user message when the entry fires |
+| `message` | string, exactly one payload for `add` | exact text injected as a user message when the entry fires; mutually exclusive with `tool_call` |
+| `tool_call` | object, exactly one payload for `add` | `{"name":"tool_name","arguments":{...}}`; run an enabled MCP tool directly, without a parent-model turn |
 | `when` | string, optional for `add` | when to fire. Defaults to `"idle"` when both `when` and `every` are omitted. |
 | `every` | string, optional | repeat interval — entry re-schedules itself after each firing until removed |
 
@@ -292,15 +293,22 @@ direct user control.
 
 | Command | Required Params | Description |
 |---------|----------------|-------------|
-| `add` | `message` | Schedule a message. `when` defaults to `"idle"`. `description` and `every` optional. |
-| `list` | -- | Show pending entries with countdown |
-| `remove` | `id` | Cancel entry by ID |
-| `edit` | `id` | Update `trigger_at` (via `when`), `message`, `description`, or interval (via `every`). Cannot switch an entry between idle and time modes — editing `when` on an idle entry has no firing effect (idle entries ignore `trigger_at`). Recreate the entry (remove + add) to change modes. |
+| `add` | exactly one of `message` or `tool_call` | Schedule a message or tool call. `when` defaults to `"idle"`. `description` and `every` optional. |
+| `list` | -- | Show pending entries with payloads and countdown |
+| `remove` | `id` | Cancel future firings by ID, not work already launched |
+| `edit` | `id` | Update `when`, `description`, or `every`; supplying `message` or `tool_call` replaces the whole payload (never merges arguments). Supply at most one payload. Cannot switch an entry between idle and time modes; remove and add to change modes. |
 
 One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing.
 Idle entries fire only when the response loop is idle AND no tap-runs, detached shell jobs, or background-agent jobs are
 running, so messages cannot interrupt in-flight work. Schedules are saved in the session log and restored when that
 session resumes; they do not fire while the process is stopped.
+
+Direct tool calls must be available in the session both when scheduled and when fired. Scheduling does not bypass normal
+permissions or guardrails: they apply at fire time. Tool calls use the working directory captured when scheduling, and
+results and errors arrive in the session inbox. Schedules are session-bound, not system cron. Repeating tool calls skip
+ticks while the same schedule is busy instead of overlapping or queuing executions; a launched `tap` specialist counts
+as busy until it finishes. Removing a schedule stops future firings only; use `tap(action="stop", session="<run-id>")`
+to cancel an already launched specialist.
 
 For a repeating timer, supply both `when` and `every`; a time interval alone is rejected. Give repeating messages a stop
 condition. Call `schedule`:
@@ -309,6 +317,15 @@ condition. Call `schedule`:
 {"command": "add", "when": "in 10m", "every": "10m", "message": "Check the deployment status. If complete, remove this schedule using its ID from schedule list."}
 {"command": "list"}
 ```
+
+When `tap` is enabled and `developer:general` is an installed/discovered role, schedule it directly with ordinary `tap`
+arguments nested under `tool_call.arguments` — there are no tap-specific schedule fields:
+
+```json
+{"command":"add","when":"in 5m","tool_call":{"name":"tap","arguments":{"action":"run","role":"developer:general","prompt":"Review auth"}}}
+```
+
+Use `message` instead when the parent agent should interpret the task with conversation context before choosing tools.
 
 ### `monitor` — Long-Lived Event Streams
 

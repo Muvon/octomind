@@ -365,6 +365,40 @@ fn attachment_with_no_matching_file_is_reported_as_not_found() {
 // ---- per-session locks ----
 
 #[tokio::test]
+async fn releasing_a_client_turn_wakes_pending_idle_tool_calls_without_inbox_messages() {
+	use crate::mcp::orchestration::schedule::storage::{ScheduleAction, ScheduleEntry, ScheduledToolCall};
+	use crate::session::context::{cleanup_session, init_session_services, with_session_id};
+
+	let id = format!("ws-idle-schedule-{}", uuid::Uuid::new_v4());
+	let notify = with_session_id(id.clone(), async {
+		init_session_services("assistant");
+		let entry = ScheduleEntry::new_idle(
+			String::new(),
+			ScheduleAction::ToolCall {
+				tool_call: ScheduledToolCall {
+					name: "schedule".to_string(),
+					arguments: serde_json::json!({"command": "list"}),
+				},
+				workdir: std::env::current_dir().unwrap(),
+			},
+			false,
+		);
+		crate::session::context::get_schedule_storage(&id)
+			.lock()
+			.unwrap()
+			.add(entry);
+		assert!(!crate::session::inbox::has_inbox_messages());
+		crate::session::inbox::get_inbox_notify().unwrap()
+	})
+	.await;
+
+	wake_inbox_monitor(id.clone()).await;
+	let woke = tokio::time::timeout(Duration::from_secs(1), notify.notified()).await;
+	cleanup_session(&id);
+	woke.expect("an idle tool call must be reconsidered after the client turn releases its lock");
+}
+
+#[tokio::test]
 async fn session_lock_is_reused_per_session_id() {
 	let locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
 	let a = get_or_create_session_lock("s", &locks).await;

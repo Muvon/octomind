@@ -14,13 +14,26 @@
 
 use super::*;
 use chrono::{Datelike, Timelike};
+use ScheduleAction::Message;
+
+fn tool_action(workdir: &str) -> ScheduleAction {
+	ScheduleAction::ToolCall {
+		tool_call: ScheduledToolCall {
+			name: "shell".into(),
+			arguments: serde_json::json!({"command": "pwd", "options": {"values": [true, 42, null]}}),
+		},
+		workdir: workdir.into(),
+	}
+}
 
 /// Minimal time-mode entry with an explicit id and trigger time.
 fn time_entry(id: &str, trigger_at: DateTime<Local>) -> ScheduleEntry {
 	ScheduleEntry {
 		id: id.to_string(),
 		description: format!("desc-{id}"),
-		message: format!("msg-{id}"),
+		action: Message {
+			message: format!("msg-{id}"),
+		},
 		trigger_at,
 		created_at: Local::now(),
 		interval_secs: None,
@@ -30,8 +43,8 @@ fn time_entry(id: &str, trigger_at: DateTime<Local>) -> ScheduleEntry {
 
 #[test]
 fn new_mints_short_unique_ids_and_defaults_to_time_mode() {
-	let a = ScheduleEntry::new("a".into(), "m".into(), Local::now(), None);
-	let b = ScheduleEntry::new("b".into(), "m".into(), Local::now(), Some(60));
+	let a = ScheduleEntry::new("a".into(), Message { message: "m".into() }, Local::now(), None);
+	let b = ScheduleEntry::new("b".into(), Message { message: "m".into() }, Local::now(), Some(60));
 	assert_eq!(a.id.len(), 8);
 	assert_eq!(b.id.len(), 8);
 	assert_ne!(a.id, b.id);
@@ -44,8 +57,8 @@ fn new_mints_short_unique_ids_and_defaults_to_time_mode() {
 
 #[test]
 fn new_idle_encodes_repeating_via_interval_flag() {
-	let one_shot = ScheduleEntry::new_idle("d".into(), "m".into(), false);
-	let repeating = ScheduleEntry::new_idle("d".into(), "m".into(), true);
+	let one_shot = ScheduleEntry::new_idle("d".into(), Message { message: "m".into() }, false);
+	let repeating = ScheduleEntry::new_idle("d".into(), Message { message: "m".into() }, true);
 	assert_eq!(one_shot.trigger_mode, TriggerMode::Idle);
 	assert_eq!(repeating.trigger_mode, TriggerMode::Idle);
 	assert_eq!(one_shot.interval_secs, None, "one-shot idle entry");
@@ -54,7 +67,7 @@ fn new_idle_encodes_repeating_via_interval_flag() {
 
 #[test]
 fn countdown_formats_by_magnitude() {
-	let idle = ScheduleEntry::new_idle("d".into(), "m".into(), false);
+	let idle = ScheduleEntry::new_idle("d".into(), Message { message: "m".into() }, false);
 	assert_eq!(idle.countdown(), "when idle");
 
 	assert_eq!(time_entry("p", Local::now() - Duration::seconds(60)).countdown(), "now");
@@ -91,6 +104,10 @@ fn reschedule_keeps_id_and_advances_exactly_one_interval() {
 	);
 	assert_eq!(next.interval_secs, Some(3600));
 	assert_eq!(next.trigger_mode, TriggerMode::Time);
+	assert_eq!(
+		serde_json::to_value(&next.action).unwrap(),
+		serde_json::to_value(&e.action).unwrap()
+	);
 	let advance = next.trigger_at.signed_duration_since(before).num_seconds();
 	assert!((3595..=3605).contains(&advance), "advance was {advance}");
 }
@@ -107,11 +124,15 @@ fn reschedule_skips_catch_up_burst_when_overdue() {
 
 #[test]
 fn reschedule_idle_entry_resets_trigger_to_now() {
-	let mut e = ScheduleEntry::new_idle("d".into(), "m".into(), true);
+	let mut e = ScheduleEntry::new_idle("d".into(), Message { message: "m".into() }, true);
 	e.trigger_at = Local::now() - Duration::hours(3);
 	let next = e.reschedule();
 	assert_eq!(next.id, e.id);
 	assert_eq!(next.trigger_mode, TriggerMode::Idle);
+	assert_eq!(
+		serde_json::to_value(&next.action).unwrap(),
+		serde_json::to_value(&e.action).unwrap()
+	);
 	let drift = next.trigger_at.signed_duration_since(Local::now()).num_seconds().abs();
 	assert!(drift <= 5, "drift was {drift}");
 }
@@ -124,11 +145,117 @@ fn serde_roundtrip_preserves_every_field() {
 	let back: ScheduleEntry = serde_json::from_str(&json).expect("deserialize");
 	assert_eq!(back.id, e.id);
 	assert_eq!(back.description, e.description);
-	assert_eq!(back.message, e.message);
+	assert_eq!(
+		serde_json::to_value(&back.action).unwrap(),
+		serde_json::to_value(&e.action).unwrap()
+	);
 	assert_eq!(back.trigger_at, e.trigger_at);
 	assert_eq!(back.created_at, e.created_at);
 	assert_eq!(back.interval_secs, e.interval_secs);
 	assert_eq!(back.trigger_mode, e.trigger_mode);
+}
+
+#[test]
+fn tool_action_roundtrip_preserves_payload_and_workdir() {
+	let action = tool_action("scheduled-workdir");
+	for entry in [
+		ScheduleEntry::new("tool".into(), action.clone(), Local::now(), Some(60)),
+		ScheduleEntry::new_idle("tool".into(), action, true),
+	] {
+		let json = serde_json::to_value(&entry).expect("serialize tool entry");
+		assert!(json.get("action").is_none(), "action must be flattened");
+		assert!(json.get("message").is_none());
+		assert_eq!(json["tool_call"]["name"], "shell");
+		assert_eq!(json["workdir"], "scheduled-workdir");
+		let restored: ScheduleEntry = serde_json::from_value(json.clone()).expect("deserialize tool entry");
+		assert!(matches!(&restored.action, ScheduleAction::ToolCall { .. }));
+		assert_eq!(serde_json::to_value(&restored).unwrap(), json);
+		let mut store = ScheduleStore::new();
+		store.seed_entries(vec![restored]);
+		assert_eq!(serde_json::to_value(&store.entries()[0]).unwrap(), json);
+	}
+}
+
+#[test]
+fn tool_action_snapshot_requires_tool_fields_and_workdir() {
+	let entry = ScheduleEntry::new_idle("tool".into(), tool_action("scheduled-workdir"), false);
+	let json = serde_json::to_value(&entry).unwrap();
+	let mut missing_workdir = json.clone();
+	missing_workdir.as_object_mut().unwrap().remove("workdir");
+	assert!(serde_json::from_value::<ScheduleEntry>(missing_workdir).is_err());
+	for field in ["name", "arguments"] {
+		let mut missing_field = json.clone();
+		missing_field["tool_call"].as_object_mut().unwrap().remove(field);
+		assert!(
+			serde_json::from_value::<ScheduleEntry>(missing_field).is_err(),
+			"missing {field}"
+		);
+	}
+}
+
+#[test]
+fn reschedule_preserves_tool_action_and_captured_workdir() {
+	let action = tool_action("scheduled-workdir");
+	for entry in [
+		ScheduleEntry::new("tool".into(), action.clone(), Local::now(), Some(60)),
+		ScheduleEntry::new_idle("tool".into(), action, true),
+	] {
+		let next = entry.reschedule();
+		assert_eq!(next.id, entry.id);
+		assert_eq!(next.trigger_mode, entry.trigger_mode);
+		assert_eq!(next.interval_secs, entry.interval_secs);
+		assert_eq!(
+			serde_json::to_value(&next.action).unwrap(),
+			serde_json::to_value(&entry.action).unwrap()
+		);
+	}
+}
+
+#[test]
+fn store_edit_preserves_or_replaces_entire_action_and_workdir() {
+	let mut store = ScheduleStore::new();
+	store.add(time_entry("edittool", Local::now()));
+	let initial = tool_action("initial-workdir");
+	assert!(store.edit("edittool", None, Some(initial.clone()), None, None));
+	assert_eq!(
+		serde_json::to_value(&store.entries()[0].action).unwrap(),
+		serde_json::to_value(&initial).unwrap()
+	);
+
+	assert!(store.edit("edittool", Some("new description".into()), None, None, Some(Some(60))));
+	assert_eq!(
+		serde_json::to_value(&store.entries()[0].action).unwrap(),
+		serde_json::to_value(&initial).unwrap()
+	);
+
+	let replacement = ScheduleAction::ToolCall {
+		tool_call: ScheduledToolCall {
+			name: "view".into(),
+			arguments: serde_json::json!({"path": "README.md"}),
+		},
+		workdir: "replacement-workdir".into(),
+	};
+	assert!(store.edit("edittool", None, Some(replacement.clone()), None, None));
+	assert_eq!(
+		serde_json::to_value(&store.entries()[0].action).unwrap(),
+		serde_json::to_value(&replacement).unwrap()
+	);
+	assert_eq!(store.entries()[0].description, "new description");
+	assert_eq!(store.entries()[0].interval_secs, Some(60));
+
+	assert!(store.edit(
+		"edittool",
+		None,
+		Some(Message {
+			message: "back to message".into()
+		}),
+		None,
+		None
+	));
+	let json = serde_json::to_value(&store.entries()[0]).unwrap();
+	assert_eq!(json["message"], "back to message");
+	assert!(json.get("tool_call").is_none());
+	assert!(json.get("workdir").is_none());
 }
 
 #[test]
@@ -149,6 +276,11 @@ fn trigger_mode_serde_is_lowercase_and_defaults_to_time() {
 	);
 	let entry: ScheduleEntry = serde_json::from_str(&legacy).expect("legacy snapshot must parse");
 	assert_eq!(entry.trigger_mode, TriggerMode::Time);
+	assert!(matches!(&entry.action, Message { message } if message == "m"));
+	assert_eq!(serde_json::to_value(&entry).unwrap()["message"], "m");
+	let mut store = ScheduleStore::new();
+	store.seed_entries(vec![entry]);
+	assert!(matches!(&store.entries()[0].action, Message { message } if message == "m"));
 }
 
 #[test]
@@ -174,13 +306,21 @@ fn store_edit_updates_only_provided_fields() {
 	assert!(store.edit("edit00001", Some("new desc".into()), None, None, None));
 	let e = &store.entries()[0];
 	assert_eq!(e.description, "new desc");
-	assert_eq!(e.message, "msg-edit00001", "unprovided fields stay untouched");
+	assert!(matches!(&e.action, Message { message } if message == "msg-edit00001"));
 	assert_eq!(e.interval_secs, None);
 
-	assert!(store.edit("edit00001", None, Some("new msg".into()), None, Some(Some(300))));
+	assert!(store.edit(
+		"edit00001",
+		None,
+		Some(Message {
+			message: "new msg".into()
+		}),
+		None,
+		Some(Some(300))
+	));
 	let e = &store.entries()[0];
 	assert_eq!(e.description, "new desc");
-	assert_eq!(e.message, "new msg");
+	assert!(matches!(&e.action, Message { message } if message == "new msg"));
 	assert_eq!(e.interval_secs, Some(300));
 
 	assert!(store.edit("edit00001", None, None, None, Some(None)));
@@ -205,7 +345,13 @@ fn store_edit_retriggers_sorting_by_new_time() {
 #[test]
 fn pop_due_ignores_idle_and_pop_idle_drains_idle_only() {
 	let mut store = ScheduleStore::new();
-	store.add(ScheduleEntry::new_idle("d".into(), "idle msg".into(), false));
+	store.add(ScheduleEntry::new_idle(
+		"d".into(),
+		Message {
+			message: "idle msg".into(),
+		},
+		false,
+	));
 	store.add(time_entry("future00", Local::now() + Duration::hours(1)));
 
 	assert!(store.pop_due().is_none(), "idle entries are never time-due");
@@ -213,7 +359,7 @@ fn pop_due_ignores_idle_and_pop_idle_drains_idle_only() {
 
 	let idle = store.pop_idle().expect("idle entry must pop");
 	assert_eq!(idle.trigger_mode, TriggerMode::Idle);
-	assert_eq!(idle.message, "idle msg");
+	assert!(matches!(&idle.action, Message { message } if message == "idle msg"));
 	assert!(!store.has_idle());
 	assert_eq!(store.entries().len(), 1, "time entry must survive pop_idle");
 	assert_eq!(store.entries()[0].id, "future00");
@@ -225,7 +371,11 @@ fn next_due_duration_tracks_earliest_time_entry() {
 	let mut store = ScheduleStore::new();
 	assert_eq!(store.next_due_duration(), None);
 
-	store.add(ScheduleEntry::new_idle("d".into(), "m".into(), true));
+	store.add(ScheduleEntry::new_idle(
+		"d".into(),
+		Message { message: "m".into() },
+		true,
+	));
 	assert_eq!(store.next_due_duration(), None, "idle entries carry no due duration");
 
 	store.add(time_entry("far000000", Local::now() + Duration::hours(2)));

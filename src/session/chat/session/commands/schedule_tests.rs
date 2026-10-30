@@ -111,6 +111,40 @@ async fn test_add_requires_message() {
 }
 
 #[tokio::test]
+async fn test_user_command_cannot_add_or_replace_messages_with_tool_calls() {
+	let id = format!("sched-cmd-message-only-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(id.clone(), async {
+		let mut config: crate::config::Config = toml::from_str(include_str!(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/config-templates/default.toml"
+		)))
+		.expect("default config");
+		config.mcp.servers = vec![crate::config::McpServerConfig::builtin(
+			"orchestration",
+			30,
+			vec!["schedule".to_string()],
+		)];
+		crate::mcp::tool_map::isolate_session_tool_map(&id);
+		crate::mcp::tool_map::initialize_tool_map(&config).await.unwrap();
+		assert!(crate::mcp::tool_map::get_server_for_tool("schedule").is_some());
+		let payload = r#"tool_call='{"name":"schedule","arguments":{"command":"list"}}'"#;
+		let added = run(&format!("/schedule add {payload}")).await;
+		assert_eq!(added["is_error"], true, "data: {added}");
+		assert_eq!(run("/schedule list").await["message"], "No scheduled entries.");
+
+		let message = run("/schedule add message='message only'").await;
+		assert_eq!(message["is_error"], false);
+		let entry = extract_id(message["message"].as_str().unwrap());
+		let edited = run(&format!("/schedule edit {entry} {payload}")).await;
+		assert_eq!(edited["is_error"], true, "data: {edited}");
+		let listing = run("/schedule list").await;
+		assert!(listing["message"].as_str().unwrap().contains("message only"));
+	})
+	.await;
+	crate::session::context::cleanup_session(&id);
+}
+
+#[tokio::test]
 async fn test_add_rejects_invalid_when() {
 	crate::session::context::with_session_id("sched-cmd-bad-when".to_string(), async {
 		let data = run("/schedule add when=\"not-a-time\" message=\"hi\"").await;

@@ -48,10 +48,53 @@ fn test_error_messages() {
 	assert!(attempt_msg.contains("no such file"));
 }
 
-/// The invariant handle_large_tool_results must hold: truncation may replace
-/// the body but must NEVER flip is_error() — a truncated error entering the
-/// dedup cache as "success" would get elided exactly when the model needs
-/// the error text most.
+#[tokio::test]
+async fn test_scheduled_tap_identity_survives_output_truncation() {
+	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	config.mcp_response_tokens_threshold = 10;
+	for action in ["run", "workflow"] {
+		let call = tap_call(action);
+		let result = crate::mcp::McpToolResult::success(
+			"tap".to_string(),
+			call.tool_id.clone(),
+			serde_json::json!({"id": "launched-tap", "message": "started ".repeat(500)}).to_string(),
+		);
+		let mut context = ToolExecutionContext::Scheduled {
+			session_name: "scheduled-tap".to_string(),
+			tap_run: None,
+		};
+		context.capture_tap_run(&call, &result);
+		let capped = handle_large_tool_results(vec![result], &config, OutputMode::NonInteractive)
+			.await
+			.unwrap();
+		assert!(serde_json::from_str::<serde_json::Value>(&capped[0].extract_content()).is_err());
+		let ToolExecutionContext::Scheduled { tap_run, .. } = context else {
+			unreachable!();
+		};
+		assert_eq!(tap_run.as_deref(), Some("launched-tap"));
+	}
+}
+
+#[test]
+fn test_scheduled_tap_tracking_ignores_errors_and_non_launch_actions() {
+	let mut context = ToolExecutionContext::Scheduled {
+		session_name: "scheduled-tap".to_string(),
+		tap_run: None,
+	};
+	for action in ["list", "send", "stop", "discover", "capability"] {
+		let result = crate::mcp::McpToolResult::success("tap".into(), "id".into(), r#"{"id":"not-launched"}"#.into());
+		context.capture_tap_run(&tap_call(action), &result);
+		assert!(matches!(
+			&context,
+			ToolExecutionContext::Scheduled { tap_run: None, .. }
+		));
+	}
+	let error = crate::mcp::McpToolResult::error("tap".into(), "id".into(), r#"{"id":"not-launched"}"#.into());
+	context.capture_tap_run(&tap_call("run"), &error);
+	assert!(matches!(context, ToolExecutionContext::Scheduled { tap_run: None, .. }));
+}
+
+/// Truncation may replace the body but must never flip is_error(): errors must not enter the dedup cache.
 #[tokio::test]
 async fn test_truncation_preserves_error_flag() {
 	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))

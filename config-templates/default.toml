@@ -121,7 +121,8 @@ top_k = 20
 # Retry count and exponential-backoff base delay.
 max_retries = 1
 retry_timeout = 30
-# Hard timeout for one provider request. 0 = no timeout.
+# HTTP request deadline; ChatGPT WebSocket inactivity limit (events/pings reset it).
+# 0 disables the request/inactivity timeout.
 request_timeout_seconds = 300
 
 # Capability provider overrides for tap agents

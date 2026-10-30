@@ -835,3 +835,20 @@ fn tool_and_prompt_images_convert_without_losing_payload_or_association() {
 		}
 	}
 }
+
+#[tokio::test]
+async fn chatgpt_uses_websockets_and_other_providers_keep_http() {
+	let config = test_config();
+	let messages = vec![msg("user", "hello")];
+	for (provider, expected) in [
+		("chatgpt", octolib::ChatGptTransport::WebSocket),
+		("openai", octolib::ChatGptTransport::Http),
+		("anthropic", octolib::ChatGptTransport::Http),
+	] {
+		let params = ChatCompletionParams::new(&messages, "model", 0.1, 1.0, 0, 10, &config)
+			.to_octolib_params(provider)
+			.await
+			.expect("conversion succeeds");
+		assert_eq!(params.chatgpt_transport, expected, "{provider}");
+	}
+}

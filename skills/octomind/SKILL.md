@@ -151,3 +151,12 @@ Success criteria:
 3. Always scope Octomind sessions to a single repo/workdir.
 4. For long tasks, provide progress updates from `process` logs.
 5. Report concrete outcomes (files changed, tests, remaining risks).
+
+
+## Local inference lifecycle
+
+Hindsight uses an automatically started local worker shared by Octomind processes in the
+same runtime directory. It may remain alive for up to 15 idle minutes. Use normal Octomind
+commands; `hindsight-worker` is an internal process entry point, not an agent command.
+CoreML compiled-model cache reuse is macOS-only; Linux and Windows keep their existing
+execution-provider selection.

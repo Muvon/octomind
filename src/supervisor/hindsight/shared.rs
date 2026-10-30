@@ -272,14 +272,14 @@ impl Worker {
 			None => Cached {
 				session: Session::new(self.model.clone()),
 				consumed: 0,
-				fingerprint: 0,
+				fingerprint: fingerprint(&[])?,
 			},
 		};
 		if cached.consumed > events.len() || fingerprint(&events[..cached.consumed])? != cached.fingerprint {
 			cached = Cached {
 				session: Session::new(self.model.clone()),
 				consumed: 0,
-				fingerprint: 0,
+				fingerprint: fingerprint(&[])?,
 			};
 		}
 		while self.traces.len() >= MAX_CACHED_SESSIONS

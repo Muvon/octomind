@@ -26,7 +26,3 @@ Thumbs.db
 /scripts
 
 /target-*
-
-# Tiny constant-output graphs used by the shared Hindsight process test.
-!tests/fixtures/hindsight-shared/encoder.onnx
-!tests/fixtures/hindsight-shared/level2.onnx

@@ -16,19 +16,20 @@
 //! A file lock serializes election through model initialization and endpoint
 //! publication. Clients never load weights while a live owner serves them.
 
+#[cfg(test)]
+use crate::local_inference::MAX_SERVICE_LINE_BYTES;
+use crate::local_inference::{election_lock, publish, read_line, write_line};
 use anyhow::{bail, Context, Result};
 use octolib::Tokenizer;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::task::AbortOnDropHandle;
 
 const MAX_SERVICE_CLIENTS: usize = 16;
-const MAX_SERVICE_LINE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BATCH_TEXTS: usize = 256;
 const SERVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Pause after a failed accept: errors like EMFILE persist until a client
@@ -175,26 +176,6 @@ pub(super) fn is_disconnected(error: &anyhow::Error) -> bool {
 	})
 }
 
-async fn election_lock(path: &Path) -> Result<File> {
-	let path = path.with_extension("lock");
-	tokio::task::spawn_blocking(move || {
-		let mut options = std::fs::OpenOptions::new();
-		options.read(true).write(true).create(true).truncate(false);
-		#[cfg(unix)]
-		{
-			use std::os::unix::fs::OpenOptionsExt;
-			options.mode(0o600);
-		}
-		let file = options
-			.open(&path)
-			.with_context(|| format!("failed to open {}", path.display()))?;
-		file.lock()
-			.with_context(|| format!("failed to lock {}", path.display()))?;
-		Ok(file)
-	})
-	.await?
-}
-
 /// Join the shared embedding service, becoming its owner if nobody else is.
 pub(super) async fn join() -> Result<Elected> {
 	join_at(&endpoint_path()?).await
@@ -266,24 +247,6 @@ async fn join_at(path: &Path) -> Result<Elected> {
 	})
 }
 
-fn publish(path: &Path, endpoint: &Endpoint) -> Result<()> {
-	use std::io::Write;
-	let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-	let mut options = std::fs::OpenOptions::new();
-	options.write(true).create_new(true);
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::OpenOptionsExt;
-		options.mode(0o600);
-	}
-	let mut file = options.open(&temporary)?;
-	file.write_all(serde_json::to_string(endpoint)?.as_bytes())?;
-	file.flush()?;
-	drop(file);
-	std::fs::rename(temporary, path)?;
-	Ok(())
-}
-
 fn serve(listener: TcpListener, token: String, hello: Hello) -> Result<AbortOnDropHandle<()>> {
 	let hello = Arc::new(serde_json::to_string(&hello)?);
 	let token = Arc::new(token);
@@ -316,40 +279,6 @@ fn serve(listener: TcpListener, token: String, hello: Hello) -> Result<AbortOnDr
 			}
 		}
 	})))
-}
-
-async fn read_line(reader: &mut BufReader<TcpStream>) -> Result<Option<String>> {
-	let mut line = String::new();
-	let count = (&mut *reader)
-		.take((MAX_SERVICE_LINE_BYTES + 1) as u64)
-		.read_line(&mut line)
-		.await?;
-	anyhow::ensure!(
-		count <= MAX_SERVICE_LINE_BYTES,
-		"embedding service line exceeds byte limit"
-	);
-	if count == 0 {
-		return Ok(None);
-	}
-	if !line.ends_with('\n') {
-		return Err(std::io::Error::new(
-			std::io::ErrorKind::UnexpectedEof,
-			"embedding service line is incomplete",
-		)
-		.into());
-	}
-	Ok(Some(line))
-}
-
-async fn write_line(stream: &mut TcpStream, value: &impl Serialize) -> Result<()> {
-	let body = serde_json::to_string(value)?;
-	anyhow::ensure!(
-		body.len() < MAX_SERVICE_LINE_BYTES,
-		"embedding service message exceeds byte limit"
-	);
-	stream.write_all(body.as_bytes()).await?;
-	stream.write_all(b"\n").await?;
-	Ok(())
 }
 
 async fn handle(stream: TcpStream, token: &str, hello: &str) -> Result<()> {

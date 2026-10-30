@@ -152,3 +152,7 @@ lto = false            # Disable Link Time Optimization to speed up builds
 codegen-units = 256    # Use more codegen units for faster parallel compilation
 incremental = true     # Enable incremental compilation
 rpath = false          # Disable runtime search path
+
+[[test]]
+name = "hindsight_shared_test"
+harness = false

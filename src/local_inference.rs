@@ -67,7 +67,7 @@ pub(crate) async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufR
 		.await?;
 	anyhow::ensure!(
 		count <= MAX_SERVICE_LINE_BYTES,
-		"embedding service line exceeds byte limit"
+		"local inference service line exceeds byte limit"
 	);
 	if count == 0 {
 		return Ok(None);
@@ -75,7 +75,7 @@ pub(crate) async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufR
 	if !line.ends_with('\n') {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::UnexpectedEof,
-			"embedding service line is incomplete",
+			"local inference service line is incomplete",
 		)
 		.into());
 	}
@@ -86,7 +86,7 @@ pub(crate) async fn write_line<W: tokio::io::AsyncWrite + Unpin>(stream: &mut W,
 	let body = serde_json::to_string(value)?;
 	anyhow::ensure!(
 		body.len() < MAX_SERVICE_LINE_BYTES,
-		"embedding service message exceeds byte limit"
+		"local inference service message exceeds byte limit"
 	);
 	stream.write_all(body.as_bytes()).await?;
 	stream.write_all(b"\n").await?;

@@ -217,7 +217,7 @@ removed.
 | Usage | Description |
 |-------|-------------|
 | `/status` | Concise active-only view across agents, MCP background jobs, and command monitors |
-| `/status agents` | Full agent view: running work plus recent completed, failed, and cancelled tap runs; preserves model, token, cache, and cost data when available |
+| `/status agents` | Full agent view: running work plus saved completed, failed, cancelled, and unattached tap runs; preserves model, token, cache, and cost data when available |
 | `/status agents <id>` | Detailed card for one tap or async `agent_*` run |
 | `/status monitors` | Full configuration and elapsed time for active command monitors |
 | `/status jobs` | Full live status and bounded output for active MCP resource-backed jobs |
@@ -243,7 +243,8 @@ process.
 Display comprehensive session statistics:
 
 - Token usage (input, output, cached, reasoning)
-- Cost breakdown (per-request and cumulative)
+- Total and main-model cost, recorded separately and preserved on resume
+- Saved tap-agent history and reported usage; historical runs without a live handle are shown as unattached
 - Cache savings (tokens and accounting estimate)
 - Compression statistics (if compression has occurred)
 - Learning packs, items/tokens shown, materially used memories, outcome credit,
@@ -254,6 +255,11 @@ Display comprehensive session statistics:
 ```text
 /info
 ```
+
+Older sessions that never recorded a separate main-model cost show it as unknown.
+Structured tap receipts recover historical run IDs even after context compression;
+available child session files supply their usage. Loading or viewing agent history
+does not add its cost to the session total again.
 
 ### `/report`
 

@@ -675,6 +675,12 @@ entire block uses `[model]` unchanged.
 An optional, local verifier scores the session event trace when the agent hands a turn back. It estimates whether the
 user's next turn will be a correction and, if so, its class. This is observe-only: scores are logged, shown in a
 supervisor notice, tallied in `/info`, and appended to `hindsight.jsonl` beside the verify-gate verdict.
+Hindsight inference is shared across Octomind processes using the same runtime directory.
+An automatically started worker owns the model; client processes keep no Hindsight weights.
+The worker exits after 15 minutes without clients. The hidden `hindsight-worker` command is
+internal and should not be launched manually. On macOS, Octolib reuses CoreML compiled-model
+cache entries; Linux and Windows retain their existing execution-provider selection.
+
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

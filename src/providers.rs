@@ -98,7 +98,7 @@ pub struct ChatCompletionParams<'a> {
 	pub max_retries: u32,
 	/// Base timeout for exponential backoff retry logic
 	pub retry_timeout: std::time::Duration,
-	/// Hard timeout for one provider request. None means unlimited.
+	/// HTTP request deadline or ChatGPT WebSocket inactivity limit. None disables it.
 	pub request_timeout: Option<std::time::Duration>,
 	/// Configuration object
 	pub config: &'a Config,
@@ -276,6 +276,10 @@ impl<'a> ChatCompletionParams<'a> {
 			MODEL_PURPOSE_HEADER.to_string(),
 			self.purpose.as_str().to_string(),
 		)]));
+
+		if provider_name == "chatgpt" {
+			params = params.with_chatgpt_transport(octolib::ChatGptTransport::WebSocket);
+		}
 
 		if let Some(token) = &self.cancellation_token {
 			params = params.with_cancellation_token(token.clone());

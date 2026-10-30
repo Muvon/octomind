@@ -142,7 +142,11 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | `top_k` | u32 | `20` | Top-k limit, 0-1000; `0` disables it |
 | `max_retries` | u32 | `1` | Provider retry attempts |
 | `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
-| `request_timeout_seconds` | u64 | `300` | Hard timeout for one provider request; `0` is unlimited |
+| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; `0` disables it |
+
+ChatGPT calls use WebSockets. Each received response event or ping/pong resets the
+inactivity timer; waiting for a session connection does not consume it. Connection
+setup has a separate deadline.
 
 ```toml
 [model]
@@ -577,7 +581,7 @@ Model used for compression decisions and summary generation.
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
-| `request_timeout_seconds` | u64 | `300` | Hard timeout for one request; `0` is unlimited |
+| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; `0` disables it |
 
 ```toml
 [compression]
@@ -656,7 +660,7 @@ entire block uses `[model]` unchanged.
 | `top_k` | u32 | `0` | Top-k sampling; disabled at zero. |
 | `max_retries` | u32 | `1` | Retry attempts. |
 | `retry_timeout` | u64 | `30` | Backoff base in seconds. |
-| `request_timeout_seconds` | u64 | `300` | Per-request timeout; zero is unlimited. |
+| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; zero disables it. |
 
 ### `[supervisor.hindsight]`
 

@@ -2197,6 +2197,172 @@ async fn command_save_failure_is_reported_for_memory_only_sessions() {
 	);
 }
 
+#[tokio::test]
+async fn user_message_during_another_clients_turn_reports_busy() {
+	let server = LoopbackServer::start(Arc::new(template_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = "busy-user";
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	let _guard = lock.lock().await;
+	let cancellation = SessionCancellation::new();
+	let _turn = TurnGuard::register(&server.state, session_id, &cancellation);
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "message", "session_id": session_id, "content": "hello", "request_id": "busy-message"
+		}),
+	)
+	.await;
+	assert_eq!(read_json(&mut ws).await["type"], "ack");
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error");
+	assert_eq!(error["request_id"], "busy-message");
+	assert_eq!(
+		error["message"],
+		format!(
+			"Session '{}' is busy processing another request. Please wait.",
+			session_id
+		)
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn client_frames_wait_for_background_turns_and_cancel_still_reaches_them() {
+	let _data = TestDataDirGuard::new();
+	let env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	for kind in ["message", "command"] {
+		let mut ws = connect_ws(server.addr).await;
+		let _welcome = read_json(&mut ws).await;
+		let session_id = create_session(&mut ws, None).await;
+		push_inbox_message_for_session(
+			&session_id,
+			InboxMessage {
+				source: InboxSource::Monitor {
+					id: "monitor".into(),
+					description: "background output".into(),
+				},
+				content: "background output".into(),
+			},
+		);
+		read_until(&mut ws, |frame| frame["type"] == "injected").await;
+		env.arrived().notified().await;
+		let request = if kind == "message" {
+			serde_json::json!({"type": kind, "session_id": session_id, "content": "user wins", "request_id": "foreground"})
+		} else {
+			serde_json::json!({"type": kind, "session_id": session_id, "command": "info", "request_id": "foreground"})
+		};
+		send_json(&mut ws, request).await;
+		let ack = read_json(&mut ws).await;
+		assert_eq!(ack["request_id"], "foreground", "got: {ack}");
+		if kind == "message" {
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Monitor {
+						id: "pending".into(),
+						description: "queued output".into(),
+					},
+					content: "monitor must wait".into(),
+				},
+			);
+		}
+		send_json(&mut ws, serde_json::json!({"type": "cancel", "session_id": session_id})).await;
+		let background = frames_through_cost(&mut ws).await;
+		assert!(
+			!background.iter().any(|frame| frame["type"] == "error"),
+			"got: {background:?}"
+		);
+		assert!(
+			background.iter().any(|frame| frame["message_type"] == "cancel"),
+			"got: {background:?}"
+		);
+		assert_eq!(background.last().unwrap()["cancelled"], true);
+		if kind == "message" {
+			let foreground = frames_through_cost(&mut ws).await;
+			assert!(
+				!foreground.iter().any(|frame| frame["type"] == "error"),
+				"got: {foreground:?}"
+			);
+			assert!(
+				foreground.iter().any(|frame| frame["type"] == "assistant"),
+				"got: {foreground:?}"
+			);
+			let cost = foreground.last().unwrap();
+			assert_eq!(cost["request_id"], "foreground");
+			assert_ne!(
+				cost["cancelled"], true,
+				"stopping background work must not stop the user's turn"
+			);
+			assert!(
+				!foreground.iter().any(|frame| frame["type"] == "injected"),
+				"got: {foreground:?}"
+			);
+			let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+			assert_eq!(injected["content"], "monitor must wait");
+			let after_user = frames_through_cost(&mut ws).await;
+			assert_ne!(after_user.last().unwrap()["cancelled"], true);
+		} else {
+			let status = read_json(&mut ws).await;
+			assert_eq!(status["type"], "status", "got: {status}");
+			assert!(status["data"].is_object());
+		}
+		let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+		let _guard = lock.lock().await;
+		assert!(!server.state.background_turns.lock().unwrap().contains(&session_id));
+		crate::session::context::cleanup_session(&session_id);
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn cancelled_background_turn_leaves_the_next_batch_for_a_new_wakeup() {
+	let _data = TestDataDirGuard::new();
+	let env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "first".into(),
+		},
+	);
+	read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	env.arrived().notified().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "next".into(),
+		},
+	);
+	// Consume the queued notification so only an explicit later wakeup can start another pass.
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::get_inbox_notify().unwrap().notified().await;
+	})
+	.await;
+	send_json(&mut ws, serde_json::json!({"type": "cancel", "session_id": session_id})).await;
+	let frames = frames_through_cost(&mut ws).await;
+	assert_eq!(frames.last().unwrap()["cancelled"], true);
+	const QUIET_WINDOW: Duration = Duration::from_millis(200);
+	assert!(
+		tokio::time::timeout(QUIET_WINDOW, ws.next()).await.is_err(),
+		"cancel must not chain into the next batch"
+	);
+	assert!(inbox_has_messages(&session_id).await);
+	wake_inbox_monitor(session_id.clone()).await;
+	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	assert_eq!(injected["content"], "next");
+	let frames = frames_through_cost(&mut ws).await;
+	assert_ne!(frames.last().unwrap()["cancelled"], true);
+	crate::session::context::cleanup_session(&session_id);
+}
+
 // ---- pre-user inbox drain ----
 
 #[tokio::test]

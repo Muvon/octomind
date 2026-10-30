@@ -502,6 +502,9 @@ impl ChatSession {
 
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
+			if ex.usage.is_none() {
+				self.session.info.main_cost = None;
+			}
 			if let Some(usage) = &ex.usage {
 				if let Some(estimate) = prompt_estimate {
 					self.observe_prompt_tokens(
@@ -551,10 +554,8 @@ impl ChatSession {
 					(None, Some(cost)) => (Some(cost), "raw"),
 					(None, None) => (None, "unreported"),
 				};
-				if let Some(cost) = cost {
-					self.session.info.total_cost += cost;
-					self.estimated_cost = self.session.info.total_cost;
-				}
+				self.session.info.record_main_cost(cost);
+				self.estimated_cost = self.session.info.total_cost;
 				let cost_summary = cost
 					.map(|value| format!("${value:.5} ({cost_source})"))
 					.unwrap_or_else(|| cost_source.to_string());

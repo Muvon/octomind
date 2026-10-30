@@ -445,6 +445,9 @@ fn handle_follow_up_cost_tracking(
 	exchange: &crate::session::ProviderExchange,
 	_config: &Config,
 ) {
+	if exchange.usage.is_none() {
+		chat_session.session.info.main_cost = None;
+	}
 	if let Some(usage) = &exchange.usage {
 		// The reply is not in the transcript yet: the messages are exactly the
 		// prompt this usage report describes.
@@ -483,10 +486,8 @@ fn handle_follow_up_cost_tracking(
 			(None, Some(cost)) => (Some(cost), "raw"),
 			(None, None) => (None, "unreported"),
 		};
-		if let Some(cost) = cost {
-			chat_session.session.info.total_cost += cost;
-			chat_session.estimated_cost = chat_session.session.info.total_cost;
-		}
+		chat_session.session.info.record_main_cost(cost);
+		chat_session.estimated_cost = chat_session.session.info.total_cost;
 		let cost_summary = cost
 			.map(|value| format!("${value:.5} ({cost_source})"))
 			.unwrap_or_else(|| cost_source.to_string());

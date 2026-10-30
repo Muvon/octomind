@@ -353,6 +353,12 @@ pub struct SessionInfo {
 	#[serde(default)]
 	pub reasoning_tokens: u64, // Tokens used for thinking/reasoning (OpenAI, MiniMax)
 	pub total_cost: f64,
+	/// None means the historical main cost was not recorded or a call was unpriced.
+	#[serde(default)]
+	pub main_cost: Option<f64>,
+	/// Durable metadata and last reported usage; runtime handles are never restored.
+	#[serde(default)]
+	pub agent_runs: Vec<tap_runs::TapJobInfo>,
 	pub duration_seconds: u64,
 	pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
 	#[serde(default)]
@@ -443,6 +449,22 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+	pub fn record_main_cost(&mut self, cost: Option<f64>) {
+		match cost {
+			Some(cost) => {
+				self.total_cost += cost;
+				if let Some(main) = &mut self.main_cost {
+					*main += cost;
+				}
+			}
+			None => self.main_cost = None,
+		}
+	}
+
+	pub fn capture_agent_runs(&mut self) {
+		tap_runs::merge_history(&mut self.agent_runs, tap_runs::list_jobs_for(&self.name));
+	}
+
 	pub(crate) fn apply_background_usage(
 		&mut self,
 		id: String,
@@ -577,6 +599,8 @@ impl Session {
 				cache_write_tokens: 0,
 				reasoning_tokens: 0,
 				total_cost: 0.0,
+				main_cost: Some(0.0),
+				agent_runs: Vec::new(),
 				duration_seconds: 0,
 				layer_stats: Vec::new(), // Initialize empty layer stats
 				tool_calls: 0,           // Initialize tool call counter
@@ -718,6 +742,7 @@ impl Session {
 	/// bill rather than just the main agent's share. Their per-source token
 	/// breakdowns stay in their own accumulators for `/info` to show.
 	pub fn fold_external_spend(&mut self) {
+		self.info.capture_agent_runs();
 		self.info.total_cost += external_spend::take_for(&self.info.name);
 		self.info
 			.supervisor_accounting

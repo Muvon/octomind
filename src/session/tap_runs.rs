@@ -67,7 +67,7 @@ impl TapJobStatus {
 /// Live, in-flight view of a run — pushed from the child's ACP stream as it
 /// works (tool calls, message chunks, per-API-call usage), ahead of the
 /// on-disk session snapshot which only flushes per completed message.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TapLiveState {
 	/// Last streamed step — a tool call (`name hint`) or assistant text.
 	pub last_action: Option<String>,
@@ -75,7 +75,7 @@ pub struct TapLiveState {
 	pub usage: Option<TapLiveUsage>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TapLiveUsage {
 	pub input_tokens: u64,
 	pub output_tokens: u64,
@@ -103,7 +103,7 @@ pub struct TapJob {
 }
 
 /// Snapshot for read APIs — `Sender` isn't `Clone`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TapJobInfo {
 	pub id: String,
 	pub role: String,
@@ -112,6 +112,56 @@ pub struct TapJobInfo {
 	pub status: TapJobStatus,
 	pub error: Option<String>,
 	pub live: TapLiveState,
+}
+
+pub(crate) fn merge_history(history: &mut Vec<TapJobInfo>, runs: impl IntoIterator<Item = TapJobInfo>) {
+	for mut run in runs {
+		if let Some(previous) = history.iter_mut().find(|saved| saved.id == run.id) {
+			match (&mut run.live.usage, previous.live.usage) {
+				(Some(usage), Some(old)) => {
+					usage.cost = usage.cost.max(old.cost);
+					usage.input_tokens = usage.input_tokens.max(old.input_tokens);
+					usage.output_tokens = usage.output_tokens.max(old.output_tokens);
+					usage.cache_read_tokens = usage.cache_read_tokens.max(old.cache_read_tokens);
+				}
+				(None, old) => run.live.usage = old,
+				_ => {}
+			}
+			if run.live.last_action.is_none() {
+				run.live.last_action = previous.live.last_action.clone();
+			}
+			*previous = run;
+		} else {
+			history.push(run);
+		}
+	}
+}
+
+/// Old sessions have no agent snapshot; their structured tap receipts retain run IDs.
+pub(crate) fn recover_job(message: &crate::session::Message) -> Option<TapJobInfo> {
+	if message.role != "tool" || message.name.as_deref() != Some("tap") {
+		return None;
+	}
+	let receipt: serde_json::Value = serde_json::from_str(&message.content).ok()?;
+	let id = receipt.get("id")?.as_str()?.to_owned();
+	let workdir = receipt.get("workdir")?.as_str()?.to_owned();
+	let role = match receipt.get("role").and_then(|role| role.as_str()) {
+		Some(role) => role.to_owned(),
+		None => format!("workflow:{}", receipt.get("workflow")?.as_str()?),
+	};
+	let status = match receipt.get("status") {
+		Some(status) => serde_json::from_value(status.clone()).ok()?,
+		None => TapJobStatus::Running,
+	};
+	Some(TapJobInfo {
+		id,
+		role,
+		workdir,
+		status,
+		started_at: std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(message.timestamp))?,
+		error: None,
+		live: TapLiveState::default(),
+	})
 }
 
 struct Registry {
@@ -247,6 +297,10 @@ pub fn list_jobs() -> Vec<TapJobInfo> {
 		Some(id) => id,
 		None => return Vec::new(),
 	};
+	list_jobs_for(&session_id)
+}
+
+pub fn list_jobs_for(session_id: &str) -> Vec<TapJobInfo> {
 	let guard = match REGISTRY.read() {
 		Ok(g) => g,
 		Err(_) => return Vec::new(),
@@ -254,7 +308,7 @@ pub fn list_jobs() -> Vec<TapJobInfo> {
 	let Some(reg) = guard.as_ref() else {
 		return Vec::new();
 	};
-	let Some(jobs) = reg.jobs.get(&session_id) else {
+	let Some(jobs) = reg.jobs.get(session_id) else {
 		return Vec::new();
 	};
 	let mut out: Vec<TapJobInfo> = jobs

@@ -35,7 +35,7 @@ async fn status_lists_pending_mcp_jobs_without_scheme_assumptions() {
 			"ssh dev 'cargo test --lib'",
 		);
 
-		let data = output_data(handle_status(&[]).await.expect("status command"));
+		let data = output_data(handle_status(&[], &[]).await.expect("status command"));
 		assert_eq!(data["view"], "overview");
 		assert_eq!(data["active"], 1);
 		assert_eq!(data["jobs"][0]["server"], "octofs-test");
@@ -60,7 +60,7 @@ async fn status_jobs_view_reports_a_task_from_its_polled_status() {
 			"shell: cargo test",
 		);
 
-		let data = output_data(handle_status(&["jobs"]).await.expect("status command"));
+		let data = output_data(handle_status(&["jobs"], &[]).await.expect("status command"));
 		assert_eq!(data["jobs"][0]["uri"], key);
 		assert_eq!(
 			data["jobs"][0]["resource_status"],
@@ -68,7 +68,7 @@ async fn status_jobs_view_reports_a_task_from_its_polled_status() {
 		);
 
 		crate::session::shell_jobs::set_task_status_for_session(&session_id, &key, "shell: cargo test · running 30s");
-		let data = output_data(handle_status(&["jobs"]).await.expect("status command"));
+		let data = output_data(handle_status(&["jobs"], &[]).await.expect("status command"));
 		assert_eq!(data["jobs"][0]["resource_status"], "shell: cargo test · running 30s");
 
 		crate::session::shell_jobs::clear_for_session(&session_id);
@@ -80,7 +80,7 @@ async fn status_jobs_view_reports_a_task_from_its_polled_status() {
 async fn status_empty_state_covers_all_activity_kinds() {
 	let session_id = format!("status-command-empty-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id, async {
-		let data = output_data(handle_status(&[]).await.expect("status command"));
+		let data = output_data(handle_status(&[], &[]).await.expect("status command"));
 		assert_eq!(data["view"], "overview");
 		assert_eq!(data["active"], 0);
 		assert!(data["agents"].as_array().unwrap().is_empty());
@@ -118,16 +118,16 @@ async fn status_combines_mcp_jobs_with_command_monitors() {
 			"background analysis",
 		);
 
-		let overview = output_data(handle_status(&[]).await.expect("status command"));
+		let overview = output_data(handle_status(&[], &[]).await.expect("status command"));
 		assert_eq!(overview["active"], 2);
 		assert_eq!(overview["jobs"].as_array().unwrap().len(), 1);
 		assert_eq!(overview["monitors"].as_array().unwrap().len(), 1);
 
-		let monitors = output_data(handle_status(&["monitors"]).await.expect("monitor status"));
+		let monitors = output_data(handle_status(&["monitors"], &[]).await.expect("monitor status"));
 		assert_eq!(monitors["view"], "monitors");
 		assert_eq!(monitors["monitors"][0]["description"], "watch changes");
 
-		let jobs = output_data(handle_status(&["jobs"]).await.expect("job status"));
+		let jobs = output_data(handle_status(&["jobs"], &[]).await.expect("job status"));
 		assert_eq!(jobs["view"], "jobs");
 		assert_eq!(jobs["jobs"][0]["server"], "generic-mcp");
 		assert!(jobs["jobs"][0]["resource_status"]
@@ -145,7 +145,7 @@ async fn status_combines_mcp_jobs_with_command_monitors() {
 async fn status_rejects_unknown_filters() {
 	let session_id = format!("status-command-error-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id, async {
-		let data = output_data(handle_status(&["unknown"]).await.expect("status command"));
+		let data = output_data(handle_status(&["unknown"], &[]).await.expect("status command"));
 		assert_eq!(data["view"], "error");
 		assert!(data["message"].as_str().unwrap().contains("Unknown status filter"));
 	})

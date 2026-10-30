@@ -88,6 +88,8 @@ mod session_restore_tests {
 			cache_write_tokens: 0,
 			reasoning_tokens: 0,
 			total_cost: 0.0,
+			main_cost: Some(0.0),
+			agent_runs: Vec::new(),
 			duration_seconds: 0,
 			layer_stats: vec![],
 			tool_calls: 0,

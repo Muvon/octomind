@@ -45,14 +45,14 @@ fn last_action_hides_internal_notes_without_changing_history() {
 fn test_agents_list_view() {
 	// Registry contents depend on what other tests in this process ran —
 	// only the output shape is stable: a list view with no detail card.
-	let data = build_agents_status(&[]).expect("status");
+	let data = build_agents_status(&[], &[]).expect("status");
 	assert_eq!(data["view"], "agents");
 	assert!(data["detail"].is_null());
 }
 
 #[test]
 fn test_agents_unknown_id_is_an_error() {
-	let data = build_agents_status(&["no-such-agent-id"]).expect("status");
+	let data = build_agents_status(&["no-such-agent-id"], &[]).expect("status");
 	assert_eq!(data["view"], "error");
 	assert!(data["message"]
 		.as_str()
@@ -64,7 +64,7 @@ fn test_agents_unknown_id_is_an_error() {
 fn test_agents_stats_shape_when_present() {
 	// Other tests in this process may have recorded runs; when stats exist
 	// they must carry the aggregate keys /info renders.
-	if let Some(stats) = get_agents_stats() {
+	if let Some(stats) = get_agents_stats(&[]) {
 		assert!(stats.get("total").is_some(), "{stats}");
 	}
 }
@@ -110,7 +110,7 @@ async fn list_detail_and_stats_cover_every_job_status() {
 			TapLiveState::default(),
 		));
 
-		let data = build_agents_status(&[]).unwrap();
+		let data = build_agents_status(&[], &[]).unwrap();
 		let running = data["running"].as_array().expect("running");
 		let finished = data["finished"].as_array().expect("finished");
 		assert_eq!(data["total"], 4);
@@ -119,14 +119,14 @@ async fn list_detail_and_stats_cover_every_job_status() {
 		assert_eq!(running[0]["last_action"], "shell cargo test");
 		assert_eq!(running[0]["tokens_input"], 100);
 
-		let data = build_agents_status(&["running-agent"]).unwrap();
+		let data = build_agents_status(&["running-agent"], &[]).unwrap();
 		let detail = &data["detail"];
 		assert_eq!(data["total"], 1);
 		assert_eq!(detail["status"], "running");
 		assert_eq!(detail["tokens_cached"], 50);
 		assert_eq!(detail["cost"], 0.25);
 
-		let stats = get_agents_stats().expect("stats");
+		let stats = get_agents_stats(&[]).expect("stats");
 		assert_eq!(stats["total"], 4);
 		assert_eq!(stats["running"], 1);
 		assert_eq!(stats["done"], 1);
@@ -330,7 +330,7 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 		crate::session::tap_runs::register_job(job("cov-agents-detail", TapJobStatus::Done, TapLiveState::default()));
 
 		// Detail: finished job → snapshot is authoritative.
-		let data = build_agents_status(&["cov-agents-detail"]).unwrap();
+		let data = build_agents_status(&["cov-agents-detail"], &[]).unwrap();
 		let detail = &data["detail"];
 		assert_eq!(data["total"], 1);
 		assert_eq!(detail["status"], "done");
@@ -343,7 +343,7 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 		assert_eq!(detail["last_action"], "Final answer");
 
 		// List: the finished row carries ago_secs from the file's mtime.
-		let data = build_agents_status(&[]).unwrap();
+		let data = build_agents_status(&[], &[]).unwrap();
 		let finished = data["finished"].as_array().expect("finished");
 		let row = finished
 			.iter()
@@ -356,4 +356,152 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 		crate::session::tap_runs::clear_for_session(&session_id);
 	})
 	.await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn saved_agent_history_and_main_cost_survive_a_fresh_runtime() {
+	let dir = tempfile::tempdir().unwrap();
+	let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+	std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+	let owner = "resume-accounting-history".to_string();
+	crate::session::context::with_session_id(owner.clone(), async {
+		tap_runs::init_for_session();
+		let run_id = "saved-agent-without-child-file";
+		tap_runs::register_job(job(
+			run_id,
+			TapJobStatus::Done,
+			TapLiveState {
+				last_action: Some("finished review".into()),
+				usage: Some(TapLiveUsage {
+					input_tokens: 100,
+					output_tokens: 20,
+					cache_read_tokens: 50,
+					cost: 1.57457,
+				}),
+			},
+		));
+		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+		session.session.info.name = owner.clone();
+		session.session.info.total_cost = 1.92857;
+		session.session.info.main_cost = Some(0.354);
+		let path = crate::session::logger::get_session_log_path(&owner).unwrap();
+		session.session.session_file = Some(path.clone());
+		session.session.save().unwrap();
+		tap_runs::clear_for_session(&owner);
+		tap_runs::init_for_session();
+		assert!(tap_runs::list_jobs().is_empty());
+		session.session = crate::session::load_session(&path).unwrap();
+		assert_eq!(session.session.info.agent_runs.len(), 1);
+		let mut config: crate::config::Config =
+			toml::from_str(include_str!("../../../../../config-templates/default.toml")).unwrap();
+		config.build_role_map();
+		let result = super::super::info::handle_info(&mut session, &config).unwrap();
+		let super::super::CommandResult::HandledWithOutput(output) = result else {
+			panic!("expected info");
+		};
+		let super::super::CommandOutput::Info {
+			total_cost,
+			main_cost,
+			agents_stats,
+			..
+		} = *output
+		else {
+			panic!("expected info");
+		};
+		assert_eq!(total_cost, 1.92857);
+		assert_eq!(main_cost, Some(0.354));
+		let stats = agents_stats.unwrap();
+		assert_eq!(stats["total"], 1);
+		assert_eq!(stats["done"], 1);
+		assert_eq!(stats["total_cost"], 1.57457);
+		assert_eq!(stats["tokens_input"], 100);
+		let history = &session.session.info.agent_runs;
+		let list = build_agents_status(&[], history).unwrap();
+		assert!(list["running"].as_array().unwrap().is_empty());
+		assert_eq!(list["finished"][0]["id"], run_id);
+		assert_eq!(list["finished"][0]["cost"], 1.57457);
+		let detail = build_agents_status(&[run_id], history).unwrap();
+		assert_eq!(detail["detail"]["status"], "done");
+		assert_eq!(detail["detail"]["last_action"], "finished review");
+		session.session.save().unwrap();
+		let again = crate::session::load_session(&path).unwrap();
+		assert_eq!(again.info.main_cost, Some(0.354));
+		assert_eq!(again.info.total_cost, 1.92857);
+		assert_eq!(again.info.agent_runs.len(), 1);
+		tap_runs::clear_for_session(&owner);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn historical_running_jobs_are_unattached_and_live_runs_are_not_counted_twice() {
+	let owner = "resume-history-live-merge".to_string();
+	crate::session::context::with_session_id(owner.clone(), async {
+		tap_runs::init_for_session();
+		tap_runs::register_job(job(
+			"same-agent",
+			TapJobStatus::Running,
+			TapLiveState {
+				last_action: Some("working".into()),
+				usage: Some(TapLiveUsage {
+					input_tokens: 10,
+					output_tokens: 5,
+					cache_read_tokens: 0,
+					cost: 0.25,
+				}),
+			},
+		));
+		let history = tap_runs::list_jobs();
+		tap_runs::clear_for_session(&owner);
+		tap_runs::init_for_session();
+		let view = build_agents_status(&[], &history).unwrap();
+		assert_eq!(view["finished"][0]["status"], "unattached");
+		assert!(view["running"].as_array().unwrap().is_empty());
+		assert_eq!(get_agents_stats(&history).unwrap()["unattached"], 1);
+		tap_runs::register_job(job(
+			"same-agent",
+			TapJobStatus::Done,
+			TapLiveState {
+				last_action: Some("done".into()),
+				usage: Some(TapLiveUsage {
+					input_tokens: 30,
+					output_tokens: 10,
+					cache_read_tokens: 0,
+					cost: 0.75,
+				}),
+			},
+		));
+		let stats = get_agents_stats(&history).unwrap();
+		assert_eq!(stats["total"], 1);
+		assert_eq!(stats["done"], 1);
+		assert_eq!(stats["total_cost"], 0.75);
+		tap_runs::clear_for_session(&owner);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn history_capture_uses_the_owner_even_under_another_session_context() {
+	let first = "history-owner-a".to_string();
+	let second = "history-owner-b".to_string();
+	crate::session::context::with_session_id(first.clone(), async {
+		tap_runs::init_for_session();
+		tap_runs::register_job(job("agent-a", TapJobStatus::Done, TapLiveState::default()));
+	})
+	.await;
+	crate::session::context::with_session_id(second.clone(), async {
+		tap_runs::init_for_session();
+		tap_runs::register_job(job("agent-b", TapJobStatus::Done, TapLiveState::default()));
+		let mut info = SessionInfo {
+			name: first.clone(),
+			..Default::default()
+		};
+		info.capture_agent_runs();
+		assert_eq!(info.agent_runs.len(), 1);
+		assert_eq!(info.agent_runs[0].id, "agent-a");
+	})
+	.await;
+	tap_runs::clear_for_session(&first);
+	tap_runs::clear_for_session(&second);
 }

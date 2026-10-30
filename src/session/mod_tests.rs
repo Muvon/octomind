@@ -756,3 +756,27 @@ fn normalized_token_totals_include_each_category_once() {
 		assert_eq!(restored.total_tokens(), total);
 	}
 }
+
+#[test]
+fn main_cost_tracks_only_main_calls_and_unknown_history_stays_unknown() {
+	let mut info = SessionInfo {
+		main_cost: Some(0.0),
+		..Default::default()
+	};
+	info.record_main_cost(Some(0.354));
+	info.total_cost += 1.57457;
+	assert!((info.total_cost - 1.92857).abs() < 1e-10);
+	assert_eq!(info.main_cost, Some(0.354));
+	let mut resumed: SessionInfo = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+	resumed.record_main_cost(Some(0.1));
+	assert!((resumed.main_cost.unwrap() - 0.454).abs() < 1e-10);
+	resumed.record_main_cost(None);
+	resumed.record_main_cost(Some(0.2));
+	assert!(resumed.main_cost.is_none());
+	let mut legacy = SessionInfo {
+		total_cost: 1.92857,
+		..Default::default()
+	};
+	legacy.record_main_cost(Some(0.1));
+	assert!(legacy.main_cost.is_none());
+}

@@ -31,6 +31,7 @@ fn test_track_exchange_cost_accumulates_everything() {
 	// global ledger, so the cost assertion below is deterministic.
 	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config).expect("no-usage tracking");
 	session.session.info.total_cost = 0.0;
+	session.session.info.main_cost = Some(0.0);
 	session.session.info.total_api_calls = 0;
 
 	let usage = TokenUsage {
@@ -48,6 +49,7 @@ fn test_track_exchange_cost_accumulates_everything() {
 
 	let info = &session.session.info;
 	assert!((info.total_cost - 0.5).abs() < 1e-9);
+	assert_eq!(info.main_cost, Some(0.5));
 	assert!((session.estimated_cost - 0.5).abs() < 1e-9);
 	assert_eq!(info.total_api_calls, 1);
 	assert_eq!(info.total_api_time_ms, 250);

@@ -41,7 +41,7 @@ struct RenderedMcpJob {
 	resource_status: String,
 }
 
-pub async fn handle_status(params: &[&str]) -> Result<CommandResult> {
+pub async fn handle_status(params: &[&str], history: &[crate::session::tap_runs::TapJobInfo]) -> Result<CommandResult> {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Status {
 			data: json!({
@@ -54,7 +54,7 @@ pub async fn handle_status(params: &[&str]) -> Result<CommandResult> {
 	let filter = params.first().map(|value| value.trim()).unwrap_or("");
 	let data = match filter {
 		"" => build_overview(&session_id),
-		"agents" => super::agents::build_agents_status(&params[1..])?,
+		"agents" => super::agents::build_agents_status(&params[1..], history)?,
 		"monitors" => build_monitors_status(&session_id),
 		"jobs" => build_jobs_status(&session_id).await,
 		other => json!({

@@ -35,6 +35,12 @@ impl CostTracker {
 		chat_session.session.fold_external_spend();
 		chat_session.estimated_cost = chat_session.session.info.total_cost;
 
+		chat_session
+			.session
+			.info
+			.record_main_cost(exchange.usage.as_ref().and_then(|usage| usage.cost));
+		chat_session.estimated_cost = chat_session.session.info.total_cost;
+
 		if let Some(usage) = &exchange.usage {
 			// Simple token extraction with clean provider interface
 			let cache_read_tokens = usage.cache_read_tokens;
@@ -62,10 +68,6 @@ impl CostTracker {
 				usage.reasoning_tokens,
 			);
 			// Update cost and emit one compact diagnostic for the whole exchange.
-			if let Some(cost) = usage.cost {
-				chat_session.session.info.total_cost += cost;
-				chat_session.estimated_cost = chat_session.session.info.total_cost;
-			}
 			let cost_summary = usage
 				.cost
 				.map(|value| format!("${value:.5}"))

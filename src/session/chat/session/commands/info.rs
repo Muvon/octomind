@@ -23,6 +23,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	// Pick up subagent/supervisor spend banked since the last API call so the
 	// session line is the real total, not just the main agent's share.
 	session.session.fold_external_spend();
+	super::agents::sync_history(&mut session.session.info);
 	crate::supervisor::authorizer::sync(session);
 	let info = &session.session.info;
 
@@ -116,6 +117,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		tokens_cache_write: info.cache_write_tokens,
 		tokens_reasoning: info.reasoning_tokens,
 		total_cost: info.total_cost,
+		main_cost: info.main_cost,
 		cache_savings,
 		tokens_per_second,
 		timing,
@@ -128,7 +130,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		cache_markers_tool: cache_stats.tool_markers as u64,
 		cache_markers_content: cache_stats.content_markers as u64,
 		cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
-		agents_stats: super::agents::get_agents_stats(),
+		agents_stats: super::agents::get_agents_stats(&info.agent_runs),
 		supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
 	})))
 }

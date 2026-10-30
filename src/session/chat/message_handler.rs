@@ -85,6 +85,10 @@ impl MessageHandler {
 
 		// CRITICAL FIX: Track API call and tokens (same logic as add_assistant_message)
 		// This was missing, causing api_calls=0 in compression analysis
+		chat_session
+			.session
+			.info
+			.record_main_cost(exchange.usage.as_ref().and_then(|usage| usage.cost));
 		if let Some(usage) = &exchange.usage {
 			// Track API time if available
 			if let Some(api_time_ms) = usage.request_time_ms {
@@ -104,11 +108,6 @@ impl MessageHandler {
 				usage.cache_write_tokens,
 				usage.reasoning_tokens,
 			);
-
-			// Track cost if available
-			if let Some(cost) = usage.cost {
-				chat_session.session.info.total_cost += cost;
-			}
 		}
 
 		Ok(())

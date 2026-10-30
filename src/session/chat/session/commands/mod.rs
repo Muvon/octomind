@@ -100,6 +100,7 @@ pub enum CommandOutput {
 		tokens_cache_write: u64,
 		tokens_reasoning: u64,
 		total_cost: f64,
+		main_cost: Option<f64>,
 		cache_savings: f64,
 		tokens_per_second: f64,
 		timing: InfoTiming,
@@ -456,7 +457,12 @@ pub async fn process_command(
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		WORKFLOW_COMMAND => workflow::handle_workflow(input, params).await,
-		STATUS_COMMAND => status::handle_status(params).await,
+		STATUS_COMMAND => {
+			if params.first().is_some_and(|filter| *filter == "agents") {
+				agents::sync_history(&mut session.session.info);
+			}
+			status::handle_status(params, &session.session.info.agent_runs).await
+		}
 		LEARNING_COMMAND => learning::handle_learning(session, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,

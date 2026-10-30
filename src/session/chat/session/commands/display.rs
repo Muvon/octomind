@@ -353,6 +353,7 @@ pub fn display_info(output: &CommandOutput) {
 		tokens_cache_write,
 		tokens_reasoning,
 		total_cost,
+		main_cost,
 		tokens_per_second,
 		timing,
 		avg_tokens_per_compression,
@@ -401,31 +402,13 @@ pub fn display_info(output: &CommandOutput) {
 			),
 			kw_sess,
 		);
-		// `total_cost` folds in compression/supervisor/agents spend; the token rows
-		// above are main-model only. Subtract the per-component costs back out so
-		// the main model's own share is visible next to the total.
-		let external_cost = compression_stats.as_ref().map(|s| s.cost).unwrap_or(0.0)
-			+ supervisor_accounting.totals.cost
-			+ agents_stats
-				.as_ref()
-				.and_then(|s| s.get("total_cost"))
-				.and_then(|v| v.as_f64())
-				.unwrap_or(0.0);
-		if external_cost > 0.0 {
-			let total_str = format!("${:.5}", total_cost).bright_yellow();
-			let main_str = format!("${:.5}", (total_cost - external_cost).max(0.0)).bright_yellow();
-			block_row(
-				"cost",
-				&format!("{} total {} {} main", total_str, dot, main_str),
-				kw_sess,
-			);
-		} else {
-			block_row(
-				"cost",
-				&format!("${:.5}", total_cost).bright_yellow().to_string(),
-				kw_sess,
-			);
-		}
+
+		let total_str = format!("${:.5}", total_cost).bright_yellow();
+		let main_str = match main_cost {
+			Some(cost) => format!("${cost:.5}").bright_yellow(),
+			None => "unknown".dimmed(),
+		};
+		block_row("cost", &format!("{} total · {} main", total_str, main_str), kw_sess);
 		if *tokens_per_second > 0.0 {
 			let model_time = if timing.model_time_ms > 0 {
 				format!(" {} {} model time", dot, format_duration(timing.model_time_ms))
@@ -615,6 +598,9 @@ pub fn display_info(output: &CommandOutput) {
 			let running = get_u64("running");
 			let done = get_u64("done");
 			let failed = get_u64("failed");
+			let unattached = get_u64("unattached");
+			let cancelled = get_u64("cancelled");
+			let unpriced = get_u64("unpriced");
 			let ag_in = get_u64("tokens_input");
 			let ag_out = get_u64("tokens_output");
 			let ag_cached = get_u64("tokens_cached");
@@ -630,6 +616,12 @@ pub fn display_info(output: &CommandOutput) {
 			}
 			if failed > 0 {
 				status_parts.push(format!("{} failed", failed).bright_red().to_string());
+			}
+			if unattached > 0 {
+				status_parts.push(format!("{unattached} unattached"));
+			}
+			if cancelled > 0 {
+				status_parts.push(format!("{cancelled} cancelled"));
 			}
 			block_row("total", &status_parts.join(" · "), kw_ag);
 			if ag_in > 0 || ag_out > 0 || ag_cached > 0 {
@@ -647,8 +639,10 @@ pub fn display_info(output: &CommandOutput) {
 					kw_ag,
 				);
 			}
-			if ag_cost > 0.0 {
-				block_row("cost", &format!("${:.5}", ag_cost).bright_yellow().to_string(), kw_ag);
+			if unpriced > 0 {
+				block_row("cost", &format!("${ag_cost:.5} known · {unpriced} unpriced"), kw_ag);
+			} else if ag_cost > 0.0 {
+				block_row("cost", &format!("${ag_cost:.5}").bright_yellow().to_string(), kw_ag);
 			}
 		}
 

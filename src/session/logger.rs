@@ -157,10 +157,14 @@ pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> R
 /// happened to precede a save. `STATS` is merged monotonically on resume
 /// (see `parse_session_file`), so an extra checkpoint is never lossy.
 pub fn log_stats_checkpoint(session_file: &std::path::Path, info: &crate::session::SessionInfo) -> Result<()> {
+	let mut info = info.clone();
+	info.capture_agent_runs();
 	let entry = serde_json::json!({
 		"type": "STATS",
 		"timestamp": get_timestamp(),
 		"total_cost": info.total_cost,
+		"main_cost": info.main_cost,
+		"agent_runs": info.agent_runs,
 		"supervisor_accounting": info.supervisor_accounting,
 		"input_tokens": info.input_tokens,
 		"output_tokens": info.output_tokens,

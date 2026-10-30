@@ -148,6 +148,8 @@ fn worker_command(spec: &str, _path: &Path) -> Result<Command> {
 	command
 		.args(["hindsight-worker", "--model", spec])
 		.current_dir(crate::directories::get_run_dir()?);
+	#[cfg(unix)]
+	command.process_group(0);
 	#[cfg(windows)]
 	{
 		const CREATE_NO_WINDOW: u32 = 0x0800_0000;

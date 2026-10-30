@@ -145,9 +145,7 @@ impl Client {
 
 fn worker_command(spec: &str, _path: &Path) -> Result<Command> {
 	let mut command = Command::new(std::env::current_exe()?);
-	command
-		.args(["hindsight-worker", "--model", spec])
-		.current_dir(crate::directories::get_run_dir()?);
+	command.args(["hindsight-worker", "--model", spec]);
 	#[cfg(unix)]
 	command.process_group(0);
 	#[cfg(windows)]

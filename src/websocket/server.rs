@@ -112,25 +112,31 @@ impl Drop for TurnGuard {
 	}
 }
 
-/// Marks only inbox-driven work, so client frames wait for it rather than being refused.
-struct BackgroundTurnGuard {
+/// Keeps background ownership and the session lock atomic to client admission.
+struct BackgroundTurnGuard<'a> {
 	turns: Arc<std::sync::Mutex<HashSet<String>>>,
 	session_id: String,
+	guard: Option<tokio::sync::MutexGuard<'a, ()>>,
 }
 
-impl BackgroundTurnGuard {
-	fn register(server: &ServerState, session_id: &str) -> Self {
-		server.background_turns.lock().unwrap().insert(session_id.to_string());
-		Self {
+impl<'a> BackgroundTurnGuard<'a> {
+	fn try_lock(server: &ServerState, session_id: &str, lock: &'a Mutex<()>) -> Option<Self> {
+		let mut turns = server.background_turns.lock().unwrap();
+		let guard = lock.try_lock().ok()?;
+		turns.insert(session_id.to_string());
+		Some(Self {
 			turns: Arc::clone(&server.background_turns),
 			session_id: session_id.to_string(),
-		}
+			guard: Some(guard),
+		})
 	}
 }
 
-impl Drop for BackgroundTurnGuard {
+impl Drop for BackgroundTurnGuard<'_> {
 	fn drop(&mut self) {
-		self.turns.lock().unwrap().remove(&self.session_id);
+		let mut turns = self.turns.lock().unwrap();
+		drop(self.guard.take());
+		turns.remove(&self.session_id);
 	}
 }
 
@@ -873,11 +879,9 @@ async fn process_client_message(
 
 			// Acquire per-session lock to prevent concurrent access
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
-			let guard = match lock.try_lock() {
-				Ok(guard) => guard,
-				// Queue behind background work; FIFO gives this frame priority over its next batch.
-				Err(_) if ctx.server.background_turns.lock().unwrap().contains(&session_id) => lock.lock().await,
-				Err(_) => {
+			let guard = match lock_for_client(&lock, &ctx.server, &session_id).await {
+				Some(guard) => guard,
+				None => {
 					let error = ServerMessage::error_for_request(
 						format!(
 							"Session '{}' is busy processing another request. Please wait.",
@@ -907,10 +911,9 @@ async fn process_client_message(
 
 			// Acquire per-session lock to prevent concurrent access
 			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
-			let guard = match lock.try_lock() {
-				Ok(guard) => guard,
-				Err(_) if ctx.server.background_turns.lock().unwrap().contains(&session_id) => lock.lock().await,
-				Err(_) => {
+			let guard = match lock_for_client(&lock, &ctx.server, &session_id).await {
+				Some(guard) => guard,
+				None => {
 					let error = ServerMessage::error_for_request(
 						format!(
 							"Session '{}' is busy processing another request. Please wait.",
@@ -1017,6 +1020,24 @@ async fn get_or_create_session_lock(session_id: &str, session_locks: &SessionLoc
 	lock
 }
 
+/// Wait behind inbox work, but refuse a competing foreground request.
+async fn lock_for_client<'a>(
+	lock: &'a Mutex<()>,
+	server: &ServerState,
+	session_id: &str,
+) -> Option<tokio::sync::MutexGuard<'a, ()>> {
+	{
+		let background = server.background_turns.lock().unwrap();
+		match lock.try_lock() {
+			Ok(guard) => return Some(guard),
+			Err(_) if !background.contains(session_id) => return None,
+			Err(_) => {}
+		}
+	}
+	// FIFO prevents the next background batch from overtaking this request.
+	Some(lock.lock().await)
+}
+
 /// Re-fire the session's inbox wake-up once a client frame has released the
 /// session lock. A handback that lands while the frame runs wakes the monitor,
 /// which fails `try_lock` and parks again; the turn's own wake-up
@@ -1097,16 +1118,15 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 				// inbox_notify on return and wakes us from the wait section.
 				while crate::session::inbox::has_inbox_messages() {
 					let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
-					let guard = match lock.try_lock() {
-						Ok(g) => g,
-						Err(_) => return false,
+					let guard = match BackgroundTurnGuard::try_lock(&ctx.server, &session_id, &lock) {
+						Some(guard) => guard,
+						None => return false,
 					};
 
 					let batch = crate::session::inbox::drain_inbox_batch();
 					if batch.is_empty() {
 						break;
 					}
-					let _background = BackgroundTurnGuard::register(&ctx.server, &session_id);
 
 					for inbox_msg in &batch {
 						log_debug!(

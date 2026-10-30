@@ -2198,6 +2198,58 @@ async fn command_save_failure_is_reported_for_memory_only_sessions() {
 }
 
 #[tokio::test]
+async fn client_admission_waits_for_background_setup_and_teardown() {
+	let server = ServerState::new(Arc::new(template_config()), "developer".into(), Vec::new());
+	let session_id = "background-handoff";
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	for after_turn in [false, true] {
+		let background = BackgroundTurnGuard::try_lock(&server, session_id, &lock).unwrap();
+		if after_turn {
+			let cancellation = SessionCancellation::new();
+			drop(TurnGuard::register(&server, session_id, &cancellation));
+		}
+		let client = lock_for_client(&lock, &server, session_id);
+		tokio::pin!(client);
+		assert!(futures::poll!(&mut client).is_pending());
+		drop(background);
+		assert!(
+			BackgroundTurnGuard::try_lock(&server, session_id, &lock).is_none(),
+			"queued client must precede the next background batch"
+		);
+		let foreground = client.await.expect("background work must not refuse the client");
+		assert!(lock_for_client(&lock, &server, session_id).await.is_none());
+		assert!(BackgroundTurnGuard::try_lock(&server, session_id, &lock).is_none());
+		drop(foreground);
+		assert!(lock_for_client(&lock, &server, session_id).await.is_some());
+	}
+}
+
+#[tokio::test]
+async fn aborted_background_task_releases_client_admission() {
+	let server = ServerState::new(Arc::new(template_config()), "developer".into(), Vec::new());
+	let session_id = "aborted-background";
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	let task_server = server.clone();
+	let task_lock = Arc::clone(&lock);
+	let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+	let task = tokio::spawn(async move {
+		let _background = BackgroundTurnGuard::try_lock(&task_server, session_id, &task_lock).unwrap();
+		started_tx.send(()).unwrap();
+		std::future::pending::<()>().await;
+	});
+	started_rx.await.unwrap();
+	let client = lock_for_client(&lock, &server, session_id);
+	tokio::pin!(client);
+	assert!(futures::poll!(&mut client).is_pending());
+	task.abort();
+	assert!(task.await.unwrap_err().is_cancelled());
+	let foreground = client.await.unwrap();
+	assert!(lock_for_client(&lock, &server, session_id).await.is_none());
+	drop(foreground);
+	assert!(BackgroundTurnGuard::try_lock(&server, session_id, &lock).is_some());
+}
+
+#[tokio::test]
 async fn user_message_during_another_clients_turn_reports_busy() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;
 	let mut ws = connect_ws(server.addr).await;
@@ -2229,21 +2281,34 @@ async fn user_message_during_another_clients_turn_reports_busy() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn client_frames_wait_for_background_turns_and_cancel_still_reaches_them() {
+async fn client_frames_wait_for_background_turns_on_completion_or_cancel() {
 	let _data = TestDataDirGuard::new();
 	let env = SlowStubEnv::new(Duration::from_secs(2)).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
-	for kind in ["message", "command"] {
+	let monitor = InboxSource::Monitor {
+		id: "monitor".into(),
+		description: "background output".into(),
+	};
+	for (kind, source, cancel) in [
+		("message", monitor.clone(), true),
+		("command", monitor, true),
+		(
+			"message",
+			InboxSource::TapRun {
+				id: "tap".into(),
+				role: "assistant".into(),
+			},
+			false,
+		),
+		("command", InboxSource::BackgroundJob { id: "job".into() }, false),
+	] {
 		let mut ws = connect_ws(server.addr).await;
 		let _welcome = read_json(&mut ws).await;
 		let session_id = create_session(&mut ws, None).await;
 		push_inbox_message_for_session(
 			&session_id,
 			InboxMessage {
-				source: InboxSource::Monitor {
-					id: "monitor".into(),
-					description: "background output".into(),
-				},
+				source,
 				content: "background output".into(),
 			},
 		);
@@ -2269,17 +2334,20 @@ async fn client_frames_wait_for_background_turns_and_cancel_still_reaches_them()
 				},
 			);
 		}
-		send_json(&mut ws, serde_json::json!({"type": "cancel", "session_id": session_id})).await;
+		if cancel {
+			send_json(&mut ws, serde_json::json!({"type": "cancel", "session_id": session_id})).await;
+		}
 		let background = frames_through_cost(&mut ws).await;
 		assert!(
 			!background.iter().any(|frame| frame["type"] == "error"),
 			"got: {background:?}"
 		);
-		assert!(
+		assert_eq!(
 			background.iter().any(|frame| frame["message_type"] == "cancel"),
+			cancel,
 			"got: {background:?}"
 		);
-		assert_eq!(background.last().unwrap()["cancelled"], true);
+		assert_eq!(background.last().unwrap()["cancelled"] == true, cancel);
 		if kind == "message" {
 			let foreground = frames_through_cost(&mut ws).await;
 			assert!(

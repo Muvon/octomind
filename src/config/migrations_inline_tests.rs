@@ -1087,3 +1087,29 @@ fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
 	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(false));
 	assert_eq!(gate["unsettled_confidence_threshold"].as_float(), Some(0.9));
 }
+
+#[test]
+fn v26_adds_disabled_stream_timeout_and_preserves_explicit_limits() {
+	for stream_setting in [None, Some(0), Some(90)] {
+		let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+		document["version"] = toml_edit::value(25);
+		document["model"]["request_timeout_seconds"] = toml_edit::value(600);
+		match stream_setting {
+			Some(value) => document["model"]["stream_timeout_seconds"] = toml_edit::value(value),
+			None => {
+				document["model"]
+					.as_table_mut()
+					.unwrap()
+					.remove("stream_timeout_seconds");
+			}
+		}
+		let migration = plan()
+			.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
+		let config: crate::config::Config = toml::from_str(&migration.content).unwrap();
+		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+		assert_eq!(config.request_timeout_seconds, 600);
+		assert_eq!(config.stream_timeout_seconds, stream_setting.unwrap_or(0) as u64);
+	}
+}

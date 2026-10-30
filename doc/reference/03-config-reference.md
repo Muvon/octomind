@@ -77,7 +77,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 25
+version = 26
 log_level = "info"
 default = "assistant:concierge"
 octohub_transport = "websocket"
@@ -150,7 +150,8 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | `top_k` | u32 | `20` | Top-k limit, 0-1000; `0` disables it |
 | `max_retries` | u32 | `1` | Provider retry attempts |
 | `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
-| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; `0` disables it |
+| `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
+| `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
 
 ChatGPT calls use WebSockets. Each received response event or ping/pong resets the
 inactivity timer; waiting for a session connection does not consume it. Connection
@@ -589,7 +590,8 @@ Model used for compression decisions and summary generation.
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
-| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; `0` disables it |
+| `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
+| `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
 
 ```toml
 [compression]
@@ -668,7 +670,8 @@ entire block uses `[model]` unchanged.
 | `top_k` | u32 | `0` | Top-k sampling; disabled at zero. |
 | `max_retries` | u32 | `1` | Retry attempts. |
 | `retry_timeout` | u64 | `30` | Backoff base in seconds. |
-| `request_timeout_seconds` | u64 | `300` | HTTP request deadline; ChatGPT WebSocket inactivity limit; zero disables it. |
+| `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
+| `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
 
 ### `[supervisor.hindsight]`
 

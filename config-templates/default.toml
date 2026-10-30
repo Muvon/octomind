@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 25
+version = 26
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -125,9 +125,10 @@ top_k = 20
 # Retry count and exponential-backoff base delay.
 max_retries = 1
 retry_timeout = 30
-# HTTP request deadline; ChatGPT WebSocket inactivity limit (events/pings reset it).
-# 0 disables the request/inactivity timeout.
+# Total deadline for one HTTP or WebSocket request attempt; 0 disables it.
 request_timeout_seconds = 300
+# SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
+stream_timeout_seconds = 0
 
 # Capability provider overrides for tap agents
 # Each key is a capability name, value is the provider to use instead of "default"
@@ -699,6 +700,8 @@ top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
+# SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
+stream_timeout_seconds = 0
 
 # ═══════════════════════════════════════════════════════════════════════
 # SUPERVISOR - out-of-band control plane: learning, orientation, detectors, gate
@@ -748,6 +751,8 @@ top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
+# SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
+stream_timeout_seconds = 0
 
 [supervisor.learning]
 # Enable the learning system (lessons + orientation memory, distill + recall)

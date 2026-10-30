@@ -160,3 +160,5 @@ same runtime directory. It may remain alive for up to 15 idle minutes. Use norma
 commands; `hindsight-worker` is an internal process entry point, not an agent command.
 CoreML compiled-model cache reuse is macOS-only; Linux and Windows keep their existing
 execution-provider selection.
+
+Model profiles accept `request_timeout_seconds` (total deadline per HTTP/WebSocket attempt) and `stream_timeout_seconds` (SSE/WebSocket response inactivity, default `0` = disabled). Stream activity never extends the total deadline; WebSocket ping/pong does not reset response inactivity.

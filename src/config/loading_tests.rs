@@ -147,7 +147,11 @@ fn later_config_override_wins() {
 fn config_overrides_do_not_write_or_migrate_an_existing_config() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let path = tmp.path().join("config.toml");
-	let contents = template_toml().replace("version = 25", "version = 24");
+	let contents = template_toml().replacen(
+		&format!("version = {}", crate::config::CURRENT_CONFIG_VERSION),
+		"version = 24",
+		1,
+	);
 	write_file(tmp.path(), "config.toml", &contents);
 	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
 	let loaded = Config::load_with_overrides(&["supervisor.enabled=false".to_string()]);

@@ -169,9 +169,20 @@ fn plan() -> MigrationPlan {
 				to: 25,
 				apply: add_v25_unsettled_advisory,
 			},
+			VersionMigration {
+				from: 25,
+				to: 26,
+				apply: add_v26_stream_timeout,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+fn add_v26_stream_timeout(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_model = required_table(template.as_table(), "model", "embedded config")?;
+	let model = ensure_table(document.as_table_mut(), template.as_table(), "model", "user config")?;
+	merge_missing(model, template_model, "stream_timeout_seconds")
 }
 
 /// Add the required unsettled-evidence advisory switch and threshold to
@@ -357,7 +368,7 @@ fn add_v13_authorizer(document: &mut toml_edit::DocumentMut, template: &toml_edi
 /// the baseline; roles inherit it, supervisor (including learning) has one
 /// shared override, and compression remains a separate override.
 fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	const PROFILE_FIELDS: [&str; 8] = [
+	const PROFILE_FIELDS: [&str; 9] = [
 		"reasoning_effort",
 		"max_tokens",
 		"temperature",
@@ -366,6 +377,7 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 		"max_retries",
 		"retry_timeout",
 		"request_timeout_seconds",
+		"stream_timeout_seconds",
 	];
 
 	let template_main = required_table(template.as_table(), "model", "embedded default configuration")?;

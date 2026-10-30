@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use tokio::io::AsyncBufReadExt;
 
 #[tokio::test]
 #[serial_test::serial(embed_model)]

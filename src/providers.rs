@@ -98,8 +98,10 @@ pub struct ChatCompletionParams<'a> {
 	pub max_retries: u32,
 	/// Base timeout for exponential backoff retry logic
 	pub retry_timeout: std::time::Duration,
-	/// HTTP request deadline or ChatGPT WebSocket inactivity limit. None disables it.
+	/// Total deadline per HTTP or WebSocket request attempt. None disables it.
 	pub request_timeout: Option<std::time::Duration>,
+	/// SSE/WebSocket response inactivity limit. None disables it.
+	pub stream_timeout: Option<std::time::Duration>,
 	/// Configuration object
 	pub config: &'a Config,
 	/// Cancellation token for request abortion
@@ -146,6 +148,10 @@ impl<'a> ChatCompletionParams<'a> {
 				0 => None,
 				n => Some(std::time::Duration::from_secs(n)),
 			},
+			stream_timeout: match config.stream_timeout_seconds {
+				0 => None,
+				n => Some(std::time::Duration::from_secs(n)),
+			},
 			config,
 			cancellation_token: None,
 			schema: None,
@@ -169,6 +175,11 @@ impl<'a> ChatCompletionParams<'a> {
 
 	pub fn with_request_timeout(mut self, request_timeout: Option<std::time::Duration>) -> Self {
 		self.request_timeout = request_timeout;
+		self
+	}
+
+	pub fn with_stream_timeout(mut self, stream_timeout: Option<std::time::Duration>) -> Self {
+		self.stream_timeout = stream_timeout;
 		self
 	}
 
@@ -264,6 +275,7 @@ impl<'a> ChatCompletionParams<'a> {
 		.with_max_retries(self.max_retries)
 		.with_retry_timeout(self.retry_timeout)
 		.with_request_timeout(self.request_timeout)
+		.with_stream_timeout(self.stream_timeout)
 		.with_long_cache(true)
 		.with_reasoning_effort(
 			self.reasoning_effort

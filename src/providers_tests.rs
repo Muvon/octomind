@@ -933,3 +933,26 @@ async fn octohub_transport_preserves_session_purpose_cancellation_and_retry_meta
 		}
 	}
 }
+
+#[tokio::test]
+async fn stream_timeout_defaults_disabled_and_is_independent_of_request_deadline() {
+	let mut config = test_config();
+	assert_eq!(config.stream_timeout_seconds, 0);
+	let messages = vec![msg("user", "hi")];
+	for (total, idle) in [(300, 0), (600, 100), (0, 100)] {
+		config.request_timeout_seconds = total;
+		config.stream_timeout_seconds = idle;
+		for provider in ["chatgpt", "alibaba"] {
+			let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+			let octo = params.to_octolib_params(provider).await.unwrap();
+			assert_eq!(
+				octo.request_timeout,
+				(total != 0).then(|| std::time::Duration::from_secs(total))
+			);
+			assert_eq!(
+				octo.stream_timeout,
+				(idle != 0).then(|| std::time::Duration::from_secs(idle))
+			);
+		}
+	}
+}

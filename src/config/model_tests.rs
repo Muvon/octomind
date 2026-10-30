@@ -26,6 +26,7 @@ fn main_profile() -> ModelProfile {
 		max_retries: 2,
 		retry_timeout: 10,
 		request_timeout_seconds: 60,
+		stream_timeout_seconds: 0,
 	}
 }
 
@@ -121,4 +122,23 @@ fn role_can_override_any_subset_of_the_main_profile() {
 	assert_eq!(resolved.max_tokens, config.model_profile.max_tokens);
 	assert_eq!(resolved.temperature, config.model_profile.temperature);
 	assert_eq!(resolved.retry_timeout, config.model_profile.retry_timeout);
+}
+
+#[test]
+fn stream_timeout_inherits_and_can_be_disabled_by_an_override() {
+	let mut base = main_profile();
+	base.stream_timeout_seconds = 90;
+	assert_eq!(
+		ModelProfileOverride::default().resolve(&base).stream_timeout_seconds,
+		90
+	);
+	let configured: ModelProfileOverride = toml::from_str("stream_timeout_seconds = 120").unwrap();
+	let disabled: ModelProfileOverride = toml::from_str("stream_timeout_seconds = 0").unwrap();
+	let resolved = configured.overlay(&disabled).resolve(&base);
+	assert_eq!(resolved.stream_timeout_seconds, 0);
+	assert_eq!(resolved.request_timeout_seconds, base.request_timeout_seconds);
+	let config: crate::config::Config = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	let profile = configured.resolve(&base);
+	let params = crate::session::completion::ChatCompletionWithValidationParams::from_profile(&[], &profile, &config);
+	assert_eq!(params.stream_timeout_seconds, 120);
 }

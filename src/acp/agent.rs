@@ -1669,8 +1669,8 @@ impl OctomindAgent {
 					Ok(PromptResponse::new(stop_reason).meta(meta))
 				}
 				Err(e) => {
-					log_error!("ACP: prompt API call failed: {}", e);
-					Err(agent_client_protocol::Error::internal_error().data(e.to_string()))
+					log_error!("ACP: prompt API call failed: {:#}", e);
+					Err(agent_client_protocol::Error::internal_error().data(format!("{e:#}")))
 				}
 			}
 		})

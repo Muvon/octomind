@@ -43,6 +43,8 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub retry_timeout: u64,
 	/// Hard timeout for one provider request, in seconds. Zero means unlimited.
 	pub request_timeout_seconds: u64,
+	/// SSE/WebSocket response inactivity limit, in seconds. Zero disables it.
+	pub stream_timeout_seconds: u64,
 	/// Configuration object
 	pub config: &'a Config,
 	/// When true, validate against the *full* context window (system prompt +
@@ -95,6 +97,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			max_retries: 0,
 			retry_timeout: config.retry_timeout,
 			request_timeout_seconds: config.request_timeout_seconds,
+			stream_timeout_seconds: config.stream_timeout_seconds,
 			config,
 			full_context_tokens: false,
 			cancellation_token: None,
@@ -118,6 +121,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			max_retries: profile.max_retries,
 			retry_timeout: profile.retry_timeout,
 			request_timeout_seconds: profile.request_timeout_seconds,
+			stream_timeout_seconds: profile.stream_timeout_seconds,
 			config,
 			full_context_tokens: false,
 			cancellation_token: None,
@@ -320,6 +324,10 @@ pub async fn chat_completion_with_validation(
 	.with_max_retries(params.max_retries)
 	.with_retry_timeout(std::time::Duration::from_secs(params.retry_timeout))
 	.with_request_timeout(match params.request_timeout_seconds {
+		0 => None,
+		n => Some(std::time::Duration::from_secs(n)),
+	})
+	.with_stream_timeout(match params.stream_timeout_seconds {
 		0 => None,
 		n => Some(std::time::Duration::from_secs(n)),
 	})

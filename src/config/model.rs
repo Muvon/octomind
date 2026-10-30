@@ -36,6 +36,7 @@ pub struct ModelProfile {
 	pub max_retries: u32,
 	pub retry_timeout: u64,
 	pub request_timeout_seconds: u64,
+	pub stream_timeout_seconds: u64,
 }
 
 impl ModelProfile {
@@ -88,6 +89,8 @@ pub struct ModelProfileOverride {
 	pub retry_timeout: Option<u64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub request_timeout_seconds: Option<u64>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub stream_timeout_seconds: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +113,8 @@ struct ModelProfileOverrideFields {
 	retry_timeout: Option<u64>,
 	#[serde(default)]
 	request_timeout_seconds: Option<u64>,
+	#[serde(default)]
+	stream_timeout_seconds: Option<u64>,
 }
 
 impl<'de> Deserialize<'de> for ModelProfileOverride {
@@ -149,6 +154,7 @@ impl<'de> Deserialize<'de> for ModelProfileOverride {
 					max_retries: fields.max_retries,
 					retry_timeout: fields.retry_timeout,
 					request_timeout_seconds: fields.request_timeout_seconds,
+					stream_timeout_seconds: fields.stream_timeout_seconds,
 				})
 			}
 		}
@@ -170,6 +176,7 @@ impl ModelProfileOverride {
 			max_retries: self.max_retries.unwrap_or(base.max_retries),
 			retry_timeout: self.retry_timeout.unwrap_or(base.retry_timeout),
 			request_timeout_seconds: self.request_timeout_seconds.unwrap_or(base.request_timeout_seconds),
+			stream_timeout_seconds: self.stream_timeout_seconds.unwrap_or(base.stream_timeout_seconds),
 		}
 	}
 
@@ -185,6 +192,7 @@ impl ModelProfileOverride {
 			max_retries: other.max_retries.or(self.max_retries),
 			retry_timeout: other.retry_timeout.or(self.retry_timeout),
 			request_timeout_seconds: other.request_timeout_seconds.or(self.request_timeout_seconds),
+			stream_timeout_seconds: other.stream_timeout_seconds.or(self.stream_timeout_seconds),
 		}
 	}
 

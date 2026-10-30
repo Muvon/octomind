@@ -197,7 +197,8 @@ After a normal AI prompt the agent also emits notification metadata:
 `octomind.verified` is true only when supervisor verification tracking is enabled and the detector reports no
 outstanding verification need. It is not proof that every task requirement passed. `octomind.pending_work` indicates
 outstanding async work and also appears in the successful prompt result's `_meta`; `end_turn` alone does not mean
-background work has finished.
+background work has finished. The inbox monitor also emits this field after draining its work, so a client keeping
+input open can observe when that background work becomes idle.
 
 Clients that preserve ACP `_meta` can read this extension; clients that discard `_meta` still receive the normal session
 updates but not this usage payload.
@@ -310,6 +311,11 @@ For an `agent_context_gatherer` tool call with these arguments, Octomind acts as
 
 Initialization and session creation each have a 30-second handshake timeout. Custom ACP binaries must reply to both
 requests before they can receive the task.
+
+For tap specialists, `tap(action="send", session="RUN_ID", prompt="...")` queues another ordinary `session/prompt`
+on the existing child connection. Prompts run sequentially in the same child session. The parent keeps input open
+while a prompt or background work is active, then drains accepted prompts before closing input and returning the
+combined reply. The `send` result acknowledges queueing, not completion.
 
 ## Background Inbox Monitor
 

@@ -858,6 +858,24 @@ impl OctomindAgent {
 						idle_notify.notify_waiters();
 					}
 
+					// A tap parent keeps input open for follow-ups until this session's
+					// background work is drained, including failed inbox turns.
+					if let Some(conn) = conn.borrow().as_ref() {
+						let mut meta = Meta::new();
+						meta.insert(
+							"octomind.pending_work".into(),
+							serde_json::Value::Bool(crate::session::has_pending_async_work()),
+						);
+						let notification = SessionNotification::new(
+							std::sync::Arc::<str>::from(session_id.as_str()),
+							SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+						)
+						.meta(meta);
+						if let Err(error) = conn.send_notification(notification) {
+							log_error!("ACP: failed to send pending-work notification: {}", error);
+						}
+					}
+
 					false // don't exit
 				})
 				.await;

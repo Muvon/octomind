@@ -33,9 +33,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::session::context::SessionId;
+
+const MAX_PENDING_PROMPTS: usize = 32;
+
+pub struct TapRunInput<'a> {
+	pub id: &'a str,
+	pub prompts: mpsc::Receiver<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +116,7 @@ pub struct TapJobInfo {
 
 struct Registry {
 	jobs: HashMap<SessionId, Vec<TapJob>>,
+	prompts: HashMap<SessionId, HashMap<String, mpsc::Sender<String>>>,
 	websocket: HashMap<SessionId, Option<crate::websocket::run_events::RunEvents>>,
 }
 
@@ -121,6 +129,7 @@ where
 	let mut guard = REGISTRY.write().ok()?;
 	let reg = guard.get_or_insert_with(|| Registry {
 		jobs: HashMap::new(),
+		prompts: HashMap::new(),
 		websocket: HashMap::new(),
 	});
 	Some(f(reg))
@@ -133,6 +142,7 @@ pub fn init_for_session() {
 		None => return,
 	};
 	let _ = with_registry(|r| {
+		r.prompts.entry(session_id.clone()).or_default();
 		r.websocket.entry(session_id.clone()).or_default();
 		r.jobs.entry(session_id).or_default();
 	});
@@ -148,6 +158,7 @@ pub fn clear_for_session(session_id: &SessionId) {
 		};
 		match guard.as_mut() {
 			Some(reg) => {
+				reg.prompts.remove(session_id);
 				reg.websocket.remove(session_id);
 				reg.jobs.remove(session_id)
 			}
@@ -169,6 +180,7 @@ pub fn register_job(job: TapJob) {
 		None => return,
 	};
 	let _ = with_registry(|r| {
+		r.prompts.entry(session_id.clone()).or_default();
 		r.jobs.entry(session_id).or_default().push(job);
 	});
 }
@@ -265,6 +277,62 @@ pub fn list_jobs() -> Vec<TapJobInfo> {
 	out
 }
 
+pub(crate) fn open_prompt_channel(id: &str) -> Result<mpsc::Receiver<String>> {
+	let session_id = crate::session::context::current_session_id().context("tap prompts require an active session")?;
+	let mut guard = REGISTRY.write().map_err(|_| anyhow::anyhow!("tap registry poisoned"))?;
+	let reg = guard.as_mut().context("tap registry is not initialized")?;
+	let prompts = reg
+		.prompts
+		.get_mut(&session_id)
+		.context("tap prompt registry is not initialized for this session")?;
+	anyhow::ensure!(
+		prompts.get(id).is_none_or(mpsc::Sender::is_closed),
+		"run {id} already accepts prompts"
+	);
+	let (tx, rx) = mpsc::channel(MAX_PENDING_PROMPTS);
+	prompts.insert(id.to_string(), tx);
+	Ok(rx)
+}
+
+pub(crate) fn send_prompt(id: &str, prompt: String) -> Result<()> {
+	let session_id = crate::session::context::current_session_id().context("tap send requires an active session")?;
+	let guard = REGISTRY.read().map_err(|_| anyhow::anyhow!("tap registry poisoned"))?;
+	let reg = guard.as_ref().context("tap registry is not initialized")?;
+	let job = reg
+		.jobs
+		.get(&session_id)
+		.and_then(|jobs| jobs.iter().find(|job| job.id == id))
+		.with_context(|| format!("No tap-run with id '{id}' in this session."))?;
+	let status = job.status.read().map_err(|_| anyhow::anyhow!("tap status poisoned"))?;
+	anyhow::ensure!(
+		*status == TapJobStatus::Running,
+		"run {id} is {}; use run to resume it",
+		status.as_str()
+	);
+	let sender = reg
+		.prompts
+		.get(&session_id)
+		.and_then(|prompts| prompts.get(id))
+		.with_context(|| format!("run {id} does not accept prompts (workflow or finishing run)"))?;
+	sender.try_send(prompt).map_err(|error| match error {
+		mpsc::error::TrySendError::Full(_) => anyhow::anyhow!("run {id} has {MAX_PENDING_PROMPTS} queued prompts"),
+		mpsc::error::TrySendError::Closed(_) => anyhow::anyhow!("run {id} is finishing and no longer accepts prompts"),
+	})
+}
+
+/// Admission and the final empty check share the registry lock: an accepted
+/// prompt is either taken here or prevents closing the child's input.
+pub(crate) fn take_prompt_or_close(input: &mut TapRunInput<'_>) -> Result<Option<String>> {
+	let _guard = REGISTRY.write().map_err(|_| anyhow::anyhow!("tap registry poisoned"))?;
+	match input.prompts.try_recv() {
+		Ok(prompt) => Ok(Some(prompt)),
+		Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
+			input.prompts.close();
+			Ok(None)
+		}
+	}
+}
+
 /// Record the run's latest streamed step (tool call or assistant text).
 pub fn record_live_action(id: &str, action: String) {
 	with_live(id, |l| l.last_action = Some(action));
@@ -348,7 +416,7 @@ pub(crate) fn resume_run(id: &str) -> Result<TapRunClaim> {
 	let mut status = job.status.write().map_err(|_| anyhow::anyhow!("tap status poisoned"))?;
 	anyhow::ensure!(
 		*status != TapJobStatus::Running,
-		"run {id} is already running; busy with a previous turn — wait or call stop."
+		"run {id} is already running; use send to queue a prompt or stop to cancel it."
 	);
 	if let Some(events) = reg.websocket.get_mut(&session_id).and_then(Option::as_mut) {
 		events.begin(&session_id, id, &job.role)?;

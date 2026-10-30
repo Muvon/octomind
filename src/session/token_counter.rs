@@ -202,6 +202,29 @@ pub fn estimate_sent_full_context_tokens(
 	)
 }
 
+/// Estimates the tokens the tool definitions would add to a request.
+fn tool_definition_tokens(tools: &[crate::mcp::McpFunction]) -> usize {
+	let mut total = 0;
+
+	for tool in tools {
+		// Estimate tokens for tool definition JSON
+		// Create a simplified representation of the tool for token counting
+		let tool_json = serde_json::json!({
+			"name": tool.name,
+			"description": tool.description,
+			"input_schema": tool.parameters
+		});
+		let tool_str = serde_json::to_string(&tool_json).unwrap_or_default();
+		total += estimate_tokens(&tool_str);
+	}
+	// Add JSON formatting overhead per tool (arrays, brackets, etc.)
+	total += tools.len() * 5;
+	// Add tools array overhead
+	total += 10;
+
+	total
+}
+
 fn full_context_tokens(
 	messages: &[crate::session::Message],
 	tools: Option<&[crate::mcp::McpFunction]>,
@@ -212,21 +235,7 @@ fn full_context_tokens(
 
 	// Add tool definition tokens if present
 	if let Some(tool_list) = tools {
-		for tool in tool_list {
-			// Estimate tokens for tool definition JSON
-			// Create a simplified representation of the tool for token counting
-			let tool_json = serde_json::json!({
-				"name": tool.name,
-				"description": tool.description,
-				"input_schema": tool.parameters
-			});
-			let tool_str = serde_json::to_string(&tool_json).unwrap_or_default();
-			total += estimate_tokens(&tool_str);
-		}
-		// Add JSON formatting overhead per tool (arrays, brackets, etc.)
-		total += tool_list.len() * 5;
-		// Add tools array overhead
-		total += 10;
+		total += tool_definition_tokens(tool_list);
 	}
 
 	total
@@ -245,17 +254,7 @@ pub async fn calculate_minimum_session_tokens(
 	// Get tool definitions tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
 		let tools = crate::mcp::get_available_functions(config).await;
-		let mut total = 0;
-		for tool in &tools {
-			let tool_json = serde_json::json!({
-				"name": tool.name,
-				"description": tool.description,
-				"input_schema": tool.parameters
-			});
-			let tool_str = serde_json::to_string(&tool_json).unwrap_or_default();
-			total += estimate_tokens(&tool_str);
-		}
-		total + (tools.len() * 5) + 10 // JSON overhead
+		tool_definition_tokens(&tools)
 	} else {
 		0
 	};
@@ -298,17 +297,7 @@ pub async fn validate_session_token_threshold(
 	// Calculate tool tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
 		let tools = crate::mcp::get_available_functions(config).await;
-		let mut total = 0;
-		for tool in &tools {
-			let tool_json = serde_json::json!({
-				"name": tool.name,
-				"description": tool.description,
-				"input_schema": tool.parameters
-			});
-			let tool_str = serde_json::to_string(&tool_json).unwrap_or_default();
-			total += estimate_tokens(&tool_str);
-		}
-		total + (tools.len() * 5) + 10
+		tool_definition_tokens(&tools)
 	} else {
 		0
 	};

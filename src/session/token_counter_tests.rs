@@ -234,6 +234,18 @@ fn full_context_tool_overhead_is_linear_per_tool() {
 	assert_eq!(with_two - with_one, estimate_tokens(&tool_json) + 5);
 }
 
+#[test]
+fn tool_definition_tokens_match_full_context_overhead() {
+	let messages = vec![msg("user", "hi")];
+	let one = [tool("shell")];
+	let with_one = estimate_full_context_tokens(&messages, Some(&one));
+	assert_eq!(tool_definition_tokens(&[]), 10);
+	assert_eq!(
+		tool_definition_tokens(&one),
+		with_one - estimate_session_tokens(&messages)
+	);
+}
+
 fn template_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");

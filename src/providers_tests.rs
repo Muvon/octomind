@@ -852,3 +852,84 @@ async fn chatgpt_uses_websockets_and_other_providers_keep_http() {
 		assert_eq!(params.chatgpt_transport, expected, "{provider}");
 	}
 }
+
+#[tokio::test]
+async fn octohub_transport_selection_is_isolated_from_other_providers() {
+	use crate::config::OctoHubTransportConfig;
+
+	let mut config = test_config();
+	let messages = vec![msg("user", "hello")];
+	for (configured, expected) in [
+		(OctoHubTransportConfig::WebSocket, octolib::OctoHubTransport::WebSocket),
+		(OctoHubTransportConfig::Http, octolib::OctoHubTransport::Http),
+	] {
+		config.octohub_transport = configured;
+		for provider in ["octohub", "chatgpt", "openai", "anthropic"] {
+			let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config)
+				.to_octolib_params(provider)
+				.await
+				.expect("conversion succeeds");
+			assert_eq!(
+				params.octohub_transport,
+				if provider == "octohub" {
+					expected
+				} else {
+					octolib::OctoHubTransport::Http
+				},
+				"{provider} with {configured:?}"
+			);
+			assert_eq!(
+				params.chatgpt_transport,
+				if provider == "chatgpt" {
+					octolib::ChatGptTransport::WebSocket
+				} else {
+					octolib::ChatGptTransport::Http
+				},
+				"{provider} with {configured:?}"
+			);
+		}
+	}
+}
+
+#[tokio::test]
+async fn octohub_transport_preserves_session_purpose_cancellation_and_retry_metadata() {
+	use crate::config::OctoHubTransportConfig;
+
+	let mut config = test_config();
+	let messages = vec![msg("user", "hello")];
+	for transport in [OctoHubTransportConfig::WebSocket, OctoHubTransportConfig::Http] {
+		config.octohub_transport = transport;
+		for purpose in [ModelPurpose::Main, ModelPurpose::Supervisor, ModelPurpose::Compression] {
+			let (cancel, token) = watch::channel(false);
+			let mut params = crate::session::context::with_session_id("octohub-session".to_string(), async {
+				ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config)
+					.with_purpose(purpose)
+					.with_cancellation_token(token)
+					.to_octolib_params("octohub")
+					.await
+					.expect("conversion succeeds")
+			})
+			.await;
+			assert_eq!(params.prompt_cache_key.as_deref(), Some("octohub-session"));
+			assert_eq!(
+				params.extra_headers.as_ref().unwrap()[MODEL_PURPOSE_HEADER],
+				purpose.as_str()
+			);
+			assert!(params.retry_observer.is_some());
+			assert_eq!(params.max_retries, config.max_retries);
+			assert_eq!(
+				params.retry_timeout,
+				std::time::Duration::from_secs(config.retry_timeout)
+			);
+			assert_eq!(
+				params.request_timeout,
+				Some(std::time::Duration::from_secs(config.request_timeout_seconds))
+			);
+			let token = params.cancellation_token.as_mut().expect("cancellation forwarded");
+			assert!(!*token.borrow());
+			cancel.send(true).unwrap();
+			token.changed().await.unwrap();
+			assert!(*token.borrow());
+		}
+	}
+}

@@ -69,6 +69,7 @@ octomind config --validate
 | `version` | u32 | `22` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
+| `octohub_transport` | enum | `"websocket"` | Octohub only: `"websocket"` or `"http"`. Omitted settings default to WebSocket, including existing configs. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `commit_attribution` | string | `"Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"` | Git trailer the agent appends to commits it writes, unless the user says otherwise about attribution. `""` = no trailer and no system-prompt instruction. |
@@ -79,10 +80,17 @@ octomind config --validate
 version = 25
 log_level = "info"
 default = "assistant:concierge"
+octohub_transport = "websocket"
 sandbox = false
 telemetry = true
 commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 ```
+
+`octohub_transport` applies to every `octohub:` model call, including supervisor and compression calls.
+Set `octohub_transport = "http"` at the root (before any table headers) to explicitly use HTTP.
+WebSocket errors do not silently fall back to HTTP or replay a request. ChatGPT keeps its existing WebSocket
+selection; other providers are unaffected. The library derives the WebSocket URL from the existing Octohub
+HTTP(S) base URL, preserving private hosts and ports; no separate endpoint setting is required.
 
 ## Performance & Limits
 

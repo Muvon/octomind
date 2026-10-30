@@ -332,6 +332,24 @@ impl ReasoningEffortConfig {
 	}
 }
 
+/// Transport used only by the octohub provider.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OctoHubTransportConfig {
+	Http,
+	#[default]
+	WebSocket,
+}
+
+impl OctoHubTransportConfig {
+	pub fn to_octolib(self) -> octolib::OctoHubTransport {
+		match self {
+			Self::Http => octolib::OctoHubTransport::Http,
+			Self::WebSocket => octolib::OctoHubTransport::WebSocket,
+		}
+	}
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)
@@ -353,6 +371,10 @@ pub struct Config {
 	// Complete main model profile. Other model-bearing boundaries inherit it.
 	#[serde(rename = "model")]
 	pub model_profile: ModelProfile,
+
+	/// Octohub transport; omitted settings use WebSocket, including existing configs.
+	#[serde(default)]
+	pub octohub_transport: OctoHubTransportConfig,
 
 	// Default tag used when no TAG is passed to `octomind run/acp/server`.
 	// Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").

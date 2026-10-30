@@ -25,6 +25,10 @@ log_level = "info"
 # The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:assistant.
 default = "assistant:concierge"
 
+# Octohub transport: "websocket" (default) or "http" (explicit opt-out).
+# Applies only to octohub models; transport errors never switch to HTTP.
+octohub_transport = "websocket"
+
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot
 # write outside the directory where octomind was launched.

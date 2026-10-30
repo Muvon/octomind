@@ -30,6 +30,53 @@ fn base_config() -> Config {
 	config
 }
 
+#[test]
+fn octohub_transport_defaults_to_websocket_when_omitted() {
+	let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	assert_eq!(value["octohub_transport"].as_str(), Some("websocket"));
+	value.as_table_mut().unwrap().remove("octohub_transport");
+	let config: Config = value.try_into().expect("existing configs can omit octohub_transport");
+	assert_eq!(config.octohub_transport, OctoHubTransportConfig::WebSocket);
+}
+
+#[test]
+fn octohub_transport_accepts_explicit_choices_and_survives_role_merge() {
+	for (name, expected) in [
+		("websocket", OctoHubTransportConfig::WebSocket),
+		("http", OctoHubTransportConfig::Http),
+	] {
+		let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		value["octohub_transport"] = toml::Value::String(name.to_string());
+		let mut config: Config = value.try_into().expect("valid transport");
+		config.build_role_map();
+		assert_eq!(config.octohub_transport, expected);
+		assert_eq!(
+			config
+				.get_merged_config_for_role(&config.roles[0].name)
+				.octohub_transport,
+			expected
+		);
+		assert_eq!(
+			toml::Value::try_from(&config).unwrap()["octohub_transport"].as_str(),
+			Some(name)
+		);
+	}
+}
+
+#[test]
+fn octohub_transport_rejects_invalid_values() {
+	for invalid in [
+		toml::Value::String("sse".to_string()),
+		toml::Value::String("WebSocket".to_string()),
+		toml::Value::String(String::new()),
+		toml::Value::Boolean(true),
+	] {
+		let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		value["octohub_transport"] = invalid;
+		assert!(value.try_into::<Config>().is_err());
+	}
+}
+
 fn make_role(name: &str, server_refs: Vec<String>, allowed_tools: Vec<String>) -> Role {
 	Role {
 		name: name.to_string(),

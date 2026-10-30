@@ -281,6 +281,10 @@ impl<'a> ChatCompletionParams<'a> {
 			params = params.with_chatgpt_transport(octolib::ChatGptTransport::WebSocket);
 		}
 
+		if provider_name == "octohub" {
+			params = params.with_octohub_transport(self.config.octohub_transport.to_octolib());
+		}
+
 		if let Some(token) = &self.cancellation_token {
 			params = params.with_cancellation_token(token.clone());
 		}

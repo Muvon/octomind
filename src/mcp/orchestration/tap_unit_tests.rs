@@ -173,6 +173,49 @@ async fn stop_with_non_string_session_is_error() {
 		.contains("Missing required parameter 'session'"));
 }
 
+#[tokio::test]
+async fn send_validates_parameters_and_preserves_prompt_text() {
+	let config = unit_config();
+	for params in [
+		json!({"action": "send", "prompt": "hello"}),
+		json!({"action": "send", "session": 1, "prompt": "hello"}),
+		json!({"action": "send", "session": "  ", "prompt": "hello"}),
+		json!({"action": "send", "session": "run"}),
+		json!({"action": "send", "session": "run", "prompt": false}),
+		json!({"action": "send", "session": "run", "prompt": "  "}),
+	] {
+		assert!(execute_tap_command(&tap_call(params), &config)
+			.await
+			.unwrap()
+			.is_error());
+	}
+	let parent = "tap-send-tool".to_string();
+	crate::session::context::with_session_id(parent.clone(), async {
+		tap_runs::init_for_session();
+		register_unit_job("run", "developer:general", TapJobStatus::Running);
+		let mut prompts = tap_runs::open_prompt_channel("run").unwrap();
+		let prompt = "  Keep this formatting.\nCheck cancellation too.  ";
+		let result = execute_tap_command(
+			&tap_call(json!({"action": "send", "session": "run", "prompt": prompt})),
+			&config,
+		)
+		.await
+		.unwrap();
+		assert!(!result.is_error(), "{}", result.extract_content());
+		assert_eq!(prompts.recv().await.as_deref(), Some(prompt));
+		assert_eq!(tap_runs::find_job("run").unwrap().status, TapJobStatus::Running);
+		let missing = execute_tap_command(
+			&tap_call(json!({"action": "send", "session": "missing", "prompt": "hello"})),
+			&config,
+		)
+		.await
+		.unwrap();
+		assert!(missing.is_error());
+		tap_runs::clear_for_session(&parent);
+	})
+	.await;
+}
+
 // ---------------------------------------------------------------------------
 // handle_run — resume guard
 // ---------------------------------------------------------------------------
@@ -198,7 +241,8 @@ async fn run_resume_while_busy_is_rejected() {
 	tap_runs::clear_for_session(&session_id);
 	assert!(result.is_error());
 	let content = result.extract_content();
-	assert!(content.contains("busy with a previous turn"), "content: {content}");
+	assert!(content.contains("already running"), "content: {content}");
+	assert!(content.contains("use send to queue a prompt"), "content: {content}");
 }
 
 // ---------------------------------------------------------------------------

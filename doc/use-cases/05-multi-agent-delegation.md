@@ -221,11 +221,20 @@ Use an exact role returned by discovery. If `developer:general` is returned and 
 
 `run` starts in the background and returns its ID. On completion, the inbox receives a tap-run result labeled with the
 ID and role. It is a system-managed continuation, distinct from the `[Async agent 'NAME' completed]` label used by
-`agent_*`. Use these `tap` arguments to inspect, resume, or stop a run; replace `RUN_ID` with the returned ID:
+`agent_*`. Use these `tap` arguments to inspect, message, resume, or stop a run; replace `RUN_ID` with the returned ID:
 
 ```json
 {"action": "list"}
 ```
+
+While the specialist is running, send a follow-up for its next available turn. It keeps working on the current turn
+and receives the queued message in the same conversation:
+
+```json
+{"action": "send", "session": "RUN_ID", "prompt": "Also check cancellation and report any uncovered races."}
+```
+
+After it finishes, use `run` to resume it:
 
 ```json
 {"action": "run", "session": "RUN_ID", "prompt": "Recheck the highest-severity finding and report the evidence."}

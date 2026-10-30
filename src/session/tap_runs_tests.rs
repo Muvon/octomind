@@ -41,6 +41,79 @@ fn id_format_is_stable() {
 	assert_eq!(id.len(), "tap-developer-general-".len() + 6);
 }
 
+#[tokio::test]
+async fn sent_prompts_are_bounded_ordered_and_closed_atomically() {
+	let parent = "tap-prompt-queue".to_string();
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		let (job, _cancel) = test_job("run", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
+		register_job(job);
+		let mut input = TapRunInput {
+			id: "run",
+			prompts: open_prompt_channel("run").unwrap(),
+		};
+		for index in 0..MAX_PENDING_PROMPTS {
+			send_prompt("run", index.to_string()).unwrap();
+		}
+		assert!(send_prompt("run", "overflow".into())
+			.unwrap_err()
+			.to_string()
+			.contains("queued prompts"));
+		for index in 0..MAX_PENDING_PROMPTS {
+			assert_eq!(take_prompt_or_close(&mut input).unwrap(), Some(index.to_string()));
+		}
+		// Emptying the queue alone must not prevent sending during the next turn.
+		send_prompt("run", "last".into()).unwrap();
+		assert_eq!(take_prompt_or_close(&mut input).unwrap().as_deref(), Some("last"));
+		assert!(take_prompt_or_close(&mut input).unwrap().is_none());
+		assert!(send_prompt("run", "too late".into())
+			.unwrap_err()
+			.to_string()
+			.contains("finishing"));
+		clear_for_session(&parent);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn sent_prompts_require_a_running_owned_specialist() {
+	let parent = "tap-prompt-owner".to_string();
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		for status in [TapJobStatus::Done, TapJobStatus::Failed, TapJobStatus::Cancelled] {
+			let id = status.as_str();
+			let (job, _cancel) = test_job(id, "developer:general", UNIX_EPOCH, status);
+			register_job(job);
+			assert!(send_prompt(id, "hello".into())
+				.unwrap_err()
+				.to_string()
+				.contains("use run to resume"));
+		}
+		let (job, _cancel) = test_job("workflow", "workflow:digest", UNIX_EPOCH, TapJobStatus::Running);
+		register_job(job);
+		assert!(send_prompt("workflow", "hello".into())
+			.unwrap_err()
+			.to_string()
+			.contains("does not accept prompts"));
+		let (job, _cancel) = test_job("active", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
+		register_job(job);
+		let mut rx = open_prompt_channel("active").unwrap();
+		crate::session::context::with_session_id("other-parent".to_string(), async {
+			assert!(send_prompt("active", "wrong owner".into())
+				.unwrap_err()
+				.to_string()
+				.contains("in this session"));
+		})
+		.await;
+		assert!(rx.try_recv().is_err());
+		send_prompt("active", "owned".into()).unwrap();
+		assert_eq!(rx.recv().await.as_deref(), Some("owned"));
+		clear_for_session(&parent);
+		assert!(rx.recv().await.is_none());
+	})
+	.await;
+}
+
 #[test]
 fn status_strings_are_stable() {
 	assert_eq!(TapJobStatus::Running.as_str(), "running");

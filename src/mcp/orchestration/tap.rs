@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `tap` core tool — run, list, stop, discover agents, and request runtime capability activation from configured taps.
+//! `tap` core tool — run, message, list, stop, discover agents, and activate capabilities from configured taps.
 //!
-//! Exposes five actions over a single tool surface:
+//! Exposes actions over a single tool surface:
 //!
 //! - `run`      — launch a fresh tap-tag (e.g. `developer:general`) or resume
 //!   an existing run by `session` id. `prompt` is required.
@@ -23,6 +23,7 @@
 //! - `list`     — show every tap-run in the current session with id, tag,
 //!   status, and start time.
 //! - `stop`     — cancel a running tap-run by id (sends the cancel watch).
+//! - `send`     — queue a user prompt for a running specialist's next turn.
 //! - `discover` — semantic match a free-text intent against installed tap
 //!   agents' `# Title:` / `# Description:` header lines.
 //!   Same matcher pipeline as `capability discover`.
@@ -72,6 +73,7 @@ Actions:
 - `run`        — launch a role in the background. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
+- `send`       — queue a user message for a running specialist's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
 - `capability` — trigger skill/capability auto-activation. Required: `prompt`.
 - `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. With `name` but no `input`: nothing runs; returns the workflow definition (its steps and where `{{input}}` lands) so you can compose the input, then call again with `input`. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
@@ -80,7 +82,7 @@ Actions:
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "discover", "capability", "workflow"],
+					"enum": ["run", "list", "stop", "send", "discover", "capability", "workflow"],
 					"description": "Action to perform"
 				},
 				"role": {
@@ -89,11 +91,11 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
+					"description": "Prompt for run or send, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
 				},
 				"session": {
 					"type": "string",
-					"description": "Run id (e.g. 'tap-developer-general-a3f1c2'). Required for stop. For run, supply this to resume an existing run instead of starting fresh."
+					"description": "Run id (e.g. 'tap-developer-general-a3f1c2'). Required for stop or send. For run, supply this to resume an existing run instead of starting fresh."
 				},
 				"workdir": {
 					"type": "string",
@@ -136,13 +138,14 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		"list" => handle_list(call).await,
 		"run" => handle_run(call, config).await,
 		"stop" => handle_stop(call).await,
+		"send" => handle_send(call),
 		"discover" => handle_discover(call).await,
 		"capability" => handle_capability(call, config).await,
 		"workflow" => handle_workflow(call).await,
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, discover, capability, or workflow."),
+			format!("Unknown action '{other}'. Use run, list, stop, send, discover, capability, or workflow."),
 		)),
 	}
 }
@@ -481,6 +484,27 @@ async fn handle_capability(call: &McpToolCall, config: &Config) -> Result<McpToo
 	))
 }
 
+fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
+	let error = |message: String| McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), message);
+	let session = match call.parameters.get("session") {
+		Some(serde_json::Value::String(session)) if !session.trim().is_empty() => session.trim(),
+		_ => return Ok(error("session: non-empty string required".into())),
+	};
+	let prompt = match call.parameters.get("prompt") {
+		Some(serde_json::Value::String(prompt)) if !prompt.trim().is_empty() => prompt.clone(),
+		_ => return Ok(error("prompt: non-empty string required".into())),
+	};
+	if let Err(failure) = tap_runs::send_prompt(session, prompt) {
+		return Ok(error(failure.to_string()));
+	}
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		json!({"id": session, "message": "Prompt queued for the running specialist's next available turn."})
+			.to_string(),
+	))
+}
+
 async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResult> {
 	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
@@ -584,6 +608,20 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	// every subsequent turn against the same tap-run id.
 	let acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
 	let workdir_path = std::path::PathBuf::from(&workdir);
+	let prompts = match tap_runs::open_prompt_channel(&id) {
+		Ok(prompts) => prompts,
+		Err(error) => {
+			if let Err(finish_error) = tap_runs::finish_run(&id, &status, TapJobStatus::Failed, Some(error.to_string()))
+			{
+				crate::log_error!("Tap run {}: failed to publish terminal status: {}", id, finish_error);
+			}
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				error.to_string(),
+			));
+		}
+	};
 
 	let id_owned = id.clone();
 	let role_owned = role.clone();
@@ -598,7 +636,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				&prompt,
 				&workdir_path,
 				cancel_rx,
-				Some(&id_owned),
+				Some(tap_runs::TapRunInput { id: &id_owned, prompts }),
 				true,
 			)
 			.await;

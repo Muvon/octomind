@@ -716,9 +716,10 @@ pub async fn run_acp_command(
 	task: &str,
 	workdir: &std::path::Path,
 	mut cancel_rx: watch::Receiver<bool>,
-	tap_run_id: Option<&str>,
+	mut tap_input: Option<crate::session::tap_runs::TapRunInput<'_>>,
 	handback: bool,
 ) -> Result<String> {
+	let tap_run_id = tap_input.as_ref().map(|input| input.id);
 	let websocket_tap = tap_run_id.is_some() && crate::session::tap_runs::with_run_events(|_, _| Ok(()))?.is_some();
 	// Reported on drop so every exit path — success, prompt error, cancellation,
 	// a child that dies mid-stream — lands in the parent's tally exactly once.
@@ -806,8 +807,8 @@ pub async fn run_acp_command(
 	};
 	let session_id = session_id.to_string();
 
-	// 3. session/prompt — collect the initial response, then close stdin and
-	// keep consuming updates until the ACP child has drained finite background work.
+	// Tap input stays open for queued prompts and background work. Other callers
+	// close stdin after the prompt and collect the child's remaining updates.
 	write_acp_request(
 		stdin.as_mut().expect("child stdin is open during prompt"),
 		json!({
@@ -840,6 +841,9 @@ pub async fn run_acp_command(
 	// with status `done` even when the API call inside the subprocess failed.
 	let mut prompt_error: Option<Value> = None;
 	let mut prompt_response_received = false;
+	let mut prompt_id = 3;
+	let mut prompt_in_flight = true;
+	let mut next_prompt: Option<String> = None;
 	let mut pending_work = false;
 	let mut shutdown_deadline: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
 	// Last cost the child reported, so repeated cumulative notifications bank
@@ -858,9 +862,38 @@ pub async fn run_acp_command(
 			terminate_acp_child(&mut child).await;
 			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
+		if let Some(prompt) = next_prompt.take() {
+			prompt_id += 1;
+			write_acp_request(
+				stdin.as_mut().expect("queued prompts keep child stdin open"),
+				json!({"jsonrpc": "2.0", "id": prompt_id, "method": "session/prompt", "params": acp_prompt_params(&session_id, &prompt)}),
+			).await?;
+			prompt_in_flight = true;
+			if !output.is_empty() && !output.ends_with("\n\n") {
+				output.push_str("\n\n");
+			}
+			if let Some(run_id) = tap_run_id.filter(|_| websocket_tap) {
+				crate::session::tap_runs::with_run_events(|events, parent| {
+					events.emit(
+						parent,
+						run_id,
+						crate::websocket::protocol::RunEvent::Prompt { content: prompt },
+					)
+				})?;
+			}
+		}
 
 		// Use tokio::select to handle both cancellation and line reading
 		let line = tokio::select! {
+			prompt = async { tap_input.as_mut().expect("tap input is enabled").prompts.recv().await },
+				if tap_input.is_some() && !prompt_in_flight && stdin.is_some() => {
+				let Some(prompt) = prompt else {
+					terminate_acp_child(&mut child).await;
+					return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+				};
+				next_prompt = Some(prompt);
+				continue;
+			}
 			line = lines.next_line() => {
 				match line? {
 					Some(l) => l,
@@ -946,17 +979,25 @@ pub async fn run_acp_command(
 			}
 		}
 
-		// The first prompt response ends client input, not necessarily the child
-		// session: after EOF the ACP server drains jobs/inbox turns before closing
-		// stdout. Keep reading those updates into the same tap handback.
-		if msg.get("id").and_then(|i| i.as_u64()) == Some(3) {
+		if msg.get("id").and_then(|i| i.as_u64()) == Some(prompt_id) {
 			prompt_response_received = true;
+			prompt_in_flight = false;
 			if let Some(err) = msg.get("error") {
 				prompt_error = Some(err.clone());
 			}
-			drop(stdin.take());
-			if !pending_work {
-				shutdown_deadline = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(5))));
+		}
+		if !prompt_in_flight && stdin.is_some() {
+			if let Some(input) = tap_input.as_mut() {
+				if pending_work {
+					continue;
+				}
+				next_prompt = crate::session::tap_runs::take_prompt_or_close(input)?;
+			}
+			if next_prompt.is_none() {
+				drop(stdin.take());
+				if !pending_work {
+					shutdown_deadline = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(5))));
+				}
 			}
 		}
 	}
@@ -971,7 +1012,7 @@ pub async fn run_acp_command(
 		terminate_acp_child(&mut child).await;
 	}
 
-	if !prompt_response_received {
+	if prompt_in_flight {
 		let partial = output.trim();
 		if partial.is_empty() {
 			return Err(anyhow::anyhow!(

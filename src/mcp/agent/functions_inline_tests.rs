@@ -60,6 +60,173 @@ async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Re
 }
 
 #[tokio::test]
+async fn tap_send_uses_sequential_user_prompts_and_keeps_background_input_open() {
+	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState, TapRunInput};
+	use std::sync::RwLock;
+	for background in [false, true] {
+		let parent = format!("tap-send-acp-{background}");
+		crate::session::context::with_session_id(parent.clone(), async {
+			tap_runs::init_for_session();
+			let (cancel_tx, cancel_rx) = watch::channel(false);
+			tap_runs::register_job(TapJob {
+				id: "run".into(), role: "developer:general".into(), workdir: ".".into(),
+				started_at: std::time::SystemTime::now(), status: Arc::new(RwLock::new(TapJobStatus::Running)),
+				error: None, cancel_tx, live: Arc::new(RwLock::new(TapLiveState::default())),
+			});
+			let prompts = tap_runs::open_prompt_channel("run").unwrap();
+			let (tx, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+			crate::mcp::process::set_notification_sender(Some(parent.clone()), tx);
+			let dir = tempfile::tempdir().unwrap();
+			let requests = dir.path().join("requests.jsonl");
+			let script = format!(r#"
+IFS= read -r initialize
+echo '{{"jsonrpc":"2.0","id":1,"result":{{}}}}'
+IFS= read -r new_session
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"child"}}}}'
+IFS= read -r initial
+echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","_meta":{{"octomind.pending_work":{background}}}}}}}'
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"background-ready"}}}}}}}}'
+IFS= read -r followup || exit 1
+printf '%s\n' "$followup" >> "$1"
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"first reply"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":4,"result":{{"stopReason":"end_turn","_meta":{{"octomind.pending_work":false}}}}}}'
+IFS= read -r followup || exit 1
+printf '%s\n' "$followup" >> "$1"
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"second reply"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":5,"result":{{"stopReason":"end_turn"}}}}'
+cat >/dev/null
+"#);
+			let send = || {
+				tap_runs::send_prompt("run", "first follow-up".into()).unwrap();
+				tap_runs::send_prompt("run", "second follow-up".into()).unwrap();
+			};
+			if !background { send(); }
+			let args = ["-c", &script, "tap-send-test", requests.to_str().unwrap()];
+			let driver = run_acp_command("sh", &args, "initial", dir.path(), cancel_rx, Some(TapRunInput { id: "run", prompts }), false);
+			let send_later = async {
+				if background {
+					loop {
+						if let Some(crate::websocket::ServerMessage::Assistant(message)) = notifications.recv().await {
+							if message.content == "background-ready" { break; }
+						}
+					}
+					send();
+				}
+			};
+			let (output, ()) = tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(driver, send_later) }).await.unwrap();
+			let output = output.unwrap();
+			assert!(output.contains("first reply") && output.contains("second reply"), "{output}");
+			let recorded = std::fs::read_to_string(requests).unwrap();
+			let recorded: Vec<Value> = recorded.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+			assert_eq!(recorded.len(), 2);
+			for (index, prompt) in ["first follow-up", "second follow-up"].into_iter().enumerate() {
+				assert_eq!(recorded[index]["method"], "session/prompt");
+				assert_eq!(recorded[index]["params"], acp_prompt_params("child", prompt));
+				assert_eq!(recorded[index]["id"], index + 4);
+			}
+			assert!(tap_runs::send_prompt("run", "late".into()).is_err());
+			crate::session::context::cleanup_session(&parent);
+		}).await;
+	}
+}
+
+#[tokio::test]
+async fn tap_followup_error_or_early_eof_fails_the_run() {
+	for failure in [
+		r#"echo '{"jsonrpc":"2.0","id":4,"error":{"code":-32603,"message":"followup failed"}}'; cat >/dev/null"#,
+		"exit 0",
+	] {
+		let (tx, prompts) = tokio::sync::mpsc::channel(1);
+		tx.try_send("follow-up".to_string()).unwrap();
+		let script = format!(
+			"{HANDSHAKE}\nread -r initialize\nread -r new_session\nread -r initial\necho '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{\"stopReason\":\"end_turn\"}}}}'\nread -r followup\n{failure}"
+		);
+		let (_cancel, cancel_rx) = watch::channel(false);
+		let result = tokio::time::timeout(
+			Duration::from_secs(10),
+			run_acp_command(
+				"sh",
+				&["-c", &script],
+				"initial",
+				&std::env::temp_dir(),
+				cancel_rx,
+				Some(crate::session::tap_runs::TapRunInput {
+					id: "followup-failure",
+					prompts,
+				}),
+				false,
+			),
+		)
+		.await
+		.unwrap();
+		let error = result.unwrap_err().to_string();
+		assert!(
+			error.contains("followup failed") || error.contains("closed before the session/prompt response"),
+			"{error}"
+		);
+	}
+}
+
+#[tokio::test]
+async fn tap_closes_input_when_background_work_reports_idle() {
+	let (_tx, prompts) = tokio::sync::mpsc::channel(1);
+	let script = format!(
+		"{HANDSHAKE}\nread -r initialize\nread -r new_session\nread -r initial\necho '{}'\necho '{}'{WAIT_STDIN_EOF}",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"octomind.pending_work":true}}}"#,
+		r#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.pending_work":false}}}"#,
+	);
+	let (_cancel, cancel_rx) = watch::channel(false);
+	let result = tokio::time::timeout(
+		Duration::from_secs(10),
+		run_acp_command(
+			"sh",
+			&["-c", &script],
+			"initial",
+			&std::env::temp_dir(),
+			cancel_rx,
+			Some(crate::session::tap_runs::TapRunInput {
+				id: "background-idle",
+				prompts,
+			}),
+			false,
+		),
+	)
+	.await
+	.unwrap()
+	.unwrap();
+	assert_eq!(result, "hello");
+}
+
+#[tokio::test]
+async fn dropping_tap_input_owner_cancels_pending_background_work() {
+	let (tx, prompts) = tokio::sync::mpsc::channel(1);
+	drop(tx);
+	let script = format!(
+		"{HANDSHAKE}\nread -r initialize\nread -r new_session\nread -r initial\necho '{}'{WAIT_STDIN_EOF}",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"octomind.pending_work":true}}}"#,
+	);
+	let (_cancel, cancel_rx) = watch::channel(false);
+	let result = tokio::time::timeout(
+		Duration::from_secs(10),
+		run_acp_command(
+			"sh",
+			&["-c", &script],
+			"initial",
+			&std::env::temp_dir(),
+			cancel_rx,
+			Some(crate::session::tap_runs::TapRunInput {
+				id: "owner-gone",
+				prompts,
+			}),
+			false,
+		),
+	)
+	.await
+	.unwrap();
+	assert!(crate::session::cancellation::is_cancelled(&result.unwrap_err()));
+}
+
+#[tokio::test]
 async fn authorizer_passes_context_without_vetoing_an_unacknowledged_peer() {
 	let sid = "authorizer-acp-parent".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
@@ -121,7 +288,10 @@ async fn streams_live_updates_into_tap_registry() {
 				"task",
 				&std::env::temp_dir(),
 				cancel_rx,
-				Some("tap-test-live-000001"),
+				Some(tap_runs::TapRunInput {
+					id: "tap-test-live-000001",
+					prompts: tap_runs::open_prompt_channel("tap-test-live-000001").unwrap(),
+				}),
 				false,
 			)
 			.await
@@ -148,7 +318,10 @@ async fn streams_live_updates_into_tap_registry() {
 				"task",
 				&std::env::temp_dir(),
 				cancel_tx.subscribe(),
-				Some("tap-test-live-000001"),
+				Some(tap_runs::TapRunInput {
+					id: "tap-test-live-000001",
+					prompts: tap_runs::open_prompt_channel("tap-test-live-000001").unwrap(),
+				}),
 				false,
 			)
 			.await

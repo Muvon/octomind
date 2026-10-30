@@ -608,7 +608,12 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	// every subsequent turn against the same tap-run id.
 	let acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
 	let workdir_path = std::path::PathBuf::from(&workdir);
-	let prompts = match tap_runs::open_prompt_channel(&id) {
+	let session_id = crate::session::context::current_session_id();
+	let prompts = match session_id
+		.as_ref()
+		.map(|_| tap_runs::open_prompt_channel(&id))
+		.transpose()
+	{
 		Ok(prompts) => prompts,
 		Err(error) => {
 			if let Err(finish_error) = tap_runs::finish_run(&id, &status, TapJobStatus::Failed, Some(error.to_string()))
@@ -626,7 +631,6 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	let id_owned = id.clone();
 	let role_owned = role.clone();
 	let status_bg = Arc::clone(&status);
-	let session_id = crate::session::context::current_session_id();
 	tokio::spawn(async move {
 		let run = async move {
 			let arg_refs: Vec<&str> = acp_args.iter().map(|s| s.as_str()).collect();
@@ -636,7 +640,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				&prompt,
 				&workdir_path,
 				cancel_rx,
-				Some(tap_runs::TapRunInput { id: &id_owned, prompts }),
+				prompts.map(|prompts| tap_runs::TapRunInput { id: &id_owned, prompts }),
 				true,
 			)
 			.await;

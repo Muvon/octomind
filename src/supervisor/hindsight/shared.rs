@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{fingerprint, Cached};
 use crate::local_inference::{election_lock, publish, read_line, write_line};
 use anyhow::{bail, Context, Result};
 use octolib::hindsight::{trace::Event, Hindsight, Scores, Session};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions, TryLockError};
+use std::hash::{Hash, Hasher};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -143,7 +143,7 @@ impl Client {
 	}
 }
 
-fn worker_command(spec: &str, _path: &Path) -> Result<Command> {
+fn worker_command(spec: &str) -> Result<Command> {
 	let mut command = Command::new(std::env::current_exe()?);
 	command.args(["hindsight-worker", "--model", spec]);
 	#[cfg(unix)]
@@ -183,7 +183,7 @@ async fn join_at(path: &Path, spec: &str) -> Result<Client> {
 		}
 		Err(TryLockError::Error(error)) => return Err(error.into()),
 	}
-	let mut command = worker_command(spec, path)?;
+	let mut command = worker_command(spec)?;
 	command
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
@@ -250,6 +250,22 @@ async fn score_at(path: &Path, spec: &str, session: &str, events: Vec<Event>) ->
 		Response::Scores { scores, events } => Ok((scores, events)),
 		_ => bail!("Hindsight service returned the wrong response"),
 	}
+}
+
+/// The encoded trace of each session seen by this process, keyed by session
+/// name, with the message prefix it was built from.
+struct Cached {
+	session: Session,
+	consumed: usize,
+	fingerprint: u64,
+}
+
+fn fingerprint(events: &[Event]) -> anyhow::Result<u64> {
+	let mut hasher = std::hash::DefaultHasher::new();
+	for event in events {
+		serde_json::to_string(event)?.hash(&mut hasher);
+	}
+	Ok(hasher.finish())
 }
 
 struct Worker {

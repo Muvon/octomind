@@ -35,6 +35,11 @@ pub enum ToolExecutionContext<'a> {
 	},
 	/// Layer/agent context — tool access controlled by the ACP session's role config
 	Layer { session_name: String, layer_name: String },
+	/// Deferred tool execution retains its launched tap identity before output is capped.
+	Scheduled {
+		session_name: String,
+		tap_run: Option<String>,
+	},
 }
 
 impl ToolExecutionContext<'_> {
@@ -42,7 +47,9 @@ impl ToolExecutionContext<'_> {
 	pub fn session_name(&self) -> &str {
 		match self {
 			ToolExecutionContext::MainSession { chat_session, .. } => &chat_session.session.info.name,
-			ToolExecutionContext::Layer { session_name, .. } => session_name,
+			ToolExecutionContext::Layer { session_name, .. } | ToolExecutionContext::Scheduled { session_name, .. } => {
+				session_name
+			}
 		}
 	}
 
@@ -51,6 +58,7 @@ impl ToolExecutionContext<'_> {
 		match self {
 			ToolExecutionContext::MainSession { .. } => None, // No suffix for main session
 			ToolExecutionContext::Layer { layer_name, .. } => Some(layer_name.clone()),
+			ToolExecutionContext::Scheduled { .. } => Some("schedule".to_string()),
 		}
 	}
 
@@ -64,7 +72,7 @@ impl ToolExecutionContext<'_> {
 	pub fn error_tracker(&mut self) -> Option<&mut crate::session::chat::tool_error_tracker::ToolErrorTracker> {
 		match self {
 			ToolExecutionContext::MainSession { tool_processor, .. } => Some(&mut tool_processor.error_tracker),
-			ToolExecutionContext::Layer { .. } => None, // Layers don't have error tracking yet
+			ToolExecutionContext::Layer { .. } | ToolExecutionContext::Scheduled { .. } => None,
 		}
 	}
 
@@ -74,6 +82,22 @@ impl ToolExecutionContext<'_> {
 		crate::telemetry::record_tool(tool_name);
 		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
 			chat_session.session.info.tool_calls += 1;
+		}
+	}
+
+	fn capture_tap_run(&mut self, call: &crate::mcp::McpToolCall, result: &crate::mcp::McpToolResult) {
+		let Self::Scheduled { tap_run, .. } = self else {
+			return;
+		};
+		if call.tool_name == "tap"
+			&& !result.is_error()
+			&& matches!(
+				call.parameters.get("action").and_then(|value| value.as_str()),
+				Some("run" | "workflow")
+			) {
+			*tap_run = serde_json::from_str::<serde_json::Value>(&result.extract_content())
+				.ok()
+				.and_then(|value| value.get("id").and_then(|id| id.as_str()).map(str::to_owned));
 		}
 	}
 }
@@ -408,7 +432,8 @@ async fn execute_tools_with_context(
 		} else {
 			previous_write = Some(finished);
 		}
-		let layer = matches!(context, ToolExecutionContext::Layer { .. });
+		let layer = !matches!(context, ToolExecutionContext::MainSession { .. });
+		let workdir_override = crate::mcp::workdir::working_directory_override();
 		let task = tokio::spawn(crate::supervisor::accounting::inherit(async move {
 			let _release = release;
 			for mut predecessor in predecessors {
@@ -421,7 +446,7 @@ async fn execute_tools_with_context(
 				));
 			}
 			// Queueing precedes the executor's timer and cancellation check.
-			crate::session::context::with_session_id(session_id, async move {
+			let execution = crate::session::context::with_session_id(session_id, async move {
 				let mut call_with_id = tool_call_clone;
 				call_with_id.tool_id = tool_id_for_task;
 				if layer {
@@ -429,8 +454,12 @@ async fn execute_tools_with_context(
 				} else {
 					crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
 				}
-			})
-			.await
+			});
+			if let Some(workdir) = workdir_override {
+				crate::mcp::workdir::with_working_directory(workdir, execution).await
+			} else {
+				execution.await
+			}
 		}));
 
 		tool_tasks.push((tool_name, task, original_tool_id, tool_index));
@@ -520,6 +549,10 @@ async fn execute_tools_with_context(
 			Ok(result) => {
 				match result {
 					Ok((res, tool_time_ms)) => {
+						// Lifecycle identity belongs to the raw result, before deduplication or output caps.
+						if let Some(call) = stored_tool_call.as_ref() {
+							context.capture_tap_run(call, &res);
+						}
 						if block_messages.get(tool_index - 1).is_some_and(Option::is_none) {
 							if let Some(call) = stored_tool_call.as_ref() {
 								crate::supervisor::authorizer::record_completed(&session_id_for_guardrails, call, &res);

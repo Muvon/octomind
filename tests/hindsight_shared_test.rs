@@ -162,6 +162,30 @@ async fn exercise(fixture: &Path) -> Result<()> {
 	let (path, second) = endpoint()?;
 	anyhow::ensure!(second["token"] != first["token"], "stale owner was reused");
 	stop_owner(&path, &second).await?;
+	// Exercise the real CLI dispatch, not only the fixture's worker entry point.
+	let mut worker = tokio::process::Command::new(env!("CARGO_BIN_EXE_octomind"))
+		.args(["hindsight-worker", "--model", spec])
+		.stdout(std::process::Stdio::piped())
+		.kill_on_drop(true)
+		.spawn()?;
+	let mut ready = BufReader::new(worker.stdout.take().context("missing worker stdout")?);
+	let mut line = String::new();
+	anyhow::ensure!(
+		ready.read_line(&mut line).await? > 0,
+		"CLI worker exited before readiness"
+	);
+	let startup: std::result::Result<(), String> = serde_json::from_str(&line)?;
+	startup.map_err(anyhow::Error::msg)?;
+	drop(ready);
+	let (path, cli_owner) = endpoint()?;
+	anyhow::ensure!(
+		cli_owner["pid"] == json!(worker.id().context("missing CLI worker pid")?),
+		"CLI dispatch used another owner"
+	);
+	octomind::supervisor::hindsight::shared::score(spec, "cli-worker", events()).await?;
+	stop_owner(&path, &cli_owner).await?;
+	anyhow::ensure!(worker.wait().await?.success(), "CLI worker failed to shut down");
+
 	println!("shared Hindsight: process ownership, client exit, input validation, and restart checks passed");
 	Ok(())
 }

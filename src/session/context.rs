@@ -1125,6 +1125,7 @@ pub fn clear_skill_capability_servers(session_id: &SessionId) {
 /// Clean up all session-scoped state when a session ends.
 /// Call this when a WebSocket connection closes or a session is destroyed.
 pub fn cleanup_session(session_id: &SessionId) {
+	crate::mcp::orchestration::schedule::execution::clear_for_session(session_id);
 	crate::mcp::orchestration::monitor::clear_for_session(session_id);
 	crate::mcp::elicitation::clear_session(session_id);
 	clear_notification_sender_for_session(session_id);
@@ -1170,6 +1171,7 @@ pub fn init_session_services(role: &str) {
 	bump_context_epoch();
 	crate::supervisor::authorizer::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
+	crate::mcp::orchestration::schedule::execution::init_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();
 	crate::session::tap_runs::init_for_session();
 	crate::session::guardrails::init_for_session();

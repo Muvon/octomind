@@ -704,10 +704,20 @@ impl OctomindAgent {
 				// Process phase: flush due schedules into inbox, then drain.
 				// Returns true to exit the monitor loop.
 				let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
-					crate::mcp::orchestration::flush_due_to_inbox();
-					// Idle-mode entries fire here too — ACP monitor runs only when nothing
-					// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
-					crate::mcp::orchestration::flush_idle_to_inbox();
+					let Some(schedule_role) = crate::session::context::get_session_role(&session_id) else {
+						return true;
+					};
+					let schedule_config = config.borrow().get_merged_config_for_role(&schedule_role);
+					crate::mcp::orchestration::flush_due_to_inbox(&schedule_config);
+					// Unlike messages, idle tool calls start immediately, so do not launch during a parent turn.
+					let lock = session_locks
+						.borrow_mut()
+						.entry(session_id.clone())
+						.or_default()
+						.clone();
+					if let Ok(_guard) = lock.try_lock() {
+						crate::mcp::orchestration::flush_idle_to_inbox(&schedule_config);
+					}
 
 					// Drain inbox while there are messages. Acquire the per-session
 					// exclusion lock before POPPING the message: graceful shutdown also
@@ -1324,7 +1334,7 @@ impl OctomindAgent {
 			// Flush any due schedule entries and process inbox messages that arrived
 			// before this user prompt (background agents, scheduled entries, skills).
 			{
-				crate::mcp::orchestration::flush_due_to_inbox();
+				crate::mcp::orchestration::flush_due_to_inbox(&config_for_role);
 				loop {
 					let batch = crate::session::inbox::drain_inbox_batch_before_user();
 					if batch.is_empty() {

@@ -1046,7 +1046,7 @@ async fn lock_for_client<'a>(
 /// told `pending_work` waits out its cap for a turn that never starts.
 async fn wake_inbox_monitor(session_id: String) {
 	crate::session::context::with_session_id(session_id, async {
-		if crate::session::inbox::has_inbox_messages() {
+		if crate::session::inbox::has_inbox_messages() || crate::mcp::orchestration::has_pending_idle_schedules() {
 			if let Some(notify) = crate::session::inbox::get_inbox_notify() {
 				notify.notify_one();
 			}
@@ -1106,8 +1106,22 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 			// Process phase: flush due schedules into inbox, then drain.
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::mcp::orchestration::flush_due_to_inbox();
-				crate::mcp::orchestration::flush_idle_to_inbox();
+				let Some(schedule_role) = crate::session::context::get_session_role(&session_id) else {
+					return true;
+				};
+				let schedule_config = role_config(
+					&ctx.server.config,
+					&ctx.server.role_configs,
+					&session_id,
+					&schedule_role,
+				)
+				.await;
+				crate::mcp::orchestration::flush_due_to_inbox(&schedule_config);
+				// Unlike messages, idle tool calls start immediately, so do not launch during a parent turn.
+				let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
+				if let Some(_guard) = BackgroundTurnGuard::try_lock(&ctx.server, &session_id, &lock) {
+					crate::mcp::orchestration::flush_idle_to_inbox(&schedule_config);
+				}
 
 				// Drain inbox while messages remain. Take the SAME per-session lock
 				// process_client_message uses, held across take→process→reinsert:
@@ -2091,8 +2105,8 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	let mut drain_stopped = false;
 	{
 		// Flush due schedule entries first.
-		crate::mcp::orchestration::flush_due_to_inbox();
-		crate::mcp::orchestration::flush_idle_to_inbox();
+		crate::mcp::orchestration::flush_due_to_inbox(&config_for_role);
+		crate::mcp::orchestration::flush_idle_to_inbox(&config_for_role);
 		loop {
 			let batch = crate::session::inbox::drain_inbox_batch_before_user();
 			if batch.is_empty() {

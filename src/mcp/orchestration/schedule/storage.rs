@@ -31,6 +31,27 @@ pub enum TriggerMode {
 	Idle,
 }
 
+/// A direct tool invocation captured when a task is scheduled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledToolCall {
+	pub name: String,
+	pub arguments: serde_json::Value,
+}
+
+/// What a scheduled task executes when triggered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ScheduleAction {
+	Message {
+		message: String,
+	},
+	ToolCall {
+		tool_call: ScheduledToolCall,
+		workdir: std::path::PathBuf,
+	},
+}
+
 /// A single scheduled task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleEntry {
@@ -38,8 +59,9 @@ pub struct ScheduleEntry {
 	pub id: String,
 	/// Human-readable description of what this task is about.
 	pub description: String,
-	/// Exact text that will be injected verbatim as a user message when triggered.
-	pub message: String,
+	/// Message or direct tool invocation to execute when triggered.
+	#[serde(flatten)]
+	pub action: ScheduleAction,
 	/// When to fire this entry. Meaningless when `trigger_mode == Idle`.
 	pub trigger_at: DateTime<Local>,
 	/// When this entry was created.
@@ -53,12 +75,17 @@ pub struct ScheduleEntry {
 }
 
 impl ScheduleEntry {
-	pub fn new(description: String, message: String, trigger_at: DateTime<Local>, interval_secs: Option<i64>) -> Self {
+	pub fn new(
+		description: String,
+		action: ScheduleAction,
+		trigger_at: DateTime<Local>,
+		interval_secs: Option<i64>,
+	) -> Self {
 		let id = Uuid::new_v4().to_string()[..8].to_string();
 		Self {
 			id,
 			description,
-			message,
+			action,
 			trigger_at,
 			created_at: Local::now(),
 			interval_secs,
@@ -67,12 +94,12 @@ impl ScheduleEntry {
 	}
 
 	/// Build an idle-mode entry. `repeating = true` fires on every idle until removed.
-	pub fn new_idle(description: String, message: String, repeating: bool) -> Self {
+	pub fn new_idle(description: String, action: ScheduleAction, repeating: bool) -> Self {
 		let id = Uuid::new_v4().to_string()[..8].to_string();
 		Self {
 			id,
 			description,
-			message,
+			action,
 			trigger_at: Local::now(),
 			created_at: Local::now(),
 			interval_secs: if repeating { Some(0) } else { None },
@@ -107,7 +134,7 @@ impl ScheduleEntry {
 		Self {
 			id,
 			description: self.description.clone(),
-			message: self.message.clone(),
+			action: self.action.clone(),
 			trigger_at,
 			created_at: Local::now(),
 			interval_secs: self.interval_secs,
@@ -173,7 +200,7 @@ impl ScheduleStore {
 		&mut self,
 		id: &str,
 		description: Option<String>,
-		message: Option<String>,
+		action: Option<ScheduleAction>,
 		trigger_at: Option<DateTime<Local>>,
 		interval_secs: Option<Option<i64>>,
 	) -> bool {
@@ -184,8 +211,8 @@ impl ScheduleStore {
 				if let Some(d) = description {
 					e.description = d;
 				}
-				if let Some(m) = message {
-					e.message = m;
+				if let Some(a) = action {
+					e.action = a;
 				}
 				if let Some(t) = trigger_at {
 					e.trigger_at = t;

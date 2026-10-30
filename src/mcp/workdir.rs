@@ -40,6 +40,19 @@ thread_local! {
 	static WORKDIR: std::cell::RefCell<Option<WorkDir>> = const { std::cell::RefCell::new(None) };
 }
 
+tokio::task_local! {
+	static WORKING_DIRECTORY_OVERRIDE: PathBuf;
+}
+
+pub(crate) fn working_directory_override() -> Option<PathBuf> {
+	WORKING_DIRECTORY_OVERRIDE.try_with(Clone::clone).ok()
+}
+
+/// A deferred call keeps its captured directory without changing the parent session's directory.
+pub(crate) async fn with_working_directory<F: std::future::Future>(path: PathBuf, future: F) -> F::Output {
+	WORKING_DIRECTORY_OVERRIDE.scope(path, future).await
+}
+
 /// Set the session working directory. Call at every session boundary.
 /// Resets both the active directory and the reset anchor to `path`.
 ///
@@ -85,6 +98,9 @@ pub fn set_thread_working_directory(path: PathBuf) {
 /// For CLI mode, returns from thread-local storage.
 /// Falls back to current_dir() if neither is set.
 pub fn get_thread_working_directory() -> PathBuf {
+	if let Some(path) = working_directory_override() {
+		return path;
+	}
 	// Try session-scoped first (WebSocket mode)
 	if let Some(session_id) = crate::session::context::current_session_id() {
 		if let Some(path) = crate::session::context::get_current_workdir(&session_id) {

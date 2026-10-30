@@ -54,7 +54,8 @@ pub async fn run_hooks(
 		return;
 	}
 
-	let workdir = crate::session::context::get_current_workdir(session_id)
+	let workdir = crate::mcp::workdir::working_directory_override()
+		.or_else(|| crate::session::context::get_current_workdir(session_id))
 		.or_else(|| std::env::current_dir().ok())
 		.unwrap_or_default();
 

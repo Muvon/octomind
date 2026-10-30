@@ -18,7 +18,7 @@ use std::path::Path;
 
 pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
 	// Get mode-specific configuration
-	let (_, mcp_config, _, _, system_prompt) = config.get_role_config(mode);
+	let (_, _, _, _, system_prompt) = config.get_role_config(mode);
 
 	// For developer role, process placeholders to add project context
 	let mut prompt = crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir).await;
@@ -26,15 +26,10 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 	// Tool names and descriptions reach the model once, as the request's tool
 	// definitions (see providers.rs); listing them here again doubled that
 	// text on every turn.
-	let has_tap_tool = if mcp_config.server_refs.is_empty() {
-		false
-	} else {
-		let config_for_role = config.get_merged_config_for_role(mode);
-		crate::mcp::get_available_functions(&config_for_role)
-			.await
-			.iter()
-			.any(|function| function.name == "tap")
-	};
+	let config_for_role = config.get_merged_config_for_role(mode);
+	let functions = crate::mcp::get_available_functions(&config_for_role).await;
+	let has_tap_tool = functions.iter().any(|function| function.name == "tap");
+	let has_schedule_tool = functions.iter().any(|function| function.name == "schedule");
 
 	prompt.push_str("\n\n<important>");
 
@@ -46,6 +41,26 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		A failed handoff → do not relaunch it unchanged: complete the task with the tools you have, or report the blocker.\n\
 		</delegation>",
 		);
+	}
+
+	if has_schedule_tool {
+		prompt.push_str(
+			"\n<scheduling>\n\
+			Use schedule(message=\"…\") for reminders or future work requiring your judgment. \
+			Use schedule(tool_call={\"name\":\"…\",\"arguments\":{…}}) for a known MCP operation to run directly later, without a model turn to interpret a reminder. \
+			For add, supply exactly one of message or tool_call, plus when for a clock time; omit when/every for next idle. \
+			Tools must be enabled at scheduling and firing; normal authorization and guardrails apply. Results/errors return to your inbox. \
+			Schedules are session-bound; removing one stops future firings, not work already launched. Give recurring work an explicit stop condition.\n",
+		);
+		if has_tap_tool {
+			prompt.push_str(
+				"For a specialist to start later, schedule the tap call itself, not a reminder to call tap: \
+				schedule(command=\"add\", when=\"in 30m\", tool_call={\"name\":\"tap\",\"arguments\":{\"action\":\"run\",\"role\":\"category:variant\",\"prompt\":\"complete self-contained brief\"}}). \
+				Discover the role before scheduling. Include session to resume a known run, or role for a fresh run. \
+				The specialist's reply arrives through the normal tap handback; do not poll it. Repeated firings of the same schedule do not overlap a still-running specialist.\n",
+			);
+		}
+		prompt.push_str("</scheduling>");
 	}
 
 	prompt.push_str(

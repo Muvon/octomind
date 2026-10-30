@@ -14,7 +14,9 @@
 
 //! Core schedule tool: global store, MCP handler, and session-loop helpers.
 
-use super::storage::{parse_duration_secs, parse_when, ScheduleEntry, ScheduleStore, TriggerMode};
+use super::storage::{
+	parse_duration_secs, parse_when, ScheduleAction, ScheduleEntry, ScheduleStore, ScheduledToolCall, TriggerMode,
+};
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -44,7 +46,7 @@ fn get_store() -> Arc<Mutex<ScheduleStore>> {
 
 /// Flush all due entries into the session inbox.  Call once per loop iteration
 /// so the inbox is the single source of truth for all injected messages.
-pub fn flush_due_to_inbox() {
+pub fn flush_due_to_inbox(config: &crate::config::Config) {
 	let store = get_store();
 	let mut mutated = false;
 	// NOTE: must NOT use `while let Some(entry) = store.lock().unwrap().pop_due()`.
@@ -66,10 +68,7 @@ pub fn flush_due_to_inbox() {
 				crate::session::context::notify_schedule_change(&sid);
 			}
 		}
-		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::Schedule { id: entry.id.clone() },
-			content: entry.message,
-		});
+		dispatch_entry(entry, config);
 	}
 	if mutated {
 		persist_schedule_snapshot();
@@ -81,7 +80,7 @@ pub fn flush_due_to_inbox() {
 /// main response loop having returned to the input-waiting state is implicit
 /// at the only call site.
 pub fn is_session_idle() -> bool {
-	if crate::session::tap_runs::has_running_jobs() {
+	if crate::session::tap_runs::has_running_jobs() || super::execution::has_running() {
 		return false;
 	}
 	if crate::session::shell_jobs::has_pending() {
@@ -96,7 +95,7 @@ pub fn is_session_idle() -> bool {
 /// Flush all idle-mode entries into the session inbox iff the session is
 /// idle (no running taps, no running background jobs). One-shot entries are
 /// consumed; repeating entries (`interval_secs = Some(_)`) are re-added.
-pub fn flush_idle_to_inbox() {
+pub fn flush_idle_to_inbox(config: &crate::config::Config) {
 	if !is_session_idle() {
 		return;
 	}
@@ -118,13 +117,22 @@ pub fn flush_idle_to_inbox() {
 			let next = entry.reschedule();
 			store.lock().unwrap().add(next);
 		}
-		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::Schedule { id: entry.id.clone() },
-			content: entry.message,
-		});
+		dispatch_entry(entry, config);
 	}
 	if mutated {
 		persist_schedule_snapshot();
+	}
+}
+
+fn dispatch_entry(entry: ScheduleEntry, config: &crate::config::Config) {
+	match &entry.action {
+		ScheduleAction::Message { message } => {
+			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::Schedule { id: entry.id.clone() },
+				content: message.clone(),
+			});
+		}
+		ScheduleAction::ToolCall { .. } => super::execution::dispatch(entry, config),
 	}
 }
 
@@ -216,7 +224,7 @@ pub fn restore_schedule_for_session(session_name: &str) {
 
 /// Returns true if there are any pending scheduled entries.
 pub fn has_pending_schedules() -> bool {
-	!get_store().lock().unwrap().is_empty()
+	!get_store().lock().unwrap().is_empty() || super::execution::has_running()
 }
 
 /// Returns a future that resolves when the next scheduled entry is due.
@@ -259,15 +267,19 @@ pub fn get_schedule_function() -> McpFunction {
 	McpFunction {
 		name: "schedule".to_string(),
 		annotations: None,
-		description: r#"Schedule a message to be automatically injected as a user message into the current session — once at a future time, when the session becomes idle, or repeatedly on an interval (a recurring loop). The session keeps running until all scheduled messages have fired.
+		description: r#"Schedule either a message to yourself or a direct MCP tool call in the current session — once at a future time, on next idle, or repeatedly. The session stays alive while schedules or their tool executions remain pending; this is session-bound scheduling, not system cron.
 
-One-shot entries fire once and are removed. Repeating entries (set via 'every') re-schedule automatically after each firing until explicitly removed — this is the loop mechanism: a periodic poll or status check ('every'='10m'), a heartbeat, or an autonomous keep-going loop ('every'='idle', fires each time the session settles). A repeating entry runs until removed, so give every loop a stop condition: the injected 'message' should check whether its goal is met and remove its own entry ('id' from list) when done, instead of looping forever.
+Choose exactly one payload when adding:
+- message: remind yourself or start a parent-agent turn when judgment or conversation context is needed.
+- tool_call: execute a known tool directly, without a parent-model turn to interpret a reminder. Supply {"name":"tool_name","arguments":{...}}. The tool must be available in this session both when scheduled and when fired; normal authorization and guardrails still apply. Results and errors arrive in the session inbox.
+
+One-shot entries fire once and are removed. Repeating entries (every) keep their ID until removed; give each loop an explicit stop condition. A tool execution never overlaps another execution of the same schedule; ticks while it is busy are skipped, not queued. Removing an entry cancels future firings, not work already launched. The working directory is captured when scheduling. Timers run when the session's scheduler is serviced, not as hard real-time deadlines.
 
 Commands:
-- add: schedule a new message ('message' required; 'when' optional only for idle entries — see below)
-- list: show all pending scheduled entries with IDs, trigger times, and countdown
-- remove: cancel a scheduled entry by 'id'
-- edit: update an existing entry by 'id' (any of when, message, description, every)
+- add: schedule a message or tool_call ('when' optional only for idle entries — see below)
+- list: show pending entries with payloads, IDs, trigger times, and countdown
+- remove: cancel future firings by 'id'
+- edit: update when, description, every, or replace the payload with message or tool_call
 
 'when' format (local timezone):
 - 'idle' — fires the next time the session is idle (no running taps, no background jobs)
@@ -299,7 +311,17 @@ If neither 'when' nor 'every' is provided, the entry defaults to when="idle" (on
 				},
 				"message": {
 					"type": "string",
-					"description": "The exact text injected verbatim as a user message when the timer fires. Write it with full context — the AI will see only this text at trigger time. Required for add; optional for edit."
+					"description": "Exact text injected as a user message when fired. Include all context needed then. Mutually exclusive with tool_call; add requires exactly one payload."
+				},
+				"tool_call": {
+					"type": "object",
+					"description": "Direct MCP tool invocation, without a parent-model turn. Mutually exclusive with message. The tool must be enabled; normal authorization and guardrails apply. Results/errors return to the inbox. Replaces the whole payload on edit.",
+					"properties": {
+						"name": { "type": "string", "minLength": 1, "description": "An available MCP tool name." },
+						"arguments": { "type": "object", "description": "The tool's arguments, exactly as for an immediate call." }
+					},
+					"required": ["name", "arguments"],
+					"additionalProperties": false
 				},
 				"description": {
 					"type": "string",
@@ -372,22 +394,59 @@ fn format_interval(secs: i64) -> String {
 	parts.join(" ")
 }
 
+fn parse_action(call: &McpToolCall) -> std::result::Result<Option<ScheduleAction>, String> {
+	match (call.parameters.get("message"), call.parameters.get("tool_call")) {
+		(Some(_), Some(_)) => Err("supply exactly one of 'message' or 'tool_call'".to_string()),
+		(Some(Value::String(message)), None) if !message.trim().is_empty() => Ok(Some(ScheduleAction::Message {
+			message: message.clone(),
+		})),
+		(Some(_), None) => Err("'message' must be a non-empty string".to_string()),
+		(None, Some(value)) => {
+			if !value.is_object() {
+				return Err("'tool_call' must be an object".to_string());
+			}
+			let tool_call: ScheduledToolCall =
+				serde_json::from_value(value.clone()).map_err(|error| format!("invalid 'tool_call': {error}"))?;
+			if tool_call.name.trim().is_empty() || !tool_call.arguments.is_object() {
+				return Err("'tool_call' requires a non-empty name and object arguments".to_string());
+			}
+			if crate::session::context::current_session_id().is_none() {
+				return Err("scheduled tool calls require an active session".to_string());
+			}
+			if crate::mcp::tool_map::get_server_for_tool(&tool_call.name).is_none() {
+				return Err(format!("tool '{}' is not available in this session", tool_call.name));
+			}
+			Ok(Some(ScheduleAction::ToolCall {
+				tool_call,
+				workdir: crate::mcp::get_thread_working_directory(),
+			}))
+		}
+		(None, None) => Ok(None),
+	}
+}
+
 fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
-	let message = match call.parameters.get("message") {
-		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-		Some(_) => {
+	let action = match parse_action(call) {
+		Ok(Some(action)) => action,
+		Ok(None) => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				"'message' must be a non-empty string".to_string(),
+				"add requires exactly one of 'message' or 'tool_call'".to_string(),
 			))
 		}
-		None => {
+		Err(error) => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				"missing required parameter 'message' for add".to_string(),
+				error,
 			))
+		}
+	};
+	let delivery = match &action {
+		ScheduleAction::Message { .. } => "The message will be injected as a user message.",
+		ScheduleAction::ToolCall { .. } => {
+			"The tool will run directly; its result or error will arrive in the session inbox."
 		}
 	};
 
@@ -437,7 +496,7 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		}
 
 		let repeating = every_is_idle;
-		let entry = ScheduleEntry::new_idle(description.clone(), message, repeating);
+		let entry = ScheduleEntry::new_idle(description.clone(), action, repeating);
 		let id = entry.id.clone();
 		get_store().lock().unwrap().add(entry);
 		persist_schedule_snapshot();
@@ -458,8 +517,8 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 			call.tool_name.clone(),
 			call.tool_id.clone(),
 			format!(
-				"✅ Scheduled [{}] for next idle{}{}\n\nThe message will be injected when the session is idle (no running taps or background jobs).",
-				id, desc_line, repeat_line
+				"✅ Scheduled [{}] for next idle{}{}\n\n{}",
+				id, desc_line, repeat_line, delivery
 			),
 		));
 	}
@@ -508,7 +567,7 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		None => None,
 	};
 
-	let entry = ScheduleEntry::new(description.clone(), message, trigger_at, interval_secs);
+	let entry = ScheduleEntry::new(description.clone(), action, trigger_at, interval_secs);
 	let id = entry.id.clone();
 	let countdown = entry.countdown();
 	let trigger_fmt = entry.trigger_at.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -534,8 +593,8 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		call.tool_name.clone(),
 		call.tool_id.clone(),
 		format!(
-			"✅ Scheduled [{}] at {} ({}){}{}\n\nThe message will be injected as a user message when the timer fires.",
-			id, trigger_fmt, countdown, desc_line, repeat_line
+			"✅ Scheduled [{}] at {} ({}){}{}\n\n{}",
+			id, trigger_fmt, countdown, desc_line, repeat_line, delivery
 		),
 	))
 }
@@ -573,17 +632,26 @@ pub fn render_pending_entries() -> Option<String> {
 		} else {
 			entry.description.clone()
 		};
-		// Truncate message preview to 80 chars.
-		let preview = if entry.message.len() > 80 {
-			format!("{}…", {
-				let mut end = 80;
-				while !entry.message.is_char_boundary(end) {
-					end -= 1;
-				}
-				&entry.message[..end]
-			})
+		let (label, payload) = match &entry.action {
+			ScheduleAction::Message { message } => ("Message", message.clone()),
+			ScheduleAction::ToolCall { tool_call, workdir } => (
+				"Tool call",
+				format!(
+					"{} {} (workdir: {})",
+					tool_call.name,
+					tool_call.arguments,
+					workdir.display()
+				),
+			),
+		};
+		let preview = if payload.len() > 80 {
+			let mut end = 80;
+			while !payload.is_char_boundary(end) {
+				end -= 1;
+			}
+			format!("{}…", &payload[..end])
 		} else {
-			entry.message.clone()
+			payload
 		};
 		let repeat_suffix = match (entry.trigger_mode, entry.interval_secs) {
 			(TriggerMode::Idle, Some(_)) => "\n  🔁 Repeats every idle".to_string(),
@@ -593,11 +661,12 @@ pub fn render_pending_entries() -> Option<String> {
 			_ => String::new(),
 		};
 		lines.push(format!(
-			"[{}] {} ({}) — {}\n  Message: {}{}",
+			"[{}] {} ({}) — {}\n  {}: {}{}",
 			entry.id,
 			trigger_fmt,
 			entry.countdown(),
 			desc,
+			label,
 			preview,
 			repeat_suffix,
 		));
@@ -679,9 +748,15 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => None,
 	};
 
-	let new_message = match call.parameters.get("message") {
-		Some(Value::String(s)) if !s.trim().is_empty() => Some(s.clone()),
-		_ => None,
+	let new_action = match parse_action(call) {
+		Ok(action) => action,
+		Err(error) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				error,
+			))
+		}
 	};
 
 	let new_description = match call.parameters.get("description") {
@@ -713,18 +788,18 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => None,
 	};
 
-	if new_when.is_none() && new_message.is_none() && new_description.is_none() && new_interval.is_none() {
+	if new_when.is_none() && new_action.is_none() && new_description.is_none() && new_interval.is_none() {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"edit requires at least one of: when, message, description, every".to_string(),
+			"edit requires at least one of: when, message, tool_call, description, every".to_string(),
 		));
 	}
 	let store = get_store();
 	let updated = store
 		.lock()
 		.unwrap()
-		.edit(&id, new_description, new_message, new_when, new_interval);
+		.edit(&id, new_description, new_action, new_when, new_interval);
 
 	if updated {
 		persist_schedule_snapshot();
@@ -765,6 +840,10 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		))
 	}
 }
+
+#[cfg(test)]
+#[path = "core_action_tests.rs"]
+mod action_tests;
 
 #[cfg(test)]
 #[path = "core_inline_tests.rs"]

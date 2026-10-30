@@ -18,6 +18,10 @@
 
 use super::*;
 
+fn test_config() -> crate::config::Config {
+	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("default config")
+}
+
 fn call(params: serde_json::Value) -> McpToolCall {
 	McpToolCall {
 		tool_name: "schedule".to_string(),
@@ -94,7 +98,7 @@ async fn test_idle_default_and_due_flush() {
 		assert!(has_pending_idle_schedules());
 
 		// Idle flush consumes the one-shot idle entry into the inbox
-		flush_idle_to_inbox();
+		flush_idle_to_inbox(&test_config());
 		assert!(!has_pending_idle_schedules());
 
 		// A due repeating entry is rescheduled by the flush, not consumed
@@ -108,7 +112,7 @@ async fn test_idle_default_and_due_flush() {
 		.expect("add repeating");
 		assert!(!added.is_error());
 		let id = extract_id(&added.extract_content());
-		flush_due_to_inbox();
+		flush_due_to_inbox(&test_config());
 		assert!(
 			has_pending_schedules(),
 			"repeating entry must be rescheduled after firing"

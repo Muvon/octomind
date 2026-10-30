@@ -192,8 +192,8 @@ fn rate_limit_info_renders_every_provider_shape() {
 	display_rate_limit_info(&exchange_with_headers("test", None));
 }
 
-#[test]
-fn api_error_removes_failed_user_message_and_prints_provider_help() {
+#[tokio::test]
+async fn api_error_removes_failed_user_message_and_prints_provider_help() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.add_user_message("doomed request").unwrap();
 	assert_eq!(session.session.messages.len(), 1);
@@ -204,7 +204,8 @@ fn api_error_removes_failed_user_message_and_prints_provider_help() {
 		"anthropic/claude-sonnet-4",
 		&err("boom"),
 		OutputMode::NonInteractive,
-	);
+	)
+	.await;
 	assert!(session.session.messages.is_empty());
 
 	// OctoHub plan-restriction hint, unknown-provider fallback, and the
@@ -216,22 +217,72 @@ fn api_error_removes_failed_user_message_and_prints_provider_help() {
 		"octohub:big-model",
 		&err("OctoHub API error 403: model 'big-model' is not permitted for this API key"),
 		OutputMode::NonInteractive,
-	);
+	)
+	.await;
 	handle_api_error(
 		&mut session,
 		0,
 		"weird:model",
 		&err("API error 401 Unauthorized"),
 		OutputMode::NonInteractive,
-	);
-	handle_api_error(&mut session, 0, "openai:gpt-x", &err("timeout"), OutputMode::Jsonl);
+	)
+	.await;
+	handle_api_error(&mut session, 0, "openai:gpt-x", &err("timeout"), OutputMode::Jsonl).await;
 }
 
-#[test]
-fn followup_error_prints_without_touching_history() {
+#[tokio::test]
+async fn followup_error_prints_without_touching_history() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.add_user_message("q").unwrap();
-	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::NonInteractive);
-	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::Jsonl);
+	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::NonInteractive).await;
+	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::Jsonl).await;
 	assert_eq!(session.session.messages.len(), 1);
+}
+
+#[derive(Debug)]
+struct ErrorAfterSpinnerStops(indicatif::ProgressBar);
+
+impl std::fmt::Display for ErrorAfterSpinnerStops {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		assert!(self.0.is_finished(), "error rendering must follow spinner cleanup");
+		f.write_str("error decoding response body")
+	}
+}
+
+impl std::error::Error for ErrorAfterSpinnerStops {}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn interactive_errors_stop_animation_before_rendering_and_allow_retry() {
+	let manager = crate::session::chat::get_animation_manager();
+	for followup in [false, true] {
+		manager.resume();
+		let pb = indicatif::ProgressBar::new_spinner();
+		pb.set_message("Working …");
+		pb.tick();
+		manager.install_test_spinner(Some(pb.clone()));
+		let error = anyhow::Error::new(ErrorAfterSpinnerStops(pb));
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.add_user_message("request").unwrap();
+
+		if followup {
+			handle_followup_api_error("chatgpt:test", &error, OutputMode::Interactive).await;
+		} else {
+			handle_api_error(&mut session, 0, "chatgpt:test", &error, OutputMode::Interactive).await;
+		}
+
+		assert!(!manager.is_running());
+		assert!(manager.is_suspended());
+		assert_eq!(session.session.messages.len(), usize::from(followup));
+		manager.start_animation(&OutputMode::Interactive).await;
+		assert!(
+			!manager.is_running(),
+			"late updates must not redraw over the error or prompt"
+		);
+
+		manager.resume();
+		manager.start_animation(&OutputMode::Interactive).await;
+		assert!(manager.is_running(), "the next user turn can start its spinner");
+		manager.stop_current().await;
+	}
 }

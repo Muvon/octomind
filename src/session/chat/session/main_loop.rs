@@ -741,7 +741,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 											// report without truncating and keep the retry
 											// buffer armed.
 											let model_for_error = chat_session.model.clone();
-											handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
+											handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive)
+												.await;
 											last_failed_followup = true;
 											continue;
 										}
@@ -778,7 +779,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 											last_failed_followup = false;
 										}
 										Err(e) => {
-											handle_followup_api_error(&chat_session.model, &e, OutputMode::Interactive);
+											handle_followup_api_error(&chat_session.model, &e, OutputMode::Interactive)
+												.await;
 											last_failed_followup = true;
 											println!(
 												"{}",
@@ -1201,7 +1203,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 								&model_for_error,
 								&e,
 								OutputMode::Interactive,
-							);
+							)
+							.await;
 							println!(
 								"{}",
 								"💡 Press Ctrl+G with empty input to retry the last failed request.".dimmed()
@@ -1349,7 +1352,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							let is_followup_failure = messages_after_api > messages_before_api;
 
 							if is_followup_failure {
-								handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
+								handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive).await;
 								last_failed_followup = true;
 							} else {
 								handle_api_error(
@@ -1358,7 +1361,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									&model_for_error,
 									&e,
 									OutputMode::Interactive,
-								);
+								)
+								.await;
 								// Stash the original input so an empty Ctrl+G replays this turn.
 								last_failed_input = Some(original_input_for_retry);
 							}
@@ -1744,7 +1748,7 @@ pub async fn run_interactive_session_with_input(
 					// persisted session log on the next reload.
 					let messages_after_api = chat_session.session.messages.len();
 					if messages_after_api > messages_before_api {
-						handle_followup_api_error(&model_for_error, &e, output_mode);
+						handle_followup_api_error(&model_for_error, &e, output_mode).await;
 					} else {
 						handle_api_error(
 							&mut chat_session,
@@ -1752,7 +1756,8 @@ pub async fn run_interactive_session_with_input(
 							&model_for_error,
 							&e,
 							output_mode,
-						);
+						)
+						.await;
 					}
 
 					// Non-interactive (non-daemon) runs must surface API failures (wrong API

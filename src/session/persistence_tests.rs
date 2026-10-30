@@ -656,3 +656,102 @@ fn historical_evidence_restores_through_session_load() {
 		info.evidence.verification_evidence(FollowUp)
 	);
 }
+
+#[test]
+fn same_timestamp_checkpoints_restore_main_cost_without_double_counting() {
+	let file = NamedTempFile::new().unwrap();
+	let path = file.path().to_path_buf();
+	let info = SessionInfo {
+		name: "accounting-checkpoints".into(),
+		total_cost: 1.0,
+		main_cost: Some(0.25),
+		..Default::default()
+	};
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":100, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	append_to_session_file(
+		&path,
+		&json!({"type":"STATS", "timestamp":100, "total_cost":1.5, "main_cost":0.5}).to_string(),
+	)
+	.unwrap();
+	// A stale summary must not overwrite a newer main-cost checkpoint.
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":100, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	let loaded = load_session(&path).unwrap();
+	assert_eq!(loaded.info.main_cost, Some(0.5));
+	assert_eq!(loaded.info.total_cost, 1.5);
+	loaded.save().unwrap();
+	assert_eq!(load_session(&path).unwrap().info.main_cost, Some(0.5));
+}
+
+#[test]
+fn old_tap_receipts_survive_compaction_and_leave_main_cost_unknown() {
+	let file = NamedTempFile::new().unwrap();
+	let path = file.path().to_path_buf();
+	let mut info = serde_json::to_value(SessionInfo {
+		name: "legacy-agents".into(),
+		total_cost: 1.92857,
+		..Default::default()
+	})
+	.unwrap();
+	info.as_object_mut().unwrap().remove("main_cost");
+	info.as_object_mut().unwrap().remove("agent_runs");
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":100, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	let receipt = json!({"id":"tap-old-child", "role":"developer:general", "workdir":"/tmp/work", "message":"started"});
+	let message = tool_response("call-1", "tap", &receipt.to_string());
+	for _ in 0..2 {
+		append_to_session_file(&path, &serde_json::to_string(&message).unwrap()).unwrap();
+	}
+	append_to_session_file(&path, &json!({"type":"RESTORATION_POINT", "timestamp":101}).to_string()).unwrap();
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":102, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	let loaded = load_session(&path).unwrap();
+	assert!(loaded.info.main_cost.is_none());
+	assert_eq!(loaded.info.total_cost, 1.92857);
+	assert_eq!(loaded.info.agent_runs.len(), 1);
+	assert_eq!(loaded.info.agent_runs[0].id, "tap-old-child");
+	loaded.save().unwrap();
+	let reloaded = load_session(&path).unwrap();
+	assert_eq!(reloaded.info.agent_runs.len(), 1);
+	assert!(reloaded.info.main_cost.is_none());
+}
+
+#[test]
+fn unknown_main_cost_checkpoint_cannot_be_replaced_with_a_partial_known_cost() {
+	let file = NamedTempFile::new().unwrap();
+	let path = file.path().to_path_buf();
+	let info = SessionInfo {
+		name: "unpriced-main".into(),
+		main_cost: Some(0.5),
+		..Default::default()
+	};
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":100, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	append_to_session_file(
+		&path,
+		&json!({"type":"STATS", "timestamp":101, "main_cost":null}).to_string(),
+	)
+	.unwrap();
+	append_to_session_file(
+		&path,
+		&json!({"type":"SUMMARY", "timestamp":102, "session_info":info}).to_string(),
+	)
+	.unwrap();
+	assert!(load_session(&path).unwrap().info.main_cost.is_none());
+}

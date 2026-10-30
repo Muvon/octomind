@@ -34,7 +34,7 @@ use std::time::SystemTime;
 use anyhow::Result;
 use serde_json::json;
 
-use crate::session::tap_runs::{self, TapJobStatus, TapLiveState};
+use crate::session::tap_runs::{self, TapJobInfo, TapJobStatus, TapLiveUsage};
 use crate::session::{Message, SessionInfo};
 
 /// What we can recover from a run's on-disk session file.
@@ -46,25 +46,54 @@ struct AgentSnapshot {
 	last_action: Option<String>,
 }
 
-pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
+pub fn sync_history(info: &mut SessionInfo) {
+	info.capture_agent_runs();
+	let mut updates = Vec::new();
+	for run in &info.agent_runs {
+		if let Some(child) = read_agent_snapshot(&run.id).info {
+			let mut update = run.clone();
+			update.live.usage = Some(TapLiveUsage {
+				input_tokens: child.input_tokens,
+				output_tokens: child.output_tokens,
+				cache_read_tokens: child.cache_read_tokens,
+				cost: child.total_cost,
+			});
+			updates.push(update);
+		}
+	}
+	tap_runs::merge_history(&mut info.agent_runs, updates);
+}
+
+fn session_jobs(history: &[TapJobInfo]) -> Vec<TapJobInfo> {
+	let mut jobs = history.to_vec();
+	tap_runs::merge_history(&mut jobs, tap_runs::list_jobs());
+	jobs.sort_by_key(|job| std::cmp::Reverse(job.started_at));
+	jobs
+}
+
+fn job_status(job: &TapJobInfo) -> &'static str {
+	if job.status == TapJobStatus::Running && tap_runs::find_job(&job.id).is_none() {
+		"unattached"
+	} else {
+		job.status.as_str()
+	}
+}
+
+pub fn build_agents_status(params: &[&str], history: &[TapJobInfo]) -> Result<serde_json::Value> {
 	// Detail mode: `/status agents <id>`
 	if let Some(raw) = params.first() {
 		let id = raw.trim();
-		if let Some(info) = tap_runs::find_job(id) {
+		if let Some(info) = session_jobs(history).into_iter().find(|job| job.id == id) {
 			let snap = read_agent_snapshot(id);
 			// For a running job the live stream (pushed per tool call / API call)
 			// is fresher than the disk snapshot; once finished the snapshot is
 			// authoritative.
-			let live = if info.status == TapJobStatus::Running {
-				info.live.clone()
-			} else {
-				TapLiveState::default()
-			};
+			let live = info.live.clone();
 			let detail = json!({
 				"id": info.id,
 				"source": "tap",
 				"role": info.role,
-				"status": info.status.as_str(),
+				"status": job_status(&info),
 				"workdir": info.workdir,
 				"elapsed_secs": elapsed_secs(info.started_at),
 				"last_action": live.last_action.or(snap.last_action),
@@ -101,13 +130,13 @@ pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
 	}
 
 	// List mode: running on top (with live last-action), finished below.
-	let jobs = tap_runs::list_jobs();
+	let jobs = session_jobs(history);
 	let async_jobs = async_agent_jobs();
 	let total = jobs.len() + async_jobs.len();
 	let mut running = Vec::new();
 	let mut finished = Vec::new();
 	for j in &jobs {
-		if j.status == TapJobStatus::Running {
+		if job_status(j) == "running" {
 			let snap = read_agent_snapshot(&j.id);
 			// Live state (pushed from the ACP stream) beats the disk snapshot —
 			// it updates on every streamed tool call / usage notification, while
@@ -117,7 +146,7 @@ pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
 				"id": j.id,
 				"source": "tap",
 				"role": j.role,
-				"status": j.status.as_str(),
+				"status": job_status(j),
 				"workdir": j.workdir,
 				"elapsed_secs": elapsed_secs(j.started_at),
 				"started_unix": system_time_secs(j.started_at),
@@ -134,14 +163,14 @@ pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
 				"id": j.id,
 				"source": "tap",
 				"role": j.role,
-				"status": j.status.as_str(),
+				"status": job_status(j),
 				"workdir": j.workdir,
 				"ago_secs": ago_secs(&j.id),
 				"model": snap.info.as_ref().map(|i| i.model.clone()),
-				"tokens_input": snap.info.as_ref().map(|i| i.input_tokens),
-				"tokens_output": snap.info.as_ref().map(|i| i.output_tokens),
-				"tokens_cached": snap.info.as_ref().map(|i| i.cache_read_tokens),
-				"cost": snap.info.as_ref().map(|i| i.total_cost),
+				"tokens_input": j.live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
+				"tokens_output": j.live.usage.map(|u| u.output_tokens).or_else(|| snap.info.as_ref().map(|i| i.output_tokens)),
+				"tokens_cached": j.live.usage.map(|u| u.cache_read_tokens).or_else(|| snap.info.as_ref().map(|i| i.cache_read_tokens)),
+				"cost": j.live.usage.map(|u| u.cost).or_else(|| snap.info.as_ref().map(|i| i.total_cost)),
 			}));
 		}
 	}
@@ -352,8 +381,8 @@ fn summarize_tool(name: &str, args: Option<&serde_json::Value>) -> String {
 
 /// Aggregate token/cost stats across all agent runs for this session.
 /// Returns `None` when there are no runs. Used by `/info`.
-pub fn get_agents_stats() -> Option<serde_json::Value> {
-	let jobs = tap_runs::list_jobs();
+pub fn get_agents_stats(history: &[TapJobInfo]) -> Option<serde_json::Value> {
+	let jobs = session_jobs(history);
 	if jobs.is_empty() {
 		return None;
 	}
@@ -364,19 +393,32 @@ pub fn get_agents_stats() -> Option<serde_json::Value> {
 	let mut count_running: usize = 0;
 	let mut count_done: usize = 0;
 	let mut count_failed: usize = 0;
+	let mut count_unattached: usize = 0;
+	let mut count_cancelled: usize = 0;
+	let mut unpriced: usize = 0;
 	for j in &jobs {
 		match j.status {
+			TapJobStatus::Running if job_status(j) == "unattached" => count_unattached += 1,
 			TapJobStatus::Running => count_running += 1,
 			TapJobStatus::Done => count_done += 1,
 			TapJobStatus::Failed => count_failed += 1,
-			TapJobStatus::Cancelled => {}
+			TapJobStatus::Cancelled => count_cancelled += 1,
 		}
-		let snap = read_agent_snapshot(&j.id);
-		if let Some(info) = snap.info {
-			total_input += info.input_tokens;
-			total_output += info.output_tokens;
-			total_cached += info.cache_read_tokens;
-			total_cost += info.total_cost;
+		let usage = j.live.usage.or_else(|| {
+			read_agent_snapshot(&j.id).info.map(|info| TapLiveUsage {
+				input_tokens: info.input_tokens,
+				output_tokens: info.output_tokens,
+				cache_read_tokens: info.cache_read_tokens,
+				cost: info.total_cost,
+			})
+		});
+		if let Some(usage) = usage {
+			total_input += usage.input_tokens;
+			total_output += usage.output_tokens;
+			total_cached += usage.cache_read_tokens;
+			total_cost += usage.cost;
+		} else {
+			unpriced += 1;
 		}
 	}
 	Some(serde_json::json!({
@@ -384,6 +426,9 @@ pub fn get_agents_stats() -> Option<serde_json::Value> {
 		"running": count_running,
 		"done": count_done,
 		"failed": count_failed,
+		"unattached": count_unattached,
+		"cancelled": count_cancelled,
+		"unpriced": unpriced,
 		"tokens_input": total_input,
 		"tokens_output": total_output,
 		"tokens_cached": total_cached,

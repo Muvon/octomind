@@ -405,6 +405,8 @@ impl ChatSession {
 			cache_write_tokens: 0,
 			reasoning_tokens: 0,
 			total_cost: 0.0,
+			main_cost: Some(0.0),
+			agent_runs: Vec::new(),
 			duration_seconds: 0,
 			layer_stats: Vec::new(), // Initialize empty layer stats
 			tool_calls: 0,           // Initialize tool call counter

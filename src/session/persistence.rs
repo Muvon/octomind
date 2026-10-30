@@ -255,6 +255,10 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 // Helper function to load a session from file - optimized to use streams
 /// Intermediate result of parsing a session log file line by line.
 struct ParsedLogLines {
+	total_cost: f64,
+	saved_supervisor: crate::supervisor::accounting::SupervisorAccounting,
+	main_cost: Option<Option<f64>>,
+	agent_runs: Vec<crate::session::tap_runs::TapJobInfo>,
 	background_supervisor: Vec<(String, crate::supervisor::accounting::SupervisorAccounting)>,
 	session_info: Option<SessionInfo>,
 	messages: Vec<Message>,
@@ -270,6 +274,10 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	let mut session_info: Option<SessionInfo> = None;
 	let mut last_summary_timestamp: u64 = 0;
 	let mut background_supervisor = Vec::new();
+	let mut total_cost: f64 = 0.0;
+	let mut saved_supervisor = crate::supervisor::accounting::SupervisorAccounting::default();
+	let mut main_cost: Option<Option<f64>> = None;
+	let mut agent_runs = Vec::new();
 	let mut messages: Vec<Message> = Vec::new();
 	let mut restoration_point_found = false;
 	let mut restoration_messages = Vec::new();
@@ -282,6 +290,33 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 		// Try to parse as JSON first (new format)
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
+				let snapshot = match log_type {
+					"SUMMARY" => json_value.get("session_info"),
+					"STATS" => Some(&json_value),
+					_ => None,
+				};
+				if let Some(snapshot) = snapshot {
+					if let Some(value) = snapshot.get("total_cost") {
+						total_cost = total_cost.max(serde_json::from_value::<f64>(value.clone())?);
+					}
+					if let Some(value) = snapshot.get("supervisor_accounting") {
+						saved_supervisor.merge_max(&serde_json::from_value(value.clone())?);
+					}
+					if let Some(value) = snapshot.get("main_cost") {
+						let incoming: Option<f64> = serde_json::from_value(value.clone())?;
+						main_cost = Some(match (main_cost, incoming) {
+							(None, value) => value,
+							(Some(Some(old)), Some(new)) => Some(old.max(new)),
+							_ => None,
+						});
+					}
+					if let Some(value) = snapshot.get("agent_runs") {
+						crate::session::tap_runs::merge_history(
+							&mut agent_runs,
+							serde_json::from_value::<Vec<crate::session::tap_runs::TapJobInfo>>(value.clone())?,
+						);
+					}
+				}
 				match log_type {
 					"BACKGROUND_SUPERVISOR" => {
 						let id: String = serde_json::from_value(
@@ -489,6 +524,11 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 					crate::log_error!("Skipping unparseable session message line on resume: {}", e);
 				}
 				if let Ok(message) = parsed {
+					if let Some(run) = crate::session::tap_runs::recover_job(&message) {
+						if !agent_runs.iter().any(|saved| saved.id == run.id) {
+							agent_runs.push(run);
+						}
+					}
 					// If this is the first tool message and we have pending tool calls,
 					// reconstruct the assistant message with tool_calls ONLY if not already present
 					if message.role == "tool" && !pending_tool_calls.is_empty() {
@@ -606,6 +646,10 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	}
 
 	Ok(ParsedLogLines {
+		total_cost,
+		saved_supervisor,
+		main_cost,
+		agent_runs,
 		background_supervisor,
 		session_info,
 		messages,
@@ -671,6 +715,8 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &Path) -> Re
 		cache_write_tokens: 0,
 		reasoning_tokens: 0,
 		total_cost: 0.0,
+		main_cost: None,
+		agent_runs: Vec::new(),
 		duration_seconds: 0,
 		layer_stats: Vec::new(),
 		tool_calls: 0,
@@ -791,6 +837,12 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	} else {
 		restore_session_info(final_messages, session_file)?
 	};
+	session.info.total_cost = session.info.total_cost.max(parsed.total_cost);
+	session.info.supervisor_accounting.merge_max(&parsed.saved_supervisor);
+	if let Some(main_cost) = parsed.main_cost {
+		session.info.main_cost = main_cost;
+	}
+	crate::session::tap_runs::merge_history(&mut session.info.agent_runs, parsed.agent_runs);
 	for (id, accounting) in parsed.background_supervisor {
 		session.info.apply_background_usage(id, &accounting);
 	}
@@ -923,6 +975,8 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 /// SUMMARY is the source of truth for session state on reload, so every save
 /// path (initial file creation and incremental saves) writes one through here.
 pub fn summary_log_entry(info: &SessionInfo) -> serde_json::Value {
+	let mut info = info.clone();
+	info.capture_agent_runs();
 	serde_json::json!({
 		"type": "SUMMARY",
 		"timestamp": crate::utils::time::now_secs(),

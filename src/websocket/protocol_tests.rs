@@ -321,7 +321,8 @@ fn test_session_ack_advertises_message_attachments() {
 			"run_events_v1",
 			"stream_resume_v1",
 			"elicitation_v1",
-			"commands_v1"
+			"commands_v1",
+			"observe_v1"
 		])
 	);
 	for field in ["stream", "stream_seq", "resumed", "commands"] {
@@ -800,4 +801,52 @@ async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
 		.await;
 	})
 	.await;
+}
+
+#[test]
+fn observe_parses_with_or_without_marks_and_needs_complete_marks() {
+	let bare: ClientMessage = serde_json::from_str(r#"{"type":"observe"}"#).unwrap();
+	bare.validate().expect("marks are optional");
+	assert_eq!(bare.message_type(), "observe");
+	assert_eq!(bare.session_id(), None);
+	assert_eq!(bare.request_id(), None);
+
+	let marked: ClientMessage =
+		serde_json::from_str(r#"{"type":"observe","sessions":[{"session_id":"s1","stream":"abc","after":7}]}"#)
+			.unwrap();
+	marked.validate().expect("a complete mark is valid");
+	let ClientMessage::Observe(observe) = &marked else {
+		panic!("expected an observe frame: {marked:?}");
+	};
+	assert_eq!(
+		observe.sessions,
+		vec![ObserveMark {
+			session_id: "s1".to_string(),
+			resume: StreamResume {
+				stream: "abc".to_string(),
+				after: 7,
+			},
+		}]
+	);
+
+	let blank: ClientMessage =
+		serde_json::from_str(r#"{"type":"observe","sessions":[{"session_id":"s1","stream":" ","after":0}]}"#).unwrap();
+	assert_eq!(
+		blank.validate().unwrap_err(),
+		"observe marks need a session_id and a stream"
+	);
+}
+
+#[test]
+fn an_observed_frame_embeds_the_session_frame_untouched() {
+	// Spacing and key order a re-serialization would normalize away.
+	let frame = r#"{"stream_seq": 3,  "type":"assistant","content":"a \"quoted\" line"}"#;
+	let envelope = observed_frame("s\"1", "abc", frame);
+	assert!(envelope.contains(frame), "byte-identical: {envelope}");
+
+	let parsed: Value = serde_json::from_str(&envelope).unwrap();
+	assert_eq!(parsed["type"], "observed");
+	assert_eq!(parsed["session_id"], "s\"1");
+	assert_eq!(parsed["stream"], "abc");
+	assert_eq!(parsed["frame"]["stream_seq"], 3);
 }

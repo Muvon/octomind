@@ -284,6 +284,15 @@ message:
 {"type":"command","session_id":"my-session","command":"done","args":["Summarize the remaining work"]}
 ```
 
+**Observe** — make the connection a read-only observer of every session on the server (see [Observer connections](#observer-connections)):
+
+```json
+{"type": "observe", "sessions": [{"session_id": "my-session", "stream": "3f9a0c6e2b7d41e8a5c09d6f1b2e7a34", "after": 41}]}
+```
+
+`sessions` is optional: one mark per session saying where an earlier observer connection stopped reading. `observe` is
+answered by an `observing` frame, not an `ack`.
+
 ### Concurrency
 
 One connection processes one client frame at a time; frames sent while one runs wait and run in order afterwards. The
@@ -312,7 +321,7 @@ A turn does not depend on the connection that started it. If that client disconn
 frames are held for the session's next bind (see [Stream position and resume](#stream-position-and-resume)); until it
 ends, other frames for the session get the busy error. One connection owns a session's output at a time: the one whose
 `message` or `command` started the current turn, unless a later bind took it over (see `resume` above). Background turns
-(schedules, delegated results) stream to that owner.
+(schedules, delegated results) stream to that owner, or are only held when no connection owns the output.
 
 ### Server to Client
 
@@ -350,6 +359,8 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
   `[provider:model]`, and is absent only when the command takes no argument. Commands that act on the CLI's own terminal
   (`copy`, `reply`, `clear`, `new`, `image`, `video`, `analyze`, `exit`) are left out. The list follows the config the
   session runs under, so read it from every bind's ack. Without the capability the ack has no `commands`.
+- `observe_v1` — the server accepts an `observe` frame and turns that connection into a read-only observer (see
+  [Observer connections](#observer-connections)). It is listed in the `observing` frame too.
 
 ```json
 {"type":"ack","message_type":"session","session_id":"my-session","status":"received","capabilities":["…","commands_v1"],"commands":[{"name":"help","description":"Show this help message"},{"name":"model","description":"View or change current AI model","hint":"[provider:model]"}],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":0}
@@ -386,11 +397,11 @@ attachment, `Internal error`, malformed or invalid input).
 A successful bind's ack reports the stream and the highest `stream_seq` assigned so far (0 if none):
 
 ```json
-{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1","elicitation_v1","commands_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
+{"type":"ack","request_id":"bind-2","message_type":"session","session_id":"my-session","status":"received","capabilities":["message_attachments_v1","session_control_v1","run_events_v1","stream_resume_v1","elicitation_v1","commands_v1","observe_v1"],"stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","stream_seq":7,"resumed":true}
 ```
 
-A failed bind's ack carries no `stream` or `stream_seq`. The server holds the frames of the running turn and of the turn
-before it, bounded (4096 frames or 8 MiB per stream, oldest dropped first). A client that lost its connection binds again
+A failed bind's ack carries no `stream` or `stream_seq`. The server holds the newest frames of each stream, up to 2 MiB
+per stream (oldest dropped first; the newest frame is always kept, however large). A client that lost its connection binds again
 with `"resume": {"stream": "<id>", "after": <last stream_seq it received>}`. When the stream matches and every frame
 after that point is still held, the ack carries `"resumed": true` and those frames follow it at once, in order and
 byte-identical to the first sending, before the bind's `status` and any new frame; then the stream continues live,
@@ -640,10 +651,14 @@ processes it:
 `source_kind` is one of: `schedule`, `monitor`, `background_agent`, `background_job`, `tap_run`, `skill`,
 `skill_validator`, `inject`, `webhook`, `guardrail_hook`, `guardrail_validator`.
 
-After a session is established, the server runs a background monitor that watches the session inbox (schedules,
-background agents, webhooks). These can fire **asynchronously without any user prompt**, producing `injected` frames
-followed by the normal `thinking`/`tool_use`/`tool_result`/`assistant`/`cost` stream. Clients should handle server
-frames arriving at any time, not only in direct response to a `message`.
+After a session is loaded — by a bind, or by a `message` or `command` for a session on disk — the server runs one
+background monitor for it, until the session is unloaded (`close`, `/exit`). It watches the session inbox (schedules,
+background agents, webhooks, delegated results). These fire **asynchronously without any user prompt**, producing
+`injected` frames followed by the normal `thinking`/`tool_use`/`tool_result`/`assistant`/`cost` stream. The monitor
+belongs to the session, not to a connection: a timed or idle schedule, or a delegated result that lands after every
+client disconnected, still runs, and its frames go on the session's stream. A client that binds later with `resume`
+reads them; an [observer](#observer-connections) receives them live. Clients should handle server frames arriving at
+any time, not only in direct response to a `message`.
 
 #### MCP elicitation
 
@@ -675,6 +690,60 @@ listed `elicitation_v1`; otherwise the session declines them. When a capable con
 server re-sends every unanswered `elicitation` frame after the bind's ack and any resumed frames, so clients dedupe by
 `id`. A question ends — answered as `cancel` — when its tool call ends, when no live connection owns the output any
 more, or when the session is closed. A client should close any open form when the turn's `cost` frame arrives.
+
+#### Observer connections
+
+An observer records what the server's sessions do without driving any of them: one observer connection sees every
+session's output, including turns that run while no client is bound. Send `observe` once; the connection is an observer
+for its lifetime. Any other client frame on it (`session`, `message`, `cancel`, a second `observe`, …) is answered with
+`{"type":"error","message":"observer connections are read-only"}` and the connection stays open. An observer never owns a
+session's output, never answers elicitations and does not count as a bound client. Any number of observers may be
+connected; each gets everything.
+
+Frames the server sends an observer:
+
+1. `observing`, always first, with the same `capabilities` a bind ack lists (`observe_v1` included):
+
+   ```json
+   {"type":"observing","capabilities":["message_attachments_v1","…","observe_v1"]}
+   ```
+
+2. For every stream open on the server, `stream_open`, then that stream's replay. A stream that opens later (a session
+   is loaded) sends `stream_open` with `last_seq` 0 and `gap` false before its first frame:
+
+   ```json
+   {"type":"stream_open","session_id":"my-session","stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","last_seq":41,"gap":false}
+   ```
+
+3. `observed`, for every frame a session stream numbers, replayed or live. `frame` is the exact frame a bound client
+   reads, `stream_seq` included:
+
+   ```json
+   {"type":"observed","session_id":"my-session","stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34","frame":{"type":"assistant","content":"Done.","session_id":"my-session","stream_seq":42}}
+   ```
+
+4. `stream_closed`, when the session is unloaded (`close`, `/exit`). Loading it again opens a new stream:
+
+   ```json
+   {"type":"stream_closed","session_id":"my-session","stream":"3f9a0c6e2b7d41e8a5c09d6f1b2e7a34"}
+   ```
+
+Frames of one session arrive in order, and the replay joins the live frames with no gap and no duplicate. The replay
+comes from the same 2 MiB hold a `resume` bind uses:
+
+- A mark for the session with the **same** `stream` replays the held frames with `stream_seq` greater than `after`.
+  `gap` is `true` when the oldest held frame is numbered above `after + 1`: the hold dropped frames the observer never
+  saw, so record that output between `after` and the first replayed `stream_seq` was lost.
+- No mark, or a mark with a different `stream` (the session was reloaded or the server restarted), replays every held
+  frame. `gap` is `true` when the oldest held `stream_seq` is above 1.
+
+One `observe` replays at most 8 MiB in all, half the connection's outbound limit, so the replay always fits. A stream
+whose frames do not fit replays only its newest ones and sets `gap` to `true` (as does a stream that gets none), so
+reconnect with marks to fetch the rest.
+
+An observer has the same outbound limits as any connection. One that cannot keep up is disconnected; it reconnects with
+its marks. Frames that answer one client frame (`ack`, `run_log`, bind statuses) belong to the connection that sent
+the request and are never observed.
 
 ## Client Examples
 

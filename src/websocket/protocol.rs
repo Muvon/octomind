@@ -34,6 +34,10 @@ pub const ELICITATION_CAPABILITY: &str = "elicitation_v1";
 /// session can run in the bind ack's `commands`. Without it the ack has no such
 /// field, so older clients see the ack they always did.
 pub const COMMANDS_CAPABILITY: &str = "commands_v1";
+/// A connection that sends `observe` is read-only for its lifetime and gets a
+/// copy of every session's output, replayed from the held frames and then live.
+/// Advertised in the bind ack and in the `observing` frame.
+pub const OBSERVE_CAPABILITY: &str = "observe_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -88,6 +92,23 @@ pub struct StreamResume {
 	pub stream: String,
 	/// The last `stream_seq` the client received.
 	pub after: u64,
+}
+
+/// Where an observer stopped reading one session's stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObserveMark {
+	pub session_id: String,
+	#[serde(flatten)]
+	pub resume: StreamResume,
+}
+
+/// Turns the connection into an observer: it receives every session's output
+/// and sends nothing else. Marks are optional; a session without one replays
+/// every frame the server still holds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserveMessage {
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub sessions: Vec<ObserveMark>,
 }
 
 /// Send user input to an existing session and receive an AI response.
@@ -333,6 +354,7 @@ pub enum ClientMessage {
 	Close(CloseMessage),
 	RunLog(RunLogMessage),
 	ElicitationResponse(ElicitationResponseMessage),
+	Observe(ObserveMessage),
 }
 
 impl ClientMessage {
@@ -358,6 +380,7 @@ impl ClientMessage {
 			ClientMessage::Close(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::RunLog(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::ElicitationResponse(c) => validate_request_id(&c.request_id)?,
+			ClientMessage::Observe(_) => {}
 		}
 
 		match self {
@@ -425,6 +448,16 @@ impl ClientMessage {
 				}
 				Ok(())
 			}
+
+			ClientMessage::Observe(m) => {
+				if m.sessions
+					.iter()
+					.any(|mark| mark.session_id.trim().is_empty() || mark.resume.stream.trim().is_empty())
+				{
+					return Err("observe marks need a session_id and a stream".to_string());
+				}
+				Ok(())
+			}
 		}
 	}
 
@@ -437,6 +470,7 @@ impl ClientMessage {
 			ClientMessage::Close(c) => c.request_id.as_deref(),
 			ClientMessage::RunLog(c) => c.request_id.as_deref(),
 			ClientMessage::ElicitationResponse(c) => c.request_id.as_deref(),
+			ClientMessage::Observe(_) => None,
 		}
 	}
 
@@ -449,6 +483,7 @@ impl ClientMessage {
 			ClientMessage::Close(_) => "close",
 			ClientMessage::RunLog(_) => "run_log",
 			ClientMessage::ElicitationResponse(_) => "elicitation_response",
+			ClientMessage::Observe(_) => "observe",
 		}
 	}
 
@@ -461,6 +496,7 @@ impl ClientMessage {
 			ClientMessage::Close(c) => Some(c.session_id.as_str()),
 			ClientMessage::RunLog(c) => Some(c.session_id.as_str()),
 			ClientMessage::ElicitationResponse(c) => Some(c.session_id.as_str()),
+			ClientMessage::Observe(_) => None,
 		}
 	}
 }
@@ -763,18 +799,64 @@ pub enum ServerMessage {
 	Elicitation(ElicitationPayload),
 }
 
+/// Frames only an observer connection receives. `observed` wraps a session
+/// frame and is built by [`observed_frame`] instead, so the frame travels as it
+/// was serialized.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ObserverMessage {
+	/// First frame: the observer is registered.
+	Observing { capabilities: Vec<String> },
+	/// A session stream exists. `gap` means frames the observer's mark expected
+	/// are no longer held.
+	StreamOpen {
+		session_id: String,
+		stream: String,
+		last_seq: u64,
+		gap: bool,
+	},
+	/// The session was unloaded; a later load opens a new stream.
+	StreamClosed { session_id: String, stream: String },
+}
+
+impl ObserverMessage {
+	/// Strings, numbers and flags only: serializing cannot fail.
+	pub(crate) fn text(&self) -> String {
+		serde_json::to_string(self).expect("observer frames are plain data")
+	}
+}
+
+/// A session frame, already serialized, wrapped for an observer. The frame text
+/// is embedded as it is, `stream_seq` included, never parsed and re-serialized.
+pub(crate) fn observed_frame(session_id: &str, stream: &str, frame: &str) -> String {
+	format!(
+		r#"{{"type":"observed","session_id":{},"stream":{},"frame":{}}}"#,
+		Value::from(session_id),
+		Value::from(stream),
+		frame
+	)
+}
+
+/// What a bind ack and the `observing` frame advertise.
+pub(crate) fn server_capabilities() -> Vec<String> {
+	[
+		MESSAGE_ATTACHMENTS_CAPABILITY,
+		SESSION_CONTROL_CAPABILITY,
+		RUN_EVENTS_CAPABILITY,
+		STREAM_RESUME_CAPABILITY,
+		ELICITATION_CAPABILITY,
+		COMMANDS_CAPABILITY,
+		OBSERVE_CAPABILITY,
+	]
+	.map(str::to_string)
+	.to_vec()
+}
+
 impl AckPayload {
 	/// The ack of a `session` bind, before the server adds the stream position.
 	pub fn bind(msg: &SessionMessage) -> Self {
 		Self {
-			capabilities: vec![
-				MESSAGE_ATTACHMENTS_CAPABILITY.to_string(),
-				SESSION_CONTROL_CAPABILITY.to_string(),
-				RUN_EVENTS_CAPABILITY.to_string(),
-				STREAM_RESUME_CAPABILITY.to_string(),
-				ELICITATION_CAPABILITY.to_string(),
-				COMMANDS_CAPABILITY.to_string(),
-			],
+			capabilities: server_capabilities(),
 			..Self::received(msg.request_id.clone(), "session", msg.session_id.clone())
 		}
 	}

@@ -2837,39 +2837,46 @@ async fn monitor_defers_when_the_inbox_is_emptied_by_another_consumer() {
 	crate::session::context::cleanup_session(&session_id);
 }
 
-// ---- handback across a connection boundary ----
+// ---- handback with no client connected ----
 
 /// A `tap` run outlives the turn that started it. The driver closes the socket
 /// on the terminal cost frame (octomind-api `AcpRunner::stream`), so when the
-/// run finishes minutes later there is no live connection — and the monitor
-/// belonging to that CLOSED connection is still parked on the session's
-/// `Notify`, because its `bg_tx.is_closed()` exit check only runs after the
-/// drain. It woke on the push, popped the message, and streamed it into a dead
-/// channel: the only copy of the answer, destroyed.
+/// run finishes minutes later there is no live connection. The monitor belongs
+/// to the loaded session, not to the connection, so it answers the handback
+/// anyway; the frames wait on the session's stream for whoever resumes it.
 ///
 /// Observed in prod 2026-09-12 — `tap list` reported `done`, the user was told
-/// "lands in my next message", and nothing ever arrived. Sessions and their
-/// inboxes deliberately outlive a connection, so the handback must simply wait
-/// for the next one.
+/// "lands in my next message", and nothing ever arrived.
 #[tokio::test]
 #[serial_test::serial]
-async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connection() {
+async fn a_handback_landing_after_the_socket_closed_runs_with_no_client_and_a_resume_replays_it() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![final_response("HANDBACK-TURN")]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let session_id = "handback-1";
 
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
-	let session_id = create_session(&mut ws, None).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": session_id}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	let stream = ack["stream"]
+		.as_str()
+		.expect("the bind ack names the stream")
+		.to_string();
+	let read_to = ack["stream_seq"].as_u64().expect("the ack reports the stream position");
+	let _greeting = read_json(&mut ws).await;
 
-	// The turn ended and the driver hung up — the monitor spawned for this
-	// connection is now orphaned, but still parked on the session's Notify.
+	// The turn ended and the driver hung up.
 	ws.close(None).await.ok();
 	drop(ws);
 	tokio::time::sleep(Duration::from_millis(200)).await;
 
 	push_inbox_message_for_session(
-		&session_id,
+		session_id,
 		InboxMessage {
 			source: InboxSource::TapRun {
 				id: "tap-1".to_string(),
@@ -2878,45 +2885,65 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
 		},
 	);
-	tokio::time::sleep(Duration::from_millis(300)).await;
 
+	let answered = tokio::time::timeout(Duration::from_secs(20), async {
+		loop {
+			let last = server
+				.sessions
+				.lock()
+				.await
+				.get(session_id)
+				.and_then(|s| s.session.messages.last().cloned());
+			if matches!(&last, Some(m) if m.role == "assistant" && m.content.contains("HANDBACK-TURN")) {
+				break;
+			}
+			tokio::time::sleep(Duration::from_millis(50)).await;
+		}
+	})
+	.await;
 	assert!(
-		inbox_has_messages(&session_id).await,
-		"the orphaned monitor must leave the handback alone, not drain it into a closed channel"
+		answered.is_ok(),
+		"the monitor must answer the handback with nobody connected"
 	);
+	assert!(!inbox_has_messages(session_id).await, "the handback was consumed");
 
-	// The next connection resumes the session, spawns a live monitor, and
-	// delivers what the previous one left behind.
+	// The next bind resumes the stream and reads what it missed.
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
-	let resumed = create_session(&mut ws, Some(&session_id)).await;
-	assert_eq!(resumed, session_id);
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "session", "session_id": session_id,
+			"resume": {"stream": stream, "after": read_to}
+		}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["resumed"], true, "got: {ack}");
+	let replayed = frames_through_cost(&mut ws).await;
+	let seqs: Vec<u64> = replayed
+		.iter()
+		.map(|frame| frame["stream_seq"].as_u64().expect("replayed frames are numbered"))
+		.collect();
+	assert_eq!(
+		seqs,
+		(read_to + 1..=read_to + seqs.len() as u64).collect::<Vec<_>>(),
+		"every missed frame once, in order"
+	);
+	assert!(
+		replayed
+			.iter()
+			.any(|f| f["type"] == "injected" && f["content"].as_str().unwrap_or_default().contains("the research")),
+		"the handback is announced: {replayed:?}"
+	);
+	assert!(
+		replayed
+			.iter()
+			.any(|f| f["type"] == "assistant" && f["content"].as_str().unwrap_or_default().contains("HANDBACK-TURN")),
+		"and answered: {replayed:?}"
+	);
 
-	let mut injected = false;
-	let mut answered = false;
-	for _ in 0..40 {
-		let frame = read_json(&mut ws).await;
-		match frame["type"].as_str().unwrap_or_default() {
-			"injected" => {
-				assert!(
-					frame["content"].as_str().unwrap_or_default().contains("the research"),
-					"got: {frame}"
-				);
-				injected = true;
-			}
-			"assistant" if frame["content"].as_str().unwrap_or_default().contains("HANDBACK-TURN") => {
-				answered = true;
-			}
-			_ => {}
-		}
-		if injected && answered {
-			break;
-		}
-	}
-	assert!(injected, "the handback must reach the new connection");
-	assert!(answered, "and drive a turn on it");
-
-	crate::session::context::cleanup_session(&session_id);
+	crate::session::context::cleanup_session(&session_id.to_string());
 }
 
 // ---- pending work: the cost frame tells a driver more is coming ----
@@ -3120,34 +3147,32 @@ async fn a_failing_background_inbox_turn_reports_an_error_frame() {
 	crate::session::context::cleanup_session(&session_id);
 }
 
-/// One monitor per connection, and none left behind.
+/// One monitor per LOADED SESSION, owned by the server.
 ///
-/// octomind-api re-sends the `session` bind ahead of every turn, so a client can
-/// bind the same session repeatedly; every bind used to spawn another monitor
-/// that shared the same `bg_tx` and simply parked on the session's Notify. And
-/// when the connection went away they all stayed parked, because the loop only
-/// notices a closed channel once something wakes it — one leaked task per turn,
-/// for the life of the process.
+/// octomind-api re-sends the `session` bind ahead of every turn, so a session is
+/// bound again and again, from one connection or several. All of them share one
+/// monitor; closing a connection leaves it alone; it ends when the session is
+/// unloaded, so nothing leaks for the life of the process.
 #[tokio::test]
 #[serial_test::serial]
-async fn inbox_monitors_are_one_per_connection_and_die_with_it() {
+async fn the_session_monitor_is_one_per_loaded_session_and_ends_only_when_it_unloads() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	// Baseline once any straggler from an earlier test has been reaped.
 	let before = wait_for_inbox_monitors(0).await;
 
-	let mut ws = connect_ws(server.addr).await;
-	let _welcome = read_json(&mut ws).await;
-	let session_id = create_session(&mut ws, None).await;
+	let mut first = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut first).await;
+	let session_id = create_session(&mut first, None).await;
 	assert_eq!(
 		live_inbox_monitors() - before,
 		1,
-		"the first bind gets the connection's monitor"
+		"the first bind starts the session's monitor"
 	);
 
 	// Re-binding the same session on the same connection must not add another.
-	let rebound = create_session(&mut ws, Some(&session_id)).await;
+	let rebound = create_session(&mut first, Some(&session_id)).await;
 	assert_eq!(rebound, session_id);
 	assert_eq!(
 		live_inbox_monitors() - before,
@@ -3155,12 +3180,73 @@ async fn inbox_monitors_are_one_per_connection_and_die_with_it() {
 		"a re-bind on the same connection is not a second monitor"
 	);
 
-	ws.close(None).await.ok();
-	drop(ws);
+	let mut second = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut second).await;
+	create_session(&mut second, Some(&session_id)).await;
+	assert_eq!(
+		live_inbox_monitors() - before,
+		1,
+		"nor is a bind from another connection"
+	);
+
+	first.close(None).await.ok();
+	drop(first);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	assert_eq!(
+		live_inbox_monitors() - before,
+		1,
+		"a closing connection does not stop the session's monitor"
+	);
+
+	send_json(
+		&mut second,
+		serde_json::json!({"type": "close", "session_id": session_id}),
+	)
+	.await;
+	let _ack = read_json(&mut second).await;
+	let closed = read_json(&mut second).await;
+	assert_eq!(closed["data"]["command_type"], "close", "got: {closed}");
 	assert_eq!(
 		wait_for_inbox_monitors(before).await,
 		before,
-		"the monitor must be reaped when its connection closes"
+		"unloading the session ends its monitor"
+	);
+
+	// Loaded again, the session gets a monitor of its own.
+	create_session(&mut second, Some(&session_id)).await;
+	assert_eq!(live_inbox_monitors() - before, 1);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// A session that enters memory through a message or command, with no bind on
+/// the connection, is monitored like a bound one.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_session_loaded_lazily_by_a_command_gets_its_monitor() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let before = wait_for_inbox_monitors(0).await;
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	send_json(&mut ws, serde_json::json!({"type": "close", "session_id": session_id})).await;
+	let _ack = read_json(&mut ws).await;
+	let _closed = read_json(&mut ws).await;
+	assert_eq!(wait_for_inbox_monitors(before).await, before);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": session_id, "command": "info"}),
+	)
+	.await;
+	read_until(&mut ws, |v| v["type"] == "status" && v["data"].is_object()).await;
+	assert_eq!(
+		live_inbox_monitors() - before,
+		1,
+		"the lazy load starts the session's monitor"
 	);
 
 	crate::session::context::cleanup_session(&session_id);
@@ -3331,10 +3417,10 @@ async fn monitor_inbox_turn_request_spending_stop_sends_the_stopped_status() {
 	crate::session::context::cleanup_session(&session_id);
 }
 
-/// `cleanup_session` destroys the inbox while the connection's monitor is
+/// `cleanup_session` destroys the inbox while the session's monitor is
 /// parked on it. The monitor must notice on its next wakeup and exit — a
 /// monitor that parks forever on a destroyed Notify is one leaked task per
-/// connection for the life of the process.
+/// unloaded session for the life of the process.
 #[tokio::test]
 #[serial_test::serial]
 async fn monitor_exits_when_cleanup_destroyed_the_inbox() {
@@ -3368,53 +3454,59 @@ async fn monitor_exits_when_cleanup_destroyed_the_inbox() {
 	ws.close(None).await.ok();
 }
 
-/// A handback queued BEFORE the connection closes must survive the close: the
-/// orphaned monitor wakes on `bg_tx.closed()` with a non-empty queue, passes
-/// the wakeup on to any live monitor parked on the same Notify, and exits
-/// WITHOUT draining the message into its dead channel.
+/// A timed schedule that falls due while no connection is open still fires: the
+/// monitor belongs to the session, so closing the socket that bound it neither
+/// stops it nor leaves the entry unanswered.
 #[tokio::test]
 #[serial_test::serial]
-async fn monitor_passes_the_wakeup_on_when_a_handback_was_queued_before_the_close() {
+async fn a_due_timed_schedule_fires_after_the_connection_closed() {
 	let _data = TestDataDirGuard::new();
-	let _env = StubEnv::new(vec![]).await;
+	let _env = StubEnv::new(vec![final_response("TIMER-TURN")]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	let before = wait_for_inbox_monitors(0).await;
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 	let session_id = create_session(&mut ws, None).await;
-	tokio::time::sleep(Duration::from_millis(200)).await;
-
-	// Queue a handback while the session lock is held: the monitor wakes,
-	// fails try_lock, and parks again with the message still queued.
-	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
-	let guard = lock.lock().await;
-	push_inbox_message_for_session(
-		&session_id,
-		InboxMessage {
-			source: InboxSource::TapRun {
-				id: "tap-1".to_string(),
-				role: "assistant:researcher".to_string(),
-			},
-			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
-		},
-	);
-	tokio::time::sleep(Duration::from_millis(300)).await;
-	assert!(
-		inbox_has_messages(&session_id).await,
-		"precondition: the handback is queued behind the lock"
-	);
-
 	ws.close(None).await.ok();
 	drop(ws);
-	drop(guard);
+	tokio::time::sleep(Duration::from_millis(300)).await;
 	assert_eq!(
-		wait_for_inbox_monitors(before).await,
-		before,
-		"the orphaned monitor must be reaped once its connection is gone"
+		live_inbox_monitors() - before,
+		1,
+		"the monitor outlives the connection that bound the session"
 	);
+
+	crate::session::context::get_schedule_storage(&session_id)
+		.lock()
+		.unwrap()
+		.add(crate::mcp::orchestration::schedule::storage::ScheduleEntry::new(
+			"tick".to_string(),
+			crate::mcp::orchestration::schedule::storage::ScheduleAction::Message {
+				message: "timer says go".to_string(),
+			},
+			chrono::Local::now() + chrono::Duration::milliseconds(300),
+			None,
+		));
+	crate::session::context::notify_schedule_change(&session_id);
+
+	let fired = tokio::time::timeout(Duration::from_secs(20), async {
+		loop {
+			let last = server
+				.sessions
+				.lock()
+				.await
+				.get(&session_id)
+				.and_then(|s| s.session.messages.last().cloned());
+			if matches!(&last, Some(m) if m.role == "assistant" && m.content.contains("TIMER-TURN")) {
+				break;
+			}
+			tokio::time::sleep(Duration::from_millis(50)).await;
+		}
+	})
+	.await;
 	assert!(
-		inbox_has_messages(&session_id).await,
-		"the queued handback must survive the close, not be drained into a dead channel"
+		fired.is_ok(),
+		"the due schedule must run its turn with nobody connected"
 	);
 
 	crate::session::context::cleanup_session(&session_id);
@@ -3866,7 +3958,7 @@ async fn monitor_swallows_an_inbox_batch_it_cannot_persist_and_keeps_the_session
 
 #[tokio::test]
 #[serial_test::serial]
-async fn monitor_finishing_a_turn_after_the_connection_closes_exits_cleanly() {
+async fn monitor_finishing_a_turn_after_the_connection_closes_keeps_the_session_and_its_monitor() {
 	let _data = TestDataDirGuard::new();
 	let _env = SlowStubEnv::new(Duration::from_secs(2)).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
@@ -3893,10 +3985,19 @@ async fn monitor_finishing_a_turn_after_the_connection_closes_exits_cleanly() {
 	drop(ws);
 	break_session_persistence();
 
+	// The turn ends with nobody connected: the session goes back to the map and
+	// the monitor stays for the session's next event.
+	let stored_back = tokio::time::timeout(Duration::from_secs(20), async {
+		while !server.sessions.lock().await.contains_key(&session_id) {
+			tokio::time::sleep(Duration::from_millis(50)).await;
+		}
+	})
+	.await;
+	assert!(stored_back.is_ok(), "the turn must finish and store the session back");
 	assert_eq!(
-		wait_for_inbox_monitors(before).await,
-		before,
-		"the monitor must exit once its connection is gone instead of leaking"
+		live_inbox_monitors() - before,
+		1,
+		"a closed connection does not end the session's monitor"
 	);
 	assert!(
 		server.sessions.lock().await.contains_key(&session_id),
@@ -5375,4 +5476,223 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 	})
 	.await;
 	tap_runs::clear_for_session(&request.session_id);
+}
+
+// ---- observer connections ----
+
+/// Opens an observer connection and returns it past its `observing` frame.
+async fn connect_observer(addr: std::net::SocketAddr, sessions: serde_json::Value) -> ClientWs {
+	let mut ws = connect_ws(addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(&mut ws, serde_json::json!({"type": "observe", "sessions": sessions})).await;
+	let observing = read_json(&mut ws).await;
+	assert_eq!(observing["type"], "observing", "first frame: {observing}");
+	assert!(
+		observing["capabilities"]
+			.as_array()
+			.is_some_and(|caps| caps.iter().any(|cap| cap == "observe_v1")),
+		"got: {observing}"
+	);
+	ws
+}
+
+/// The next `observed` envelope of `session_id`, skipping anything else.
+async fn read_observed(ws: &mut ClientWs, session_id: &str) -> serde_json::Value {
+	read_until(ws, |v| v["type"] == "observed" && v["session_id"] == session_id).await
+}
+
+/// The frames of `session_id`'s next turn, as an observer reads them: up to and
+/// including its cost frame.
+async fn observed_turn(ws: &mut ClientWs, session_id: &str) -> Vec<serde_json::Value> {
+	let mut frames = Vec::new();
+	loop {
+		let envelope = read_observed(ws, session_id).await;
+		let done = envelope["frame"]["type"] == "cost";
+		frames.push(envelope["frame"].clone());
+		if done {
+			return frames;
+		}
+	}
+}
+
+/// The cloud's recorder holds one observer per machine: whatever any session
+/// outputs reaches it as the very frames a driver reads, and so does a turn the
+/// session runs by itself while no client is bound.
+#[tokio::test]
+#[serial_test::serial]
+async fn an_observer_receives_every_session_including_a_background_turn_with_no_client() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("DRIVEN-A"), final_response("BACKGROUND-B")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut observer = connect_observer(server.addr, serde_json::json!([])).await;
+
+	let mut driver = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut driver).await;
+	create_session(&mut driver, Some("obs-a")).await;
+	let opened = read_until(&mut observer, |v| {
+		v["type"] == "stream_open" && v["session_id"] == "obs-a"
+	})
+	.await;
+	assert_eq!(opened["last_seq"], 0, "got: {opened}");
+	assert_eq!(opened["gap"], false);
+
+	send_json(
+		&mut driver,
+		serde_json::json!({"type": "message", "session_id": "obs-a", "content": "hello"}),
+	)
+	.await;
+	let driven: Vec<serde_json::Value> = frames_through_cost(&mut driver)
+		.await
+		.into_iter()
+		.filter(|frame| frame.get("stream_seq").is_some())
+		.collect();
+	assert_eq!(
+		observed_turn(&mut observer, "obs-a").await,
+		driven,
+		"the observer gets the frames the driver gets"
+	);
+
+	// A second session, bound by a driver that leaves before its work arrives.
+	create_session(&mut driver, Some("obs-b")).await;
+	drop(driver);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	push_inbox_message_for_session(
+		"obs-b",
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "background work".to_string(),
+		},
+	);
+	let background = observed_turn(&mut observer, "obs-b").await;
+	assert_eq!(background[0]["type"], "injected", "got: {background:?}");
+	assert!(
+		background
+			.iter()
+			.any(|f| f["type"] == "assistant" && f["content"].as_str().unwrap_or_default().contains("BACKGROUND-B")),
+		"the background turn reaches the observer: {background:?}"
+	);
+
+	crate::session::context::cleanup_session(&"obs-a".to_string());
+	crate::session::context::cleanup_session(&"obs-b".to_string());
+}
+
+/// A reconnecting observer says where it stopped: the same stream replays only
+/// what follows, another one replays all that is held.
+#[tokio::test]
+#[serial_test::serial]
+async fn an_observer_reconnecting_with_a_mark_replays_only_what_it_missed() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("MARKED")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut driver = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut driver).await;
+	send_json(
+		&mut driver,
+		serde_json::json!({"type": "session", "session_id": "obs-mark"}),
+	)
+	.await;
+	let ack = read_json(&mut driver).await;
+	assert!(
+		ack["capabilities"]
+			.as_array()
+			.is_some_and(|caps| caps.iter().any(|cap| cap == "observe_v1")),
+		"the bind ack advertises observe_v1: {ack}"
+	);
+	let stream = ack["stream"].as_str().expect("stream id").to_string();
+	let _greeting = read_json(&mut driver).await;
+	send_json(
+		&mut driver,
+		serde_json::json!({"type": "message", "session_id": "obs-mark", "content": "hello"}),
+	)
+	.await;
+	let turn = frames_through_cost(&mut driver).await;
+	let last_seq = turn
+		.iter()
+		.filter_map(|frame| frame["stream_seq"].as_u64())
+		.max()
+		.expect("the turn is numbered");
+
+	let mut resumed = connect_observer(
+		server.addr,
+		serde_json::json!([{"session_id": "obs-mark", "stream": stream, "after": last_seq - 1}]),
+	)
+	.await;
+	let opened = read_json(&mut resumed).await;
+	assert_eq!(opened["type"], "stream_open", "got: {opened}");
+	assert_eq!(opened["stream"], stream.as_str());
+	assert_eq!(opened["last_seq"], last_seq);
+	assert_eq!(opened["gap"], false);
+	let only = read_json(&mut resumed).await;
+	assert_eq!(only["type"], "observed");
+	assert_eq!(only["frame"]["type"], "cost");
+	assert_eq!(only["frame"]["stream_seq"], last_seq);
+	assert!(stays_unanswered(&mut resumed).await, "nothing else was missed");
+
+	let mut foreign = connect_observer(
+		server.addr,
+		serde_json::json!([{"session_id": "obs-mark", "stream": "0123456789abcdef", "after": last_seq - 1}]),
+	)
+	.await;
+	let opened = read_json(&mut foreign).await;
+	assert_eq!(opened["type"], "stream_open", "got: {opened}");
+	assert_eq!(opened["gap"], false);
+	let mut seqs = Vec::new();
+	for _ in 0..last_seq {
+		seqs.push(read_json(&mut foreign).await["frame"]["stream_seq"].as_u64().unwrap());
+	}
+	assert_eq!(
+		seqs,
+		(1..=last_seq).collect::<Vec<_>>(),
+		"another stream: every held frame"
+	);
+
+	crate::session::context::cleanup_session(&"obs-mark".to_string());
+}
+
+/// Unloading a session closes its stream for observers, and an observer only
+/// reads: every frame it sends is refused while the connection stays open.
+#[tokio::test]
+#[serial_test::serial]
+async fn an_observer_hears_a_session_unload_and_refuses_every_frame_of_its_own() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut observer = connect_observer(server.addr, serde_json::json!([])).await;
+	let mut driver = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut driver).await;
+	create_session(&mut driver, Some("obs-close")).await;
+	let opened = read_until(&mut observer, |v| {
+		v["type"] == "stream_open" && v["session_id"] == "obs-close"
+	})
+	.await;
+
+	send_json(
+		&mut driver,
+		serde_json::json!({"type": "close", "session_id": "obs-close"}),
+	)
+	.await;
+	let _ack = read_json(&mut driver).await;
+	let _closed = read_json(&mut driver).await;
+	let closed = read_until(&mut observer, |v| v["type"] == "stream_closed").await;
+	assert_eq!(closed["session_id"], "obs-close");
+	assert_eq!(closed["stream"], opened["stream"]);
+
+	for frame in [
+		serde_json::json!({"type": "message", "session_id": "obs-close", "content": "hi"}),
+		serde_json::json!({"type": "session", "session_id": "obs-close"}),
+		serde_json::json!({"type": "cancel", "session_id": "obs-close"}),
+		serde_json::json!({"type": "observe"}),
+	] {
+		send_json(&mut observer, frame.clone()).await;
+		let refusal = read_json(&mut observer).await;
+		assert_eq!(refusal["type"], "error", "{frame}: {refusal}");
+		assert_eq!(refusal["message"], "observer connections are read-only", "{frame}");
+	}
+
+	// Still connected: the next load of the session is announced under a new stream.
+	create_session(&mut driver, Some("obs-close")).await;
+	let reopened = read_until(&mut observer, |v| v["type"] == "stream_open").await;
+	assert_eq!(reopened["session_id"], "obs-close");
+	assert_ne!(reopened["stream"], opened["stream"]);
+
+	crate::session::context::cleanup_session(&"obs-close".to_string());
 }

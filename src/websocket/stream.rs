@@ -12,21 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Session output streams: numbered, buffered, and routed to the latest bind.
+// Session output streams: numbered, buffered, routed to the latest bind and
+// copied to every observer.
 
-use super::protocol::{AckPayload, ServerMessage, StreamResume};
-use super::server::WsSender;
+use super::protocol::{
+	observed_frame, server_capabilities, AckPayload, ObserveMark, ObserverMessage, ServerMessage, StreamResume,
+};
+use super::server::{WsSender, MAX_QUEUED_BYTES};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
-/// Held frames per stream, whichever bound is hit first. Frames are whole
-/// messages (never token deltas), so a turn rarely nears the count; the byte
-/// bound is what large tool results run into.
-const MAX_HELD_FRAMES: usize = 4096;
-const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+/// Held bytes per stream: the replay source for a resuming driver and for an
+/// observer reconnecting with a mark. Frames are whole messages (never token
+/// deltas). The newest frame is always kept, so one large tool result still
+/// replays.
+const HOLD_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// What one `observe` replays in total, across all streams: half a
+/// connection's outbound byte limit, so the replay always fits and leaves room
+/// for the live frames behind it.
+const OBSERVE_REPLAY_MAX_BYTES: usize = MAX_QUEUED_BYTES / 2;
 
 /// A session frame as it goes on the wire: the payload plus its place in the
 /// session's stream.
@@ -46,32 +54,27 @@ struct StreamState {
 	id: String,
 	session_id: String,
 	last_seq: u64,
-	/// Frames of the turn running now and of the one before it, oldest first,
-	/// exactly as they were sent.
+	/// The newest frames, oldest first, exactly as they were sent, up to
+	/// `HOLD_MAX_BYTES`.
 	held: VecDeque<HeldFrame>,
 	held_bytes: usize,
-	/// First `stream_seq` of the latest turn; frames before the turn ahead of
-	/// it are dropped when the next one begins.
-	turn_start: u64,
 	/// The connection that owns the output (see `attach` and `own`). None until
 	/// one does, and again once it is gone: frames are then only held.
 	sink: Option<WsSender>,
 	/// Connections whose latest bind of this session listed `elicitation_v1`.
 	answering: Vec<WsSender>,
+	/// Observer connections: they get a copy of every frame and never own the
+	/// output.
+	observers: Vec<WsSender>,
 }
 
 impl StreamState {
 	fn hold(&mut self, seq: u64, text: String) {
 		self.held_bytes += text.len();
 		self.held.push_back(HeldFrame { seq, text });
-		while self.held.len() > MAX_HELD_FRAMES || self.held_bytes > MAX_HELD_BYTES {
-			self.drop_oldest();
-		}
-	}
-
-	fn drop_oldest(&mut self) {
-		if let Some(frame) = self.held.pop_front() {
-			self.held_bytes -= frame.text.len();
+		while self.held_bytes > HOLD_MAX_BYTES && self.held.len() > 1 {
+			let dropped = self.held.pop_front().expect("more than one frame is held");
+			self.held_bytes -= dropped.text.len();
 		}
 	}
 
@@ -91,6 +94,17 @@ impl StreamState {
 				self.set_owner(None);
 			}
 		}
+	}
+
+	/// Observers get every numbered frame, wrapped around the text already
+	/// serialized. A send an observer refuses means its connection is gone.
+	fn deliver_observed(&mut self, text: &str) {
+		if self.observers.is_empty() {
+			return;
+		}
+		let envelope = observed_frame(&self.session_id, &self.id, text);
+		self.observers
+			.retain(|observer| observer.send(Message::text(envelope.clone())).is_ok());
 	}
 
 	/// The session's MCP elicitations are answered by the connection that owns
@@ -115,9 +129,9 @@ impl StreamState {
 }
 
 /// The output of one session loaded in this process. Every frame the session
-/// produces is numbered here (`stream_seq` 1, 2, 3 …), held for a resume, and
-/// sent to the connection that owns the output — whichever connection or task
-/// produced it.
+/// produces is numbered here (`stream_seq` 1, 2, 3 …), held for a resume, sent
+/// to the connection that owns the output — whichever connection or task
+/// produced it — and copied to every observer.
 pub(crate) struct SessionStream(Mutex<StreamState>);
 
 /// Emits directly into the replay stream; producer output must not accumulate
@@ -156,9 +170,9 @@ impl SessionStream {
 			last_seq: 0,
 			held: VecDeque::new(),
 			held_bytes: 0,
-			turn_start: 1,
 			sink: None,
 			answering: Vec::new(),
+			observers: Vec::new(),
 		}))
 	}
 
@@ -170,19 +184,9 @@ impl SessionStream {
 		let text = serde_json::to_string(&Sequenced { frame, stream_seq: seq })?;
 		state.last_seq = seq;
 		state.deliver(&text);
+		state.deliver_observed(&text);
 		state.hold(seq, text);
 		Ok(())
-	}
-
-	/// A new turn starts: what came before the previous turn is no longer
-	/// resumable.
-	pub(crate) fn begin_turn(&self) {
-		let mut state = self.0.lock().unwrap();
-		let previous_start = state.turn_start;
-		while state.held.front().is_some_and(|frame| frame.seq < previous_start) {
-			state.drop_oldest();
-		}
-		state.turn_start = state.last_seq + 1;
 	}
 
 	/// A client frame starts a turn: the connection that sent it reads that
@@ -242,36 +246,143 @@ impl SessionStream {
 	fn detach(&self, sink: &WsSender) {
 		let mut state = self.0.lock().unwrap();
 		state.answering.retain(|answering| !answering.same_channel(sink));
+		state.observers.retain(|observer| !observer.same_channel(sink));
 		if state.sink.as_ref().is_some_and(|bound| bound.same_channel(sink)) {
 			state.set_owner(None);
 		}
 	}
+
+	/// A freshly minted stream: the observers connected so far learn of it
+	/// before its first frame, and receive that frame like any later one.
+	fn announce_open(&self, observers: &[WsSender]) {
+		let mut state = self.0.lock().unwrap();
+		let opened = ObserverMessage::StreamOpen {
+			session_id: state.session_id.clone(),
+			stream: state.id.clone(),
+			last_seq: 0,
+			gap: false,
+		}
+		.text();
+		state.observers = observers
+			.iter()
+			.filter(|observer| observer.send(Message::text(opened.clone())).is_ok())
+			.cloned()
+			.collect();
+	}
+
+	/// The session was unloaded: its observers hear the stream is over.
+	fn announce_closed(&self) {
+		let state = self.0.lock().unwrap();
+		let closed = ObserverMessage::StreamClosed {
+			session_id: state.session_id.clone(),
+			stream: state.id.clone(),
+		}
+		.text();
+		for observer in &state.observers {
+			if let Err(error) = observer.send(Message::text(closed.clone())) {
+				crate::log_debug!("Session stream {}: observer is gone: {}", state.id, error);
+			}
+		}
+	}
+
+	/// Tell a new observer where the stream stands, replay what it has not read
+	/// and register it for the live frames, all under the stream lock so no
+	/// frame falls between the replay and the live part. A mark of this very
+	/// stream limits the replay to the frames after it; any other point gets
+	/// every held frame.
+	///
+	/// The replay is charged to `budget`, shared by all streams of one `observe`.
+	/// A stream that does not fit replays only its newest frames, and `gap` says
+	/// the older ones were not delivered — the same as frames lost to the hold.
+	fn observe(&self, sink: &WsSender, mark: Option<&StreamResume>, budget: &mut usize) -> Result<()> {
+		let mut state = self.0.lock().unwrap();
+		let after = mark.filter(|mark| mark.stream == state.id).map_or(0, |mark| mark.after);
+		// Newest first, so what is cut is always the oldest part of the replay.
+		let mut replay = Vec::new();
+		for frame in state.held.iter().rev().take_while(|frame| frame.seq > after) {
+			let envelope = observed_frame(&state.session_id, &state.id, &frame.text);
+			if envelope.len() > *budget {
+				break;
+			}
+			*budget -= envelope.len();
+			replay.push((frame.seq, envelope));
+		}
+		let first_replayed = replay.last().map_or(state.last_seq + 1, |(seq, _)| *seq);
+		let opened = ObserverMessage::StreamOpen {
+			session_id: state.session_id.clone(),
+			stream: state.id.clone(),
+			last_seq: state.last_seq,
+			gap: first_replayed > after.saturating_add(1),
+		};
+		sink.send(Message::text(opened.text()))?;
+		for (_, envelope) in replay.into_iter().rev() {
+			sink.send(Message::text(envelope))?;
+		}
+		state.observers.push(sink.clone());
+		Ok(())
+	}
 }
 
-/// The streams of every session loaded in this process, by session id. A
-/// stream is minted the first time its session is used and lives until the
-/// session is closed (unloaded), so a re-load starts a new one.
+/// The streams of every session loaded in this process, by session id, and the
+/// observer connections that see all of them. A stream is minted the first
+/// time its session is used and lives until the session is closed (unloaded),
+/// so a re-load starts a new one.
 #[derive(Clone, Default)]
-pub(crate) struct Streams(Arc<Mutex<HashMap<String, Arc<SessionStream>>>>);
+pub(crate) struct Streams(Arc<Mutex<Registry>>);
+
+/// One lock covers both halves, so an observer registers against exactly the
+/// streams that exist and never misses one opening or closing meanwhile.
+#[derive(Default)]
+struct Registry {
+	streams: HashMap<String, Arc<SessionStream>>,
+	observers: Vec<WsSender>,
+}
 
 impl Streams {
 	pub(crate) fn open(&self, session_id: &str) -> Arc<SessionStream> {
-		let mut streams = self.0.lock().unwrap();
-		Arc::clone(
-			streams
-				.entry(session_id.to_string())
-				.or_insert_with(|| Arc::new(SessionStream::new(session_id))),
-		)
+		let mut registry = self.0.lock().unwrap();
+		if let Some(stream) = registry.streams.get(session_id) {
+			return Arc::clone(stream);
+		}
+		let stream = Arc::new(SessionStream::new(session_id));
+		stream.announce_open(&registry.observers);
+		registry.streams.insert(session_id.to_string(), Arc::clone(&stream));
+		stream
 	}
 
 	pub(crate) fn close(&self, session_id: &str) {
-		self.0.lock().unwrap().remove(session_id);
+		if let Some(stream) = self.0.lock().unwrap().streams.remove(session_id) {
+			stream.announce_closed();
+		}
+	}
+
+	/// `sink` becomes an observer: `observing`, then every open stream with the
+	/// replay `marks` ask for, within `OBSERVE_REPLAY_MAX_BYTES` in all. Streams
+	/// opened later announce themselves to it.
+	pub(crate) fn observe(&self, sink: &WsSender, marks: &[ObserveMark]) -> Result<()> {
+		let mut registry = self.0.lock().unwrap();
+		let observing = ObserverMessage::Observing {
+			capabilities: server_capabilities(),
+		};
+		sink.send(Message::text(observing.text()))?;
+		let mut budget = OBSERVE_REPLAY_MAX_BYTES;
+		for (session_id, stream) in &registry.streams {
+			let mark = marks
+				.iter()
+				.find(|mark| mark.session_id == *session_id)
+				.map(|mark| &mark.resume);
+			stream.observe(sink, mark, &mut budget)?;
+		}
+		registry.observers.push(sink.clone());
+		Ok(())
 	}
 
 	/// A connection ended: no stream sends to it any more, and none keeps its
 	/// writer alive.
 	pub(crate) fn detach(&self, sink: &WsSender) {
-		for stream in self.0.lock().unwrap().values() {
+		let mut registry = self.0.lock().unwrap();
+		registry.observers.retain(|observer| !observer.same_channel(sink));
+		for stream in registry.streams.values() {
 			stream.detach(sink);
 		}
 	}

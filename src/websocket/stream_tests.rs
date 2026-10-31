@@ -654,3 +654,43 @@ fn one_observe_replays_within_its_budget_and_flags_what_it_left_out() {
 	assert!(whole > 0, "the budget replays some streams whole");
 	assert!(cut > 0, "and flags the ones it could not");
 }
+
+/// Many small frames fill a connection's frame queue long before their bytes
+/// do: the hold keeps at most `HOLD_MAX_FRAMES`, newest kept, so a resume
+/// replay always fits the queue.
+#[test]
+fn held_frames_are_bounded_by_count_too() {
+	let stream = SessionStream::new("s1");
+	for _ in 0..HOLD_MAX_FRAMES + 10 {
+		stream.emit(&assistant("x")).unwrap();
+	}
+	let state = stream.0.lock().unwrap();
+	assert_eq!(state.held.len(), HOLD_MAX_FRAMES);
+	assert_eq!(state.held.back().unwrap().seq, state.last_seq, "the newest frame stays");
+	assert_eq!(state.held.front().unwrap().seq, 11, "the oldest ten went first");
+}
+
+/// Three streams of `HOLD_MAX_FRAMES` tiny frames are well under the byte
+/// budget but over the frame budget: one `observe` replays at most
+/// `OBSERVE_REPLAY_MAX_FRAMES` frames and flags what it left out.
+#[test]
+fn one_observe_replays_within_its_frame_budget() {
+	let streams = Streams::default();
+	for index in 0..3 {
+		let stream = streams.open(&format!("s{index}"));
+		for _ in 0..HOLD_MAX_FRAMES {
+			stream.emit(&assistant("x")).unwrap();
+		}
+	}
+	let (sink, mut rx) = WsSender::channel();
+	streams.observe(&sink, &[]).expect("observe");
+	let frames: Vec<serde_json::Value> = texts(&mut rx).iter().map(|text| json(text)).collect();
+	let replayed = frames.iter().filter(|frame| frame["type"] == "observed").count();
+	assert!(replayed <= OBSERVE_REPLAY_MAX_FRAMES, "replayed {replayed} frames");
+	let gaps = frames
+		.iter()
+		.filter(|frame| frame["type"] == "stream_open" && frame["gap"] == true)
+		.count();
+	assert!(gaps > 0, "a stream the frame budget cut is flagged");
+	assert!(sink.send(Message::text("live")).is_ok(), "the connection stays open");
+}

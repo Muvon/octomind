@@ -18,7 +18,7 @@
 use super::protocol::{
 	observed_frame, server_capabilities, AckPayload, ObserveMark, ObserverMessage, ServerMessage, StreamResume,
 };
-use super::server::{WsSender, MAX_QUEUED_BYTES};
+use super::server::{WsSender, MAX_QUEUED_BYTES, MAX_QUEUED_FRAMES};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -31,10 +31,40 @@ use tokio_tungstenite::tungstenite::Message;
 /// replays.
 const HOLD_MAX_BYTES: usize = 2 * 1024 * 1024;
 
+/// Held frames per stream: a replay must also fit the connection's frame
+/// queue, which many small frames fill long before their bytes add up.
+const HOLD_MAX_FRAMES: usize = MAX_QUEUED_FRAMES / 2;
+
 /// What one `observe` replays in total, across all streams: half a
-/// connection's outbound byte limit, so the replay always fits and leaves room
-/// for the live frames behind it.
+/// connection's outbound limits, in bytes and in frames, so the replay always
+/// fits and leaves room for the live frames behind it.
 const OBSERVE_REPLAY_MAX_BYTES: usize = MAX_QUEUED_BYTES / 2;
+const OBSERVE_REPLAY_MAX_FRAMES: usize = MAX_QUEUED_FRAMES / 2;
+
+/// What is left of one `observe`'s replay allowance.
+struct ReplayBudget {
+	bytes: usize,
+	frames: usize,
+}
+
+impl ReplayBudget {
+	fn observe() -> Self {
+		Self {
+			bytes: OBSERVE_REPLAY_MAX_BYTES,
+			frames: OBSERVE_REPLAY_MAX_FRAMES,
+		}
+	}
+
+	/// Charge one replayed envelope; false (nothing charged) when it does not fit.
+	fn take(&mut self, len: usize) -> bool {
+		if len > self.bytes || self.frames == 0 {
+			return false;
+		}
+		self.bytes -= len;
+		self.frames -= 1;
+		true
+	}
+}
 
 /// A session frame as it goes on the wire: the payload plus its place in the
 /// session's stream.
@@ -55,7 +85,7 @@ struct StreamState {
 	session_id: String,
 	last_seq: u64,
 	/// The newest frames, oldest first, exactly as they were sent, up to
-	/// `HOLD_MAX_BYTES`.
+	/// `HOLD_MAX_BYTES` and `HOLD_MAX_FRAMES`.
 	held: VecDeque<HeldFrame>,
 	held_bytes: usize,
 	/// The connection that owns the output (see `attach` and `own`). None until
@@ -72,7 +102,7 @@ impl StreamState {
 	fn hold(&mut self, seq: u64, text: String) {
 		self.held_bytes += text.len();
 		self.held.push_back(HeldFrame { seq, text });
-		while self.held_bytes > HOLD_MAX_BYTES && self.held.len() > 1 {
+		while (self.held_bytes > HOLD_MAX_BYTES || self.held.len() > HOLD_MAX_FRAMES) && self.held.len() > 1 {
 			let dropped = self.held.pop_front().expect("more than one frame is held");
 			self.held_bytes -= dropped.text.len();
 		}
@@ -294,17 +324,16 @@ impl SessionStream {
 	/// The replay is charged to `budget`, shared by all streams of one `observe`.
 	/// A stream that does not fit replays only its newest frames, and `gap` says
 	/// the older ones were not delivered — the same as frames lost to the hold.
-	fn observe(&self, sink: &WsSender, mark: Option<&StreamResume>, budget: &mut usize) -> Result<()> {
+	fn observe(&self, sink: &WsSender, mark: Option<&StreamResume>, budget: &mut ReplayBudget) -> Result<()> {
 		let mut state = self.0.lock().unwrap();
 		let after = mark.filter(|mark| mark.stream == state.id).map_or(0, |mark| mark.after);
 		// Newest first, so what is cut is always the oldest part of the replay.
 		let mut replay = Vec::new();
 		for frame in state.held.iter().rev().take_while(|frame| frame.seq > after) {
 			let envelope = observed_frame(&state.session_id, &state.id, &frame.text);
-			if envelope.len() > *budget {
+			if !budget.take(envelope.len()) {
 				break;
 			}
-			*budget -= envelope.len();
 			replay.push((frame.seq, envelope));
 		}
 		let first_replayed = replay.last().map_or(state.last_seq + 1, |(seq, _)| *seq);
@@ -357,7 +386,7 @@ impl Streams {
 	}
 
 	/// `sink` becomes an observer: `observing`, then every open stream with the
-	/// replay `marks` ask for, within `OBSERVE_REPLAY_MAX_BYTES` in all. Streams
+	/// replay `marks` ask for, within one `ReplayBudget` in all. Streams
 	/// opened later announce themselves to it.
 	pub(crate) fn observe(&self, sink: &WsSender, marks: &[ObserveMark]) -> Result<()> {
 		let mut registry = self.0.lock().unwrap();
@@ -365,7 +394,7 @@ impl Streams {
 			capabilities: server_capabilities(),
 		};
 		sink.send(Message::text(observing.text()))?;
-		let mut budget = OBSERVE_REPLAY_MAX_BYTES;
+		let mut budget = ReplayBudget::observe();
 		for (session_id, stream) in &registry.streams {
 			let mark = marks
 				.iter()

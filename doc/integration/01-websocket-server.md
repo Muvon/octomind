@@ -401,7 +401,7 @@ A successful bind's ack reports the stream and the highest `stream_seq` assigned
 ```
 
 A failed bind's ack carries no `stream` or `stream_seq`. The server holds the newest frames of each stream, up to 2 MiB
-per stream (oldest dropped first; the newest frame is always kept, however large). A client that lost its connection binds again
+and 4096 frames per stream (oldest dropped first; the newest frame is always kept, however large). A client that lost its connection binds again
 with `"resume": {"stream": "<id>", "after": <last stream_seq it received>}`. When the stream matches and every frame
 after that point is still held, the ack carries `"resumed": true` and those frames follow it at once, in order and
 byte-identical to the first sending, before the bind's `status` and any new frame; then the stream continues live,
@@ -694,7 +694,9 @@ more, or when the session is closed. A client should close any open form when th
 #### Observer connections
 
 An observer records what the server's sessions do without driving any of them: one observer connection sees every
-session's output, including turns that run while no client is bound. Send `observe` once; the connection is an observer
+session's output, including turns that run while no client is bound. Send `observe` once, before the connection binds
+any session (after a bind it is refused with `observe must come before any session bind on a connection`, because a
+connection that owns a session's output or answers its questions cannot stop doing so); the connection is an observer
 for its lifetime. Any other client frame on it (`session`, `message`, `cancel`, a second `observe`, …) is answered with
 `{"type":"error","message":"observer connections are read-only"}` and the connection stays open. An observer never owns a
 session's output, never answers elicitations and does not count as a bound client. Any number of observers may be
@@ -737,9 +739,10 @@ comes from the same 2 MiB hold a `resume` bind uses:
 - No mark, or a mark with a different `stream` (the session was reloaded or the server restarted), replays every held
   frame. `gap` is `true` when the oldest held `stream_seq` is above 1.
 
-One `observe` replays at most 8 MiB in all, half the connection's outbound limit, so the replay always fits. A stream
-whose frames do not fit replays only its newest ones and sets `gap` to `true` (as does a stream that gets none), so
-reconnect with marks to fetch the rest.
+One `observe` replays at most 8 MiB and 4096 frames in all, half the connection's outbound limits, so the replay always
+fits. A stream whose frames do not fit replays only its newest ones and sets `gap` to `true` (as does a stream that gets
+none). The frames left out are not replayed later: record the range as lost, exactly as for frames the hold dropped. A
+single held frame larger than the whole budget is therefore never replayed to an observer.
 
 An observer has the same outbound limits as any connection. One that cannot keep up is disconnected; it reconnects with
 its marks. Frames that answer one client frame (`ack`, `run_log`, bind statuses) belong to the connection that sent

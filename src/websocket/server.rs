@@ -53,7 +53,7 @@ type SessionLocks = Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>;
 /// Sessions that have a background monitor (see `ensure_session_monitor`).
 type Monitors = Arc<std::sync::Mutex<HashSet<String>>>;
 
-const MAX_QUEUED_FRAMES: usize = 8192;
+pub(super) const MAX_QUEUED_FRAMES: usize = 8192;
 pub(super) const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DEFERRED_FRAMES: usize = 256;
 const MAX_DEFERRED_BYTES: usize = 10 * 1024 * 1024;
@@ -70,6 +70,10 @@ const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis
 
 /// The answer to any frame on an observer connection.
 const OBSERVER_READ_ONLY_ERROR: &str = "observer connections are read-only";
+/// The answer to `observe` on a connection that already bound a session: it may
+/// own that session's output and answer its questions, which an observer never
+/// does, so it would leave them stranded.
+const OBSERVE_AFTER_BIND_ERROR: &str = "observe must come before any session bind on a connection";
 
 /// Configs committed by a `/role` switch or restored from the session log on
 /// load, keyed by session id. A tap role's servers exist only in the config its
@@ -637,6 +641,10 @@ async fn serve_connection(
 					continue;
 				};
 				if let ClientMessage::Observe(observe) = &client_msg {
+					if !active_session_ids.is_empty() {
+						send_message(ws_sender, &ServerMessage::error(OBSERVE_AFTER_BIND_ERROR.to_string())).await?;
+						continue;
+					}
 					ctx.server.streams.observe(ws_sender, &observe.sessions)?;
 					observing = true;
 					continue;

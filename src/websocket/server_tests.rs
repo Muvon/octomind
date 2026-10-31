@@ -5696,3 +5696,35 @@ async fn an_observer_hears_a_session_unload_and_refuses_every_frame_of_its_own()
 
 	crate::session::context::cleanup_session(&"obs-close".to_string());
 }
+
+/// A connection that bound a session may own its output and answer its
+/// questions; turning it into an observer would strand both, so `observe` is
+/// refused there and the connection keeps driving the session.
+#[tokio::test]
+#[serial_test::serial]
+async fn observe_after_a_bind_is_refused_and_the_connection_keeps_its_session() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut driver = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut driver).await;
+	create_session(&mut driver, Some("obs-after-bind")).await;
+
+	send_json(&mut driver, serde_json::json!({"type": "observe"})).await;
+	let refusal = read_json(&mut driver).await;
+	assert_eq!(refusal["type"], "error", "{refusal}");
+	assert_eq!(
+		refusal["message"],
+		"observe must come before any session bind on a connection"
+	);
+
+	// Not an observer: its next frame is handled, not refused as read-only.
+	send_json(
+		&mut driver,
+		serde_json::json!({"type": "close", "session_id": "obs-after-bind"}),
+	)
+	.await;
+	let ack = read_json(&mut driver).await;
+	assert_ne!(ack["message"], "observer connections are read-only", "{ack}");
+
+	crate::session::context::cleanup_session(&"obs-after-bind".to_string());
+}

@@ -96,7 +96,7 @@ jobs:
     #   Windows: ~/AppData/Local/octolib/huggingface
     # Cache key invalidates when src/embeddings/mod.rs changes (e.g. MODEL_NAME).
     - name: Cache HuggingFace model weights
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cache/octolib/huggingface
@@ -172,7 +172,7 @@ jobs:
         cache-on-failure: true
 
     - name: Cache HuggingFace model weights
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.cache/octolib/huggingface
         key: ${{ runner.os }}-octolib-hf-${{ hashFiles('src/embeddings/mod.rs') }}
@@ -257,13 +257,13 @@ jobs:
     # Flattening the .a files into one dir breaks linking.
     # Keyed by ORT version + target so a version bump invalidates correctly.
     - name: Cache ONNX Runtime static build
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: onnxruntime-src
         key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.22-v6
 
     - name: Cache cargo registry and target
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry

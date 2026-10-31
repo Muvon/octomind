@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.67.1] - 2026-10-31
+
+### 📋 Release Summary
+
+GitHub taps now refresh asynchronously.
+
+### 🔧 Improvements & Optimizations
+
+- **github-actions**: pin selected actions to commit SHAs `5920e546`
+- **workflows**: restrict workflow token permissions `73419014`
+- **dependencies**: configure weekly dependency updates `969ca9bf`
+- **tests**: add shared hindsight fixtures `fa1102e1`
+
+### 🐛 Bug Fixes & Stability
+
+- **taps**: refresh GitHub taps asynchronously `be78a2e6`
+
+### 🔄 Other Changes
+
+5 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.67.0] - 2026-10-31
 
 ### 📋 Release Summary

@@ -40,11 +40,21 @@ use std::time::{Duration, SystemTime};
 /// The built-in default tap — always present as the last fallback.
 pub const DEFAULT_TAP: &str = "muvon/tap";
 
-/// How often a GitHub tap is pulled automatically. Every agent start reads the
+/// How often a GitHub tap is refreshed automatically. Every agent start reads the
 /// taps, and a delegated specialist has seconds to answer its parent's
-/// handshake, so the pull runs at most once per interval for every process
-/// sharing the data dir: git's own `FETCH_HEAD` marks the last one.
+/// handshake, so a refresh starts at most once per interval for every process
+/// sharing the data dir: the newer of git's `FETCH_HEAD` and `REFRESH_STAMP`
+/// marks the last one.
 const TAP_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// File under `.git` touched when a background refresh is started. `FETCH_HEAD`
+/// only changes when the pull finishes, which on a slow mount is long after
+/// other processes have seen the same due refresh and started their own.
+const REFRESH_STAMP: &str = "octomind-refresh";
+
+/// Age past which a `.git/*.lock` has no live owner. A refresh that took 4.5
+/// minutes on a degraded network mount is the slowest seen; an hour is far past it.
+const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// A tap entry: either a GitHub repo or a local path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,15 +148,20 @@ fn write_taps_file(taps: &TapsFile) -> Result<()> {
 	Ok(())
 }
 
-/// Whether a GitHub tap is due for its automatic pull. A clone that has never
-/// fetched has no `FETCH_HEAD`, so its first refresh is due at once.
+/// Whether a GitHub tap is due for its automatic refresh. A clone that has
+/// never fetched nor started a refresh is due at once.
 fn refresh_due(tap_dir: &Path) -> bool {
-	match fs::metadata(tap_dir.join(".git").join("FETCH_HEAD")).and_then(|meta| meta.modified()) {
+	let git_dir = tap_dir.join(".git");
+	let last_refresh = ["FETCH_HEAD", REFRESH_STAMP]
+		.iter()
+		.filter_map(|name| fs::metadata(git_dir.join(name)).and_then(|meta| meta.modified()).ok())
+		.max();
+	match last_refresh {
 		// A stamp from the future (clock skew on a network mount) cannot prove freshness.
-		Ok(fetched_at) => SystemTime::now()
-			.duration_since(fetched_at)
+		Some(refreshed_at) => SystemTime::now()
+			.duration_since(refreshed_at)
 			.map_or(true, |age| age >= TAP_REFRESH_INTERVAL),
-		Err(_) => true,
+		None => true,
 	}
 }
 
@@ -195,20 +210,20 @@ pub fn get_taps() -> Result<Vec<Tap>> {
 }
 
 /// Returns all active taps: user taps first, built-in default last.
-/// Also auto-updates GitHub taps by running git pull (Homebrew-style).
+/// Also starts a background refresh of due GitHub taps (Homebrew-style); the
+/// files it brings in are visible to later calls, never to this one.
 pub fn load_taps() -> Result<Vec<Tap>> {
 	let mut file = read_taps_file()?;
 
 	// Ensure default tap is cloned (seamless first-time setup)
 	ensure_default_tap()?;
 
-	// Auto-update GitHub taps only (local taps are symlinks — always live)
+	// Refresh GitHub taps only (local taps are symlinks — always live)
 	for tap in &file.taps {
 		if tap.local_path.is_none() {
 			if let Ok(tap_dir) = tap.local_dir() {
-				if tap_dir.exists() && refresh_due(&tap_dir) {
-					// Silently pull updates — don't block on failure
-					let _ = git_pull(&tap_dir);
+				if tap_dir.exists() {
+					spawn_refresh(&tap_dir);
 				}
 			}
 		}
@@ -222,7 +237,8 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 	Ok(file.taps)
 }
 
-/// Ensure the default tap is cloned and updated (seamless first-time setup).
+/// Ensure the default tap is cloned (seamless first-time setup) and refreshed
+/// in the background. Only the first clone blocks: nothing exists to read without it.
 pub fn ensure_default_tap() -> Result<()> {
 	let default_tap = Tap {
 		name: DEFAULT_TAP.to_string(),
@@ -233,9 +249,8 @@ pub fn ensure_default_tap() -> Result<()> {
 		let url = default_tap.github_url();
 		crate::log_info!("Cloning default tap {}...", DEFAULT_TAP);
 		git_clone(&url, &tap_dir)?;
-	} else if refresh_due(&tap_dir) {
-		// Silently pull updates — don't block on failure
-		let _ = git_pull(&tap_dir);
+	} else {
+		spawn_refresh(&tap_dir);
 	}
 	Ok(())
 }
@@ -300,8 +315,9 @@ pub fn list_agent_tags() -> Result<Vec<String>> {
 /// Fetch a public workflow definition by name from taps.
 ///
 /// Reads `<tap>/workflows/<name>.toml`, first tap wins (user taps first,
-/// built-in default last). Auto-pulls GitHub taps (Homebrew-style) before
-/// reading so fetched workflows stay fresh — mirrors agent manifest fetch.
+/// built-in default last). Starts a background refresh of GitHub taps
+/// (Homebrew-style) before reading, so workflows fetched later stay fresh —
+/// mirrors agent manifest fetch.
 ///
 /// Returns `(raw_toml, source_tap_name)`.
 pub fn fetch_workflow(name: &str) -> Result<(String, String)> {
@@ -487,6 +503,98 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 		);
 	}
 	Ok(())
+}
+
+/// Start a detached `git pull --ff-only` for a due tap and return at once.
+///
+/// The pull is never awaited on the caller's path: on a slow network mount it
+/// takes minutes, and a delegated specialist must answer its parent's ACP
+/// handshake first. It runs in its own process group so that the parent
+/// killing a timed-out child's group cannot stop git mid-merge and leave a
+/// stale `.git/*.lock` that fails every later pull. `--ff-only` never creates
+/// a merge commit or leaves a half-merge in a clone shared between processes.
+fn spawn_refresh(tap_dir: &Path) {
+	if !refresh_due(tap_dir) {
+		return;
+	}
+	remove_stale_locks(&tap_dir.join(".git"));
+	// Stamp before spawning so concurrent processes see the refresh as taken.
+	// Without a `.git` dir this is not a clone and there is nothing to pull.
+	let stamp = tap_dir.join(".git").join(REFRESH_STAMP);
+	if fs::File::create(&stamp)
+		.and_then(|file| file.set_modified(SystemTime::now()))
+		.is_err()
+	{
+		return;
+	}
+
+	let mut command = std::process::Command::new("git");
+	command
+		.args(["pull", "--ff-only"])
+		.current_dir(tap_dir)
+		// Best-effort and silent; it must never wait on a credential prompt.
+		.env("GIT_TERMINAL_PROMPT", "0")
+		.stdin(Stdio::null())
+		.stdout(Stdio::null())
+		.stderr(Stdio::null());
+	#[cfg(unix)]
+	{
+		use std::os::unix::process::CommandExt;
+		command.process_group(0);
+	}
+	#[cfg(windows)]
+	{
+		use std::os::windows::process::CommandExt;
+		const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+		command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+	}
+
+	let mut child = match command.spawn() {
+		Ok(child) => child,
+		Err(err) => {
+			crate::log_debug!("Failed to start tap refresh at {}: {}", tap_dir.display(), err);
+			return;
+		}
+	};
+	let tap_dir = tap_dir.to_path_buf();
+	// Reaps the child (no zombie in a long-lived server) and lets that server
+	// pick up the new files once the pull lands.
+	std::thread::spawn(move || {
+		match child.wait() {
+			Ok(status) if !status.success() => {
+				crate::log_debug!("Failed to update tap at {}: {}", tap_dir.display(), status);
+			}
+			Ok(_) => {}
+			Err(err) => {
+				crate::log_debug!("Failed to wait for tap refresh at {}: {}", tap_dir.display(), err);
+			}
+		}
+		crate::agent::registry::invalidate_capability_catalog();
+	});
+}
+
+/// Remove `.git/*.lock` files older than [`STALE_LOCK_AGE`]. A container stop
+/// or idle suspend kills git together with everything else, and the lock it
+/// leaves makes every later pull fail — one such lock froze a tap for a week.
+fn remove_stale_locks(git_dir: &Path) {
+	let Ok(entries) = fs::read_dir(git_dir) else {
+		return;
+	};
+	for entry in entries.flatten() {
+		let path = entry.path();
+		let stale = path.extension().is_some_and(|ext| ext == "lock")
+			&& entry
+				.metadata()
+				.and_then(|meta| meta.modified())
+				.ok()
+				.and_then(|modified| SystemTime::now().duration_since(modified).ok())
+				.is_some_and(|age| age >= STALE_LOCK_AGE);
+		if stale {
+			if let Err(err) = fs::remove_file(&path) {
+				crate::log_debug!("Failed to remove stale tap lock {}: {}", path.display(), err);
+			}
+		}
+	}
 }
 
 #[cfg(test)]

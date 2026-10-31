@@ -68,8 +68,8 @@ impl Drop for EnvVarGuard {
 }
 
 /// Pre-create the default tap directory so `ensure_default_tap` takes the
-/// already-cloned branch (git pull failure is silently ignored) and no network
-/// clone is attempted.
+/// already-cloned branch (a directory without `.git` starts no refresh) and no
+/// network clone is attempted.
 fn create_default_tap() -> PathBuf {
 	let dir = Tap {
 		name: DEFAULT_TAP.to_string(),
@@ -358,8 +358,8 @@ fn load_taps_lists_user_taps_then_default() {
 
 	let src = tempfile::tempdir().unwrap();
 	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
-	// A GitHub tap whose directory already exists is pulled silently (failure
-	// ignored) — it must still be listed.
+	// A GitHub tap whose directory already exists is only refreshed in the
+	// background (and not at all without a `.git`) — it must still be listed.
 	let gh_dir = tap_dir_for("gh/repo");
 	fs::create_dir_all(&gh_dir).unwrap();
 	write_taps(vec![
@@ -440,11 +440,11 @@ fn chmod(path: &std::path::Path, mode: u32) {
 
 #[test]
 #[serial]
-fn load_taps_pulls_existing_github_tap_dirs_silently() {
+fn load_taps_skips_refresh_of_existing_github_tap_dirs_without_git() {
 	let _guard = DataDirGuard::new();
 	create_default_tap();
 	// A GitHub-format tap (no local_path) whose directory exists but is not a
-	// git repo: the pull fails and is swallowed — load must still succeed.
+	// git repo: no refresh starts — load must still succeed.
 	let gh_dir = tap_dir_for("probe/github");
 	fs::create_dir_all(&gh_dir).expect("create github tap dir");
 	write_taps(vec![Tap {
@@ -452,7 +452,7 @@ fn load_taps_pulls_existing_github_tap_dirs_silently() {
 		local_path: None,
 	}]);
 
-	let taps = load_taps().expect("load_taps survives a failed pull");
+	let taps = load_taps().expect("load_taps survives a tap that cannot refresh");
 	let names: Vec<&str> = taps.iter().map(|t| t.name.as_str()).collect();
 	assert_eq!(
 		names,
@@ -663,5 +663,161 @@ fn remove_tap_deletes_the_local_tap_symlink() {
 	assert!(
 		target.path().join("marker.txt").exists(),
 		"the local target directory is untouched"
+	);
+}
+
+// --- background refresh --------------------------------------------------------
+
+fn wait_for(path: &std::path::Path) {
+	for _ in 0..200 {
+		if path.exists() {
+			return;
+		}
+		std::thread::sleep(Duration::from_millis(50));
+	}
+	panic!("{} never appeared", path.display());
+}
+
+/// A `git` first on PATH that records each call and blocks until released, so a
+/// test can see `load_taps` return while the pull is still running.
+#[cfg(unix)]
+struct FakeGit {
+	dir: tempfile::TempDir,
+	_path: EnvVarGuard,
+}
+
+#[cfg(unix)]
+impl FakeGit {
+	fn install() -> Self {
+		let dir = tempfile::tempdir().expect("fake git dir");
+		let script = format!(
+			"#!/bin/sh\necho \"$@ prompt=$GIT_TERMINAL_PROMPT\" >> '{dir}/calls'\nwhile [ ! -e '{dir}/release' ]; do sleep 0.05; done\ntouch '{dir}/done'\n",
+			dir = dir.path().display()
+		);
+		let path = dir.path().join("git");
+		fs::write(&path, script).expect("write fake git");
+		chmod(&path, 0o755);
+		let search_path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
+		Self {
+			dir,
+			_path: EnvVarGuard::set("PATH", search_path),
+		}
+	}
+
+	fn calls_file(&self) -> PathBuf {
+		self.dir.path().join("calls")
+	}
+
+	fn done_file(&self) -> PathBuf {
+		self.dir.path().join("done")
+	}
+
+	fn release_and_wait(&self) {
+		fs::write(self.dir.path().join("release"), "").expect("release fake git");
+		wait_for(&self.done_file());
+	}
+}
+
+/// A GitHub tap that is a git checkout (has `.git`) and has never fetched, so
+/// its refresh is due; returns its `.git` dir.
+fn write_due_github_tap(name: &str) -> PathBuf {
+	let git_dir = tap_dir_for(name).join(".git");
+	fs::create_dir_all(&git_dir).expect("create .git");
+	write_taps(vec![Tap {
+		name: name.to_string(),
+		local_path: None,
+	}]);
+	git_dir
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn load_taps_returns_while_the_pull_is_still_running() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let git_dir = write_due_github_tap("probe/slow");
+	let fake_git = FakeGit::install();
+
+	load_taps().expect("load taps");
+
+	assert!(git_dir.join(REFRESH_STAMP).exists(), "stamp is written before the pull");
+	wait_for(&fake_git.calls_file());
+	assert!(!fake_git.done_file().exists(), "load_taps must not wait for the pull");
+	assert_eq!(
+		fs::read_to_string(fake_git.calls_file()).unwrap().trim(),
+		"pull --ff-only prompt=0"
+	);
+	fake_git.release_and_wait();
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn back_to_back_load_taps_start_one_refresh() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	write_due_github_tap("probe/once");
+	let fake_git = FakeGit::install();
+
+	load_taps().expect("first load");
+	load_taps().expect("second load");
+
+	wait_for(&fake_git.calls_file());
+	fake_git.release_and_wait();
+	assert_eq!(
+		fs::read_to_string(fake_git.calls_file()).unwrap().lines().count(),
+		1,
+		"the stamp must keep the second load from pulling again"
+	);
+}
+
+#[test]
+#[serial]
+fn missing_default_tap_is_cloned_before_load_taps_returns() {
+	let _guard = DataDirGuard::new();
+	let remote_root = tempfile::tempdir().expect("remote root");
+	let remote = remote_root.path().join("muvon").join("octomind-tap");
+	fs::create_dir_all(&remote).expect("create remote");
+	fs::write(remote.join("marker.txt"), "cloned").expect("write marker");
+	for args in [
+		vec!["init"],
+		vec!["add", "."],
+		vec![
+			"-c",
+			"user.name=test",
+			"-c",
+			"user.email=test@example.com",
+			"-c",
+			"commit.gpgsign=false",
+			"commit",
+			"-m",
+			"init",
+		],
+	] {
+		let status = std::process::Command::new("git")
+			.args(&args)
+			.current_dir(&remote)
+			.stdout(Stdio::null())
+			.stderr(Stdio::null())
+			.status()
+			.expect("run git");
+		assert!(status.success(), "git {args:?} failed");
+	}
+
+	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
+	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");
+	let _key = EnvVarGuard::set(
+		"GIT_CONFIG_KEY_0",
+		format!("url.file://{}/.insteadOf", remote_root.path().display()),
+	);
+	let _value = EnvVarGuard::set("GIT_CONFIG_VALUE_0", "https://github.com/");
+
+	load_taps().expect("load taps clones the missing default tap");
+
+	let default_dir = tap_dir_for(DEFAULT_TAP);
+	assert!(
+		default_dir.join("marker.txt").exists(),
+		"the first run must have the clone on disk when it returns"
 	);
 }

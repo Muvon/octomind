@@ -14,10 +14,11 @@
 
 //! /skill command — list/filter skills or toggle by name.
 //!
-//! `/skill`            → list all skills (active first, then alphabetical), page 1
-//! `/skill 2`          → list page 2
-//! `/skill *pattern*`  → filter skills by glob pattern
-//! `/skill <name>`     → toggle: enable if inactive, disable if active
+//! `/skill`              → list all skills (active first, then alphabetical), page 1
+//! `/skill 2`            → list page 2
+//! `/skill *pattern*`    → filter skills by glob pattern
+//! `/skill *pattern* 2`  → page 2 of the filtered list
+//! `/skill <name>`       → toggle: enable if inactive, disable if active
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
@@ -36,18 +37,22 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	// Numeric argument → page number
 	if let Ok(page) = arg.parse::<usize>() {
 		return if page == 0 {
-			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
-				error: "Page number must be a positive integer".to_string(),
-				context: None,
-			})))
+			page_error()
 		} else {
 			handle_list(None, page)
 		};
 	}
 
-	// Contains `*` → glob pattern filter
+	// Contains `*` → glob pattern filter, with an optional page number
 	if arg.contains('*') {
-		return handle_list(Some(arg), 1);
+		let page = match params.get(1) {
+			None => 1,
+			Some(raw) => match raw.parse::<usize>() {
+				Ok(page) if page > 0 => page,
+				_ => return page_error(),
+			},
+		};
+		return handle_list(Some(arg), page);
 	}
 
 	// Otherwise → toggle skill by exact name
@@ -70,6 +75,13 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	} else {
 		handle_use(session, arg).await
 	}
+}
+
+fn page_error() -> Result<CommandResult> {
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+		error: "Page number must be a positive integer".to_string(),
+		context: None,
+	})))
 }
 
 fn handle_list(pattern: Option<&str>, page: usize) -> Result<CommandResult> {

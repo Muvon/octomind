@@ -325,11 +325,13 @@ List or toggle skills interactively during a session:
 | `/skill` | List active skills first, then alphabetical; 15 per page |
 | `/skill 2` | Show page two, if present |
 | `/skill *review*` | Filter names/descriptions by a case-insensitive `*` pattern |
+| `/skill *review* 2` | Show page two of the filtered list |
 | `/skill project-review` | Toggle the exact skill name |
 
 ```text
 /skill
 /skill *review*
+/skill *review* 2
 /skill project-review
 ```
 

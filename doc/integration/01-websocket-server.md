@@ -402,8 +402,9 @@ A successful bind's ack reports the stream and the highest `stream_seq` assigned
 
 A failed bind's ack carries no `stream` or `stream_seq`. The server holds the newest frames of each stream, up to 2 MiB
 and 4096 frames per stream (oldest dropped first; the newest frame is always kept, however large). A client that lost its connection binds again
-with `"resume": {"stream": "<id>", "after": <last stream_seq it received>}`. When the stream matches and every frame
-after that point is still held, the ack carries `"resumed": true` and those frames follow it at once, in order and
+with `"resume": {"stream": "<id>", "after": <last stream_seq it received>}`. When the stream matches, every frame
+after that point is still held, and those frames fit one replay (8 MiB and 4096 frames, half the connection's outbound
+limits, so a single held frame larger than that is never replayed), the ack carries `"resumed": true` and those frames follow it at once, in order and
 byte-identical to the first sending, before the bind's `status` and any new frame; then the stream continues live,
 including the rest of a turn that was running. Otherwise the ack carries `"resumed": false`, nothing is replayed, and the
 client reloads its state from its own store. `resumed` is present only when the bind asked to resume.

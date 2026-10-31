@@ -210,7 +210,7 @@ jobs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload lcov artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-lcov
         path: lcov.info

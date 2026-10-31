@@ -6,6 +6,9 @@ on:
     - cron: '0 10 * * 1'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -13,6 +16,9 @@ jobs:
   update-dependencies:
     name: Update Dependencies
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the update branch
+      pull-requests: write # open the update PR
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

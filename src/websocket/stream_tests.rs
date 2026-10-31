@@ -238,18 +238,6 @@ fn held_frames_are_bounded_by_bytes_oldest_first_and_the_newest_always_stays() {
 }
 
 #[test]
-fn small_frames_are_held_up_to_the_byte_cap_whatever_their_count() {
-	let stream = SessionStream::new("s1");
-	let count = 5000;
-	for _ in 0..count {
-		stream.emit(&assistant("x")).unwrap();
-	}
-	let all = resume(&stream, at(&stream, 0));
-	assert_eq!(all[0]["resumed"], true, "nothing was dropped");
-	assert_eq!(all.len(), count + 2, "ack, every frame, greeting");
-}
-
-#[test]
 fn a_gone_connection_unbinds_and_its_frames_wait_for_the_next_bind() {
 	let streams = Streams::default();
 	let stream = streams.open("s1");

@@ -2879,9 +2879,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lru-slab"
@@ -3339,9 +3339,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.48.0"
+version = "0.48.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ccdcbabb68e170aebaf6721716fc2a77a32182ce4a7f82bc2e985611eb2f428"
+checksum = "f8cdcfd59f40439c73c71db8e81a4997e17ee0fc5ff339e3b16b95b7125a7b16"
 dependencies = [
  "anyhow",
  "arc-swap",

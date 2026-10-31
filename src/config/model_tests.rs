@@ -149,9 +149,18 @@ fn request_transport_defaults_to_websocket_in_the_template() {
 	let value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
 	assert_eq!(value["model"]["request_transport"].as_str(), Some("websocket"));
 	let config: crate::config::Config = value.try_into().unwrap();
-	assert_eq!(config.model_profile.request_transport, RequestTransportConfig::WebSocket);
-	assert_eq!(config.get_supervisor_model_profile().request_transport, RequestTransportConfig::WebSocket);
-	assert_eq!(config.get_compression_model_profile().request_transport, RequestTransportConfig::WebSocket);
+	assert_eq!(
+		config.model_profile.request_transport,
+		RequestTransportConfig::WebSocket
+	);
+	assert_eq!(
+		config.get_supervisor_model_profile().request_transport,
+		RequestTransportConfig::WebSocket
+	);
+	assert_eq!(
+		config.get_compression_model_profile().request_transport,
+		RequestTransportConfig::WebSocket
+	);
 }
 
 #[test]
@@ -167,7 +176,10 @@ fn request_transport_accepts_explicit_choices_and_survives_role_merge() {
 		assert_eq!(config.request_transport, expected);
 		assert_eq!(config.get_supervisor_model_profile().request_transport, expected);
 		assert_eq!(config.get_compression_model_profile().request_transport, expected);
-		assert_eq!(config.get_model_profile_for_role("assistant").request_transport, expected);
+		assert_eq!(
+			config.get_model_profile_for_role("assistant").request_transport,
+			expected
+		);
 		assert_eq!(
 			toml::Value::try_from(&config).unwrap()["model"]["request_transport"].as_str(),
 			Some(name)

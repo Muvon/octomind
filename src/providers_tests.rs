@@ -897,7 +897,9 @@ fn request_transport_builder_overrides_the_config_default() {
 	let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config);
 	assert_eq!(params.request_transport, RequestTransportConfig::WebSocket);
 	assert_eq!(
-		params.with_request_transport(RequestTransportConfig::Http).request_transport,
+		params
+			.with_request_transport(RequestTransportConfig::Http)
+			.request_transport,
 		RequestTransportConfig::Http
 	);
 }

@@ -68,3 +68,51 @@ fn tap_refresh_is_due_only_when_the_last_fetch_is_older_than_the_interval() {
 	fetch_head.set_modified(stale).expect("age FETCH_HEAD");
 	assert!(refresh_due(tap.path()), "an old fetch pulls again");
 }
+
+#[test]
+fn a_started_refresh_counts_as_fresh_until_the_interval_passes() {
+	let tap = tempfile::tempdir().expect("tempdir");
+	let git = tap.path().join(".git");
+	fs::create_dir_all(&git).expect("create .git");
+	let stale = SystemTime::now() - TAP_REFRESH_INTERVAL - Duration::from_secs(1);
+
+	let fetch_head = fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
+	fetch_head.set_modified(stale).expect("age FETCH_HEAD");
+	assert!(refresh_due(tap.path()), "an old fetch alone is due");
+
+	let stamp = fs::File::create(git.join(REFRESH_STAMP)).expect("create stamp");
+	assert!(!refresh_due(tap.path()), "a fresh stamp holds off another process");
+
+	stamp.set_modified(stale).expect("age stamp");
+	assert!(refresh_due(tap.path()), "an old stamp and an old fetch are due again");
+
+	fetch_head.set_modified(SystemTime::now()).expect("refresh FETCH_HEAD");
+	assert!(!refresh_due(tap.path()), "the newer of the two decides");
+}
+
+#[test]
+fn locks_left_by_a_killed_git_are_removed_once_stale() {
+	// Prod 2026-10-24: a pull killed mid-merge left ORIG_HEAD.lock and every
+	// later pull failed for a week.
+	let tap = tempfile::tempdir().expect("tempdir");
+	let git = tap.path().join(".git");
+	fs::create_dir_all(&git).expect("create .git");
+	let stale = fs::File::create(git.join("ORIG_HEAD.lock")).expect("create stale lock");
+	stale
+		.set_modified(SystemTime::now() - STALE_LOCK_AGE - Duration::from_secs(1))
+		.expect("age lock");
+	fs::File::create(git.join("index.lock")).expect("create live lock");
+	fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
+
+	remove_stale_locks(&git);
+
+	assert!(
+		!git.join("ORIG_HEAD.lock").exists(),
+		"a lock older than the limit has no owner"
+	);
+	assert!(
+		git.join("index.lock").exists(),
+		"a fresh lock may belong to a running git"
+	);
+	assert!(git.join("FETCH_HEAD").exists(), "only lock files are touched");
+}

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.67.2] - 2026-10-31
+
+### 📋 Release Summary
+
+Websocket replay resumes now enforce size budgets and reject oversized requests. Read-only session observation is supported.
+
+### 🚨 Breaking Changes
+
+- **websocket**: enforce websocket replay budgets `fdc6cca7`
+
+### ✨ New Features & Enhancements
+
+- **websocket**: support read-only session observation `29a9630e`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.48.2 `9c6a4095`
+- **websocket**: remove small-frame retention test `84d75a7f`
+- **dependencies**: refresh locked dependencies `51664b18`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: refuse oversized websocket replay resumes `fd8f5022`
+
+### 📚 Documentation & Examples
+
+- **websocket**: document replay size limits `7851f1a6`
+
 ## [0.67.1] - 2026-10-31
 
 ### 📋 Release Summary

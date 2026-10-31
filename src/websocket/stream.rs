@@ -35,20 +35,20 @@ const HOLD_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// queue, which many small frames fill long before their bytes add up.
 const HOLD_MAX_FRAMES: usize = MAX_QUEUED_FRAMES / 2;
 
-/// What one `observe` replays in total, across all streams: half a
-/// connection's outbound limits, in bytes and in frames, so the replay always
-/// fits and leaves room for the live frames behind it.
+/// What one replay sends at most — one `observe` across all streams, or one
+/// resuming bind: half a connection's outbound limits, in bytes and in frames,
+/// so the replay always fits and leaves room for the live frames behind it.
 const OBSERVE_REPLAY_MAX_BYTES: usize = MAX_QUEUED_BYTES / 2;
 const OBSERVE_REPLAY_MAX_FRAMES: usize = MAX_QUEUED_FRAMES / 2;
 
-/// What is left of one `observe`'s replay allowance.
+/// What is left of one replay's allowance.
 struct ReplayBudget {
 	bytes: usize,
 	frames: usize,
 }
 
 impl ReplayBudget {
-	fn observe() -> Self {
+	fn full() -> Self {
 		Self {
 			bytes: OBSERVE_REPLAY_MAX_BYTES,
 			frames: OBSERVE_REPLAY_MAX_FRAMES,
@@ -113,6 +113,18 @@ impl StreamState {
 	fn holds_after(&self, after: u64) -> bool {
 		let first_held = self.held.front().map_or(self.last_seq + 1, |frame| frame.seq);
 		after <= self.last_seq && after >= first_held - 1
+	}
+
+	/// The frames after `after` fit one replay. A resume is all or nothing, and
+	/// one that cannot fit (a single frame above the connection's byte limit)
+	/// would cut the connection on every reconnect: it is refused instead, so the
+	/// client rebuilds from its own history.
+	fn replay_fits(&self, after: u64) -> bool {
+		let mut budget = ReplayBudget::full();
+		self.held
+			.iter()
+			.filter(|frame| frame.seq > after)
+			.all(|frame| budget.take(frame.text.len()))
 	}
 
 	/// A send the sink refuses means its connection is gone; the frame stays
@@ -246,7 +258,9 @@ impl SessionStream {
 		let (resend_questions, session_id) = {
 			let mut state = self.0.lock().unwrap();
 			let replay_after = resume
-				.filter(|resume| resume.stream == state.id && state.holds_after(resume.after))
+				.filter(|resume| {
+					resume.stream == state.id && state.holds_after(resume.after) && state.replay_fits(resume.after)
+				})
 				.map(|resume| resume.after);
 			ack.stream = Some(state.id.clone());
 			ack.stream_seq = Some(state.last_seq);
@@ -394,7 +408,7 @@ impl Streams {
 			capabilities: server_capabilities(),
 		};
 		sink.send(Message::text(observing.text()))?;
-		let mut budget = ReplayBudget::observe();
+		let mut budget = ReplayBudget::full();
 		for (session_id, stream) in &registry.streams {
 			let mark = marks
 				.iter()

@@ -682,3 +682,18 @@ fn one_observe_replays_within_its_frame_budget() {
 	assert!(gaps > 0, "a stream the frame budget cut is flagged");
 	assert!(sink.send(Message::text("live")).is_ok(), "the connection stays open");
 }
+
+/// A held frame too big for one replay would cut the resuming connection, and
+/// the next reconnect would ask for it again: the resume is refused instead,
+/// sending nothing held, so the client rebuilds from its own history.
+#[test]
+fn a_resume_that_cannot_fit_one_replay_is_refused_not_sent() {
+	let stream = SessionStream::new("s1");
+	stream.emit(&assistant("before")).unwrap();
+	stream
+		.emit(&assistant(&"x".repeat(OBSERVE_REPLAY_MAX_BYTES + 1)))
+		.unwrap();
+	let frames = resume(&stream, at(&stream, 0));
+	assert_eq!(frames[0]["resumed"], false, "{}", frames[0]);
+	assert_eq!(frames.len(), 2, "ack and greeting only");
+}

@@ -1332,16 +1332,16 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 			// next_schedule_sleep() handles the empty case (waits for schedule-change notify),
 			// so no special polling branch is needed.
 			crate::session::context::with_session_id(session_id.clone(), async {
-				let inbox_notify = crate::session::inbox::get_inbox_notify();
+				// No inbox means the session was unloaded after the check above: go
+				// back and retire. Waiting here instead would park this monitor for
+				// good while it still holds the session's slot, and a reload would
+				// then find the slot taken and start none.
+				let Some(inbox_notify) = crate::session::inbox::get_inbox_notify() else {
+					return;
+				};
 				tokio::select! {
 					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
-					_ = async {
-						if let Some(notify) = inbox_notify {
-							notify.notified().await;
-						} else {
-							std::future::pending::<()>().await;
-						}
-					} => {}
+					_ = inbox_notify.notified() => {}
 				}
 			})
 			.await;

@@ -50,8 +50,11 @@ use tokio_util::sync::CancellationToken;
 /// Per-session processing locks to prevent concurrent access to the same session.
 type SessionLocks = Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>;
 
+/// Sessions that have a background monitor (see `ensure_session_monitor`).
+type Monitors = Arc<std::sync::Mutex<HashSet<String>>>;
+
 const MAX_QUEUED_FRAMES: usize = 8192;
-const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DEFERRED_FRAMES: usize = 256;
 const MAX_DEFERRED_BYTES: usize = 10 * 1024 * 1024;
 const MAX_LOADED_SESSIONS: usize = 128;
@@ -64,6 +67,9 @@ const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 /// Pause after a failed accept: errors like EMFILE persist until a connection
 /// closes, and retrying at once would spin a core and flood the log.
 const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The answer to any frame on an observer connection.
+const OBSERVER_READ_ONLY_ERROR: &str = "observer connections are read-only";
 
 /// Configs committed by a `/role` switch or restored from the session log on
 /// load, keyed by session id. A tap role's servers exist only in the config its
@@ -162,6 +168,9 @@ struct ServerState {
 	streams: Streams,
 	/// Includes loads and turns while their ChatSession is outside `sessions`.
 	residents: Arc<std::sync::Mutex<HashSet<String>>>,
+	/// Sessions whose background monitor runs: one each, from the session's
+	/// first load until it is unloaded.
+	monitors: Monitors,
 	/// Browser origins permitted to open a connection. Empty = refuse every
 	/// handshake that carries an `Origin` header.
 	allow_origins: Arc<Vec<String>>,
@@ -183,6 +192,7 @@ impl ServerState {
 			turn_started: Arc::default(),
 			streams: Streams::default(),
 			residents: Arc::default(),
+			monitors: Arc::default(),
 			allow_origins: Arc::new(allow_origins),
 			token: None,
 		}
@@ -224,14 +234,13 @@ impl Drop for SessionReservation {
 #[derive(Clone)]
 struct ConnCtx {
 	server: ServerState,
-	/// Cancelled once the client is gone. The connection's inbox monitors stop
-	/// on it; a turn the client left keeps running.
+	/// Cancelled once the client is gone; a turn the client left keeps running.
 	closed: CancellationToken,
 }
 
 impl ConnCtx {
-	/// The client is gone: this connection's monitors stop, and no session
-	/// sends to it any more — its frames are held for the next bind.
+	/// The client is gone: no session sends to it any more — its frames are held
+	/// for the next bind.
 	fn hang_up(&self, ws_sender: &WsSender) {
 		self.closed.cancel();
 		self.server.streams.detach(ws_sender);
@@ -599,6 +608,8 @@ async fn serve_connection(
 	let mut deferred: VecDeque<Message> = VecDeque::new();
 	// The client side ended while a frame was processing.
 	let mut stream_ended = false;
+	// The connection sent `observe`: from then on it only reads.
+	let mut observing = false;
 
 	loop {
 		let msg = if let Some(frame) = deferred.pop_front() {
@@ -618,9 +629,18 @@ async fn serve_connection(
 		match msg {
 			Ok(Message::Text(text)) => {
 				log_debug!("Received message from {}: {} bytes", peer_addr, text.len());
+				if observing {
+					send_message(ws_sender, &ServerMessage::error(OBSERVER_READ_ONLY_ERROR.to_string())).await?;
+					continue;
+				}
 				let Some(client_msg) = accept_client_frame(&text, ws_sender, peer_addr).await? else {
 					continue;
 				};
+				if let ClientMessage::Observe(observe) = &client_msg {
+					ctx.server.streams.observe(ws_sender, &observe.sessions)?;
+					observing = true;
+					continue;
+				}
 
 				match &client_msg {
 					ClientMessage::Cancel(cancel) => {
@@ -702,7 +722,8 @@ async fn serve_connection(
 
 /// Parse, validate and acknowledge one client text frame. Invalid frames are
 /// answered with an error here and yield `None`. A `session` bind is
-/// acknowledged by its handler instead, once it knows the session's stream.
+/// acknowledged by its handler instead, once it knows the session's stream, and
+/// an `observe` by the `observing` frame.
 async fn accept_client_frame(text: &str, ws_sender: &WsSender, peer_addr: SocketAddr) -> Result<Option<ClientMessage>> {
 	// Parse client message
 	let client_msg = match serde_json::from_str::<ClientMessage>(text) {
@@ -729,7 +750,7 @@ async fn accept_client_frame(text: &str, ws_sender: &WsSender, peer_addr: Socket
 		return Ok(None);
 	}
 
-	if !matches!(client_msg, ClientMessage::Session(_)) {
+	if !matches!(client_msg, ClientMessage::Session(_) | ClientMessage::Observe(_)) {
 		send_message(ws_sender, &ServerMessage::ack(&client_msg)).await?;
 	}
 	Ok(Some(client_msg))
@@ -945,6 +966,8 @@ async fn process_client_message(
 		ClientMessage::ElicitationResponse(msg) => handle_elicitation_response(msg, ws_sender).await,
 		ClientMessage::Close(msg) => handle_close_message(msg, ws_sender, &ctx.server, active_session_ids).await,
 		// Applied by the connection loop the moment it is read, never queued here.
+		ClientMessage::Observe(_) => unreachable!("observe is applied by the connection loop"),
+		// Applied by the connection loop the moment it is read, never queued here.
 		ClientMessage::Cancel(cancel) => {
 			cancel_turn(&ctx.server, &cancel);
 			Ok(())
@@ -983,16 +1006,7 @@ async fn handle_close_message(
 	server.residents.lock().unwrap().remove(&session_id);
 	// A later bind loads the session anew, under a new stream.
 	server.streams.close(&session_id);
-	let inbox_notify = crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::inbox::get_inbox_notify()
-	})
-	.await;
-	crate::session::context::cleanup_session(&session_id);
-	// Wake the session's inbox monitor so it sees the inbox gone and exits now
-	// rather than when its connection closes.
-	if let Some(notify) = inbox_notify {
-		notify.notify_one();
-	}
+	cleanup_and_wake_monitor(&session_id).await;
 	active_session_ids.remove(&session_id);
 	drop(guard);
 	log_info!("Session closed: {} (was loaded: {})", session_id, was_loaded);
@@ -1006,6 +1020,19 @@ async fn handle_close_message(
 		),
 	)
 	.await
+}
+
+/// Drops the session's scope-keyed state and wakes its monitor, which sees the
+/// inbox gone and retires now rather than at its next event.
+async fn cleanup_and_wake_monitor(session_id: &str) {
+	let inbox_notify = crate::session::context::with_session_id(session_id.to_string(), async {
+		crate::session::inbox::get_inbox_notify()
+	})
+	.await;
+	crate::session::context::cleanup_session(&session_id.to_string());
+	if let Some(notify) = inbox_notify {
+		notify.notify_one();
+	}
 }
 
 /// Get or create a per-session processing lock.
@@ -1055,71 +1082,90 @@ async fn wake_inbox_monitor(session_id: String) {
 	.await;
 }
 
-/// Spawn a background task that monitors schedules and inbox for a WebSocket session.
-///
-/// Runs independently of user prompts — when a scheduled entry fires or an inbox
-/// message arrives, the task takes the session from the map, processes the message
-/// through the full AI pipeline, emits the results on the session's stream (which
-/// sends them to the session's latest bind), and puts the session back.
-/// Inbox monitors currently alive. A monitor belongs to ONE connection, so this
-/// must fall back to zero as connections close — a count that only grows is the
-/// leak this exists to catch, and nothing else observes it from outside.
+/// Session monitors currently alive: one per loaded session, owned by the
+/// server and never by a connection. The count must fall back to zero as
+/// sessions unload — a count that only grows is the leak this exists to
+/// catch, and nothing else observes it from outside.
 static LIVE_INBOX_MONITORS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Decrements the live count however the monitor task ends, including a panic.
-struct MonitorGuard;
+/// A monitor that retired itself already freed its registry slot, which a newer
+/// monitor may hold by now; any other exit frees it here, so the session is
+/// never left without one.
+struct MonitorGuard {
+	monitors: Monitors,
+	session_id: String,
+	retired: bool,
+}
+
+impl MonitorGuard {
+	/// The session was unloaded (`cleanup_session` clears its role and inbox
+	/// together): free the slot. Decided under the registry lock, so a load
+	/// that follows either finds this monitor still registered and keeps it, or
+	/// finds the slot free and starts its own.
+	fn retire_if_unloaded(&mut self) -> bool {
+		let mut monitors = self.monitors.lock().unwrap();
+		let inbox_gone = crate::session::context::CURRENT_SESSION_ID
+			.sync_scope(Arc::new(self.session_id.clone()), || {
+				crate::session::inbox::get_inbox_notify().is_none()
+			});
+		let unloaded = inbox_gone || crate::session::context::get_session_role(&self.session_id).is_none();
+		if unloaded {
+			monitors.remove(&self.session_id);
+			self.retired = true;
+		}
+		unloaded
+	}
+}
 
 impl Drop for MonitorGuard {
 	fn drop(&mut self) {
 		LIVE_INBOX_MONITORS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+		if !self.retired {
+			self.monitors.lock().unwrap().remove(&self.session_id);
+		}
 	}
 }
 
-/// Exits when the session is removed from the map or its connection is gone.
-fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
+/// Start the session's background monitor unless it has one. Called the first
+/// time a session enters `server.sessions` by any path — bind, attach, a lazy
+/// load on a message or command — so a session works with no client connected:
+/// the monitor lives until the session is unloaded, whatever connections come
+/// and go.
+///
+/// Runs independently of user prompts — when a scheduled entry fires or an inbox
+/// message arrives, the task takes the session from the map, processes the
+/// message through the full AI pipeline, emits the results on the session's
+/// stream (which sends them to the output owner and every observer, or only
+/// holds them when nobody is connected), and puts the session back.
+fn ensure_session_monitor(server: &ServerState, session_id: &str) {
+	if !server.monitors.lock().unwrap().insert(session_id.to_string()) {
+		return;
+	}
+	let server = server.clone();
+	let session_id = session_id.to_string();
+	// Counted and guarded before the task runs, so a task that never starts
+	// (runtime shutdown) still gives its count and its registry slot back.
+	LIVE_INBOX_MONITORS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+	let mut reaped = MonitorGuard {
+		monitors: Arc::clone(&server.monitors),
+		session_id: session_id.clone(),
+		retired: false,
+	};
 	tokio::spawn(async move {
-		LIVE_INBOX_MONITORS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-		let _reaped = MonitorGuard;
 		log_debug!("WebSocket: inbox monitor started for session: {}", session_id);
 		loop {
-			// This connection is gone. The exit check below runs only AFTER the
-			// drain, so a handback that lands now (a tap run finishing long after
-			// its turn closed the socket) would be popped off the queue and
-			// answered with nobody bound to read it — the only copy of an answer
-			// the user is still waiting for. Sessions and their inboxes
-			// deliberately outlive a connection, so leave both alone; the next
-			// connection spawns its own monitor and picks the message up.
-			if ctx.closed.is_cancelled() {
-				// Pass the wakeup on: a live connection's monitor can be parked on
-				// this same Notify, and notify_one() only ever wakes one waiter.
-				crate::session::context::with_session_id(session_id.clone(), async {
-					if crate::session::inbox::has_inbox_messages() {
-						if let Some(notify) = crate::session::inbox::get_inbox_notify() {
-							notify.notify_one();
-						}
-					}
-				})
-				.await;
-				break;
-			}
-
 			// Process phase: flush due schedules into inbox, then drain.
-			// Returns true to exit the monitor loop.
-			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
+			crate::session::context::with_session_id(session_id.clone(), async {
 				let Some(schedule_role) = crate::session::context::get_session_role(&session_id) else {
-					return true;
+					return;
 				};
-				let schedule_config = role_config(
-					&ctx.server.config,
-					&ctx.server.role_configs,
-					&session_id,
-					&schedule_role,
-				)
-				.await;
+				let schedule_config =
+					role_config(&server.config, &server.role_configs, &session_id, &schedule_role).await;
 				crate::mcp::orchestration::flush_due_to_inbox(&schedule_config);
 				// Unlike messages, idle tool calls start immediately, so do not launch during a parent turn.
-				let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
-				if let Some(_guard) = BackgroundTurnGuard::try_lock(&ctx.server, &session_id, &lock) {
+				let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+				if let Some(_guard) = BackgroundTurnGuard::try_lock(&server, &session_id, &lock) {
 					crate::mcp::orchestration::flush_idle_to_inbox(&schedule_config);
 				}
 
@@ -1131,10 +1177,10 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 				// same file. If the client holds the lock, stop this pass; it fires
 				// inbox_notify on return and wakes us from the wait section.
 				while crate::session::inbox::has_inbox_messages() {
-					let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
-					let guard = match BackgroundTurnGuard::try_lock(&ctx.server, &session_id, &lock) {
+					let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+					let guard = match BackgroundTurnGuard::try_lock(&server, &session_id, &lock) {
 						Some(guard) => guard,
-						None => return false,
+						None => return,
 					};
 
 					let batch = crate::session::inbox::drain_inbox_batch();
@@ -1151,7 +1197,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					}
 
 					// Take session for exclusive access (lock guarantees no client race).
-					let mut chat_session = match ctx.server.sessions.lock().await.remove(&session_id) {
+					let mut chat_session = match server.sessions.lock().await.remove(&session_id) {
 						Some(s) => s,
 						None => {
 							// Session genuinely gone (cleanup). Put the batch back and stop.
@@ -1159,23 +1205,21 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 								crate::session::inbox::push_inbox_message(inbox_msg);
 							}
 							drop(guard);
-							return false;
+							return;
 						}
 					};
 
-					let stream = ctx.server.streams.open(&session_id);
-					stream.begin_turn();
+					let stream = server.streams.open(&session_id);
 					let emit = |frame: &ServerMessage| {
 						if let Err(e) = stream.emit(frame) {
 							log_error!("WS monitor: failed to emit a frame of session {}: {}", session_id, e);
 						}
 					};
-					let config_for_role =
-						session_config(&ctx.server.config, &ctx.server.role_configs, &chat_session).await;
+					let config_for_role = session_config(&server.config, &server.role_configs, &chat_session).await;
 					let mut cancellation = crate::session::cancellation::SessionCancellation::new();
 					let op_rx = cancellation.new_operation();
 					let cancel_probe = op_rx.clone();
-					let _turn = TurnGuard::register(&ctx.server, &session_id, &cancellation);
+					let _turn = TurnGuard::register(&server, &session_id, &cancellation);
 
 					// Notify the client what's about to drive the AI, before we kick off
 					// the API call. Mirrors `display_injected_input` in CLI mode.
@@ -1193,13 +1237,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						.await
 					{
 						log_error!("WS monitor: failed to add inbox message: {}", e);
-						ctx.server
-							.sessions
-							.lock()
-							.await
-							.insert(session_id.clone(), chat_session);
+						server.sessions.lock().await.insert(session_id.clone(), chat_session);
 						if cancellation.is_cancelled() {
-							return false;
+							return;
 						}
 						continue;
 					}
@@ -1214,13 +1254,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
-						ctx.server
-							.sessions
-							.lock()
-							.await
-							.insert(session_id.clone(), chat_session);
+						server.sessions.lock().await.insert(session_id.clone(), chat_session);
 						if cancellation.is_cancelled() {
-							return false;
+							return;
 						}
 						continue;
 					}
@@ -1234,7 +1270,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					let result = crate::supervisor::accounting::background(execute_api_call_and_process_response(
 						&mut chat_session,
 						&config_for_role,
-						&ctx.server.role,
+						&server.role,
 						op_rx,
 						OutputMode::WebSocket,
 						ws_sink,
@@ -1270,31 +1306,17 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					if let Err(e) = chat_session.save() {
 						log_error!("WS monitor: failed to save session: {}", e);
 					}
-					ctx.server
-						.sessions
-						.lock()
-						.await
-						.insert(session_id.clone(), chat_session);
+					server.sessions.lock().await.insert(session_id.clone(), chat_session);
 					if cancellation.is_cancelled() {
-						return false;
+						return;
 					}
 				}
-
-				false // don't exit
 			})
 			.await;
 
-			if should_exit || ctx.closed.is_cancelled() {
-				break;
-			}
-
-			// Exit if session inbox was destroyed (session truly gone via cleanup_session).
-			let inbox_gone = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::session::inbox::get_inbox_notify().is_none()
-			})
-			.await;
-			if inbox_gone {
-				log_debug!("WS monitor: inbox cleared for {}, exiting", session_id);
+			// Exit if the session was unloaded (close, /exit, cleanup_session).
+			if reaped.retire_if_unloaded() {
+				log_debug!("WS monitor: session {} unloaded, exiting", session_id);
 				break;
 			}
 
@@ -1304,10 +1326,6 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 			crate::session::context::with_session_id(session_id.clone(), async {
 				let inbox_notify = crate::session::inbox::get_inbox_notify();
 				tokio::select! {
-					// Without this the monitor of a closed connection parks until
-					// something else happens to wake it — one leaked task per
-					// connection, for the life of the process.
-					_ = ctx.closed.cancelled() => {}
 					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 					_ = async {
 						if let Some(notify) = inbox_notify {
@@ -1542,11 +1560,10 @@ async fn bind_session(
 		.insert(session_id.clone(), chat_session);
 	bind_stream(msg, &session_id, ack, &greeting, &config_for_role, ws_sender, ctx)?;
 
-	// Repeated binds on one connection share a monitor; duplicates would park
-	// on the same inbox Notify for the rest of the connection's lifetime.
-	if active_session_ids.insert(session_id.clone()) {
-		spawn_ws_inbox_monitor(session_id, ctx.clone());
-	}
+	// Every bind of a loaded session passes here; the registry keeps it to one
+	// monitor, however many connections bind it.
+	active_session_ids.insert(session_id.clone());
+	ensure_session_monitor(&ctx.server, &session_id);
 
 	Ok(())
 }
@@ -1554,8 +1571,8 @@ async fn bind_session(
 /// Bind to a session a turn is driving: the session is in the turn's hands, set up
 /// for its role and directory, so nothing is loaded or set up again — nor is the
 /// bind's `cwd` applied, which would move the running turn's directory under it.
-/// Only this connection's own wiring is done (its run events, its inbox monitor),
-/// and it reads the session's stream like any bind.
+/// Only this connection's own wiring is done (its run events; the session's
+/// monitor runs already), and it reads the session's stream like any bind.
 async fn attach_to_running_turn(
 	msg: &SessionMessage,
 	session_id: String,
@@ -1582,9 +1599,7 @@ async fn attach_to_running_turn(
 	}
 	let greeting = ServerMessage::status(format!("Session resumed: {}", session_id), Some(session_id.clone()));
 	bind_stream(msg, &session_id, ack, &greeting, &config_for_role, ws_sender, ctx)?;
-	if active_session_ids.insert(session_id.clone()) {
-		spawn_ws_inbox_monitor(session_id, ctx.clone());
-	}
+	active_session_ids.insert(session_id);
 	Ok(())
 }
 
@@ -1736,6 +1751,7 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 	.await;
 	if loaded.is_ok() {
 		reservation.committed = true;
+		ensure_session_monitor(server, session_id);
 	} else {
 		server.role_configs.lock().await.remove(session_id);
 		server.streams.close(session_id);
@@ -1749,7 +1765,6 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 fn turn_stream(server: &ServerState, session_id: &str, ws_sender: &WsSender) -> Arc<SessionStream> {
 	let stream = server.streams.open(session_id);
 	stream.own(ws_sender);
-	stream.begin_turn();
 	stream
 }
 
@@ -1925,7 +1940,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			server.role_configs.lock().await.remove(&session_id);
 			server.residents.lock().unwrap().remove(&session_id);
 			server.streams.close(&session_id);
-			crate::session::context::cleanup_session(&session_id);
+			cleanup_and_wake_monitor(&session_id).await;
 			return Ok(());
 		}
 		CommandResult::TreatAsUserInput => {

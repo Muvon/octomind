@@ -215,45 +215,9 @@ fn a_resume_of_another_stream_or_an_unknown_point_is_refused_without_replay() {
 }
 
 #[test]
-fn a_new_turn_keeps_only_the_turn_before_it() {
+fn held_frames_are_bounded_by_bytes_oldest_first_and_the_newest_always_stays() {
 	let stream = SessionStream::new("s1");
-	stream.begin_turn();
-	stream.emit(&assistant("turn one")).unwrap();
-	stream.begin_turn();
-	stream.emit(&assistant("turn two")).unwrap();
-	stream.emit(&assistant("turn two, more")).unwrap();
-	stream.begin_turn();
-	stream.emit(&assistant("turn three")).unwrap();
-
-	let evicted = resume(&stream, at(&stream, 0));
-	assert_eq!(evicted[0]["resumed"], false, "turn one is gone");
-	assert_eq!(evicted.len(), 2);
-
-	let kept = resume(&stream, at(&stream, 1));
-	assert_eq!(kept[0]["resumed"], true, "the last finished turn is held");
-	let seqs: Vec<u64> = kept[1..4]
-		.iter()
-		.map(|frame| frame["stream_seq"].as_u64().unwrap())
-		.collect();
-	assert_eq!(seqs, vec![2, 3, 4]);
-}
-
-#[test]
-fn held_frames_are_bounded_by_count_oldest_first() {
-	let stream = SessionStream::new("s1");
-	for _ in 0..=MAX_HELD_FRAMES {
-		stream.emit(&assistant("x")).unwrap();
-	}
-	assert_eq!(resume(&stream, at(&stream, 0))[0]["resumed"], false);
-	let kept = resume(&stream, at(&stream, 1));
-	assert_eq!(kept[0]["resumed"], true);
-	assert_eq!(kept.len(), MAX_HELD_FRAMES + 2, "ack, every held frame, greeting");
-}
-
-#[test]
-fn held_frames_are_bounded_by_bytes_oldest_first() {
-	let stream = SessionStream::new("s1");
-	let large = "x".repeat(MAX_HELD_BYTES / 2);
+	let large = "x".repeat(HOLD_MAX_BYTES / 2);
 	for _ in 0..3 {
 		stream.emit(&assistant(&large)).unwrap();
 	}
@@ -261,6 +225,28 @@ fn held_frames_are_bounded_by_bytes_oldest_first() {
 	let kept = resume(&stream, at(&stream, 2));
 	assert_eq!(kept[0]["resumed"], true);
 	assert_eq!(kept[1]["stream_seq"], 3);
+	assert_eq!(kept.len(), 3, "ack, the one frame that fits, greeting");
+
+	let oversized = SessionStream::new("s1");
+	oversized.emit(&assistant(&"x".repeat(HOLD_MAX_BYTES * 2))).unwrap();
+	let only = resume(&oversized, at(&oversized, 0));
+	assert_eq!(
+		only[0]["resumed"], true,
+		"a frame over the cap stays while it is the newest"
+	);
+	assert_eq!(only[1]["stream_seq"], 1);
+}
+
+#[test]
+fn small_frames_are_held_up_to_the_byte_cap_whatever_their_count() {
+	let stream = SessionStream::new("s1");
+	let count = 5000;
+	for _ in 0..count {
+		stream.emit(&assistant("x")).unwrap();
+	}
+	let all = resume(&stream, at(&stream, 0));
+	assert_eq!(all[0]["resumed"], true, "nothing was dropped");
+	assert_eq!(all.len(), count + 2, "ack, every frame, greeting");
 }
 
 #[test]
@@ -377,4 +363,294 @@ async fn losing_the_output_owner_cancels_open_questions() {
 		.expect("a cancelled question is not an error");
 	assert_eq!(answer.action, rmcp::model::ElicitationAction::Cancel);
 	crate::session::context::clear_notification_sender_for_session(&session.to_string());
+}
+
+/// Registers an observer on `streams` and returns it with the receiving end of
+/// its connection and what it received on registering.
+fn observer(
+	streams: &Streams,
+	marks: &[ObserveMark],
+) -> (
+	WsSender,
+	Receiver<super::super::server::QueuedFrame>,
+	Vec<serde_json::Value>,
+) {
+	let (sink, mut rx) = WsSender::channel();
+	streams.observe(&sink, marks).expect("observe");
+	let opening = texts(&mut rx).iter().map(|text| json(text)).collect();
+	(sink, rx, opening)
+}
+
+fn mark(session_id: &str, stream: String, after: u64) -> ObserveMark {
+	ObserveMark {
+		session_id: session_id.to_string(),
+		resume: StreamResume { stream, after },
+	}
+}
+
+fn observed_seqs(frames: &[serde_json::Value]) -> Vec<u64> {
+	frames
+		.iter()
+		.filter(|frame| frame["type"] == "observed")
+		.map(|frame| frame["frame"]["stream_seq"].as_u64().expect("numbered frame"))
+		.collect()
+}
+
+#[test]
+fn an_observer_hears_the_open_streams_then_every_frame_live_byte_identical() {
+	let streams = Streams::default();
+	let first = streams.open("s1");
+	first.emit(&assistant("one")).unwrap();
+
+	let (_sink, mut rx, opening) = observer(&streams, &[]);
+	assert_eq!(opening[0]["type"], "observing");
+	assert!(
+		opening[0]["capabilities"]
+			.as_array()
+			.is_some_and(|caps| caps.iter().any(|cap| cap == "observe_v1")),
+		"got: {}",
+		opening[0]
+	);
+	assert_eq!(opening[1]["type"], "stream_open");
+	assert_eq!(opening[1]["session_id"], "s1");
+	assert_eq!(opening[1]["stream"], stream_id(&first).as_str());
+	assert_eq!(opening[1]["last_seq"], 1);
+	assert_eq!(opening[1]["gap"], false);
+	assert_eq!(opening[2]["type"], "observed");
+	assert_eq!(opening[2]["frame"]["content"], "one");
+	assert_eq!(opening[2]["frame"]["stream_seq"], 1);
+	assert_eq!(opening.len(), 3);
+
+	// A driver reading the stream receives the very text the observer wraps.
+	let (driver, mut driver_rx) = WsSender::channel();
+	first.attach(&driver, bind_ack(), None, &greeting(), false).unwrap();
+	texts(&mut driver_rx);
+	first.emit(&assistant("two")).unwrap();
+	let driven = texts(&mut driver_rx);
+	let observed = texts(&mut rx);
+	assert!(
+		observed[0].contains(&driven[0]),
+		"the frame travels byte-identical inside the envelope: {}",
+		observed[0]
+	);
+	assert_eq!(json(&observed[0])["session_id"], "s1");
+	assert_eq!(json(&observed[0])["stream"], stream_id(&first).as_str());
+
+	// A session loaded later announces itself before its first frame.
+	let second = streams.open("s2");
+	second.emit(&assistant("other")).unwrap();
+	let later: Vec<serde_json::Value> = texts(&mut rx).iter().map(|text| json(text)).collect();
+	assert_eq!(later[0]["type"], "stream_open");
+	assert_eq!(later[0]["session_id"], "s2");
+	assert_eq!(later[0]["last_seq"], 0);
+	assert_eq!(later[0]["gap"], false);
+	assert_eq!(later[1]["type"], "observed");
+	assert_eq!(later[1]["session_id"], "s2");
+	assert_eq!(later.len(), 2);
+}
+
+#[test]
+fn an_observer_mark_of_the_same_stream_replays_exactly_the_frames_after_it() {
+	let streams = Streams::default();
+	let stream = streams.open("s1");
+	for content in ["one", "two", "three", "four"] {
+		stream.emit(&assistant(content)).unwrap();
+	}
+	let id = stream_id(&stream);
+
+	let (_, _, marked) = observer(&streams, &[mark("s1", id.clone(), 2)]);
+	assert_eq!(marked[1]["last_seq"], 4);
+	assert_eq!(marked[1]["gap"], false);
+	assert_eq!(observed_seqs(&marked), vec![3, 4]);
+
+	let (_, _, foreign) = observer(&streams, &[mark("s1", "0123456789abcdef".to_string(), 3)]);
+	assert_eq!(foreign[1]["gap"], false);
+	assert_eq!(observed_seqs(&foreign), vec![1, 2, 3, 4], "another stream: full replay");
+
+	let (_, _, unmarked) = observer(&streams, &[]);
+	assert_eq!(observed_seqs(&unmarked), vec![1, 2, 3, 4]);
+
+	let (_, _, elsewhere) = observer(&streams, &[mark("other-session", id, 4)]);
+	assert_eq!(
+		observed_seqs(&elsewhere),
+		vec![1, 2, 3, 4],
+		"a mark names its own session"
+	);
+}
+
+#[test]
+fn a_gap_is_reported_when_the_cap_dropped_frames_past_the_mark() {
+	let streams = Streams::default();
+	let stream = streams.open("s1");
+	let large = "x".repeat(HOLD_MAX_BYTES / 2);
+	for _ in 0..3 {
+		stream.emit(&assistant(&large)).unwrap();
+	}
+	let id = stream_id(&stream);
+	// Only frame 3 is still held.
+
+	let (_, _, behind) = observer(&streams, &[mark("s1", id.clone(), 1)]);
+	assert_eq!(behind[1]["gap"], true, "frame 2 was lost: {}", behind[1]);
+	assert_eq!(observed_seqs(&behind), vec![3]);
+
+	let (_, _, caught_up) = observer(&streams, &[mark("s1", id, 2)]);
+	assert_eq!(caught_up[1]["gap"], false);
+	assert_eq!(observed_seqs(&caught_up), vec![3]);
+
+	let (_, _, unmarked) = observer(&streams, &[]);
+	assert_eq!(unmarked[1]["gap"], true, "frames 1 and 2 were lost");
+
+	let (_, _, foreign) = observer(&streams, &[mark("s1", "0123456789abcdef".to_string(), 2)]);
+	assert_eq!(
+		foreign[1]["gap"], true,
+		"another stream replays all that is held: {}",
+		foreign[1]
+	);
+}
+
+#[test]
+fn stream_open_and_close_are_announced_to_observers_connected_before() {
+	let streams = Streams::default();
+	let (_sink, mut rx, opening) = observer(&streams, &[]);
+	assert_eq!(opening.len(), 1, "nothing is loaded: only `observing`");
+
+	let stream = streams.open("s1");
+	let id = stream_id(&stream);
+	streams.open("s1");
+	streams.close("s1");
+	streams.close("s1");
+	let frames: Vec<serde_json::Value> = texts(&mut rx).iter().map(|text| json(text)).collect();
+	assert_eq!(
+		frames.len(),
+		2,
+		"one open and one close, however often they are asked: {frames:?}"
+	);
+	assert_eq!(frames[0]["type"], "stream_open");
+	assert_eq!(frames[0]["session_id"], "s1");
+	assert_eq!(frames[0]["stream"], id.as_str());
+	assert_eq!(frames[0]["last_seq"], 0);
+	assert_eq!(frames[0]["gap"], false);
+	assert_eq!(frames[1]["type"], "stream_closed");
+	assert_eq!(frames[1]["session_id"], "s1");
+	assert_eq!(frames[1]["stream"], id.as_str());
+
+	streams.open("s1");
+	let reloaded = json(&texts(&mut rx)[0]);
+	assert_eq!(reloaded["type"], "stream_open");
+	assert_ne!(reloaded["stream"], id.as_str(), "a reload mints a new stream");
+}
+
+#[test]
+fn an_observer_never_owns_the_output_and_a_gone_observer_is_dropped() {
+	let streams = Streams::default();
+	let stream = streams.open("s1");
+	let (observer_sink, mut observer_rx, _) = observer(&streams, &[]);
+
+	// Nobody owns the output, so a plain bind adopts it: the observer was never
+	// counted as the owner.
+	let (driver, mut driver_rx) = WsSender::channel();
+	stream.attach(&driver, bind_ack(), None, &greeting(), false).unwrap();
+	texts(&mut driver_rx);
+	stream.emit(&assistant("one")).unwrap();
+	assert_eq!(texts(&mut driver_rx).len(), 1, "the driver owns the output");
+	assert_eq!(texts(&mut observer_rx).len(), 1, "and the observer still has its copy");
+
+	streams.detach(&observer_sink);
+	stream.emit(&assistant("two")).unwrap();
+	assert!(texts(&mut observer_rx).is_empty(), "a detached observer gets nothing");
+	assert_eq!(texts(&mut driver_rx).len(), 1);
+
+	let (saturated, _rx, _) = observer(&streams, &[]);
+	while saturated.send(Message::text("queued")).is_ok() {}
+	stream.emit(&assistant("three")).unwrap();
+	assert_eq!(
+		texts(&mut driver_rx).len(),
+		1,
+		"an overflowing observer does not hold the driver back"
+	);
+	assert!(
+		stream.0.lock().unwrap().observers.is_empty(),
+		"an observer that refuses a frame is dropped"
+	);
+}
+
+#[test]
+fn an_observer_registering_mid_stream_sees_no_gap_and_no_duplicate() {
+	let streams = Streams::default();
+	let stream = streams.open("s1");
+	let emitted = 2000;
+	let emitter = {
+		let stream = Arc::clone(&stream);
+		std::thread::spawn(move || {
+			for _ in 0..emitted {
+				stream.emit(&assistant("x")).unwrap();
+			}
+		})
+	};
+	let (_sink, mut rx, opening) = observer(&streams, &[]);
+	emitter.join().unwrap();
+
+	let mut frames = opening;
+	frames.extend(texts(&mut rx).iter().map(|text| json(text)));
+	assert_eq!(observed_seqs(&frames), (1..=emitted as u64).collect::<Vec<_>>());
+}
+
+/// Twelve streams of about 1.8 MiB each are 22 MB of replay, more than a
+/// connection may queue (16 MiB): one `observe` must stay inside its budget
+/// instead, replay the newest frames of what does not fit, and say so.
+#[test]
+fn one_observe_replays_within_its_budget_and_flags_what_it_left_out() {
+	let streams = Streams::default();
+	let chunk = "x".repeat(HOLD_MAX_BYTES / 9);
+	for index in 0..12 {
+		let stream = streams.open(&format!("s{index}"));
+		for _ in 0..8 {
+			stream.emit(&assistant(&chunk)).unwrap();
+		}
+	}
+
+	let (sink, mut rx) = WsSender::channel();
+	streams.observe(&sink, &[]).expect("observe");
+	let received = texts(&mut rx);
+	let replayed_bytes: usize = received
+		.iter()
+		.filter(|text| text.starts_with(r#"{"type":"observed""#))
+		.map(String::len)
+		.sum();
+	assert!(
+		replayed_bytes <= OBSERVE_REPLAY_MAX_BYTES,
+		"replayed {replayed_bytes} bytes"
+	);
+	assert!(
+		sink.send(Message::text("live")).is_ok(),
+		"the replay leaves the connection open and room for live frames"
+	);
+
+	let frames: Vec<serde_json::Value> = received.iter().map(|text| json(text)).collect();
+	let opened: Vec<&serde_json::Value> = frames.iter().filter(|frame| frame["type"] == "stream_open").collect();
+	assert_eq!(opened.len(), 12);
+	let (mut whole, mut cut) = (0, 0);
+	for open in opened {
+		let session_id = open["session_id"].as_str().unwrap();
+		let last = open["last_seq"].as_u64().unwrap();
+		let seqs: Vec<u64> = frames
+			.iter()
+			.filter(|frame| frame["type"] == "observed" && frame["session_id"] == session_id)
+			.map(|frame| frame["frame"]["stream_seq"].as_u64().unwrap())
+			.collect();
+		let first_replayed = seqs.first().copied().unwrap_or(last + 1);
+		assert_eq!(
+			seqs,
+			(first_replayed..=last).collect::<Vec<_>>(),
+			"{session_id}: the newest frames, in order, none skipped"
+		);
+		assert_eq!(open["gap"], first_replayed > 1, "{session_id}: {open}");
+		if first_replayed > 1 {
+			cut += 1;
+		} else {
+			whole += 1;
+		}
+	}
+	assert!(whole > 0, "the budget replays some streams whole");
+	assert!(cut > 0, "and flags the ones it could not");
 }

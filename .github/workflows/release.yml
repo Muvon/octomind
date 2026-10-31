@@ -11,6 +11,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -307,6 +310,8 @@ jobs:
     name: Create Release
     needs: [build, publish-crate]
     uses: muvon/ci-workflow/.github/workflows/release.yml@master
+    permissions:
+      contents: write # create the GitHub release and upload assets
     secrets: inherit
     with:
       tag: ${{ inputs.tag }}
@@ -330,6 +335,9 @@ jobs:
     name: Build and Push Docker Images
     needs: release
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push image digests to ghcr.io
     strategy:
       fail-fast: false
       matrix:
@@ -387,6 +395,8 @@ jobs:
     name: Merge Docker Manifests
     needs: [release, docker]
     runs-on: ubuntu-latest
+    permissions:
+      packages: write # push the multi-arch manifest to ghcr.io
     steps:
     - name: Download digests
       uses: actions/download-artifact@v4

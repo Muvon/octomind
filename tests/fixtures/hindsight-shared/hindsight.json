@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "model": "hindsight-shared-test",
+  "d_vec": 2,
+  "d_feat": 69,
+  "window": 8,
+  "max_len": 16,
+  "max_chars": 1500,
+  "summary": false,
+  "req": false,
+  "sources": [],
+  "unknown_source": 0,
+  "kinds": ["user_turn", "assistant", "thinking", "tool_call", "tool_result", "diff", "harness", "session_end"],
+  "ops": ["read", "edit", "write", "run", "search", "git", "external", "other"],
+  "statuses": ["ok", "error", "denied", "interrupted"],
+  "harness_events": ["interrupt", "denial", "pivot", "gate_verdict", "permission_prompt", "compaction", "steer"],
+  "n_labels": 30,
+  "groups": ["not_done"],
+  "platt": {
+    "corr": [1.0, 0.0],
+    "grp_not_done": [1.0, 0.0]
+  }
+}

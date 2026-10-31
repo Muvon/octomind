@@ -102,6 +102,8 @@ pub struct ChatCompletionParams<'a> {
 	pub request_timeout: Option<std::time::Duration>,
 	/// SSE/WebSocket response inactivity limit. None disables it.
 	pub stream_timeout: Option<std::time::Duration>,
+	/// Persistent-connection transport for octohub and chatgpt; other providers ignore it.
+	pub request_transport: crate::config::RequestTransportConfig,
 	/// Configuration object
 	pub config: &'a Config,
 	/// Cancellation token for request abortion
@@ -152,6 +154,7 @@ impl<'a> ChatCompletionParams<'a> {
 				0 => None,
 				n => Some(std::time::Duration::from_secs(n)),
 			},
+			request_transport: config.request_transport,
 			config,
 			cancellation_token: None,
 			schema: None,
@@ -180,6 +183,11 @@ impl<'a> ChatCompletionParams<'a> {
 
 	pub fn with_stream_timeout(mut self, stream_timeout: Option<std::time::Duration>) -> Self {
 		self.stream_timeout = stream_timeout;
+		self
+	}
+
+	pub fn with_request_transport(mut self, request_transport: crate::config::RequestTransportConfig) -> Self {
+		self.request_transport = request_transport;
 		self
 	}
 
@@ -290,11 +298,11 @@ impl<'a> ChatCompletionParams<'a> {
 		)]));
 
 		if provider_name == "chatgpt" {
-			params = params.with_chatgpt_transport(octolib::ChatGptTransport::WebSocket);
+			params = params.with_chatgpt_transport(self.request_transport.to_chatgpt());
 		}
 
 		if provider_name == "octohub" {
-			params = params.with_octohub_transport(self.config.octohub_transport.to_octolib());
+			params = params.with_octohub_transport(self.request_transport.to_octohub());
 		}
 
 		if let Some(token) = &self.cancellation_token {

@@ -29,7 +29,7 @@ fn reject_legacy_evaluate(value: &toml::Value) -> Result<()> {
 	Ok(())
 }
 
-const MODEL_PROFILE_FIELDS: [&str; 9] = [
+const MODEL_PROFILE_FIELDS: [&str; 10] = [
 	"reasoning_effort",
 	"max_tokens",
 	"temperature",
@@ -39,6 +39,7 @@ const MODEL_PROFILE_FIELDS: [&str; 9] = [
 	"retry_timeout",
 	"request_timeout_seconds",
 	"stream_timeout_seconds",
+	"request_transport",
 ];
 
 /// Accept the pre-v12 scalar/flat spelling at versionless merge boundaries.

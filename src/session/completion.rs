@@ -45,6 +45,8 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub request_timeout_seconds: u64,
 	/// SSE/WebSocket response inactivity limit, in seconds. Zero disables it.
 	pub stream_timeout_seconds: u64,
+	/// Persistent-connection transport for octohub and chatgpt; other providers ignore it.
+	pub request_transport: crate::config::RequestTransportConfig,
 	/// Configuration object
 	pub config: &'a Config,
 	/// When true, validate against the *full* context window (system prompt +
@@ -98,6 +100,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			retry_timeout: config.retry_timeout,
 			request_timeout_seconds: config.request_timeout_seconds,
 			stream_timeout_seconds: config.stream_timeout_seconds,
+			request_transport: config.request_transport,
 			config,
 			full_context_tokens: false,
 			cancellation_token: None,
@@ -122,6 +125,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			retry_timeout: profile.retry_timeout,
 			request_timeout_seconds: profile.request_timeout_seconds,
 			stream_timeout_seconds: profile.stream_timeout_seconds,
+			request_transport: profile.request_transport,
 			config,
 			full_context_tokens: false,
 			cancellation_token: None,
@@ -331,6 +335,7 @@ pub async fn chat_completion_with_validation(
 		0 => None,
 		n => Some(std::time::Duration::from_secs(n)),
 	})
+	.with_request_transport(params.request_transport)
 	.with_purpose(params.purpose)
 	.with_vision(crate::session::model_utils::provider_supports_vision(
 		provider.as_ref(),

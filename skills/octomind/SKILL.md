@@ -162,3 +162,5 @@ CoreML compiled-model cache reuse is macOS-only; Linux and Windows keep their ex
 execution-provider selection.
 
 Model profiles accept `request_timeout_seconds` (total deadline per HTTP/WebSocket attempt) and `stream_timeout_seconds` (SSE/WebSocket response inactivity, default `0` = disabled). Stream activity never extends the total deadline; WebSocket ping/pong does not reset response inactivity.
+
+Model profiles also accept `request_transport` (`"websocket"` default, or `"http"` to opt out). It applies to `octohub:` and `chatgpt:` models only; other providers ignore it.

@@ -854,16 +854,13 @@ async fn chatgpt_uses_websockets_and_other_providers_keep_http() {
 }
 
 #[tokio::test]
-async fn octohub_transport_selection_is_isolated_from_other_providers() {
-	use crate::config::OctoHubTransportConfig;
+async fn request_transport_applies_to_octohub_and_chatgpt_only() {
+	use crate::config::RequestTransportConfig;
 
 	let mut config = test_config();
 	let messages = vec![msg("user", "hello")];
-	for (configured, expected) in [
-		(OctoHubTransportConfig::WebSocket, octolib::OctoHubTransport::WebSocket),
-		(OctoHubTransportConfig::Http, octolib::OctoHubTransport::Http),
-	] {
-		config.octohub_transport = configured;
+	for configured in [RequestTransportConfig::WebSocket, RequestTransportConfig::Http] {
+		config.request_transport = configured;
 		for provider in ["octohub", "chatgpt", "openai", "anthropic"] {
 			let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config)
 				.to_octolib_params(provider)
@@ -872,7 +869,7 @@ async fn octohub_transport_selection_is_isolated_from_other_providers() {
 			assert_eq!(
 				params.octohub_transport,
 				if provider == "octohub" {
-					expected
+					configured.to_octohub()
 				} else {
 					octolib::OctoHubTransport::Http
 				},
@@ -881,7 +878,7 @@ async fn octohub_transport_selection_is_isolated_from_other_providers() {
 			assert_eq!(
 				params.chatgpt_transport,
 				if provider == "chatgpt" {
-					octolib::ChatGptTransport::WebSocket
+					configured.to_chatgpt()
 				} else {
 					octolib::ChatGptTransport::Http
 				},
@@ -891,14 +888,28 @@ async fn octohub_transport_selection_is_isolated_from_other_providers() {
 	}
 }
 
+#[test]
+fn request_transport_builder_overrides_the_config_default() {
+	use crate::config::RequestTransportConfig;
+
+	let config = test_config();
+	let messages = vec![msg("user", "hello")];
+	let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config);
+	assert_eq!(params.request_transport, RequestTransportConfig::WebSocket);
+	assert_eq!(
+		params.with_request_transport(RequestTransportConfig::Http).request_transport,
+		RequestTransportConfig::Http
+	);
+}
+
 #[tokio::test]
-async fn octohub_transport_preserves_session_purpose_cancellation_and_retry_metadata() {
-	use crate::config::OctoHubTransportConfig;
+async fn request_transport_preserves_session_purpose_cancellation_and_retry_metadata() {
+	use crate::config::RequestTransportConfig;
 
 	let mut config = test_config();
 	let messages = vec![msg("user", "hello")];
-	for transport in [OctoHubTransportConfig::WebSocket, OctoHubTransportConfig::Http] {
-		config.octohub_transport = transport;
+	for transport in [RequestTransportConfig::WebSocket, RequestTransportConfig::Http] {
+		config.request_transport = transport;
 		for purpose in [ModelPurpose::Main, ModelPurpose::Supervisor, ModelPurpose::Compression] {
 			let (cancel, token) = watch::channel(false);
 			let mut params = crate::session::context::with_session_id("octohub-session".to_string(), async {

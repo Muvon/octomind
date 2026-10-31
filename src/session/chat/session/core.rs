@@ -219,6 +219,7 @@ pub struct ChatSession {
 	pub retry_timeout: u64,
 	pub request_timeout_seconds: u64,
 	pub stream_timeout_seconds: u64,
+	pub request_transport: crate::config::RequestTransportConfig,
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
 
 	pub initial_status_shown: bool, // Flag to track if initial status line was displayed
@@ -468,6 +469,7 @@ impl ChatSession {
 			retry_timeout: profile.retry_timeout,
 			request_timeout_seconds: profile.request_timeout_seconds,
 			stream_timeout_seconds: profile.stream_timeout_seconds,
+			request_transport: profile.request_transport,
 			was_resumed: false,          // This is a new session
 			initial_status_shown: false, // Initialize status display flag
 			cached_tools: None,          // Initialize tool cache (populated on first use)
@@ -685,6 +687,7 @@ impl ChatSession {
 						retry_timeout: effective_profile.retry_timeout,
 						request_timeout_seconds: effective_profile.request_timeout_seconds,
 						stream_timeout_seconds: effective_profile.stream_timeout_seconds,
+						request_transport: effective_profile.request_transport,
 						was_resumed: true,          // This session was resumed from file
 						initial_status_shown: true, // Don't show status for resumed sessions
 						cached_tools: None,         // Initialize tool cache (populated on first use)
@@ -852,6 +855,7 @@ impl ChatSession {
 			retry_timeout: self.retry_timeout,
 			request_timeout_seconds: self.request_timeout_seconds,
 			stream_timeout_seconds: self.stream_timeout_seconds,
+			request_transport: self.request_transport,
 		}
 	}
 
@@ -866,6 +870,7 @@ impl ChatSession {
 		self.retry_timeout = profile.retry_timeout;
 		self.request_timeout_seconds = profile.request_timeout_seconds;
 		self.stream_timeout_seconds = profile.stream_timeout_seconds;
+		self.request_transport = profile.request_transport;
 		self.reasoning_effort = Some(profile.reasoning_effort);
 	}
 
@@ -1510,6 +1515,7 @@ impl ChatSession {
 			retry_timeout: 30,
 			request_timeout_seconds: 300,
 			stream_timeout_seconds: 0,
+			request_transport: crate::config::RequestTransportConfig::WebSocket,
 
 			was_resumed: false,
 			initial_status_shown: false,

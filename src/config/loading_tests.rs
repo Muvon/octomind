@@ -546,6 +546,20 @@ welcome = "agent extra role welcome"
 }
 
 #[test]
+fn merge_agent_toml_accepts_flat_request_transport_override() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base_path = tmp.path().join("config.toml");
+	std::fs::write(&base_path, template_toml()).expect("write template");
+	let base = Config::load_from_path(&base_path).expect("load base");
+	assert_eq!(base.request_transport, crate::config::RequestTransportConfig::WebSocket);
+
+	let merged = merge_agent_toml(&base, "request_transport = \"http\"\n").expect("merge agent manifest");
+
+	assert_eq!(merged.request_transport, crate::config::RequestTransportConfig::Http);
+	assert_eq!(base.request_transport, crate::config::RequestTransportConfig::WebSocket);
+}
+
+#[test]
 fn merge_agent_toml_skips_servers_and_roles_the_base_already_has() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let base_path = tmp.path().join("config.toml");

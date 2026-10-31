@@ -69,7 +69,6 @@ octomind config --validate
 | `version` | u32 | `22` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
-| `octohub_transport` | enum | `"websocket"` | Octohub only: `"websocket"` or `"http"`. Omitted settings default to WebSocket, including existing configs. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `commit_attribution` | string | `"Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"` | Git trailer the agent appends to commits it writes, unless the user says otherwise about attribution. `""` = no trailer and no system-prompt instruction. |
@@ -80,17 +79,10 @@ octomind config --validate
 version = 26
 log_level = "info"
 default = "assistant:concierge"
-octohub_transport = "websocket"
 sandbox = false
 telemetry = true
 commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 ```
-
-`octohub_transport` applies to every `octohub:` model call, including supervisor and compression calls.
-Set `octohub_transport = "http"` at the root (before any table headers) to explicitly use HTTP.
-WebSocket errors do not silently fall back to HTTP or replay a request. ChatGPT keeps its existing WebSocket
-selection; other providers are unaffected. The library derives the WebSocket URL from the existing Octohub
-HTTP(S) base URL, preserving private hosts and ports; no separate endpoint setting is required.
 
 ## Performance & Limits
 
@@ -152,10 +144,15 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
 | `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
+| `request_transport` | enum | `"websocket"` | `"websocket"` or `"http"`. Applies to `octohub:` and `chatgpt:` models only; other providers ignore it. Required in the file; the v26 migration adds it as `"websocket"` |
 
-ChatGPT calls use WebSockets. Each received response event or ping/pong resets the
-inactivity timer; waiting for a session connection does not consume it. Connection
-setup has a separate deadline.
+`request_transport` applies to every `octohub:` and `chatgpt:` model call, including supervisor and compression
+calls that inherit it. Set `request_transport = "http"` to opt out. WebSocket errors do not silently fall back to
+HTTP or replay a request. The library derives the Octohub WebSocket URL from the existing Octohub HTTP(S) base URL,
+preserving private hosts and ports; no separate endpoint setting is required.
+
+ChatGPT WebSocket calls: each received response event or ping/pong resets the inactivity timer; waiting for a
+session connection does not consume it. Connection setup has a separate deadline.
 
 ```toml
 [model]
@@ -168,6 +165,8 @@ top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
+stream_timeout_seconds = 0
+request_transport = "websocket"
 ```
 
 ## `[capabilities]`
@@ -592,6 +591,7 @@ Model used for compression decisions and summary generation.
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
 | `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
+| `request_transport` | enum | `"websocket"` | `"websocket"` or `"http"` (octohub and chatgpt only) |
 
 ```toml
 [compression]
@@ -672,6 +672,7 @@ entire block uses `[model]` unchanged.
 | `retry_timeout` | u64 | `30` | Backoff base in seconds. |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
 | `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
+| `request_transport` | enum | `"websocket"` | `"websocket"` or `"http"` (octohub and chatgpt only) |
 
 ### `[supervisor.hindsight]`
 

@@ -23,6 +23,32 @@ use serde::{Deserialize, Serialize};
 use super::ReasoningEffortConfig;
 use anyhow::{anyhow, Result};
 
+/// Request transport for the providers that support a persistent connection
+/// (octohub, chatgpt). Other providers ignore it.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestTransportConfig {
+	Http,
+	#[default]
+	WebSocket,
+}
+
+impl RequestTransportConfig {
+	pub fn to_octohub(self) -> octolib::OctoHubTransport {
+		match self {
+			Self::Http => octolib::OctoHubTransport::Http,
+			Self::WebSocket => octolib::OctoHubTransport::WebSocket,
+		}
+	}
+
+	pub fn to_chatgpt(self) -> octolib::ChatGptTransport {
+		match self {
+			Self::Http => octolib::ChatGptTransport::Http,
+			Self::WebSocket => octolib::ChatGptTransport::WebSocket,
+		}
+	}
+}
+
 /// Fully resolved parameters for one model request class.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelProfile {
@@ -37,6 +63,7 @@ pub struct ModelProfile {
 	pub retry_timeout: u64,
 	pub request_timeout_seconds: u64,
 	pub stream_timeout_seconds: u64,
+	pub request_transport: RequestTransportConfig,
 }
 
 impl ModelProfile {
@@ -91,6 +118,8 @@ pub struct ModelProfileOverride {
 	pub request_timeout_seconds: Option<u64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub stream_timeout_seconds: Option<u64>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_transport: Option<RequestTransportConfig>,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +144,8 @@ struct ModelProfileOverrideFields {
 	request_timeout_seconds: Option<u64>,
 	#[serde(default)]
 	stream_timeout_seconds: Option<u64>,
+	#[serde(default)]
+	request_transport: Option<RequestTransportConfig>,
 }
 
 impl<'de> Deserialize<'de> for ModelProfileOverride {
@@ -155,6 +186,7 @@ impl<'de> Deserialize<'de> for ModelProfileOverride {
 					retry_timeout: fields.retry_timeout,
 					request_timeout_seconds: fields.request_timeout_seconds,
 					stream_timeout_seconds: fields.stream_timeout_seconds,
+					request_transport: fields.request_transport,
 				})
 			}
 		}
@@ -177,6 +209,7 @@ impl ModelProfileOverride {
 			retry_timeout: self.retry_timeout.unwrap_or(base.retry_timeout),
 			request_timeout_seconds: self.request_timeout_seconds.unwrap_or(base.request_timeout_seconds),
 			stream_timeout_seconds: self.stream_timeout_seconds.unwrap_or(base.stream_timeout_seconds),
+			request_transport: self.request_transport.unwrap_or(base.request_transport),
 		}
 	}
 
@@ -193,6 +226,7 @@ impl ModelProfileOverride {
 			retry_timeout: other.retry_timeout.or(self.retry_timeout),
 			request_timeout_seconds: other.request_timeout_seconds.or(self.request_timeout_seconds),
 			stream_timeout_seconds: other.stream_timeout_seconds.or(self.stream_timeout_seconds),
+			request_transport: other.request_transport.or(self.request_transport),
 		}
 	}
 

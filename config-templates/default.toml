@@ -25,10 +25,6 @@ log_level = "info"
 # The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:assistant.
 default = "assistant:concierge"
 
-# Octohub transport: "websocket" (default) or "http" (explicit opt-out).
-# Applies only to octohub models; transport errors never switch to HTTP.
-octohub_transport = "websocket"
-
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot
 # write outside the directory where octomind was launched.
@@ -129,6 +125,8 @@ retry_timeout = 30
 request_timeout_seconds = 300
 # SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
 stream_timeout_seconds = 0
+# Persistent WebSocket for octohub/chatgpt requests ("http" opts out); other providers ignore it.
+request_transport = "websocket"
 
 # Capability provider overrides for tap agents
 # Each key is a capability name, value is the provider to use instead of "default"

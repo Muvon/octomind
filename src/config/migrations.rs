@@ -172,17 +172,23 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 25,
 				to: 26,
-				apply: add_v26_stream_timeout,
+				apply: add_v26_model_timeouts_and_transport,
 			},
 		],
 	)
 	.with_missing_version(0)
 }
 
-fn add_v26_stream_timeout(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+fn add_v26_model_timeouts_and_transport(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
 	let template_model = required_table(template.as_table(), "model", "embedded config")?;
 	let model = ensure_table(document.as_table_mut(), template.as_table(), "model", "user config")?;
-	merge_missing(model, template_model, "stream_timeout_seconds")
+	for key in ["stream_timeout_seconds", "request_transport"] {
+		merge_missing(model, template_model, key)?;
+	}
+	Ok(())
 }
 
 /// Add the required unsettled-evidence advisory switch and threshold to

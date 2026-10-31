@@ -1113,3 +1113,32 @@ fn v26_adds_disabled_stream_timeout_and_preserves_explicit_limits() {
 		assert_eq!(config.stream_timeout_seconds, stream_setting.unwrap_or(0) as u64);
 	}
 }
+
+#[test]
+fn v26_adds_websocket_request_transport_and_preserves_explicit_choice() {
+	use crate::config::RequestTransportConfig;
+
+	for (transport_setting, expected) in [
+		(None, RequestTransportConfig::WebSocket),
+		(Some("websocket"), RequestTransportConfig::WebSocket),
+		(Some("http"), RequestTransportConfig::Http),
+	] {
+		let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+		document["version"] = toml_edit::value(25);
+		match transport_setting {
+			Some(value) => document["model"]["request_transport"] = toml_edit::value(value),
+			None => {
+				document["model"].as_table_mut().unwrap().remove("request_transport");
+			}
+		}
+		let migration = plan()
+			.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
+		let config: crate::config::Config = toml::from_str(&migration.content).unwrap();
+		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+		assert_eq!(config.request_transport, expected);
+		assert_eq!(config.get_supervisor_model_profile().request_transport, expected);
+		assert_eq!(config.get_compression_model_profile().request_transport, expected);
+	}
+}

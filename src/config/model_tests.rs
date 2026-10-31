@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ModelProfile, ModelProfileOverride};
+use super::{ModelProfile, ModelProfileOverride, RequestTransportConfig};
 use crate::config::ReasoningEffortConfig;
 
 fn main_profile() -> ModelProfile {
@@ -27,6 +27,7 @@ fn main_profile() -> ModelProfile {
 		retry_timeout: 10,
 		request_timeout_seconds: 60,
 		stream_timeout_seconds: 0,
+		request_transport: RequestTransportConfig::WebSocket,
 	}
 }
 
@@ -141,4 +142,66 @@ fn stream_timeout_inherits_and_can_be_disabled_by_an_override() {
 	let profile = configured.resolve(&base);
 	let params = crate::session::completion::ChatCompletionWithValidationParams::from_profile(&[], &profile, &config);
 	assert_eq!(params.stream_timeout_seconds, 120);
+}
+
+#[test]
+fn request_transport_defaults_to_websocket_in_the_template() {
+	let value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	assert_eq!(value["model"]["request_transport"].as_str(), Some("websocket"));
+	let config: crate::config::Config = value.try_into().unwrap();
+	assert_eq!(config.model_profile.request_transport, RequestTransportConfig::WebSocket);
+	assert_eq!(config.get_supervisor_model_profile().request_transport, RequestTransportConfig::WebSocket);
+	assert_eq!(config.get_compression_model_profile().request_transport, RequestTransportConfig::WebSocket);
+}
+
+#[test]
+fn request_transport_accepts_explicit_choices_and_survives_role_merge() {
+	for (name, expected) in [
+		("websocket", RequestTransportConfig::WebSocket),
+		("http", RequestTransportConfig::Http),
+	] {
+		let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		value["model"]["request_transport"] = toml::Value::String(name.to_string());
+		let mut config: crate::config::Config = value.try_into().expect("valid transport");
+		config.build_role_map();
+		assert_eq!(config.request_transport, expected);
+		assert_eq!(config.get_supervisor_model_profile().request_transport, expected);
+		assert_eq!(config.get_compression_model_profile().request_transport, expected);
+		assert_eq!(config.get_model_profile_for_role("assistant").request_transport, expected);
+		assert_eq!(
+			toml::Value::try_from(&config).unwrap()["model"]["request_transport"].as_str(),
+			Some(name)
+		);
+	}
+}
+
+#[test]
+fn request_transport_rejects_invalid_values() {
+	for invalid in [
+		toml::Value::String("sse".to_string()),
+		toml::Value::String("WebSocket".to_string()),
+		toml::Value::String(String::new()),
+		toml::Value::Boolean(true),
+	] {
+		let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		value["model"]["request_transport"] = invalid;
+		assert!(value.try_into::<crate::config::Config>().is_err());
+	}
+}
+
+#[test]
+fn request_transport_inherits_and_an_override_can_opt_out() {
+	let base = main_profile();
+	assert_eq!(
+		ModelProfileOverride::default().resolve(&base).request_transport,
+		RequestTransportConfig::WebSocket
+	);
+	let http: ModelProfileOverride = toml::from_str("request_transport = \"http\"").unwrap();
+	let websocket: ModelProfileOverride = toml::from_str("request_transport = \"websocket\"").unwrap();
+	assert_eq!(http.resolve(&base).request_transport, RequestTransportConfig::Http);
+	assert_eq!(
+		http.overlay(&websocket).resolve(&base).request_transport,
+		RequestTransportConfig::WebSocket
+	);
+	assert!(toml::from_str::<ModelProfileOverride>("request_transport = \"sse\"").is_err());
 }

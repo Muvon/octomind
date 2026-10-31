@@ -56,7 +56,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -148,7 +148,7 @@ jobs:
       contents: write # push the badge JSON to the `badges` branch
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -249,7 +249,7 @@ jobs:
             os: ubuntu-22.04-arm
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     # Cache the static ONNX Runtime build (45–60 min cold) between runs.
     # Cache the full source+build tree because ort-sys's full static-link

@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.67.0] - 2026-10-31
+
+### 📋 Release Summary
+
+Request transport can now be configured per model, and octohub and ChatGPT providers use WebSockets with configurable transport behavior. Separate stream inactivity timeouts, scheduled MCP tool calls, agent run history with main-model costs, and queued follow-up prompts for running specialists are supported. Session teardown, Hindsight workers, error handling, prompt routing, and foreground/user-turn prioritization have been corrected.
+
+### 🚨 Breaking Changes
+
+- **config**: configure request transport per model `f9663316`
+
+### ✨ New Features & Enhancements
+
+- **timeouts**: support separate stream inactivity timeouts `d1296ff3`
+- **schedule**: support scheduled MCP tool calls `74dd7755`
+- **providers**: default octohub to configurable websocket transport `304abb00`
+- **session**: track agent run history and main-model costs `8e1c9a6f`
+- **providers**: use WebSockets for ChatGPT providers `d3a997dd`
+- **tap**: queue follow-up prompts for running specialists `7338b43d`
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: reformat request transport assertions `653ba2b7`
+- **dependencies**: update octolib to 0.48.1 `db42e775`
+- **hindsight**: preserve shared Hindsight fixtures `f14ff0f3`
+- **hindsight**: cover shared Hindsight process behavior `c7084539`
+- **hindsight**: move Hindsight inference into a shared worker `0f6896a9`
+- **session**: wrote a helper that estimates the tool definition token count `41518026`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: prevent MCP reconnection after session teardown `a57cbd40`
+- **hindsight**: preserve hindsight worker environment `2c323db7`
+- **hindsight**: initialize cached hindsight fingerprints `813bf504`
+- **hindsight**: run workers in separate process groups `431ae9f6`
+- **chat**: suspend spinner before handling API errors `51f23820`
+- **tap**: guard prompt channel by session context `fe55c338`
+- **websocket**: prioritize foreground session admission `03d2de29`
+- prioritize user turns over inbox work `29d5a013`
+
+### 📚 Documentation & Examples
+
+- **session**: document saved agent history and cost reporting `3f117845`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.66.4] - 2026-10-29
 
 ### 📋 Release Summary

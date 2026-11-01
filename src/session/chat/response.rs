@@ -846,6 +846,7 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 											ms: 0,
 										});
 										params.chat_session.advise_open.push(advise::open(
+											alarm,
 											signature,
 											advise::Arm::Control,
 											false,
@@ -907,6 +908,7 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 												});
 												params.chat_session.advise_notes.push(advice.note.clone());
 												params.chat_session.advise_open.push(advise::open(
+													alarm,
 													signature.clone(),
 													advise::Arm::Treated,
 													true,
@@ -931,6 +933,7 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 													ms: advised.ms,
 												});
 												params.chat_session.advise_open.push(advise::open(
+													alarm,
 													signature,
 													advise::Arm::Treated,
 													false,

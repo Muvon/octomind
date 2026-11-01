@@ -567,6 +567,8 @@ pub async fn stuck_lessons(role: &str, project: &str, signature: &StuckSignature
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenAdvice {
+	/// The alarm number of the emitted record this outcome belongs to.
+	pub sequence: u64,
 	pub signature: StuckSignature,
 	pub arm: Arm,
 	pub advised: bool,
@@ -575,8 +577,9 @@ pub struct OpenAdvice {
 	pub changed: bool,
 }
 
-pub fn open(signature: StuckSignature, arm: Arm, advised: bool, calls_hash: u64) -> OpenAdvice {
+pub fn open(sequence: u64, signature: StuckSignature, arm: Arm, advised: bool, calls_hash: u64) -> OpenAdvice {
 	OpenAdvice {
+		sequence,
 		signature,
 		arm,
 		advised,
@@ -602,11 +605,14 @@ pub fn record_outcome(open: &mut Vec<OpenAdvice>, session: &str, gate: &str) {
 	}
 }
 
+// Records carry only the signature hash: the key quotes a command or error
+// line, which can hold a credential, and the hash is all the analysis needs.
 fn outcome_line(entry: &OpenAdvice, session: &str, gate: &str) -> serde_json::Value {
 	serde_json::json!({
 		"ts": crate::utils::time::now_secs(),
 		"session": session,
-		"signature": entry.signature,
+		"sequence": entry.sequence,
+		"signature": entry.signature.hex,
 		"arm": entry.arm,
 		"advised": entry.advised,
 		"changed_calls": entry.changed,
@@ -640,7 +646,7 @@ fn emit_line(record: &EmitRecord<'_>) -> serde_json::Value {
 		"session": record.session,
 		"sequence": record.sequence,
 		"signal": signal_name(record.signal),
-		"signature": record.signature,
+		"signature": record.signature.hex,
 		"arm": record.arm,
 		"result": record.result,
 		"class": record.class,

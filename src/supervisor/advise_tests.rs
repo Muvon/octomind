@@ -403,8 +403,8 @@ fn writer_payload_escapes_untrusted_text_and_omits_empty_blocks() {
 fn open_entries_measure_call_set_change_for_outcome_rounds_only() {
 	let signature = stuck_signature(DetectorSignal::Loop, &[], &[]);
 	let mut entries = vec![
-		open(signature.clone(), Arm::Treated, true, 11),
-		open(signature, Arm::Control, false, 22),
+		open(1, signature.clone(), Arm::Treated, true, 11),
+		open(2, signature, Arm::Control, false, 22),
 	];
 	assert!(entries
 		.iter()
@@ -463,8 +463,11 @@ fn record_lines_have_the_documented_shape() {
 	assert_eq!(emitted["class"], "stale_view");
 	assert_eq!(emitted["evidence"], "#4");
 	assert_eq!(emitted["lessons"], serde_json::json!(["lesson-a"]));
-	assert_eq!(emitted["signature"]["key"], signature.key.as_str());
-	assert_eq!(emitted["signature"]["hex"], signature.hex.as_str());
+	assert_eq!(emitted["signature"], signature.hex.as_str());
+	assert!(
+		!emitted.to_string().contains(&signature.key),
+		"the key may quote a command line"
+	);
 
 	let control = emit_line(&EmitRecord {
 		session: "s1",
@@ -482,10 +485,19 @@ fn record_lines_have_the_documented_shape() {
 	assert!(control["class"].is_null() && control["evidence"].is_null() && control["p_useful"].is_null());
 	assert_eq!(control["arm"], "control");
 
-	let outcome = outcome_line(&open(signature, Arm::Control, false, 5), "s1", "pass");
+	let outcome = outcome_line(&open(5, signature, Arm::Control, false, 5), "s1", "pass");
 	assert_eq!(
 		keys(&outcome),
-		["advised", "arm", "changed_calls", "gate", "session", "signature", "ts"]
+		[
+			"advised",
+			"arm",
+			"changed_calls",
+			"gate",
+			"sequence",
+			"session",
+			"signature",
+			"ts"
+		]
 	);
 	assert_eq!(outcome["gate"], "pass");
 	assert_eq!(outcome["changed_calls"], false);
@@ -498,8 +510,8 @@ async fn record_outcome_drains_and_appends_one_line_per_entry() {
 	let _data = DataDirGuard::new();
 	let signature = stuck_signature(DetectorSignal::Loop, &[], &[]);
 	let mut entries = vec![
-		open(signature.clone(), Arm::Treated, true, 1),
-		open(signature.clone(), Arm::Control, false, 2),
+		open(1, signature.clone(), Arm::Treated, true, 1),
+		open(2, signature.clone(), Arm::Control, false, 2),
 	];
 	record_outcome(&mut entries, "s1", "gaps");
 	assert!(entries.is_empty());

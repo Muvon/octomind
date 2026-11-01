@@ -3705,3 +3705,52 @@ async fn the_ceiling_margin_changes_the_prefix_past_every_gate() {
 	session.fold_cooldown_until_call = usize::MAX;
 	assert!(super::replaces_prefix_on_next_request(&session, &config, false));
 }
+
+/// A session grown just past the fire line by small messages only (no tool
+/// result near the response cap), so no trim can answer for the fold gates.
+async fn session_past_the_fire_line() -> (crate::session::chat::session::ChatSession, crate::config::Config) {
+	let mut config = fold_config();
+	config.compression.threshold = 70_000;
+	config.max_session_tokens_threshold = 200_000;
+	config.mcp_response_tokens_threshold = 20_000;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "Preserve the user's constraints."),
+		fold_message("user", "Compare the observations and explain the conclusion."),
+	]);
+	session.model = "alibaba:glm-5.1".to_string();
+	session.max_tokens = 32_000;
+	session.cached_tools = Some(Vec::new());
+	while session.get_full_context_tokens(&config).await < config.compression.threshold {
+		let mut assistant = fold_message("assistant", "Reviewing the next observation.");
+		assistant.thinking = Some(serde_json::json!({"content": "observation ".repeat(3_000)}));
+		session.session.messages.push(assistant);
+		session.session.messages.push(fold_message("tool", "Observed result."));
+		session.session.info.total_api_calls += 1;
+	}
+	(session, config)
+}
+
+#[tokio::test]
+async fn a_user_turn_clears_the_fold_cooldown_and_folds() {
+	let (mut session, config) = session_past_the_fire_line().await;
+	assert!(
+		super::should_check_compression(&mut session, &config).await.0,
+		"the fixture is past the fire line and folds without a cooldown"
+	);
+	session.fold_cooldown_until_call = session.session.info.total_api_calls + 10;
+	let before = serde_json::to_value(&session.session.messages).unwrap();
+
+	assert!(
+		super::replaces_prefix_on_next_request(&session, &config, true),
+		"a genuine user turn resets the cooldown, so the fold is free"
+	);
+	assert!(
+		!super::replaces_prefix_on_next_request(&session, &config, false),
+		"a non-user turn keeps the cooldown, so nothing folds"
+	);
+	assert_eq!(
+		serde_json::to_value(&session.session.messages).unwrap(),
+		before,
+		"asking must not rewrite the prompt"
+	);
+}

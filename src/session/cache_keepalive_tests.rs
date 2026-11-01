@@ -482,3 +482,70 @@ async fn run_stops_after_a_ping_that_misses_the_cache() {
 		"the missed ping is billed once, then the loop stops"
 	);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn run_sends_real_zero_output_pings_through_the_anthropic_provider() {
+	let _lock = test_support::ENV_LOCK.lock().await;
+	let _env = test_support::EnvGuard::new(&["ANTHROPIC_API_URL", "ANTHROPIC_API_KEY"]);
+	// A pre-warm answers with no content and the whole prefix read from cache.
+	let cache_hit = serde_json::json!({
+		"id": "msg_1",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-5-5",
+		"content": [],
+		"stop_reason": "max_tokens",
+		"stop_sequence": null,
+		"usage": {
+			"input_tokens": 4,
+			"cache_read_input_tokens": 9000,
+			"cache_creation_input_tokens": 0,
+			"output_tokens": 0
+		}
+	});
+	let (url, captured) = test_support::spawn_recording_stub(vec![cache_hit.clone(), cache_hit]).await;
+	// The stub ignores the path; the provider wants the full messages endpoint.
+	std::env::set_var("ANTHROPIC_API_URL", url.replace("/v1/chat/completions", "/v1/messages"));
+	std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+
+	let snapshot = vec![
+		message("system", "rules", true, None),
+		message("user", "cached question", true, None),
+	];
+	let (_tx, rx) = watch::channel(false);
+	let exchanges = run(
+		snapshot,
+		profile("anthropic:claude-sonnet-5-5"),
+		keepalive_config(),
+		Duration::from_millis(10),
+		2,
+		rx,
+	)
+	.await;
+
+	assert_eq!(exchanges.len(), 2, "a hit does not stop the loop: both pings go out");
+	for exchange in &exchanges {
+		let usage = exchange.usage.as_ref().expect("ping usage");
+		assert!(usage.cache_read_tokens > 0, "the ping read the cached prefix");
+	}
+
+	let requests = captured.lock().expect("captured requests").clone();
+	assert_eq!(requests.len(), 2);
+	for body in &requests {
+		assert_eq!(body["max_tokens"], 0, "a pre-warm generates nothing");
+		assert_eq!(body["stream"], false, "the API rejects max_tokens 0 with streaming");
+		let messages = body["messages"].as_array().expect("messages array");
+		let last = messages.last().expect("at least the cached user message");
+		assert_eq!(last["role"], "user", "nothing follows the last cached message");
+		let last_block = last["content"]
+			.as_array()
+			.and_then(|blocks| blocks.last())
+			.expect("content block");
+		assert_eq!(last_block["text"], "cached question");
+		assert!(
+			last_block.get("cache_control").is_some(),
+			"the marker rides the last block"
+		);
+	}
+}

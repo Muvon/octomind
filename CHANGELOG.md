@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.68.0] - 2026-11-01
+
+### 📋 Release Summary
+
+The supervisor can provide evidence-bound alarm advice. Advice signatures are serialized as hex, and session keepalive pings are limited while usage is reported.
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: add evidence-bound supervisor alarm advice `7bd5ac40`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: cover cache pings and fold cooldown behavior `d5b4bc5f`
+- **session**: test reply waits with work in flight `38dfe3e2`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: serialize advice signatures as hex `7b4aa68c`
+- **session**: limit keepalive pings and report usage `2c0a75fb`
+
 ## [0.67.3] - 2026-10-31
 
 ### 📋 Release Summary

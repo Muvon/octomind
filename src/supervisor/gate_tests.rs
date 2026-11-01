@@ -75,6 +75,7 @@ fn unsettled_advisory_is_scored_bounded_and_switchable() {
 fn condition_confidence_and_citations_have_the_same_contract_in_both_encodings() {
 	let evidence = CitationEvidence {
 		corpus: "The independent check passed".into(),
+		request: String::new(),
 	};
 	for (status, observation, score, valid) in [
 		("unknown", "Output unavailable", Some(0.9), true),

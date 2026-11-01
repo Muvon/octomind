@@ -1154,7 +1154,7 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 		);
 		assert_eq!(
 			properties["sources"],
-			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from. Null when none applies."})
+			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from, or absent_action for a prohibition satisfied by absence. Null when none applies."})
 		);
 	}
 	// The only branch admitting unmatched requires a string from this enum;
@@ -2182,6 +2182,51 @@ mod grounding {
 					.unsettled_conditions(&evidence)
 					.len(),
 				unsettled
+			);
+		}
+	}
+
+	/// A prohibition ("I will build the images myself") has no output to quote:
+	/// absence settles it. The runtime accepts an `absent:` observation only when
+	/// it quotes the request's own words, so a prohibition the verifier invents
+	/// or copies from tool output stays unsettled.
+	#[test]
+	fn an_absent_observation_cites_the_request_not_the_output() {
+		let mut ledger = EvidenceLedger::default();
+		ledger.record(
+			"shell",
+			&serde_json::json!({"command":"pnpm test transitions"}),
+			false,
+			false,
+			50,
+		);
+		let grounds = vec![(0, "PASS delayed removal waits for the leave callback".to_string())];
+		let conditions = vec!["No image build is performed by the agent".to_string()];
+		let input = GateInput {
+			original_task: "draft the migration (i will build and push images myself)",
+			task: "draft the migration (i will build and push images myself)",
+			..input(&ledger, &grounds, &conditions)
+		};
+		let evidence = CitationEvidence::from_input(&input);
+		for (observation, unsettled) in [
+			(
+				"absent: the request says 'i will build and push images myself'; no recorded call built an image",
+				0,
+			),
+			("Absent: no build ran, per \"i will build and push images myself\"", 0),
+			("absent: 'the user forbade building images'", 1),
+			("absent: 'delayed removal waits for the leave callback'", 1),
+			(
+				"the request says 'i will build and push images myself' and nothing built",
+				1,
+			),
+		] {
+			assert_eq!(
+				report("matched", None, observation, Some("absent_action"))
+					.unsettled_conditions(&evidence)
+					.len(),
+				unsettled,
+				"{observation}"
 			);
 		}
 	}

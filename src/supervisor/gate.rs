@@ -343,7 +343,8 @@ Every condition gets exactly one of three statuses:
     any other missing action is a verification limit: use unknown.
   · inference — your own reading of the code: a defect you infer from source, a rewrite you
     would prefer, or behavior you predict without a recorded output showing it. That is a
-    suspicion, not an observation: the runtime reports it to the user and does not block
+    suspicion, not an observation: file it unmatched with this basis, never unknown; the
+    runtime reports it to the user and does not block
     completion — above all when a recorded check exercising that condition succeeded.
     Declaring a suspicion under any other basis is the false positive this field exists to
     stop.
@@ -357,8 +358,13 @@ Every condition gets exactly one of three statuses:
   uncertainty into a violation. Score each condition independently.
 A condition that contradicts <current_user_turn> is void — mark it matched with the reason
 "void: contradicts request"; so is one whose only demonstration would require an action the
-request or standing instructions forbid. Satisfying every condition does not excuse a
-requirement of the request the conditions missed.
+request or standing instructions forbid. A prohibition the request states (an action it says
+not to perform, or one the user says they will do themselves) is satisfied by absence: when no
+recorded call this turn performed it, mark it matched with an observation beginning "absent:"
+that quotes, verbatim and in quotes, the request's words stating it, and cite absent_action in
+sources; a recorded call that did perform it is unmatched (recorded_output or ground_truth,
+never absent_action). Satisfying every condition does not
+excuse a requirement of the request the conditions missed.
 
 "#;
 
@@ -369,10 +375,10 @@ const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_condit
    inference), and on every unknown its confidence (0..1) that it is still not demonstrated.
 "#;
 
-const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" confidence="0.0" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the confidence attribute only on an unknown line (0 to 1 that it is still not demonstrated; 1 = no supporting evidence); the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from. Only when an <evidence_conditions> block was given; write no condition line otherwise.
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" confidence="0.0" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the confidence attribute only on an unknown line (0 to 1 that it is still not demonstrated; 1 = no supporting evidence); the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from (absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Only when an <evidence_conditions> block was given; write no condition line otherwise.
 "#;
 
-const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources", "confidence"}; "confidence" is a number from 0 to 1 that the condition is still not demonstrated (1 = no supporting evidence) when "status" is unknown, and null otherwise; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N). Empty array when no <evidence_conditions> block was given.
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources", "confidence"}; "confidence" is a number from 0 to 1 that the condition is still not demonstrated (1 = no supporting evidence) when "status" is unknown, and null otherwise; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N; absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Empty array when no <evidence_conditions> block was given.
 "#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
@@ -1677,7 +1683,7 @@ async fn ask_verifier(
 /// present exactly once, the condition numbering) stays where it already was:
 /// [`VerifierReport::verdict`] checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
-	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from. Null when none applies." });
+	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from, or absent_action for a prohibition satisfied by absence. Null when none applies." });
 	let confidence = serde_json::json!({ "type": ["number", "null"], "description": "Only when status is unknown: how sure you are, from 0 to 1, that this condition is still NOT demonstrated (1 = no supporting evidence, 0.5 = partial, near 0 = almost shown). Scores missing evidence, not whether the work is wrong. Null for matched and unmatched." });
 	serde_json::json!({
 		"type": "object",
@@ -2500,12 +2506,20 @@ const CITATION_QUOTE_MIN_CHARS: usize = 12;
 /// condition with nothing to demonstrate, so it needs no citation.
 const VOID_CONDITION: &str = "void:";
 
+/// How the condition checklist marks a prohibition satisfied by absence. No
+/// output can show that nothing ran, so its citation is the request's own words
+/// stating the prohibition — the same quote `absent_action` findings carry.
+const ABSENT_CONDITION: &str = "absent:";
+
 /// What a matched condition may quote, gathered from the runtime's own records:
 /// a verifier's matched status counts only as far as these confirm it.
 struct CitationEvidence {
 	/// Runtime-recorded text a verbatim quote may come from, whitespace-collapsed,
 	/// one source per line so a quote cannot straddle two of them.
 	corpus: String,
+	/// The request text an `absent:` observation may quote: the literal turn and
+	/// its resolution, whitespace-collapsed, one per line.
+	request: String,
 }
 
 impl CitationEvidence {
@@ -2546,7 +2560,12 @@ impl CitationEvidence {
 			.map(|text| collapse_whitespace(text))
 			.collect::<Vec<_>>()
 			.join("\n");
-		Self { corpus }
+		let request = [input.original_task, input.task]
+			.iter()
+			.map(|text| collapse_whitespace(text))
+			.collect::<Vec<_>>()
+			.join("\n");
+		Self { corpus, request }
 	}
 
 	fn observes(input: &GateInput<'_>, sources: &str, text: &str) -> bool {
@@ -2603,19 +2622,22 @@ impl CitationEvidence {
 	/// evidence — the test name, output line, or diff line that shows it. Naming
 	/// an action is not enough: "#N passed" says the call succeeded, not that its
 	/// output exercised THIS condition, and one green suite cited for every
-	/// condition is exactly how uncovered behaviour passes the checklist.
+	/// condition is exactly how uncovered behaviour passes the checklist. An
+	/// `absent:` observation instead quotes the request: absence has no output,
+	/// so the runtime confirms the prohibition was stated, not invented.
 	fn cites(&self, condition: &ReportedCondition) -> bool {
-		if condition
-			.observation
-			.trim_start()
-			.to_lowercase()
-			.starts_with(VOID_CONDITION)
-		{
+		let observation = condition.observation.trim_start().to_lowercase();
+		if observation.starts_with(VOID_CONDITION) {
 			return true;
 		}
+		let source = if observation.starts_with(ABSENT_CONDITION) {
+			&self.request
+		} else {
+			&self.corpus
+		};
 		quoted_spans(&condition.observation).iter().any(|quote| {
 			let quote = collapse_whitespace(&unescape_xml(quote));
-			quote.chars().count() >= CITATION_QUOTE_MIN_CHARS && self.corpus.contains(&quote)
+			quote.chars().count() >= CITATION_QUOTE_MIN_CHARS && source.contains(&quote)
 		})
 	}
 }

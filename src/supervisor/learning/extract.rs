@@ -195,6 +195,9 @@ pub async fn run_extraction(
 	if transcript.is_empty() {
 		return Ok(0);
 	}
+	// Scanned once per extraction so every experience candidate (and its repair) is tagged by the stuck
+	// signatures the agent was advised on, which is how later alarms find it.
+	let stuck_signatures = crate::supervisor::advise::signatures_in(messages);
 
 	let mut system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
 	system.push_str(ORIENTATION_SECTION);
@@ -232,6 +235,7 @@ pub async fn run_extraction(
 			project,
 			source: session_name,
 			outcome,
+			stuck_signatures: &stuck_signatures,
 		},
 	) {
 		let duplicate = existing_scoped.iter().any(|existing| {
@@ -251,8 +255,15 @@ pub async fn run_extraction(
 						"Experience grounding requested one repair: {}",
 						verdict.issues.join("; ")
 					);
-					if let Some(repaired) =
-						repair_experience(config, &experience, messages, &reconcile, &verdict.issues).await
+					if let Some(repaired) = repair_experience(
+						config,
+						&experience,
+						messages,
+						&reconcile,
+						&verdict.issues,
+						&stuck_signatures,
+					)
+					.await
 					{
 						verify_experience(config, &repaired, messages).await.then_some(repaired)
 					} else {
@@ -1093,6 +1104,7 @@ struct ExperienceParseContext<'a> {
 	project: &'a str,
 	source: &'a str,
 	outcome: super::TrajectoryOutcome,
+	stuck_signatures: &'a [String],
 }
 
 fn parse_experience_tag(response: &str, context: &ExperienceParseContext<'_>) -> Option<GroundedCandidate> {
@@ -1171,13 +1183,14 @@ fn parse_experience_tag(response: &str, context: &ExperienceParseContext<'_>) ->
 	if title.is_empty() {
 		return None;
 	}
-	let tags = extract_attr(attrs, "tags")
+	let mut tags: Vec<String> = extract_attr(attrs, "tags")
 		.unwrap_or_default()
 		.split(',')
 		.map(|tag| tag.trim().to_string())
 		.filter(|tag| !tag.is_empty())
 		.take(10)
 		.collect();
+	tags.extend(context.stuck_signatures.iter().map(|hex| format!("stuck:{hex}")));
 	let evidence = message_numbers
 		.iter()
 		.map(|number| format!("session://{}/message/{number}", context.source))
@@ -1311,6 +1324,7 @@ async fn repair_experience(
 	messages: &[crate::session::Message],
 	reconcile: &[Lesson],
 	issues: &[String],
+	stuck_signatures: &[String],
 ) -> Option<GroundedCandidate> {
 	let response = repair_experience_response(config, candidate, messages, issues)
 		.await
@@ -1326,6 +1340,7 @@ async fn repair_experience(
 			project: &candidate.lesson.project,
 			source: &candidate.lesson.source,
 			outcome: candidate.lesson.outcome,
+			stuck_signatures,
 		},
 	)
 }

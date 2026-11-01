@@ -174,6 +174,11 @@ fn plan() -> MigrationPlan {
 				to: 26,
 				apply: add_v26_model_timeouts_and_transport,
 			},
+			VersionMigration {
+				from: 26,
+				to: 27,
+				apply: add_v27_advise,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -356,6 +361,19 @@ fn add_v21_hindsight(document: &mut toml_edit::DocumentMut, template: &toml_edit
 		"user config",
 	)?;
 	merge_missing(supervisor, template_supervisor, "hindsight")
+}
+
+/// Add the optional `[supervisor.advise]` section (off) without changing
+/// existing supervisor settings.
+fn add_v27_advise(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	merge_missing(supervisor, template_supervisor, "advise")
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

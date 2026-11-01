@@ -63,7 +63,7 @@ fn test_tools_to_functions_maps_fields() {
 		rmcp_tool("alpha", Some("Does alpha things"), Some(true)),
 		rmcp_tool("beta", None, None),
 	];
-	let functions = tools_to_functions(&tools);
+	let functions = tools_to_functions("server-tests", &tools);
 	assert_eq!(functions.len(), 2);
 	assert_eq!(functions[0].name, "alpha");
 	assert_eq!(functions[0].description, "Does alpha things");
@@ -75,7 +75,22 @@ fn test_tools_to_functions_maps_fields() {
 
 #[test]
 fn test_tools_to_functions_empty() {
-	assert!(tools_to_functions(&[]).is_empty());
+	assert!(tools_to_functions("server-tests", &[]).is_empty());
+}
+
+#[test]
+fn test_tools_to_functions_skips_tools_without_an_object_schema() {
+	// A server whose schema generator broke (zod 4 under zod-to-json-schema 3 emits
+	// a bare `$schema`) must cost that tool, not every model call of the session:
+	// Anthropic rejects the whole request over one `input_schema` without `type`.
+	let broken: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+		"name": "read_media_file",
+		"inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#"}
+	}))
+	.expect("deserialize rmcp Tool");
+	let functions = tools_to_functions("image-view", &[broken, rmcp_tool("alpha", None, None)]);
+	assert_eq!(functions.len(), 1);
+	assert_eq!(functions[0].name, "alpha");
 }
 
 #[tokio::test]
@@ -900,7 +915,7 @@ fn tools_to_functions_registers_command_shape_from_schema() {
 		}
 	}))
 	.expect("deserialize rmcp Tool");
-	tools_to_functions(&[runner, editor]);
+	tools_to_functions("server-tests", &[runner, editor]);
 
 	use crate::supervisor::detect::is_mutation_call;
 	let check = serde_json::json!({"command": "cargo test --all"});

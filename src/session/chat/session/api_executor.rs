@@ -690,20 +690,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let verdict = crate::supervisor::gate::verify(config, gate_input, operation_rx.clone()).await;
 		animation_manager.clear_phase();
 		chat_session.evidence.mark_gate_checkpoint();
-		crate::supervisor::hindsight::record_gate(
-			config,
-			match &verdict {
-				crate::supervisor::gate::GateVerdict::Pass => "pass",
-				crate::supervisor::gate::GateVerdict::Gaps(gaps)
-					if crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
-				{
-					"stall"
-				}
-				crate::supervisor::gate::GateVerdict::Gaps(_) => "gaps",
-				crate::supervisor::gate::GateVerdict::Unsettled(_) => "unsettled",
-				crate::supervisor::gate::GateVerdict::Indeterminate(_) => "indeterminate",
-			},
+		let verdict_label = match &verdict {
+			crate::supervisor::gate::GateVerdict::Pass => "pass",
+			crate::supervisor::gate::GateVerdict::Gaps(gaps)
+				if crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
+			{
+				"stall"
+			}
+			crate::supervisor::gate::GateVerdict::Gaps(_) => "gaps",
+			crate::supervisor::gate::GateVerdict::Unsettled(_) => "unsettled",
+			crate::supervisor::gate::GateVerdict::Indeterminate(_) => "indeterminate",
+		};
+		crate::supervisor::advise::record_outcome(
+			&mut chat_session.advise_open,
+			&chat_session.session.info.name,
+			verdict_label,
 		);
+		crate::supervisor::hindsight::record_gate(config, verdict_label);
 		if let Some(note) = crate::supervisor::gate::take_unsettled_advisory(
 			&verdict,
 			&config.supervisor.gate,

@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 26
+version = 27
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -808,6 +808,16 @@ enabled = false
 [supervisor.hindsight]
 enabled = false
 model = "muvon/hindsight"
+
+# advise: on a loop or recovery alarm the steer note can carry content. One
+# shared supervisor-model call reads the request, the last tool receipts and
+# any stuck-keyed experience records and answers with a short observation that
+# points at a receipt (`#N`), or skips — never a command, never code. One in
+# four eligible alarms gets the plain note instead (control arm), and every
+# note is logged to advise.jsonl in the data directory with the gate verdict
+# that followed, so the trigger can later be fit on whether advice helped.
+[supervisor.advise]
+enabled = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

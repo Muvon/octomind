@@ -47,7 +47,10 @@
 //! verification payloads and can only confirm or reject candidates. The evolution seam reads
 //! the request and the turn's final answer; its answers only grade or drop a
 //! trial sample that already carries a verify-gate verdict, and every sample
-//! in both arms of one artifact is measured the same way.
+//! in both arms of one artifact is measured the same way. The advise seam
+//! reads tool output by design, like condense: its state carries the request,
+//! the receipts and their outputs, and its answer is only logged beside the
+//! advice record; it never skips the writer or alters a note.
 
 use octolib::evaluation::{Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question};
 use std::collections::BTreeMap;
@@ -67,9 +70,10 @@ pub enum Seam {
 	Gate,
 	Capabilities,
 	Evolution,
+	Advise,
 }
 
-pub const SEAM_COUNT: usize = 10;
+pub const SEAM_COUNT: usize = 11;
 
 impl Seam {
 	pub const ALL: [Seam; SEAM_COUNT] = [
@@ -83,6 +87,7 @@ impl Seam {
 		Seam::Gate,
 		Seam::Capabilities,
 		Seam::Evolution,
+		Seam::Advise,
 	];
 
 	pub fn name(self) -> &'static str {
@@ -97,6 +102,7 @@ impl Seam {
 			Seam::Gate => "gate",
 			Seam::Capabilities => "capabilities",
 			Seam::Evolution => "evolution",
+			Seam::Advise => "advise",
 		}
 	}
 
@@ -112,6 +118,7 @@ impl Seam {
 			Seam::Gate => 7,
 			Seam::Capabilities => 8,
 			Seam::Evolution => 9,
+			Seam::Advise => 10,
 		}
 	}
 
@@ -127,6 +134,7 @@ impl Seam {
 			Seam::Gate => config.supervisor,
 			Seam::Capabilities => config.capabilities,
 			Seam::Evolution => config.supervisor,
+			Seam::Advise => config.supervisor,
 		}
 	}
 }
@@ -243,6 +251,9 @@ pub const CAPABILITY_NONE: &str = SKILL_NONE;
 pub const CAPABILITY_QUESTION_ID: &str = "capability";
 /// Question id of the evolution seam's turn-outcome Noul.
 pub const EVOLUTION_OUTCOME_ID: &str = "outcome";
+/// Question id of the advise seam's usefulness Noul. No threshold constant:
+/// the seam acts on nothing until a trigger is fit from `advise.jsonl`.
+pub const ADVISE_QUESTION_ID: &str = "useful";
 
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes when the lesson states a convention, constraint, workflow step, or preference the work on this request must follow, or a fact it must take into account; no when it concerns a different tool, language, file, or task and following it would change nothing about this request.";
 const CONDENSE_QUESTION: &str = "Must the agent read this chunk to finish the current task? Yes only when the chunk holds an error message or stack trace, a failing test, check or assertion (each failure is distinct, even when it shares another's format), the specific data the task or the tool arguments ask for, an explicit negative result, a count, total or exit code, or a path, line number or signature the agent must act on. No when the chunk is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.";
@@ -293,6 +304,7 @@ const GATE_QUESTION: &str = "Is this finding refuted by a citable observation in
 const GATE_HUNK_QUESTION: &str = "Must the verifier read this hunk to judge whether the request's conditions hold? Yes when it makes or changes something a condition names, or is a check the agent produced for one (a test, an assertion, a worked example, a verification script); no when it is a rename, formatting, rewording, generated output or boilerplate that no condition depends on.";
 const EVOLUTION_OUTCOME_QUESTION: &str = "Does the final answer fulfil the request? Yes when it delivers what the request asks for, or reports a concrete blocker with its evidence; no when it is partial, off-target, claims work it does not show, or asks the user to do what was requested.";
 const EVOLUTION_APPLIES_QUESTION: &str = "Does this behavior's description address the kind of work the request asks for? Yes when following it would change how this request is done; no when it concerns a different task, tool, or situation and would change nothing here.";
+const ADVISE_QUESTION: &str = "Would a short note that points at one of these receipts change what the agent does next? Yes when the repeated calls or errors show the agent is missing something its own receipts already contain: a different target than the one it keeps addressing, an error it has not read, a view that is stale after its own edit, or a check it has not run; no when the repetition is legitimate polling, a wait on a background job, deliberate probing, or when the receipts hold nothing it has not already acted on.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
 const CAPABILITY_QUESTION: &str = "Which capability applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed capability fits.";
@@ -451,6 +463,11 @@ pub fn plan_phase_question(done_when: &str) -> BTreeMap<String, Question> {
 		PLAN_QUESTION_ID.to_string(),
 		Question::noul(format!("{PLAN_PHASE_QUESTION} The phase's done_when: {done_when}")),
 	)])
+}
+
+/// The observe-only usefulness Noul asked once per treated advise alarm.
+pub fn advise_question() -> BTreeMap<String, Question> {
+	BTreeMap::from([(ADVISE_QUESTION_ID.to_string(), Question::noul(ADVISE_QUESTION))])
 }
 
 pub fn evolution_question_id(artifact: usize) -> String {

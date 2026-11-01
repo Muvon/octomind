@@ -92,6 +92,7 @@ fn experience_parser_requires_grounding_and_maps_links() {
 			project: "octomind",
 			source: "session-a",
 			outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
+			stuck_signatures: &[],
 		},
 	)
 	.expect("grounded experience parses");
@@ -132,6 +133,7 @@ fn experience_parser_rejects_synthetic_or_assistant_only_evidence() {
 				project: "octomind",
 				source: "session-a",
 				outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
+				stuck_signatures: &[],
 			},
 		)
 		.is_none());
@@ -436,6 +438,7 @@ async fn live_curated_trajectory_produces_grounded_experience() {
 			project: "__learning_live_contract",
 			source: "live-contract",
 			outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
+			stuck_signatures: &[],
 		},
 	)
 	.expect("substantial verified trajectory must produce one parseable experience");
@@ -461,6 +464,7 @@ async fn live_curated_trajectory_produces_grounded_experience() {
 				project: "__learning_live_contract",
 				source: "live-contract",
 				outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
+				stuck_signatures: &[],
 			},
 		)
 		.expect("grounding repair produces a candidate");
@@ -840,6 +844,7 @@ fn experience_cannot_cite_a_message_hidden_by_transcript_budget() {
 			project: "octomind",
 			source: "session-a",
 			outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
+			stuck_signatures: &[],
 		},
 	)
 	.is_none());

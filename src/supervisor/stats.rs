@@ -45,6 +45,8 @@ pub enum CallKind {
 	Retention,
 	Evolution,
 	Hindsight,
+	/// Model-written observation on a loop or recovery alarm.
+	Advise,
 }
 
 #[derive(Default, Clone)]
@@ -58,6 +60,7 @@ struct Stats {
 	condense_calls: u64,
 	authorize_calls: u64,
 	evaluate_calls: u64,
+	advise_calls: u64,
 	evaluate_input_tokens: u64,
 	evaluate_cost: f64,
 	// Per-seam evaluation gate counters, indexed by `evaluate::Seam::index`.
@@ -110,6 +113,11 @@ struct Stats {
 	/// any-correction probabilities (mean = sum / scored).
 	hindsight_scored: u64,
 	hindsight_p_sum: f64,
+	/// Alarm notes that carried advice, fell back to the fixed note after a
+	/// skip, or went to the control arm.
+	advised: u64,
+	advise_skipped: u64,
+	advise_control: u64,
 }
 
 fn global() -> &'static Mutex<Stats> {
@@ -159,6 +167,7 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Authorize => s.authorize_calls += 1,
+			CallKind::Advise => s.advise_calls += 1,
 			CallKind::Retention | CallKind::Evolution | CallKind::Hindsight => {}
 			CallKind::Evaluate => {
 				s.evaluate_calls += 1;
@@ -316,6 +325,22 @@ pub fn hindsight(p: f32) {
 	});
 }
 
+/// An alarm note carried model-written advice.
+pub fn advised() {
+	record_outcome(Mechanic::Advise, Outcome::Advised, 1);
+	with(|s| s.advised += 1);
+}
+/// The advice writer skipped or failed; the fixed note went out instead.
+pub fn advise_skipped() {
+	record_outcome(Mechanic::Advise, Outcome::AdviceSkipped, 1);
+	with(|s| s.advise_skipped += 1);
+}
+/// An eligible alarm went to the control arm and got the fixed note.
+pub fn advise_control() {
+	record_outcome(Mechanic::Advise, Outcome::AdviceControl, 1);
+	with(|s| s.advise_control += 1);
+}
+
 pub fn evolution(action: &str) {
 	with(|stats| match action {
 		"shadow" | "candidate" => stats.evolution_candidates += 1,
@@ -351,6 +376,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.evolution_rollbacks == 0
 		&& s.evolution_retired == 0
 		&& s.hindsight_scored == 0
+		&& s.advised == 0
+		&& s.advise_skipped == 0
+		&& s.advise_control == 0
 		&& s.evaluate_seam_calls.iter().all(|n| *n == 0)
 		&& s.evaluate_seam_unavailable.iter().all(|n| *n == 0)
 		&& s.evaluate_seam_applied.iter().all(|n| *n == 0)
@@ -403,6 +431,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"condense_calls": s.condense_calls,
 		"authorize_calls": s.authorize_calls,
 		"evaluate_calls": s.evaluate_calls,
+		"advise_calls": s.advise_calls,
 		"evaluate_input_tokens": s.evaluate_input_tokens,
 		"evaluate_cost": s.evaluate_cost,
 		"evaluate_avoided_calls": s.evaluate_seam_avoided.iter().sum::<u64>(),
@@ -447,6 +476,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"evolution_rollbacks": s.evolution_rollbacks,
 		"evolution_retired": s.evolution_retired,
 		"hindsight_scored": s.hindsight_scored,
+		"advised": s.advised,
+		"advise_skipped": s.advise_skipped,
+		"advise_control": s.advise_control,
 		"hindsight_mean_p_correction": if s.hindsight_scored > 0 {
 			s.hindsight_p_sum / s.hindsight_scored as f64
 		} else {

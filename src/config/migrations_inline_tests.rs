@@ -925,6 +925,30 @@ gate = true
 }
 
 #[test]
+fn v26_gains_advise_section_off_and_keeps_supervisor_values() {
+	let existing = r#"version = 26
+
+[supervisor]
+enabled = true
+
+[supervisor.hindsight]
+enabled = true
+"#;
+
+	let migration = plan()
+		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.expect("v26 must migrate");
+	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+
+	assert_eq!(migration.from_version, 26);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migrated["supervisor"]["advise"]["enabled"].as_bool(), Some(false));
+	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(true));
+	assert_eq!(migrated["supervisor"]["hindsight"]["enabled"].as_bool(), Some(true));
+}
+
+#[test]
 fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 	for enabled in ["authorizer", "condense", "distill", "plan", "gate", "evolution"] {
 		let flags = ["authorizer", "condense", "distill", "plan", "gate", "evolution"]

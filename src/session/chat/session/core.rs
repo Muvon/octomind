@@ -340,6 +340,12 @@ pub struct ChatSession {
 	/// re-issued the same calls ⇒ it is IGNORING the steer (vs. a different call-set =
 	/// trying). Drives the critical-signal adaptive backoff (ignore-vs-trying gate).
 	pub last_steered_calls: Option<u64>,
+	/// Supervisor: advice notes already given this genuine turn (the writer sees its own past advice).
+	pub advise_notes: Vec<String>,
+	/// Supervisor: advisory events awaiting their outcome record (call-set change, gate verdict).
+	pub advise_open: Vec<crate::supervisor::advise::OpenAdvice>,
+	/// Supervisor: eligible advise alarms so far this session; draws the control arm.
+	pub advise_alarms: u64,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
@@ -504,6 +510,9 @@ impl ChatSession {
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
+			advise_notes: Vec::new(),
+			advise_open: Vec::new(),
+			advise_alarms: 0,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
 			pending_plan_signal: None,
@@ -723,6 +732,9 @@ impl ChatSession {
 						steer_attempt: 0,
 						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 						last_steered_calls: None,
+						advise_notes: Vec::new(),
+						advise_open: Vec::new(),
+						advise_alarms: 0,
 						last_self_report_reason: None,
 						last_self_report_handoff: None,
 						pending_plan_signal: None,
@@ -1553,6 +1565,9 @@ impl ChatSession {
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
+			advise_notes: Vec::new(),
+			advise_open: Vec::new(),
+			advise_alarms: 0,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
 			pending_plan_signal: None,

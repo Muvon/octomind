@@ -537,6 +537,7 @@ fn experience_context<'a>(
 		project: "p",
 		source: "s",
 		outcome,
+		stuck_signatures: &[],
 	}
 }
 
@@ -676,6 +677,52 @@ fn experience_evidence_render_labels_each_cited_role() {
 		!rendered.contains("[M3 ASSISTANT]"),
 		"assistant citations are validated but never rendered"
 	);
+}
+
+#[test]
+fn experience_is_tagged_with_the_stuck_signatures_the_agent_was_advised_on() {
+	let mut messages = grounded_messages();
+	messages.push(crate::session::Message {
+		role: "user".to_string(),
+		content:
+			"<pay-attention>\n<!-- octomind:advise:deadbeef -->\nAdvisory: read the error at #2.\n</pay-attention>"
+				.to_string(),
+		..Default::default()
+	});
+	let transcript = build_transcript(&messages);
+	let signatures = crate::supervisor::advise::signatures_in(&messages);
+	let mut context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	);
+	context.stuck_signatures = &signatures;
+	let tag = format!(
+		r#"<experience title="T" confidence="high" tags="provider" evidence="M1,M2">{}</experience>"#,
+		experience_body()
+	);
+	let parsed = parse_experience_tag(&tag, &context).expect("grounded experience parses");
+	assert!(parsed.lesson.tags.contains(&"provider".to_string()));
+	assert!(parsed.lesson.tags.contains(&"stuck:deadbeef".to_string()));
+}
+
+#[test]
+fn experience_without_an_advice_marker_has_no_stuck_tag() {
+	let messages = grounded_messages();
+	let transcript = build_transcript(&messages);
+	let signatures = crate::supervisor::advise::signatures_in(&messages);
+	let mut context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	);
+	context.stuck_signatures = &signatures;
+	let tag = format!(
+		r#"<experience title="T" confidence="high" tags="provider" evidence="M1,M2">{}</experience>"#,
+		experience_body()
+	);
+	let parsed = parse_experience_tag(&tag, &context).expect("grounded experience parses");
+	assert!(parsed.lesson.tags.iter().all(|tag| !tag.starts_with("stuck:")));
 }
 
 fn experience_body() -> String {

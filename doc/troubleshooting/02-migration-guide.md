@@ -412,6 +412,7 @@ supported older primary config:
 | `20` | Adds the timing calibration section |
 | `21` | Adds the optional hindsight section |
 | `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
+| `27` | Adds the optional advise section |
 
 Version `22` preserves the legacy model, recall, skills, capabilities, and compression values and comments.
 The old authorizer, condense, distill, plan, gate, and evolution switches become one `supervisor` flag: any true

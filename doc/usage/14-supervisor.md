@@ -61,6 +61,9 @@ enabled = true
 [supervisor.authorizer]    # user-intent check before tool execution
 enabled = false
 
+[supervisor.advise]       # model-written steer note on loop / recovery alarms
+enabled = false
+
 [supervisor.plan]          # adaptive external plan manager
 enabled = true
 
@@ -165,6 +168,7 @@ and the corresponding flag. Absent or empty model disables routing; malformed no
 | Retention merge verifier | One Noul for entailment and preserved boundaries; support at 0.5. Merge text remains a writer call. | No consolidation; independent archival still applies. |
 | Repaired experience and orientation verifiers | One grounding Noul over the existing candidate, outcome, and cited evidence; support at 0.5. | Reject candidate, preserving existing records. |
 | Evolution grading | Existing outcome and applicability Nouls; applicability floor 0.5. An artifact's first sample fixes its graded or plain-verdict measure for both arms. | Graded artifacts skip the turn; existing verdict sampling remains unchanged. |
+| Advise usefulness | One Noul per treated alarm over the request, receipts and outputs; logged beside the advice record, never acts yet. | Nothing recorded. |
 
 Decision mode never retries a replaced decision on the chat model. With decision routing disabled, the original chat
 prompts, payloads, and consumers remain unchanged. Gate primary judgment, readback and format repair, resolve
@@ -341,13 +345,28 @@ The specialist has no plan mutation tool. Later `phase_complete` or `reassess` s
 the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion
 gate owns final plan clearance.
 
-## Steer
+## Steer and advise
 
 When a detector fires (loop, recovery, or no-progress that the self-report doesn't excuse), the supervisor queues an
 advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report
 `blocked`"* — injected at the next request's safe point. It nudges; it never forces. Re-emission follows a
 parameter-free doubling backoff when the agent repeats the same call-set after a note, so an ignored steer stays cheap
 without going silent.
+
+With `[supervisor.advise] enabled = true` (off by default), a loop or recovery alarm can carry content instead of the
+fixed text. It never fires on no-progress, never periodically, and not before four actions are recorded this turn. One
+shared supervisor-model call reads your request, the specialist's standing instructions, the live plan, the last tool
+receipts and their outputs, recent commands, mutated paths, advice already given this turn, and up to two past
+experience records keyed to the same stuck pattern.
+Tool output is untrusted data. The answer is an observation that cites a receipt (`#N`) and the question it raises. It is
+never a command, code, or a next action. The model may also skip, and a note that cites a missing receipt, runs over 120
+words, or contains a code fence or a `$ ` command line is dropped. A skip falls back to the plain note.
+
+One in four eligible alarms is a control and gets the plain note, so the effect of advice can be measured. Every alarm is
+appended to `advise.jsonl` in the data directory with its arm, signature, receipt, and later whether the call-set
+changed and what the verify-gate verdict was. With `[decision] supervisor = true`, one Noul per treated alarm scores
+usefulness; that score is logged and never acts. `/info` shows `advise_calls`, `advised`, `advise_skipped`, and
+`advise_control`.
 
 ## Condense
 
@@ -468,6 +487,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Verify-gate | Eligible completion after deterministic checks | Model (rare) | `[supervisor.gate]` |
 | Condense | On oversized tool results | Model call | `[supervisor.condense]` |
 | Steer | On loop / no-progress / recovery | Context tokens | None (automatic) |
+| Advise | Treated loop / recovery alarm, when enabled | Model call | `[supervisor.advise]` |
 | Recite | Live goal, plan, constraints, or policy available | Context tokens | None (automatic) |
 | Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
 | Recall | First and subsequent genuine requests | First-query model prep, retrieval, pack tokens | `[supervisor.learning]` |
@@ -483,6 +503,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Condensation and recitation | [src/supervisor/condense.rs](../../src/supervisor/condense.rs), [src/supervisor/recite.rs](../../src/supervisor/recite.rs) |
 | Delegation and accounting | [src/supervisor/delegate.rs](../../src/supervisor/delegate.rs), [src/supervisor/stats.rs](../../src/supervisor/stats.rs), [src/session/external_spend.rs](../../src/session/external_spend.rs) |
 | Evaluation gates | [src/supervisor/evaluate.rs](../../src/supervisor/evaluate.rs), [src/supervisor/learning/inject.rs](../../src/supervisor/learning/inject.rs), [src/mcp/runtime/skill_auto.rs](../../src/mcp/runtime/skill_auto.rs), [src/mcp/runtime/capability.rs](../../src/mcp/runtime/capability.rs), [src/supervisor/authorizer.rs](../../src/supervisor/authorizer.rs) |
+| Advise | [src/supervisor/advise.rs](../../src/supervisor/advise.rs), [src/session/chat/response.rs](../../src/session/chat/response.rs) |
 
 ## See also
 

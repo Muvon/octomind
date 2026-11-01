@@ -767,6 +767,11 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 						no_progress_window,
 					);
 					round_signal = round_signal.merge(batch_signal);
+					// Close the outcome window of earlier advice before this round can open a new one.
+					crate::supervisor::advise::note_round(
+						&mut params.chat_session.advise_open,
+						crate::supervisor::detect::call_set_hash(&current_tool_calls),
+					);
 					if tree_moved {
 						params.chat_session.detectors.note_tree_moved();
 					}
@@ -799,14 +804,160 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 						let emit = !repeated || attempt.saturating_add(1).is_power_of_two();
 
 						if emit {
-							params.chat_session.steer_pending =
-								Some(crate::supervisor::detect::steer_note(round_signal).to_string());
+							// Evidence-driven trigger: advice is written only on a loop or recovery alarm that
+							// already passed backoff, never periodically. One alarm in `CONTROL_EVERY` gets the
+							// fixed note as a control arm, and the note is a plain steer message (one exposure).
+							let fixed_note = crate::supervisor::detect::steer_note(round_signal).to_string();
+							let mut advice_label: Option<&'static str> = None;
+							let actions_since_gate = params.chat_session.evidence.actions_since_gate();
+							// A round that reaches the hard stop ends the turn before any note lands,
+							// so writing advice for it would be a wasted call logged as given.
+							let max_identical = params.config.supervisor.max_identical_rounds;
+							let will_stop =
+								max_identical > 0 && params.chat_session.detectors.identical_rounds() >= max_identical;
+							let note = if params.config.supervisor.advise.enabled
+								&& !will_stop && crate::supervisor::advise::eligible(
+								round_signal,
+								actions_since_gate,
+							) {
+								use crate::supervisor::advise;
+								let session_name = params.chat_session.session.info.name.clone();
+								// The control arm is drawn per eligible alarm, not per ledger position:
+								// alarms recur at the same position across turns, which would pin a
+								// session to one arm.
+								params.chat_session.advise_alarms += 1;
+								let alarm = params.chat_session.advise_alarms;
+								let signature =
+									advise::stuck_signature(round_signal, &current_tool_calls, &tool_results);
+								match advise::arm(&session_name, alarm) {
+									advise::Arm::Control => {
+										crate::supervisor::stats::advise_control();
+										advise::record_emitted(&advise::EmitRecord {
+											session: &session_name,
+											sequence: alarm,
+											signal: round_signal,
+											signature: &signature,
+											arm: advise::Arm::Control,
+											result: "control",
+											class: None,
+											evidence: None,
+											lessons: &[],
+											p_useful: None,
+											ms: 0,
+										});
+										params.chat_session.advise_open.push(advise::open(
+											signature,
+											advise::Arm::Control,
+											false,
+											calls_hash,
+										));
+										fixed_note
+									}
+									advise::Arm::Treated => {
+										let evidence = &params.chat_session.evidence;
+										let lessons = advise::stuck_lessons(
+											params.role,
+											&crate::supervisor::learning::evolution::project_name(None),
+											&signature,
+										)
+										.await;
+										let lesson_ids: Vec<String> =
+											lessons.iter().map(|lesson| lesson.file_id()).collect();
+										let state = advise::AdviseState {
+											signal: round_signal,
+											signature: signature.clone(),
+											request: crate::session::latest_real_user_task_content(
+												&params.chat_session.session.messages,
+											)
+											.unwrap_or_default()
+											.to_string(),
+											role: crate::supervisor::role_context(
+												&params.chat_session.session.messages,
+											),
+											plan: crate::mcp::core::plan::render_plan_details(),
+											actions: evidence.render(),
+											grounds: evidence.grounds().to_vec(),
+											recent_commands: evidence
+												.recent_commands()
+												.into_iter()
+												.map(|(command, output)| (command.to_string(), output.to_string()))
+												.collect(),
+											mutated_paths: evidence.mutated_paths().to_vec(),
+											prior_notes: params.chat_session.advise_notes.clone(),
+											lessons,
+										};
+										let advised =
+											advise::advise(params.config, &state, operation_cancelled_clone.clone())
+												.await;
+										match advised.result {
+											advise::AdviceResult::Advice(advice) => {
+												crate::supervisor::stats::advised();
+												advise::record_emitted(&advise::EmitRecord {
+													session: &session_name,
+													sequence: alarm,
+													signal: round_signal,
+													signature: &signature,
+													arm: advise::Arm::Treated,
+													result: "advised",
+													class: Some(advice.class),
+													evidence: Some(&advice.evidence),
+													lessons: &lesson_ids,
+													p_useful: advised.p_useful,
+													ms: advised.ms,
+												});
+												params.chat_session.advise_notes.push(advice.note.clone());
+												params.chat_session.advise_open.push(advise::open(
+													signature.clone(),
+													advise::Arm::Treated,
+													true,
+													calls_hash,
+												));
+												advice_label = Some(advice.class.label());
+												advise::render_note(&advice, &signature)
+											}
+											advise::AdviceResult::Skipped(reason) => {
+												crate::supervisor::stats::advise_skipped();
+												advise::record_emitted(&advise::EmitRecord {
+													session: &session_name,
+													sequence: alarm,
+													signal: round_signal,
+													signature: &signature,
+													arm: advise::Arm::Treated,
+													result: reason,
+													class: None,
+													evidence: None,
+													lessons: &lesson_ids,
+													p_useful: advised.p_useful,
+													ms: advised.ms,
+												});
+												params.chat_session.advise_open.push(advise::open(
+													signature,
+													advise::Arm::Treated,
+													false,
+													calls_hash,
+												));
+												fixed_note
+											}
+										}
+									}
+								}
+							} else {
+								fixed_note
+							};
+							params.chat_session.steer_pending = Some(note);
 							params.chat_session.last_steered_calls = Some(calls_hash);
 							crate::supervisor::stats::steer(round_signal);
-							crate::supervisor::notify(&format!(
-								"advisory — {}",
-								crate::supervisor::detect::signal_description(round_signal)
-							));
+							crate::supervisor::notify(&match advice_label {
+								Some(label) => format!(
+									"advisory — {} · advice: {}",
+									crate::supervisor::detect::signal_description(round_signal),
+									label
+								),
+								None => format!(
+									"advisory — {}",
+									crate::supervisor::detect::signal_description(round_signal)
+								),
+							});
 							crate::log_debug!(
 								"Supervisor steer queued: {:?} attempt={} (self_report={:?})",
 								round_signal,
@@ -838,6 +989,11 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 					let max_identical = params.config.supervisor.max_identical_rounds;
 					let identical = params.chat_session.detectors.identical_rounds();
 					if max_identical > 0 && identical >= max_identical {
+						crate::supervisor::advise::record_outcome(
+							&mut params.chat_session.advise_open,
+							&params.chat_session.session.info.name,
+							"loop_stop",
+						);
 						// The turn ends here, so a queued hint would only land on the next one.
 						params.chat_session.steer_pending = None;
 						// The stop is final for this turn: spend the verify-gate's and the

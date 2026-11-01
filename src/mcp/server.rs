@@ -53,12 +53,25 @@ lazy_static::lazy_static! {
 /// `capability enable <cap>` whose runtime overlay extends that filter
 /// (see `server_functions_for` in `src/mcp/mod.rs` for the union with
 /// `runtime_overlay::extras_for_server`).
-pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
+pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
 	tools
 		.iter()
-		.map(|tool| {
+		.filter_map(|tool| {
 			let name = tool.name.as_ref().to_string();
 			let parameters = tool.schema_as_json_value();
+			// MCP requires `inputSchema.type == "object"`, and Anthropic rejects the whole
+			// request when any tool breaks that (`tools.N.custom.input_schema.type: Field
+			// required`), so one non-compliant tool is dropped here instead of failing
+			// every model call of the session.
+			if parameters.get("type").and_then(serde_json::Value::as_str) != Some("object") {
+				crate::log_error!(
+					"MCP server '{}' tool '{}' skipped: inputSchema is not an object schema ({})",
+					server,
+					name,
+					parameters
+				);
+				return None;
+			}
 			crate::supervisor::detect::register_tool_read_only_hint(
 				&name,
 				tool.annotations
@@ -72,12 +85,12 @@ pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
 				&name,
 				crate::supervisor::detect::command_param_is_free_form(&parameters),
 			);
-			McpFunction {
+			Some(McpFunction {
 				name,
 				annotations: tool.annotations.clone(),
 				description: tool.description.as_deref().unwrap_or("").to_string(),
 				parameters,
-			}
+			})
 		})
 		.collect()
 }
@@ -88,7 +101,7 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 	match server.connection_type() {
 		McpConnectionType::Http | McpConnectionType::Stdin => {
 			let list = super::client::list_tools(server).await?;
-			Ok(tools_to_functions(&list.tools))
+			Ok(tools_to_functions(server.name(), &list.tools))
 		}
 		McpConnectionType::Builtin => Err(anyhow::anyhow!("Built-in servers should not use get_server_functions")),
 	}
@@ -155,7 +168,7 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 
 		match super::client::list_tools(server).await {
 			Ok(list) => {
-				let functions = tools_to_functions(&list.tools);
+				let functions = tools_to_functions(server_id, &list.tools);
 				// Cache the functions (no expiration - only cleared on server restart)
 				{
 					let mut cache = FUNCTION_CACHE.write().unwrap();

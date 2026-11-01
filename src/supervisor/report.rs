@@ -38,6 +38,7 @@ pub enum Mechanic {
 	Skills,
 	Capabilities,
 	Compression,
+	Advise,
 }
 
 impl Mechanic {
@@ -56,6 +57,7 @@ impl Mechanic {
 			Self::Skills => "skills",
 			Self::Capabilities => "capabilities",
 			Self::Compression => "compression",
+			Self::Advise => "advise",
 		}
 	}
 	pub(super) fn from_kind(kind: CallKind) -> Option<Self> {
@@ -70,6 +72,7 @@ impl Mechanic {
 			CallKind::Retention => Self::Retention,
 			CallKind::Evolution => Self::Evolution,
 			CallKind::Hindsight => Self::Hindsight,
+			CallKind::Advise => Self::Advise,
 			CallKind::Evaluate => return None,
 		})
 	}
@@ -85,6 +88,7 @@ impl Mechanic {
 			Seam::Skills => Self::Skills,
 			Seam::Capabilities => Self::Capabilities,
 			Seam::Compression => Self::Compression,
+			Seam::Advise => Self::Advise,
 		}
 	}
 	pub(super) fn usage_mut(self, accounting: &mut SupervisorAccounting) -> &mut Usage {
@@ -99,6 +103,7 @@ impl Mechanic {
 			Self::Retention => CallKind::Retention,
 			Self::Evolution => CallKind::Evolution,
 			Self::Hindsight => CallKind::Hindsight,
+			Self::Advise => CallKind::Advise,
 			Self::Skills => return accounting.seams.entry(Seam::Skills).or_default(),
 			Self::Capabilities => return accounting.seams.entry(Seam::Capabilities).or_default(),
 			Self::Compression => return accounting.seams.entry(Seam::Compression).or_default(),
@@ -134,6 +139,9 @@ pub enum Outcome {
 	Replaced,
 	Consolidated,
 	Archived,
+	Advised,
+	AdviceSkipped,
+	AdviceControl,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

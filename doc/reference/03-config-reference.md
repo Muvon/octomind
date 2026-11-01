@@ -695,6 +695,24 @@ enabled = false
 model = "muvon/hindsight"
 ```
 
+### `[supervisor.advise]`
+
+An optional, model-written steer note. On a loop or recovery alarm, one shared supervisor-model call reads the request,
+the last tool receipts, and any stuck-keyed experience records, and answers with a short observation that cites a
+receipt (`#N`). It never gives a command or code, and it may skip, in which case the plain note goes out. One in four
+eligible alarms is a control that gets the plain note. Every alarm is appended to `advise.jsonl` in the data directory
+with the gate verdict that followed. With `[decision] supervisor = true`, an observe-only usefulness score is logged
+beside it. See the [Supervisor guide](../usage/14-supervisor.md#steer-and-advise).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable model-written advice on loop and recovery alarms. |
+
+```toml
+[supervisor.advise]
+enabled = false
+```
+
 ### `[supervisor.learning]`
 
 Cross-session adaptive learning. Extracts lessons and orientation memory (durable subject understanding, recalled as
@@ -800,6 +818,9 @@ request_timeout_seconds = 300
 [supervisor.hindsight]
 enabled = false
 model = "muvon/hindsight"
+
+[supervisor.advise]
+enabled = false
 
 [supervisor.learning]
 enabled = true

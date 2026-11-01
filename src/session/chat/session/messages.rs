@@ -317,6 +317,8 @@ impl ChatSession {
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
+		crate::supervisor::advise::record_outcome(&mut self.advise_open, &self.session.info.name, "unverified");
+		self.advise_notes.clear();
 		// New genuine task: the verify-gate's evidence ledger starts fresh (gate and
 		// steer re-runs arrive as system-managed messages and keep accumulating), and
 		// the gate's per-turn re-entry budget resets — a previous turn's exhaustion

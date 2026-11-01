@@ -38,6 +38,10 @@ fn test_recorders_and_snapshot_render() {
 	evolution("shadow");
 	evolution("trial");
 	evolution("promoted");
+	record_call(CallKind::Advise, 10, 5, 0, 15, 0.0);
+	advised();
+	advise_skipped();
+	advise_control();
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
@@ -56,6 +60,10 @@ fn test_recorders_and_snapshot_render() {
 		"evolution_candidates",
 		"evolution_trials",
 		"evolution_promoted",
+		"advise_calls",
+		"advised",
+		"advise_skipped",
+		"advise_control",
 	] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");
 	}

@@ -38,6 +38,7 @@
 //! fail loudly instead of degrading to silent defaults.
 
 pub mod accounting;
+pub mod advise;
 pub mod authorizer;
 pub mod condense;
 pub mod delegate;
@@ -231,6 +232,8 @@ pub struct SupervisorConfig {
 	pub condense: CondenseConfig,
 	/// Local next-turn-correction verifier scored at every turn end.
 	pub hindsight: hindsight::HindsightConfig,
+	/// Model-written observation in place of the fixed loop/recovery steer note.
+	pub advise: advise::AdviseConfig,
 }
 
 /// Condense: task-aware narrowing of oversized tool outputs. A result whose own

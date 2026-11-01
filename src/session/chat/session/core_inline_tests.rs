@@ -155,6 +155,17 @@ fn real_user_turn_resets_steer_streak() {
 }
 
 #[test]
+fn real_user_turn_clears_advice_notes() {
+	let mut cs = make_session(vec![msg("system", false)]);
+	cs.advise_notes.push("the same path was read three times".to_string());
+
+	cs.add_user_message("new task after advice").unwrap();
+
+	assert!(cs.advise_notes.is_empty());
+	assert!(cs.advise_open.is_empty());
+}
+
+#[test]
 fn only_real_user_turn_resets_adaptive_compression_runway() {
 	let mut cs = make_session(vec![msg("system", false)]);
 	cs.session.info.consecutive_compressions = 3;

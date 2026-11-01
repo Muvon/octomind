@@ -135,12 +135,39 @@ fn waits(entries: &[(u64, bool)]) -> VecDeque<Wait> {
 }
 
 fn budget(history: &[(u64, bool)]) -> u32 {
-	ping_budget(&waits(history), None, FIVE_MINUTE_INTERVAL, FULL_TAIL_PENALTY)
+	ping_budget(&waits(history), None, FIVE_MINUTE_INTERVAL, FULL_TAIL_PENALTY).0
 }
 
 #[test]
-fn budget_without_history_is_the_ski_rental_bound() {
-	assert_eq!(budget(&[]), 24);
+fn budget_without_history_is_the_cold_start_cap() {
+	// The coin-flip prior would spend the whole bound (24) on a user who left.
+	assert_eq!(budget(&[]), COLD_START_PINGS);
+}
+
+#[test]
+fn a_cold_kind_is_capped_until_it_has_measured_three_waits() {
+	// Two 20-minute replies would pay for four pings, but two waits are not
+	// a rhythm yet.
+	assert_eq!(budget(&[(20, true), (20, true)]), COLD_START_PINGS);
+	assert_eq!(budget(&[(20, true), (20, true), (20, true)]), 4);
+}
+
+#[test]
+fn budget_never_outruns_the_longest_wait_seen() {
+	assert_eq!(budget(&[(20, true); 5]), 4);
+	assert_eq!(budget(&[(40, true); 5]), 8, "a longer rhythm earns more pings");
+	assert_eq!(
+		budget(&[(1, true); 5]),
+		0,
+		"replies within one interval never let the cache expire"
+	);
+}
+
+#[test]
+fn budget_reports_its_basis() {
+	let basis = |history: &[(u64, bool)]| ping_budget(&waits(history), None, FIVE_MINUTE_INTERVAL, FULL_TAIL_PENALTY).1;
+	assert_eq!(basis(&[]), BudgetBasis::ColdStart);
+	assert_eq!(basis(&[(20, true); 3]), BudgetBasis::Learned);
 }
 
 #[test]
@@ -148,14 +175,14 @@ fn budget_bridges_an_affordable_known_wake_exactly() {
 	let history = waits(&[(200, true)]);
 	assert_eq!(
 		ping_budget(&history, Some(minutes(20)), FIVE_MINUTE_INTERVAL, FULL_TAIL_PENALTY),
-		4
+		(4, BudgetBasis::KnownWake)
 	);
 }
 
 #[test]
 fn budget_ignores_a_known_wake_beyond_the_bound() {
 	// 3h needs 40 pings > 24: the wake is not worth bridging, so the budget
-	// falls back to the history (none yet: the bound).
+	// falls back to the history (none yet: the cold-start cap).
 	assert_eq!(
 		ping_budget(
 			&VecDeque::new(),
@@ -163,7 +190,7 @@ fn budget_ignores_a_known_wake_beyond_the_bound() {
 			FIVE_MINUTE_INTERVAL,
 			FULL_TAIL_PENALTY
 		),
-		24
+		(COLD_START_PINGS, BudgetBasis::ColdStart)
 	);
 }
 
@@ -183,8 +210,8 @@ fn budget_is_zero_after_waits_the_user_walked_away_from() {
 }
 
 #[test]
-fn budget_covers_the_waits_the_session_keeps_having() {
-	assert!(budget(&[(20, true), (20, true), (20, true)]) >= 4);
+fn budget_covers_exactly_the_waits_the_session_keeps_having() {
+	assert_eq!(budget(&[(20, true), (20, true), (20, true)]), 4);
 }
 
 #[test]
@@ -211,6 +238,14 @@ fn hazards_without_history_read_as_a_coin_flip() {
 fn a_cut_short_wait_lowers_the_hazard_of_the_intervals_it_reached() {
 	let hazards = interval_hazards(&waits(&[(60, false)]), FIVE_MINUTE_INTERVAL, 3);
 	assert!(hazards.iter().all(|h| *h < 0.5), "got {:?}", hazards);
+}
+
+#[test]
+fn intervals_no_wait_reached_have_no_reply_hazard() {
+	// A 10-minute wait lasts into the third interval and no further.
+	let hazards = interval_hazards(&waits(&[(10, true)]), FIVE_MINUTE_INTERVAL, 5);
+	assert!(hazards[..=2].iter().all(|h| *h > 0.0), "got {:?}", hazards);
+	assert_eq!(&hazards[3..], &[0.0; 3], "no wait lasted into the fourth interval");
 }
 
 #[test]
@@ -271,6 +306,24 @@ async fn spawn_returns_none_for_provider_without_keepalive_policy() {
 	// money for nothing.
 	let chat = session("openai:gpt-5", vec![user_message(true)]);
 	assert!(KeepaliveHandle::spawn(&chat, &keepalive_config(), WaitKind::Reply).is_none());
+}
+
+#[tokio::test]
+async fn finish_keeps_the_report_for_info() {
+	let config = keepalive_config();
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![user_message(true)]);
+	assert!(chat.wait_history.report().is_none(), "nothing measured yet");
+
+	let handle = KeepaliveHandle::spawn(&chat, &config, WaitKind::Reply).expect("cached Anthropic session spawns");
+	handle.finish(&mut chat, true).await;
+
+	let report = chat.wait_history.report().expect("one wait measured");
+	assert_eq!(report.pings_sent, 0, "the first ping is minutes away");
+	assert_eq!(report.ping_cost, 0.0);
+	assert_eq!(report.last_budget.kind, WaitKind::Reply);
+	assert_eq!(report.last_budget.basis, BudgetBasis::ColdStart);
+	assert_eq!(report.last_budget.pings, COLD_START_PINGS);
+	assert!(report.last_budget.bound >= COLD_START_PINGS);
 }
 
 #[tokio::test]
@@ -483,13 +536,9 @@ async fn run_stops_after_a_ping_that_misses_the_cache() {
 	);
 }
 
-#[tokio::test]
-#[serial_test::serial]
-async fn run_sends_real_zero_output_pings_through_the_anthropic_provider() {
-	let _lock = test_support::ENV_LOCK.lock().await;
-	let _env = test_support::EnvGuard::new(&["ANTHROPIC_API_URL", "ANTHROPIC_API_KEY"]);
-	// A pre-warm answers with no content and the whole prefix read from cache.
-	let cache_hit = serde_json::json!({
+/// A pre-warm answers with no content and the whole prefix read from cache.
+fn cache_hit_response() -> serde_json::Value {
+	serde_json::json!({
 		"id": "msg_1",
 		"type": "message",
 		"role": "assistant",
@@ -503,8 +552,15 @@ async fn run_sends_real_zero_output_pings_through_the_anthropic_provider() {
 			"cache_creation_input_tokens": 0,
 			"output_tokens": 0
 		}
-	});
-	let (url, captured) = test_support::spawn_recording_stub(vec![cache_hit.clone(), cache_hit]).await;
+	})
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn run_sends_real_zero_output_pings_through_the_anthropic_provider() {
+	let _lock = test_support::ENV_LOCK.lock().await;
+	let _env = test_support::EnvGuard::new(&["ANTHROPIC_API_URL", "ANTHROPIC_API_KEY"]);
+	let (url, captured) = test_support::spawn_recording_stub(vec![cache_hit_response(), cache_hit_response()]).await;
 	// The stub ignores the path; the provider wants the full messages endpoint.
 	std::env::set_var("ANTHROPIC_API_URL", url.replace("/v1/chat/completions", "/v1/messages"));
 	std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -548,4 +604,34 @@ async fn run_sends_real_zero_output_pings_through_the_anthropic_provider() {
 			"the marker rides the last block"
 		);
 	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn run_stops_when_the_provider_rate_limits_a_ping() {
+	let _lock = test_support::ENV_LOCK.lock().await;
+	let _env = test_support::EnvGuard::new(&["ANTHROPIC_API_URL", "ANTHROPIC_API_KEY"]);
+	let rate_limited = serde_json::json!({
+		"type": "error",
+		"error": {"type": "rate_limit_error", "message": "slow down"}
+	});
+	let url = test_support::spawn_stub_with_status(vec![(429, rate_limited), (200, cache_hit_response())]).await;
+	std::env::set_var("ANTHROPIC_API_URL", url.replace("/v1/chat/completions", "/v1/messages"));
+	std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+
+	let (_tx, rx) = watch::channel(false);
+	let exchanges = run(
+		vec![user_message(true)],
+		profile("anthropic:claude-sonnet-5-5"),
+		keepalive_config(),
+		Duration::from_millis(10),
+		3,
+		rx,
+	)
+	.await;
+
+	assert!(
+		exchanges.is_empty(),
+		"the 429 ends the loop before a second ping could read the stub's cache hit"
+	);
 }

@@ -116,6 +116,9 @@ pub enum CommandOutput {
 		cache_non_cached_tokens: u64,
 		/// Aggregated stats from all tap-offloaded agents this session.
 		agents_stats: Option<serde_json::Value>,
+		/// Cache keepalive pings, their cost and the last ping budget; `None`
+		/// until a wait was measured.
+		keepalive: Option<crate::session::cache_keepalive::KeepaliveReport>,
 		supervisor_accounting: crate::supervisor::report::SupervisorReport,
 	},
 	Model {

@@ -131,6 +131,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		cache_markers_content: cache_stats.content_markers as u64,
 		cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 		agents_stats: super::agents::get_agents_stats(&info.agent_runs),
+		keepalive: session.wait_history.report(),
 		supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
 	})))
 }

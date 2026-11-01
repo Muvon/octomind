@@ -366,6 +366,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_markers_content,
 		cache_non_cached_tokens,
 		agents_stats,
+		keepalive,
 		supervisor_accounting,
 		..
 	} = output
@@ -570,6 +571,7 @@ pub fn display_info(output: &CommandOutput) {
 			"cache read",
 			"cache write",
 			"non-cached",
+			"keepalive",
 		]);
 		block_row("system markers", &cache_markers_system.to_string(), kw);
 		block_row("tool markers", &cache_markers_tool.to_string(), kw);
@@ -589,6 +591,24 @@ pub fn display_info(output: &CommandOutput) {
 			&format_number(*cache_non_cached_tokens).bright_white().to_string(),
 			kw,
 		);
+		if let Some(report) = keepalive {
+			let budget = report.last_budget;
+			block_row(
+				"keepalive",
+				&format!(
+					"{} ping(s) {} ${:.5} {} last budget {}/{} ({:?}, {:?} wait)",
+					format_number(report.pings_sent).bright_white(),
+					dot,
+					report.ping_cost,
+					dot,
+					budget.pings,
+					budget.bound,
+					budget.basis,
+					budget.kind
+				),
+				kw,
+			);
+		}
 
 		// ── agents ─────────────────────────────────────────────────────
 		if let Some(astats) = agents_stats {

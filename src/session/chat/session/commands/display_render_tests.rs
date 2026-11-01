@@ -572,6 +572,16 @@ fn test_render_info_full_and_minimal() {
 		cache_markers_tool: 2,
 		cache_markers_content: 2,
 		cache_non_cached_tokens: 12_000,
+		keepalive: Some(crate::session::cache_keepalive::KeepaliveReport {
+			pings_sent: 3,
+			ping_cost: 0.0027,
+			last_budget: crate::session::cache_keepalive::BudgetDecision {
+				kind: crate::session::cache_keepalive::WaitKind::Reply,
+				pings: 4,
+				bound: 24,
+				basis: crate::session::cache_keepalive::BudgetBasis::Learned,
+			},
+		}),
 		agents_stats: Some(json!({
 			"total": 3, "running": 1, "done": 1, "failed": 1,
 			"tokens_input": 50_000, "tokens_output": 4_000,
@@ -635,6 +645,7 @@ fn test_render_info_full_and_minimal() {
 		cache_markers_tool: 0,
 		cache_markers_content: 0,
 		cache_non_cached_tokens: 0,
+		keepalive: None,
 		agents_stats: None,
 		supervisor_accounting: Default::default(),
 	});
@@ -1065,6 +1076,7 @@ fn test_render_info_partial_sections() {
 		cache_markers_tool: 0,
 		cache_markers_content: 0,
 		cache_non_cached_tokens: 0,
+		keepalive: None,
 		agents_stats: Some(json!({
 			"total": 1, "running": 0, "done": 1, "failed": 0,
 			"tokens_input": 10, "tokens_output": 2, "tokens_cached": 0, "total_cost": 0.01
@@ -1692,6 +1704,7 @@ fn info_restyle_render_samples() {
 		cache_markers_tool: 0,
 		cache_markers_content: 0,
 		cache_non_cached_tokens: 0,
+		keepalive: None,
 		agents_stats: None,
 		supervisor_accounting: empty_report,
 	});

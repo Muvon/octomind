@@ -31,11 +31,16 @@
 //! (the chance the wait ends in it, given it lasted that long), estimated
 //! from past waits of the same kind — answered and cut-short ones alike — and
 //! shrunk toward the session's pooled rate so a few samples cannot overrule
-//! it. With `S_j` the chance of still waiting when interval `j` starts:
-//! `E[cost(n)] = Σ_{j=1..n} S_j + B · S_{n+1}`, so the n-th ping pays exactly
-//! when `B · h_n > 1`. A known wake (a scheduled turn) is bridged exactly when
-//! affordable, and a prefix the next request replaces anyway (a pending or
-//! due compression) is never pinged.
+//! it. An interval no wait ever reached reads as no reply at all, so the
+//! budget never outruns the longest wait seen: the first longer wait pays one
+//! rewrite and extends the record. With `S_j` the chance of still waiting when
+//! interval `j` starts: `E[cost(n)] = Σ_{j=1..n} S_j + B · S_{n+1}`, so the
+//! n-th ping pays exactly when `B · h_n > 1`. Until a kind has measured
+//! [`COLD_START_WAITS`] waits the budget is capped at [`COLD_START_PINGS`]:
+//! the coin-flip prior alone would spend the whole bound on a user who left.
+//! A known wake (a scheduled turn) is bridged exactly when affordable, and a
+//! prefix the next request replaces anyway (a pending or due compression) is
+//! never pinged.
 //!
 //! Read-only on session state: the snapshot is owned by the keepalive task and
 //! `session.messages` is never mutated by a ping. [`KeepaliveHandle::finish`]
@@ -50,6 +55,7 @@ use crate::providers::{ChatCompletionParams, ProviderExchange, ProviderFactory};
 use crate::session::chat::ChatSession;
 use crate::session::Message;
 use anyhow::Result;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -63,8 +69,8 @@ const LONG_CACHE_TTL: &str = "1h";
 const PRICE_RATIO_TOLERANCE: f64 = 1e-9;
 
 /// Jeffreys prior on the session's pooled reply rate: half a reply per
-/// interval. With no history every interval reads as a coin flip, which makes
-/// the budget the ski-rental bound — never worse than twice the optimum.
+/// interval. With no history every interval reads as a coin flip; the
+/// cold-start cap, not this prior, bounds that first budget.
 const PRIOR_REPLIES: f64 = 0.5;
 const PRIOR_INTERVALS: f64 = 1.0;
 
@@ -83,9 +89,21 @@ const WAIT_HALF_LIFE: f64 = 8.0;
 /// longer moves the estimate.
 const MAX_WAITS: usize = 32;
 
+/// Waits a kind must have measured before its own rhythm sets the budget.
+/// Until then the budget is capped at [`COLD_START_PINGS`]: with no rhythm to
+/// read, the coin-flip prior would spend the whole ski-rental bound on a user
+/// who walked away — on the 1h cache, a night of pings.
+const COLD_START_WAITS: usize = 3;
+
+/// Pings a cold wait may spend. The interval is 0.9 × TTL and the entry
+/// outlives the last ping by one interval, so two pings cover about three
+/// TTLs: one long first reply without a rewrite, never a night of pings.
+const COLD_START_PINGS: u32 = 2;
+
 /// What the session waits on while a keepalive runs. Each kind keeps its own
 /// history: how fast a user replies says nothing about how long builds take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WaitKind {
 	/// Waiting for the next user / client message.
 	Reply,
@@ -106,12 +124,48 @@ pub struct Wait {
 	pub answered: bool,
 }
 
-/// Measured waits per kind, newest last (runtime-only, never persisted).
+/// Why a wait got the ping budget it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetBasis {
+	/// The next request folds or trims the prefix: nothing to keep warm.
+	PrefixReplaced,
+	/// A scheduled wake within the bound, bridged exactly.
+	KnownWake,
+	/// Fewer than [`COLD_START_WAITS`] waits measured: capped at [`COLD_START_PINGS`].
+	ColdStart,
+	/// The expected-cost minimum under the session's own wait rhythm.
+	Learned,
+}
+
+/// The ping budget of one wait and how it was chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BudgetDecision {
+	pub kind: WaitKind,
+	pub pings: u32,
+	/// The ski-rental bound `⌊B⌋` the budget was chosen within.
+	pub bound: u32,
+	pub basis: BudgetBasis,
+}
+
+/// Keepalive accounting for `/info`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct KeepaliveReport {
+	pub pings_sent: u64,
+	pub ping_cost: f64,
+	pub last_budget: BudgetDecision,
+}
+
+/// Measured waits per kind, newest last, and what their keepalives cost
+/// (runtime-only, never persisted).
 #[derive(Debug, Clone, Default)]
 pub struct WaitHistory {
 	reply: VecDeque<Wait>,
 	background: VecDeque<Wait>,
 	tools: VecDeque<Wait>,
+	pings_sent: u64,
+	ping_cost: f64,
+	last_budget: Option<BudgetDecision>,
 }
 
 impl WaitHistory {
@@ -131,6 +185,15 @@ impl WaitHistory {
 		}
 	}
 
+	/// `None` until a wait has been measured.
+	pub fn report(&self) -> Option<KeepaliveReport> {
+		self.last_budget.map(|last_budget| KeepaliveReport {
+			pings_sent: self.pings_sent,
+			ping_cost: self.ping_cost,
+			last_budget,
+		})
+	}
+
 	fn samples_mut(&mut self, kind: WaitKind) -> &mut VecDeque<Wait> {
 		match kind {
 			WaitKind::Reply => &mut self.reply,
@@ -146,6 +209,7 @@ pub struct KeepaliveHandle {
 	cancel_tx: watch::Sender<bool>,
 	task: JoinHandle<Vec<ProviderExchange>>,
 	kind: WaitKind,
+	budget: BudgetDecision,
 	started: Instant,
 }
 
@@ -191,8 +255,8 @@ impl KeepaliveHandle {
 			config,
 			kind == WaitKind::Reply,
 		);
-		let budget = if prefix_replaced {
-			0
+		let (pings, basis) = if prefix_replaced {
+			(0, BudgetBasis::PrefixReplaced)
 		} else {
 			ping_budget(
 				chat_session.wait_history.samples(kind),
@@ -201,9 +265,22 @@ impl KeepaliveHandle {
 				penalty,
 			)
 		};
+		let budget = BudgetDecision {
+			kind,
+			pings,
+			bound: max_pings(penalty),
+			basis,
+		};
 
 		let (cancel_tx, cancel_rx) = watch::channel(false);
-		let ping_loop = run(snapshot, profile, config.clone(), policy.interval, budget, cancel_rx);
+		let ping_loop = run(
+			snapshot,
+			profile,
+			config.clone(),
+			policy.interval,
+			budget.pings,
+			cancel_rx,
+		);
 		// A spawned task drops the task-local session: without it the ping
 		// would assemble the global tool list instead of this session's, and
 		// a different tools block misses the cache.
@@ -216,18 +293,20 @@ impl KeepaliveHandle {
 		});
 
 		crate::log_debug!(
-			"Cache keepalive started: kind={:?}, interval={}s, budget={} ping(s), rewrite penalty={:.1} ping(s), prefix replaced next={}",
+			"Cache keepalive started: kind={:?}, interval={}s, budget={} ping(s) ({:?}) within {}, rewrite penalty={:.1} ping(s)",
 			kind,
 			policy.interval.as_secs(),
-			budget,
-			penalty,
-			prefix_replaced
+			budget.pings,
+			budget.basis,
+			budget.bound,
+			penalty
 		);
 
 		Some(Self {
 			cancel_tx,
 			task,
 			kind,
+			budget,
 			started: Instant::now(),
 		})
 	}
@@ -246,7 +325,14 @@ impl KeepaliveHandle {
 				Vec::new()
 			}
 		};
-		chat_session.wait_history.record(self.kind, elapsed, answered);
+		let history = &mut chat_session.wait_history;
+		history.record(self.kind, elapsed, answered);
+		history.pings_sent += exchanges.len() as u64;
+		history.ping_cost += exchanges
+			.iter()
+			.filter_map(|exchange| exchange.usage.as_ref().and_then(|usage| usage.cost))
+			.sum::<f64>();
+		history.last_budget = Some(self.budget);
 		bill_pings(&mut chat_session.session.info, &exchanges);
 		chat_session.estimated_cost = chat_session.session.info.total_cost;
 		crate::log_debug!(
@@ -314,20 +400,31 @@ fn pings_to_bridge(wait: Duration, interval: Duration) -> u32 {
 	(wait.as_millis() / interval.as_millis().max(1)) as u32
 }
 
-/// Pings to spend on this wait, in `0..=max_pings(penalty)`. A known wake
-/// that is affordable is bridged exactly — a turn is certain then. Otherwise
-/// the budget minimizes `E[cost(n)] = Σ_{j=1..n} S_j + B · S_{n+1}`: ping `j`
-/// goes out only while the wait is still open at its interval, and the
-/// rewrite is paid only when the wait outlasts the last ping's coverage.
-/// Ties choose the smaller budget.
-fn ping_budget(history: &VecDeque<Wait>, known_wake: Option<Duration>, interval: Duration, penalty: f64) -> u32 {
-	let max = max_pings(penalty);
+/// Pings to spend on this wait, in `0..=max_pings(penalty)`, and why. A
+/// known wake that is affordable is bridged exactly — a turn is certain then.
+/// A kind with fewer than [`COLD_START_WAITS`] waits measured is capped at
+/// [`COLD_START_PINGS`]. Otherwise the budget minimizes
+/// `E[cost(n)] = Σ_{j=1..n} S_j + B · S_{n+1}`: ping `j` goes out only while
+/// the wait is still open at its interval, and the rewrite is paid only when
+/// the wait outlasts the last ping's coverage. Ties choose the smaller budget.
+fn ping_budget(
+	history: &VecDeque<Wait>,
+	known_wake: Option<Duration>,
+	interval: Duration,
+	penalty: f64,
+) -> (u32, BudgetBasis) {
+	let bound = max_pings(penalty);
 	if let Some(wake) = known_wake {
 		let needed = pings_to_bridge(wake, interval);
-		if needed <= max {
-			return needed;
+		if needed <= bound {
+			return (needed, BudgetBasis::KnownWake);
 		}
 	}
+	let (max, basis) = if history.len() < COLD_START_WAITS {
+		(bound.min(COLD_START_PINGS), BudgetBasis::ColdStart)
+	} else {
+		(bound, BudgetBasis::Learned)
+	};
 	// survival[j]: the chance the wait is still open when interval j starts.
 	let mut survival = vec![1.0];
 	let mut open = 1.0;
@@ -336,9 +433,10 @@ fn ping_budget(history: &VecDeque<Wait>, known_wake: Option<Duration>, interval:
 		survival.push(open);
 	}
 	let expected_cost = |budget: usize| survival[1..=budget].iter().sum::<f64>() + penalty * survival[budget + 1];
-	(0..=max as usize)
+	let pings = (0..=max as usize)
 		.min_by(|a, b| expected_cost(*a).total_cmp(&expected_cost(*b)))
-		.unwrap_or(0) as u32
+		.unwrap_or(0) as u32;
+	(pings, basis)
 }
 
 /// Reply hazard of each ping interval `0..=max`: replies that landed in it
@@ -346,6 +444,9 @@ fn ping_budget(history: &VecDeque<Wait>, known_wake: Option<Duration>, interval:
 /// session's pooled rate (replies per interval waited, over every past wait
 /// of this kind). A cut-short wait counts as waited up to where it stopped,
 /// never as a reply — dropping it would make waits look shorter than they are.
+/// An interval no measured wait reached has no reply evidence and reads as
+/// zero, so pings never outrun the longest wait seen; with no waits at all
+/// every interval is the prior's coin flip.
 fn interval_hazards(history: &VecDeque<Wait>, interval: Duration, max: u32) -> Vec<f64> {
 	let slots = max as usize + 1;
 	let mut reached = vec![0.0; slots];
@@ -370,7 +471,12 @@ fn interval_hazards(history: &VecDeque<Wait>, interval: Duration, max: u32) -> V
 	reached
 		.iter()
 		.zip(&replies)
-		.map(|(reached, replies)| (replies + POOLED_RATE_WEIGHT * pooled_rate) / (reached + POOLED_RATE_WEIGHT))
+		.map(|(reached, replies)| {
+			if !history.is_empty() && *reached == 0.0 {
+				return 0.0;
+			}
+			(replies + POOLED_RATE_WEIGHT * pooled_rate) / (reached + POOLED_RATE_WEIGHT)
+		})
 		.collect()
 }
 
@@ -415,6 +521,12 @@ async fn run(
 					break;
 				}
 			}
+			Err(e) if hit_rate_limit(&e) => {
+				// The quota is shared with the real requests: spending the rest
+				// of the budget on retries would only crowd them out.
+				crate::log_info!("Cache keepalive: provider rate limit, stopping");
+				break;
+			}
 			Err(e) => {
 				crate::log_debug!("Cache keepalive ping failed: {}", e);
 			}
@@ -422,6 +534,16 @@ async fn run(
 	}
 
 	exchanges
+}
+
+/// Providers wrap a 429 in octolib's typed retryable status; with the ping's
+/// zero retries it surfaces as the error's root cause.
+fn hit_rate_limit(err: &anyhow::Error) -> bool {
+	err.chain().any(|cause| {
+		cause
+			.downcast_ref::<octolib::llm::retry::RetryableStatusError>()
+			.is_some_and(|status| status.status == reqwest::StatusCode::TOO_MANY_REQUESTS.as_u16())
+	})
 }
 
 async fn send_ping(

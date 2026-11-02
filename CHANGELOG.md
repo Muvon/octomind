@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.68.1] - 2026-11-02
+
+### 📋 Release Summary
+
+Hindsight worker stderr is now relayed to error logs, filtered skill lists handle pagination correctly, and supervisor gates validate absence-based observations.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: upgrade octolib to 0.49.0 `8f9619a5`
+- **supervisor**: set an empty citation request in test fixture `ceb54f0c`
+
+### 🐛 Bug Fixes & Stability
+
+- **hindsight**: relay worker stderr through error logging `1968142d`
+- **skill**: update pagination handling for filtered skill lists `49e03882`
+- **supervisor**: validate absence-based gate observations `deb086b2`
+
 ## [0.68.0] - 2026-11-01
 
 ### 📋 Release Summary

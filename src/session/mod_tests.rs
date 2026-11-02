@@ -780,3 +780,18 @@ fn main_cost_tracks_only_main_calls_and_unknown_history_stays_unknown() {
 	legacy.record_main_cost(Some(0.1));
 	assert!(legacy.main_cost.is_none());
 }
+
+#[test]
+fn new_session_sets_identity_and_zeroes_counters() {
+	let session = Session::new("name".into(), "model".into());
+	let info = &session.info;
+	assert_eq!(info.name, "name");
+	assert_eq!(info.model, "model");
+	assert_eq!(info.created_at, info.last_cache_checkpoint_time);
+	// The one counter that differs from `Default`: a new session knows its main
+	// spend is zero, while `None` marks legacy history whose spend is unknown.
+	assert_eq!(info.main_cost, Some(0.0));
+	assert_eq!(info.role, "");
+	assert_eq!(info.total_cost, 0.0);
+	assert_eq!(info.tool_calls, 0);
+}

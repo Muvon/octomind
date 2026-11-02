@@ -2012,6 +2012,10 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			.insert(session_id.clone(), Arc::new(command_config));
 	}
 
+	let restarts_keepalive = matches!(
+		command_result,
+		CommandResult::Handled | CommandResult::HandledWithOutput(_)
+	);
 	let terminal = match command_result {
 		CommandResult::Handled => {
 			log_debug!("Command '{}' executed successfully", slash_command);
@@ -2060,6 +2064,14 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 		}
 	};
 
+	// A non-terminal command leaves the session waiting for the client's next
+	// frame exactly like a finished turn, so the keepalive the command finished
+	// above restarts — otherwise an idle session's cache expires unpinged. It
+	// runs under the config the next turn uses: a `/role` switch pinned a new one.
+	if restarts_keepalive {
+		let next_turn_config = session_config(&server.config, &server.role_configs, &chat_session).await;
+		server.start_keepalive(&chat_session, &next_turn_config, &stream);
+	}
 	let save_result = chat_session.save();
 	server.sessions.lock().await.insert(session_id, chat_session);
 	if let Err(e) = save_result {

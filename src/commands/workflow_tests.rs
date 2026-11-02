@@ -594,3 +594,35 @@ async fn local_workflow_requires_input_via_stdin() {
 	let err = result.expect_err("empty stdin must be rejected");
 	assert!(err.to_string().contains("requires input via stdin"), "got: {err}");
 }
+
+#[tokio::test]
+#[serial]
+async fn tap_workflow_resolves_when_directory_with_same_name_exists() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("tap-dir-collision");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	install_tap_workflow(&dir, TAP_WF.trim());
+
+	// The workflow's role is public: the tap ships a matching agent file.
+	let agents = dir
+		.join("taps")
+		.join("acme")
+		.join("octomind-lib")
+		.join("agents")
+		.join("developer");
+	std::fs::create_dir_all(&agents).expect("tap agents dir");
+	std::fs::write(agents.join("general.toml"), "# agent\n").expect("tap agent");
+
+	// Create a colliding directory named "alpha" in a temp workdir and switch cwd to it.
+	let work_dir = tempdir().expect("temp workdir");
+	std::fs::create_dir(work_dir.path().join("alpha")).expect("create colliding folder");
+
+	let orig_cwd = std::env::current_dir().expect("get current dir");
+	std::env::set_current_dir(work_dir.path()).expect("set current dir");
+
+	let result = execute(&wf_args(Some("alpha"), true), &template_config()).await;
+
+	let _ = std::env::set_current_dir(orig_cwd);
+
+	result.expect("tap workflow 'alpha' resolves and runs dry run even when ./alpha/ directory exists");
+}

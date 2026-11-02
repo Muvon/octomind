@@ -61,7 +61,7 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 
 	// Resolve source: an existing local file vs. a tap workflow name.
 	let path = PathBuf::from(target);
-	let (raw, from_tap) = if path.exists() {
+	let (raw, from_tap) = if path.is_file() {
 		let raw = std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
 		(raw, false)
 	} else if looks_like_path(target) {

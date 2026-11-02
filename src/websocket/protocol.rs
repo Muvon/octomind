@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+/// The largest WebSocket message either side of this protocol sends or accepts.
+/// A relay in between (the cloud API) must accept this much, so every reply
+/// built from unbounded data — a specialist's log above all — is sized to fit it.
+pub const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 pub const MESSAGE_ATTACHMENTS_CAPABILITY: &str = "message_attachments_v1";
 /// The bind's session accepts `cancel`/`close` frames and a bind `role`, and
 /// echoes a request's `request_id` on the cost frame that closes its turn.

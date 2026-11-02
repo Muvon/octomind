@@ -150,6 +150,33 @@ fn buffer_caps_content_and_drops_oldest_even_for_one_oversized_chunk() {
 	assert_eq!(buffer.bytes, 6);
 }
 
+#[test]
+fn a_full_log_of_escaped_text_still_fits_one_message() {
+	let request = request();
+	let mut events = RunEvents::default();
+	events
+		.begin(&request.session_id, &request.run_id, "developer:cto")
+		.unwrap();
+	// A control character is one byte in the log and six (`\u0001`) on the wire.
+	for _ in 0..12 {
+		let content = "\u{1}".repeat(MAX_RUN_CONTENT / 12);
+		let event = RunEvent::ToolResult {
+			tool_id: "call".into(),
+			content,
+			success: Some(true),
+		};
+		events.emit(&request.session_id, &request.run_id, event).unwrap();
+	}
+	let reply = events.snapshot(&request).unwrap();
+	assert!(reply.truncated);
+	let wire = serde_json::to_string(&ServerMessage::RunLog(reply)).unwrap();
+	assert!(
+		wire.len() <= crate::websocket::protocol::MAX_MESSAGE_BYTES,
+		"{} bytes",
+		wire.len()
+	);
+}
+
 fn usage(cost: f64, input_tokens: u64, output_tokens: u64) -> RunEvent {
 	RunEvent::Usage {
 		cost,

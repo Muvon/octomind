@@ -605,8 +605,8 @@ impl Drop for RunSubscriptions {
 async fn handle_connection(stream: TcpStream, peer_addr: SocketAddr, server: ServerState) -> Result<()> {
 	// Accept WebSocket connection with compression enabled
 	let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-		.max_message_size(Some(10 * 1024 * 1024)) // 10MB max message size
-		.max_frame_size(Some(10 * 1024 * 1024)) // 10MB max frame size
+		.max_message_size(Some(super::protocol::MAX_MESSAGE_BYTES))
+		.max_frame_size(Some(super::protocol::MAX_MESSAGE_BYTES))
 		.accept_unmasked_frames(false);
 
 	let ws_stream = tokio::time::timeout(

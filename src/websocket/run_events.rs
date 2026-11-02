@@ -21,6 +21,9 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use tokio_tungstenite::tungstenite::Message;
 
+/// A run's log, as sent, is held to this many bytes of its events' text — the
+/// newest kept — so neither the live buffer nor one `run_log` reply grows with
+/// the run. Well inside `MAX_MESSAGE_BYTES` once every event's JSON keys are added.
 const MAX_RUN_CONTENT: usize = 4 * 1024 * 1024;
 const MAX_RUN_EVENTS: usize = 4096;
 
@@ -51,16 +54,27 @@ impl EventBuffer {
 	}
 }
 
+/// The bytes an event's text takes in the reply. Strings count JSON-escaped: a
+/// log of quotes or control characters grows up to sixfold on the wire, and
+/// counting it raw let a reply outgrow what the relay accepts.
 fn content_size(event: &RunEvent) -> usize {
 	match event {
 		RunEvent::Prompt { content } | RunEvent::Assistant { content } | RunEvent::Thinking { content } => {
-			content.len()
+			escaped_len(content)
 		}
-		RunEvent::ToolUse { tool, tool_id, params } => tool.len() + tool_id.len() + params.to_string().len(),
-		RunEvent::ToolResult { tool_id, content, .. } => tool_id.len() + content.len(),
+		RunEvent::ToolUse { tool, tool_id, params } => {
+			escaped_len(tool) + escaped_len(tool_id) + params.to_string().len()
+		}
+		RunEvent::ToolResult { tool_id, content, .. } => escaped_len(tool_id) + escaped_len(content),
 		RunEvent::Usage { .. } => std::mem::size_of::<f64>() + 2 * std::mem::size_of::<u64>(),
-		RunEvent::Status { status, error } => status.as_str().len() + error.as_ref().map_or(0, String::len),
+		RunEvent::Status { status, error } => status.as_str().len() + error.as_deref().map_or(0, escaped_len),
 	}
+}
+
+/// JSON escaping is per character, so a merged chunk costs exactly the sum of its parts.
+fn escaped_len(text: &str) -> usize {
+	let quoted = serde_json::to_string(text).expect("a string always serializes");
+	quoted.len() - 2
 }
 
 struct RunState {

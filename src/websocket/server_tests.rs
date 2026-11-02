@@ -5863,3 +5863,100 @@ async fn release_ownerless_keepalive_leaves_the_handle_when_the_owner_is_live_ag
 	server.finish_keepalive(&mut session, false).await;
 	crate::session::context::cleanup_session(&"ka-rebound".to_string());
 }
+
+#[tokio::test]
+async fn non_terminal_command_restarts_the_sessions_keepalive() {
+	let config = keepalive_config();
+	let server = LoopbackServer::start(Arc::new(config.clone())).await;
+	let session = keepalive_session("ka-command");
+	let stream = server.state.streams.open("ka-command");
+	let (sender, _receiver) = WsSender::channel();
+	stream.own(&sender);
+	server.state.start_keepalive(&session, &config, &stream);
+	assert!(server.state.keepalives.lock().unwrap().contains_key("ka-command"));
+	server.sessions.lock().await.insert("ka-command".to_string(), session);
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": "ka-command", "command": "info"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let _status = read_until(&mut ws, |value| value["type"] == "status" || value["type"] == "error").await;
+	assert!(
+		server.state.keepalives.lock().unwrap().contains_key("ka-command"),
+		"a non-terminal command must not leave the session without a keepalive"
+	);
+
+	let mut session = server
+		.sessions
+		.lock()
+		.await
+		.remove("ka-command")
+		.expect("the session is stored back");
+	server.state.finish_keepalive(&mut session, false).await;
+	crate::session::context::cleanup_session(&"ka-command".to_string());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(Vec::new()).await;
+	let mut config = two_role_config();
+	config.cache_keepalive_enabled = true;
+	let keepalive_model = Some("anthropic:claude-sonnet-5-5".to_string());
+	let outbound = config.role_map.get_mut("outbound").expect("outbound role");
+	outbound.config.model.model = keepalive_model.clone();
+	let outbound = config.roles.iter_mut().find(|role| role.name == "outbound");
+	outbound.expect("outbound role").config.model.model = keepalive_model;
+	crate::mcp::initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("server MCP init");
+	let server = LoopbackServer::start(Arc::new(config.clone())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	let id = create_session(&mut ws, Some("ka-role-switch")).await;
+	let mut session = server
+		.sessions
+		.lock()
+		.await
+		.remove(&id)
+		.expect("created session is in memory");
+	session.session.messages[0].cached = true;
+	server.sessions.lock().await.insert(id.clone(), session);
+	// The previous role's pinned config has keepalive off: a restart that
+	// still used it would start nothing.
+	let mut previous_role_config = config;
+	previous_role_config.cache_keepalive_enabled = false;
+	server
+		.state
+		.role_configs
+		.lock()
+		.await
+		.insert(id.clone(), Arc::new(previous_role_config));
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": id, "command": "role", "args": ["outbound"]}),
+	)
+	.await;
+	let status = read_until(&mut ws, |v| v["type"] == "status").await;
+	assert!(status["data"].to_string().contains("outbound"), "got: {status}");
+	assert!(
+		server.state.keepalives.lock().unwrap().contains_key(&id),
+		"the keepalive restarts under the config the switched role's next turn uses"
+	);
+
+	let mut session = server
+		.sessions
+		.lock()
+		.await
+		.remove(&id)
+		.expect("the session is stored back");
+	server.state.finish_keepalive(&mut session, false).await;
+	crate::session::context::cleanup_session(&id);
+}

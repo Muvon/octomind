@@ -49,6 +49,13 @@ pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Resu
 					pattern = Some(tok);
 				} else if let Ok(n) = tok.parse::<usize>() {
 					page = n;
+				} else {
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+						data: json!({
+							"subcommand": "error",
+							"message": format!("invalid argument '{}' — expected a page number or a *pattern*", tok),
+						}),
+					})));
 				}
 			}
 			handle_list(session, pattern, page).await

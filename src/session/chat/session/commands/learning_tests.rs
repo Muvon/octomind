@@ -257,6 +257,39 @@ async fn test_learning_error_arms() {
 
 #[serial]
 #[tokio::test]
+async fn test_learning_list_rejects_invalid_token() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	cleanup();
+	let mut session = test_session();
+	store("first learning-cmd lesson about widgets").await;
+
+	// Tokens that are neither a page number nor a `*pattern*` must error,
+	// not silently fall back to page 1 of the unfiltered list.
+	for bad in ["bogus", "-1", "2x"] {
+		let data = learning_data(
+			handle_learning(&mut session, &["list", bad])
+				.await
+				.expect("dispatches"),
+		);
+		assert_eq!(data["subcommand"], "error", "token {bad}: {data}");
+	}
+
+	// A valid glob pattern and a valid page number must still list.
+	let data = learning_data(
+		handle_learning(&mut session, &["list", "*widgets*"])
+			.await
+			.expect("dispatches"),
+	);
+	assert_eq!(data["subcommand"], "list");
+	let data = learning_data(handle_learning(&mut session, &["list", "1"]).await.expect("dispatches"));
+	assert_eq!(data["subcommand"], "list");
+
+	cleanup();
+}
+
+#[serial]
+#[tokio::test]
 async fn test_learning_storage_summary_counts_cold_memory() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();

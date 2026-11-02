@@ -24,9 +24,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::process::Command;
+use tokio::process::{ChildStderr, Command};
 
 const PROTOCOL: u32 = 1;
 const MAX_CLIENTS: usize = 16;
@@ -187,9 +187,11 @@ async fn join_at(path: &Path, spec: &str) -> Result<Client> {
 	command
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
-		.stderr(Stdio::inherit())
+		.stderr(Stdio::piped())
 		.kill_on_drop(false);
 	let mut child = command.spawn().context("Starting the Hindsight model worker")?;
+	let stderr = child.stderr.take().context("Hindsight worker stderr was not piped")?;
+	tokio::spawn(relay_worker_stderr(stderr));
 	let stdout = child.stdout.take().context("Hindsight worker stdout was not piped")?;
 	let mut reader = BufReader::new(stdout);
 	let line = tokio::time::timeout(STARTUP_TIMEOUT, read_line(&mut reader))
@@ -207,6 +209,24 @@ async fn join_at(path: &Path, spec: &str) -> Result<Client> {
 	let client = Client(endpoint);
 	client.ready().await?;
 	Ok(client)
+}
+
+/// ONNX Runtime and CoreML write to the worker's stderr from C code. Inherited,
+/// those writes land raw in the terminal past the spinner; relayed, they surface
+/// as errors like any other. Once this session ends the relay stops and the
+/// worker's later writes fail silently on the closed pipe.
+async fn relay_worker_stderr(stderr: ChildStderr) {
+	let mut lines = BufReader::new(stderr).lines();
+	loop {
+		match lines.next_line().await {
+			Ok(Some(line)) => crate::log_error!("Hindsight worker: {}", line),
+			Ok(None) => break,
+			Err(error) => {
+				crate::log_error!("Hindsight worker stderr relay failed: {}", error);
+				break;
+			}
+		}
+	}
 }
 
 fn disconnected(error: &anyhow::Error) -> bool {

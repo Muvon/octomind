@@ -592,46 +592,9 @@ impl Session {
 				name,
 				created_at: timestamp,
 				model,
-				role: String::new(),
-				input_tokens: 0,
-				output_tokens: 0,
-				cache_read_tokens: 0,
-				cache_write_tokens: 0,
-				reasoning_tokens: 0,
-				total_cost: 0.0,
 				main_cost: Some(0.0),
-				agent_runs: Vec::new(),
-				duration_seconds: 0,
-				layer_stats: Vec::new(), // Initialize empty layer stats
-				tool_calls: 0,           // Initialize tool call counter
-				// Initialize time tracking fields
-				total_api_time_ms: 0,
-				total_tool_time_ms: 0,
-				total_layer_time_ms: 0,
-				turn_timing: TurnTimingStats::default(),
-				supervisor_accounting: Default::default(),
-				compression_stats: CompressionStats::default(),
-				anchor: crate::session::anchor::Anchor::default(),
-				total_api_calls: 0,
-				// Initialize cache state
-				current_non_cached_tokens: 0,
-				current_total_tokens: 0,
 				last_cache_checkpoint_time: timestamp,
-				// Initialize runtime state
-				spending_threshold_checkpoint: 0.0,
-
-				context_tokens_after_last_compression: 0,
-				turn_call_counts: Vec::new(),
-				api_calls_at_turn_start: 0,
-				api_calls_at_last_compression: 0,
-				output_tokens_at_last_compression: 0,
-				consecutive_compressions: 0,
-				learning_stats: LearningSessionStats::default(),
-				verification_policy: crate::supervisor::VerificationPolicy::default(),
-				session_rules: Vec::new(),
-				authorization: crate::supervisor::authorizer::AuthorizationState::default(),
-				evidence: crate::supervisor::gate::EvidenceLedger::default(),
-				interactive: false,
+				..Default::default()
 			},
 
 			messages: Vec::new(),

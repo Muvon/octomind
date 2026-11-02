@@ -19,14 +19,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::hash::{Hash, Hasher};
+use std::io::BufRead;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::process::{ChildStderr, Command};
+use tokio::process::Command;
 
 const PROTOCOL: u32 = 1;
 const MAX_CLIENTS: usize = 16;
@@ -183,15 +184,15 @@ async fn join_at(path: &Path, spec: &str) -> Result<Client> {
 		}
 		Err(TryLockError::Error(error)) => return Err(error.into()),
 	}
+	let (stderr, stderr_writer) = std::io::pipe().context("Creating the Hindsight worker stderr pipe")?;
 	let mut command = worker_command(spec)?;
 	command
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
+		.stderr(stderr_writer)
 		.kill_on_drop(false);
 	let mut child = command.spawn().context("Starting the Hindsight model worker")?;
-	let stderr = child.stderr.take().context("Hindsight worker stderr was not piped")?;
-	tokio::spawn(relay_worker_stderr(stderr));
+	std::thread::spawn(move || relay_worker_stderr(stderr));
 	let stdout = child.stdout.take().context("Hindsight worker stdout was not piped")?;
 	let mut reader = BufReader::new(stdout);
 	let line = tokio::time::timeout(STARTUP_TIMEOUT, read_line(&mut reader))
@@ -213,14 +214,14 @@ async fn join_at(path: &Path, spec: &str) -> Result<Client> {
 
 /// ONNX Runtime and CoreML write to the worker's stderr from C code. Inherited,
 /// those writes land raw in the terminal past the spinner; relayed, they surface
-/// as errors like any other. Once this session ends the relay stops and the
-/// worker's later writes fail silently on the closed pipe.
-async fn relay_worker_stderr(stderr: ChildStderr) {
-	let mut lines = BufReader::new(stderr).lines();
-	loop {
-		match lines.next_line().await {
-			Ok(Some(line)) => crate::log_error!("Hindsight worker: {}", line),
-			Ok(None) => break,
+/// as errors like any other. The relay runs on a detached std thread, not a tokio
+/// task: tokio reads child pipes on its blocking pool on Windows, and runtime
+/// shutdown would wait forever on a read the long-lived worker never ends. Once
+/// this process exits the worker's later writes fail silently on the closed pipe.
+fn relay_worker_stderr(stderr: std::io::PipeReader) {
+	for line in std::io::BufReader::new(stderr).lines() {
+		match line {
+			Ok(line) => crate::log_error!("Hindsight worker: {}", line),
 			Err(error) => {
 				crate::log_error!("Hindsight worker stderr relay failed: {}", error);
 				break;

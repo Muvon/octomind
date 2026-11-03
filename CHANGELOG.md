@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.69.0] - 2026-11-03
+
+### 📋 Release Summary
+
+Delegated agent runs now include guidance. Gate findings are scoped to the latest user turn, websocket logs are bounded by escaped wire size, and session keepalive restarts after non-terminal commands. ACP uses agent protocol v1, condensation chunks are scored across three factors, refused evaluations are handled conservatively, and hindsight stderr relay runs outside the Tokio runtime.
+
+### ✨ New Features & Enhancements
+
+- **agent**: guide delegated agent runs `87b5900f`
+
+### 🔧 Improvements & Optimizations
+
+- **acp**: migrate to agent protocol v1 `3adcbf87`
+- **supervisor**: score condensation chunks across three factors `fa342b3d`
+- **evaluation**: handle refused evaluations conservatively `62a9e9b4`
+- **session**: build SessionInfo with ..Default::default() `cdc8de35`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: fix latest gate findings per user turn `cbabcdc6`
+- **websocket**: bound run logs by escaped wire size `8f18ce79`
+- **websocket**: restart session keepalive after non-terminal commands `5d985b3c`
+- **hindsight**: run stderr relay outside the Tokio runtime `d028be6e`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.68.1] - 2026-11-02
 
 ### 📋 Release Summary

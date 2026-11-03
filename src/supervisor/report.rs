@@ -163,7 +163,7 @@ pub struct MechanicUsage {
 
 impl MechanicUsage {
 	fn include(&mut self, usage: &Usage) {
-		if !usage.reported_findings.is_empty() {
+		if usage.replaces_findings() {
 			self.reported_findings = usage.reported_findings.clone();
 		}
 		self.api_ms += usage.api_time_ms;

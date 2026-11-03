@@ -48,8 +48,16 @@ pub struct Usage {
 }
 
 impl Usage {
+	/// A verify-gate run always records an `Outcome::Reported` count (possibly
+	/// zero), so a Usage carrying that key is a genuine latest gate run: its
+	/// findings — including the empty set of a clean run — replace the previous
+	/// set. Any other Usage (zero-initialized defaults, other kinds, sums of
+	/// unrelated spend) never touches the findings.
+	pub(crate) fn replaces_findings(&self) -> bool {
+		!self.reported_findings.is_empty() || self.outcome.contains_key(&Outcome::Reported)
+	}
 	fn add(&mut self, other: &Self) {
-		if !other.reported_findings.is_empty() {
+		if other.replaces_findings() {
 			self.reported_findings = other.reported_findings.clone();
 		}
 		for (&key, &count) in &other.outcome {
@@ -65,7 +73,7 @@ impl Usage {
 		self.background_wall_time_ms += other.background_wall_time_ms;
 	}
 	fn merge_max(&mut self, other: &Self) {
-		if !other.reported_findings.is_empty() {
+		if other.replaces_findings() {
 			self.reported_findings = other.reported_findings.clone();
 		}
 		for (&key, &count) in &other.outcome {

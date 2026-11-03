@@ -20,7 +20,7 @@
 mod agent;
 pub mod commands;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -30,6 +30,10 @@ use crate::config::Config;
 /// Per-session async exclusion locks shared by `prompt()`, the inbox monitor,
 /// and ext commands (single-threaded LocalSet, hence `Rc`/`RefCell`).
 pub type SessionLocks = Rc<RefCell<HashMap<String, Rc<tokio::sync::Mutex<()>>>>>;
+
+/// Stack for the thread that polls every ACP session future. The default main
+/// thread stack is 1 MiB on Windows, and a full tool round there overflows it.
+const ACP_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 /// Runtime options for the ACP server, mirroring the relevant subset of `octomind run` flags.
 ///
@@ -80,8 +84,24 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 	// Run the actor and the ACP event loop together on a single-threaded LocalSet.
 	// The SDK requires `Send` handlers while our session machinery is `!Send`;
 	// the bridge lives in `agent::serve` (see the module-level notes there).
-	let local = tokio::task::LocalSet::new();
-	local.run_until(agent::serve(config, role, options)).await
+	// The LocalSet gets its own thread because polling it on the main thread
+	// ties the deepest session futures to the platform's main-thread stack size.
+	let runtime = tokio::runtime::Handle::current();
+	let acp_thread = std::thread::Builder::new()
+		.name("acp".into())
+		.stack_size(ACP_THREAD_STACK_BYTES)
+		.spawn(move || {
+			let local = tokio::task::LocalSet::new();
+			runtime.block_on(local.run_until(agent::serve(config, role, options)))
+		})
+		.context("spawn ACP thread")?;
+	match tokio::task::spawn_blocking(move || acp_thread.join())
+		.await
+		.context("join ACP thread")?
+	{
+		Ok(result) => result,
+		Err(panic) => std::panic::resume_unwind(panic),
+	}
 }
 
 #[cfg(test)]

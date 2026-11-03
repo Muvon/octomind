@@ -4,7 +4,7 @@
   </a>
 
   <h3>Open-source coding agent harness. One Rust binary, any model, every surface.</h3>
-  <p>Run it interactively, from stdin, as a daemon, over WebSocket, or as an ACP agent in your editor — one session engine, one config.<br />A supervising model plans and checks the work. Policy lives in TOML guardrails, not approval prompts.</p>
+  <p>Interactive, stdin, daemon, WebSocket, or ACP — one engine, one config.<br />A supervising model plans and checks the work.<br />Policy lives in TOML guardrails, not approval prompts.</p>
 
   [![CI](https://github.com/Muvon/octomind/actions/workflows/ci.yml/badge.svg)](https://github.com/Muvon/octomind/actions/workflows/ci.yml)
   [![Crates.io](https://img.shields.io/crates/v/octomind?style=flat-square&color=7c3aed)](https://crates.io/crates/octomind)

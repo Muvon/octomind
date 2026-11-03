@@ -1259,7 +1259,7 @@ async fn relevant_hunks<'a>(
 			"text": crate::supervisor::condense::truncate_preserving_edges(text, evaluate::GATE_HUNK_SAMPLE_TOKENS),
 		})
 	};
-	let windows = evaluate::windows((0..hunks.len()).collect(), header_tokens, |index| {
+	let windows = evaluate::windows((0..hunks.len()).collect(), header_tokens, 1, |index| {
 		crate::session::estimate_tokens(&hunk_json(*index).to_string())
 	});
 	let window_sizes: Vec<usize> = windows.iter().map(Vec::len).collect();

@@ -1235,19 +1235,12 @@ async fn verify_experience(
 ) -> bool {
 	use crate::supervisor::evaluate::{self, Seam};
 	if evaluate::enabled(config, Seam::Distill) {
-		let Ok(user) = experience_verifier_payload(candidate, messages) else {
+		let Ok(state) = experience_verifier_state(candidate, messages) else {
 			return false;
 		};
-		let replaced =
-			crate::session::estimate_tokens(&user) + crate::session::estimate_tokens(VERIFY_EXPERIENCE_PROMPT);
-		let Some(answers) = evaluate::run(
-			config,
-			Seam::Distill,
-			serde_json::Value::String(user),
-			evaluate::memory_questions(),
-		)
-		.await
-		else {
+		let replaced = crate::session::estimate_tokens(&state.to_string())
+			+ crate::session::estimate_tokens(VERIFY_EXPERIENCE_PROMPT);
+		let Some(answers) = evaluate::run(config, Seam::Distill, state, evaluate::memory_questions()).await else {
 			return false;
 		};
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
@@ -1306,6 +1299,23 @@ fn experience_verifier_payload(candidate: &GroundedCandidate, messages: &[crate:
 		crate::supervisor::escape_xml_text(&candidate.lesson.content),
 		cited
 	))
+}
+
+/// The structured form of the verifier payload for the evaluation seam: JSON
+/// is the framing, so content and transcript are raw, not XML-escaped.
+fn experience_verifier_state(
+	candidate: &GroundedCandidate,
+	messages: &[crate::session::Message],
+) -> Result<serde_json::Value> {
+	let cited = render_experience_evidence(candidate, messages)?;
+	Ok(serde_json::json!({
+		"proposed_memory": {
+			"outcome": candidate.lesson.outcome.as_str(),
+			"cited_messages": candidate.message_numbers,
+			"content": candidate.lesson.content,
+		},
+		"transcript": cited,
+	}))
 }
 
 #[cfg(test)]

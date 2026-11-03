@@ -1177,7 +1177,7 @@ impl PactContext {
 				)
 			})
 			.collect();
-		let windows = evaluate::windows(samples, header_tokens, |(_, unit)| {
+		let windows = evaluate::windows(samples, header_tokens, 1, |(_, unit)| {
 			crate::session::estimate_tokens(&unit.to_string())
 		});
 		let requests = windows

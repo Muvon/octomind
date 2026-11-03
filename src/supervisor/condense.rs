@@ -683,10 +683,11 @@ fn chunk_lines(content: &str) -> Vec<Chunk> {
 	chunks
 }
 
-/// Chunk-score every candidate through the condense seam: one Noul per chunk
-/// over the candidate's full original text, windowed under the state cap, all
-/// windows of the round in flight together. `None` means the seam is off or a
-/// window was unavailable; the caller leaves the entire round untouched.
+/// Chunk-score every candidate through the condense seam: three factor Nouls
+/// per chunk (any one yes keeps it) over the candidate's full original text,
+/// windowed under the state cap, all windows of the round in flight together.
+/// `None` means the seam is off or a window was unavailable; the caller leaves
+/// the entire round untouched.
 async fn evaluate_candidates(
 	config: &Config,
 	results: &[McpToolResult],
@@ -721,21 +722,17 @@ async fn evaluate_candidates(
 			"chunks": [],
 		});
 		let header_tokens = estimate_tokens(&header.to_string());
-		let windows = evaluate::windows(chunks.iter().collect(), header_tokens, |chunk| {
-			estimate_tokens(&chunk_json(chunk).to_string())
-		});
+		let windows = evaluate::windows(
+			chunks.iter().collect(),
+			header_tokens,
+			evaluate::CONDENSE_FACTORS.len(),
+			|chunk| estimate_tokens(&chunk_json(chunk).to_string()),
+		);
 		let window_sizes: Vec<usize> = windows.iter().map(Vec::len).collect();
 		for window in windows {
 			let mut state = header.clone();
 			state["chunks"] = window.iter().map(|chunk| chunk_json(chunk)).collect();
-			requests.push((
-				state,
-				evaluate::condense_questions(
-					window
-						.iter()
-						.map(|chunk| (chunk.index, chunk.first_line, chunk.last_line)),
-				),
-			));
+			requests.push((state, evaluate::condense_questions(window.len())));
 		}
 		plans.push((candidate.result_index, content, chunks, window_sizes));
 	}
@@ -747,10 +744,7 @@ async fn evaluate_candidates(
 		let mut keep = Vec::with_capacity(chunks.len());
 		for size in window_sizes {
 			let window = answers.next()?;
-			keep.extend((0..size).map(|slot| {
-				evaluate::probability(&window, &evaluate::condense_question_id(slot))
-					.is_none_or(|probability| probability >= evaluate::CONDENSE_KEEP_AT)
-			}));
+			keep.extend((0..size).map(|slot| evaluate::condense_keep(&window, slot)));
 		}
 		let r = &results[result_index];
 		crate::log_debug!(

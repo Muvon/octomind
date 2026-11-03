@@ -443,10 +443,21 @@ async fn orientation_verification_uses_jev_and_only_supported_records_supersede(
 		assert!(memories.iter().any(|memory| memory.content == old.content) != expected);
 		let requests = fake.requests();
 		assert_eq!(requests.len(), 1);
-		let payload = requests[0].state.as_str().unwrap();
-		assert!(payload.contains("<proposed_memory outcome=\"unknown\" cited_messages=\"1\">"));
-		assert!(payload.contains("Preserve provider identity across requests and forbid silent model fallback"));
-		assert!(payload.contains("use exponential backoff with jitter for retries"));
+		let state = &requests[0].state;
+		let mut keys: Vec<&str> = state.as_object().unwrap().keys().map(String::as_str).collect();
+		keys.sort_unstable();
+		assert_eq!(keys, ["proposed_memory", "transcript"]);
+		let memory = &state["proposed_memory"];
+		assert_eq!(memory["outcome"], "unknown");
+		assert_eq!(memory["cited_messages"], serde_json::json!([1]));
+		assert_eq!(
+			memory["content"],
+			"Preserve provider identity across requests and forbid silent model fallback"
+		);
+		assert!(state["transcript"]
+			.as_str()
+			.unwrap()
+			.contains("use exponential backoff with jitter for retries"));
 	}
 }
 
@@ -491,9 +502,14 @@ async fn repaired_experience_reverification_uses_jev_while_initial_verdict_and_r
 		assert_eq!(distill_chat_calls() - chat_calls, 4);
 		assert_eq!(memories.len(), usize::from(expected));
 		assert_eq!(fake.requests().len(), 1);
-		let payload = fake.requests()[0].state.as_str().unwrap().to_string();
-		assert!(payload.contains("<proposed_memory outcome=\"verified\" cited_messages=\"1,3\">"));
-		assert!(payload.contains("provider error invalid continuation identifier"));
+		let state = fake.requests()[0].state.clone();
+		assert_eq!(state["proposed_memory"]["outcome"], "verified");
+		assert_eq!(state["proposed_memory"]["cited_messages"], serde_json::json!([1, 3]));
+		assert!(state["proposed_memory"]["content"].is_string());
+		assert!(state["transcript"]
+			.as_str()
+			.unwrap()
+			.contains("provider error invalid continuation identifier"));
 	}
 }
 

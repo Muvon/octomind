@@ -25,7 +25,7 @@ use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, install_fake_evaluation, nouls, FakeEvaluationStep,
 };
 use crate::supervisor::evaluate::{
-	Seam, CONDENSE_CHUNK_MIN_TOKENS, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS,
+	Seam, CONDENSE_CHUNK_MIN_TOKENS, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS, CONDENSE_FACTORS,
 };
 
 fn config(condense: bool) -> Config {
@@ -70,18 +70,35 @@ fn candidate(index: usize, content: &str) -> Candidate {
 	}
 }
 
-/// Noul answers `k0..kn` with `probability(slot)`.
+/// Every condense factor Noul of chunks `k0..kn`, all at `probability(slot)`.
 fn chunk_answers(count: usize, probability: impl Fn(usize) -> f64) -> FakeEvaluationStep {
 	let pairs: Vec<(String, f64)> = (0..count)
-		.map(|slot| {
-			(
-				crate::supervisor::evaluate::condense_question_id(slot),
-				probability(slot),
-			)
+		.flat_map(|slot| {
+			let p = probability(slot);
+			CONDENSE_FACTORS
+				.iter()
+				.map(move |(factor, _)| (crate::supervisor::evaluate::condense_question_id(slot, factor), p))
 		})
 		.collect();
 	let borrowed: Vec<(&str, f64)> = pairs.iter().map(|(id, p)| (id.as_str(), *p)).collect();
 	FakeEvaluationStep::Answers(nouls(&borrowed))
+}
+
+/// Every chunk gets the same per-factor answers in `CONDENSE_FACTORS` order:
+/// `Some(p)` is a Noul, `None` a refusal.
+fn chunk_factors(count: usize, levels: [Option<f64>; 3]) -> FakeEvaluationStep {
+	let mut answers = std::collections::BTreeMap::new();
+	for slot in 0..count {
+		for ((factor, _), level) in CONDENSE_FACTORS.iter().zip(levels) {
+			let id = crate::supervisor::evaluate::condense_question_id(slot, factor);
+			let answer = match level {
+				Some(noul) => octolib::evaluation::Answer::Noul { noul },
+				None => octolib::evaluation::Answer::Refusal,
+			};
+			answers.insert(id, answer);
+		}
+	}
+	FakeEvaluationStep::Answers(answers)
 }
 
 async fn score(config: &Config, results: &[McpToolResult], session: &str) -> Option<Vec<Outcome>> {
@@ -253,7 +270,7 @@ async fn scored_state_carries_only_the_documented_fields_per_candidate() {
 		assert_eq!(state["task"], "inspect the payload");
 		assert_eq!(state["intent"], "reading big.txt");
 		let chunks = state["chunks"].as_array().unwrap();
-		assert_eq!(chunks.len(), request.questions.len());
+		assert_eq!(chunks.len() * CONDENSE_FACTORS.len(), request.questions.len());
 		let rendered: String = chunks
 			.iter()
 			.map(|chunk| chunk["text"].as_str().unwrap())
@@ -276,12 +293,16 @@ async fn scored_state_carries_only_the_documented_fields_per_candidate() {
 #[serial_test::serial]
 async fn kept_chunks_keep_their_neighbours_and_diagnostics_verbatim() {
 	let _data = crate::session::chat::test_support::DataDirGuard::new();
-	let mut lines: Vec<String> = body(400).lines().map(str::to_string).collect();
+	let mut lines: Vec<String> = body(250).lines().map(str::to_string).collect();
 	let last = lines.len();
 	lines[last - 1] = "error: boom at the very end".to_string();
 	let text = lines.join("\n");
 	let chunks = chunk_lines(&text);
 	assert!(chunks.len() >= 6, "fixture needs several chunks");
+	assert!(
+		chunks.len() <= crate::supervisor::evaluate::MAX_WINDOW_QUESTIONS / CONDENSE_FACTORS.len(),
+		"fixture must fit one window: the fake answers one step"
+	);
 	let _fake = install_fake_evaluation(vec![chunk_answers(
 		chunks.len(),
 		|slot| {
@@ -331,18 +352,41 @@ async fn all_chunks_relevant_leaves_the_result_untouched() {
 
 #[tokio::test]
 async fn refused_chunks_are_kept_so_the_result_stays_untouched() {
-	let ids: Vec<String> = (0..64).map(crate::supervisor::evaluate::condense_question_id).collect();
-	let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
-	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
-		crate::session::chat::test_support::refusals(&borrowed),
-	)])
-	.await;
+	let _fake = install_fake_evaluation(vec![chunk_factors(64, [None, None, None])]).await;
 	let results = vec![ok("t1", &body(150))];
 	let outcomes = score(&config(true), &results, "condense-eval-refused")
 		.await
 		.expect("scored");
 	assert!(outcomes[0].content.is_none());
 	assert_eq!(outcomes[0].verdict, "keep");
+}
+
+#[tokio::test]
+async fn one_yes_factor_keeps_a_chunk_and_a_refusal_with_two_nos_keeps_it_too() {
+	for (levels, label) in [
+		([Some(0.1), Some(0.1), Some(0.9)], "one factor yes"),
+		([None, Some(0.1), Some(0.1)], "refused plus two no"),
+	] {
+		let _fake = install_fake_evaluation(vec![chunk_factors(64, levels)]).await;
+		let results = vec![ok("t1", &body(150))];
+		let outcomes = score(&config(true), &results, "condense-eval-any-of")
+			.await
+			.expect("scored");
+		assert!(outcomes[0].content.is_none(), "{label}");
+		assert_eq!(outcomes[0].verdict, "keep", "{label}");
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn three_no_factors_drop_a_chunk() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let _fake = install_fake_evaluation(vec![chunk_factors(64, [Some(0.1), Some(0.1), Some(0.1)])]).await;
+	let results = vec![ok("t1", &body(150))];
+	let outcomes = score(&config(true), &results, "condense-eval-all-no")
+		.await
+		.expect("scored");
+	assert_eq!(outcomes[0].verdict, "omit");
 }
 
 #[tokio::test]

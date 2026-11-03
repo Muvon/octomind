@@ -330,6 +330,32 @@ fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
 }
 
 #[test]
+fn user_turn_clears_gate_findings_but_keeps_their_count() {
+	use crate::supervisor::{accounting::Usage, report::Outcome, stats::CallKind};
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.supervisor_accounting.kinds.insert(
+		CallKind::Gate,
+		Usage {
+			outcome: std::collections::BTreeMap::from([(Outcome::Reported, 3)]),
+			reported_findings: vec!["condition 1 unsettled: log not retained".to_string()],
+			..Default::default()
+		},
+	);
+
+	session.add_user_message("new request").unwrap();
+	let gate = &session.session.info.supervisor_accounting.kinds[&CallKind::Gate];
+	assert!(
+		gate.reported_findings.is_empty(),
+		"findings belong to the latest turn only"
+	);
+	assert_eq!(
+		gate.outcome[&Outcome::Reported],
+		3,
+		"the lifetime count survives the turn"
+	);
+}
+
+#[test]
 fn user_turn_clears_a_pending_fold_deferral_but_system_managed_injection_does_not() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.fold_deferral = Some(crate::session::chat::conversation_compression::FoldDeferral {

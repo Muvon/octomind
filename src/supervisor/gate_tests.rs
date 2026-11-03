@@ -1633,6 +1633,7 @@ mod verify_round_trip {
 				let frame = serde_json::to_value(crate::websocket::ServerMessage::Cost(payload)).unwrap();
 				let gate = &frame["supervisor_accounting"]["mechanics"]["gate"];
 				assert_eq!(gate["outcome"]["pass"], 1);
+				assert_eq!(gate["outcome"]["reported"], 1);
 				assert_eq!(
 					gate["reported_findings"],
 					serde_json::json!(["gap output outside gate view: the diff is not supplied"])

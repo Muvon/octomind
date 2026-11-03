@@ -170,7 +170,7 @@ fn advisory_only_gate_outcomes_survive_reporting_and_old_reports_still_load() {
 	info.supervisor_accounting.kinds.insert(
 		CallKind::Gate,
 		Usage {
-			reported_findings: ["output outside gate view".to_string()].into(),
+			reported_findings: vec!["output outside gate view".to_string()],
 			..Default::default()
 		},
 	);

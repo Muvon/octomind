@@ -330,6 +330,18 @@ impl ChatSession {
 		self.gate_iterations = 0;
 		self.nudge_iterations = 0;
 		self.last_gate_gaps.clear();
+		// Gate findings shown in /info belong to the latest turn only; fold the
+		// pending bank first so the previous turn's findings cannot resurface.
+		self.session.fold_external_spend();
+		if let Some(gate) = self
+			.session
+			.info
+			.supervisor_accounting
+			.kinds
+			.get_mut(&crate::supervisor::stats::CallKind::Gate)
+		{
+			gate.reported_findings.clear();
+		}
 		self.pending_plan_signal = None;
 		self.plan_evaluated = false;
 		self.planner_failed = false;

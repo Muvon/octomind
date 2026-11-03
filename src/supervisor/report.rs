@@ -20,7 +20,7 @@ use super::{
 	stats::CallKind,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +120,7 @@ pub enum Outcome {
 	Fail,
 	Stall,
 	RefutedGaps,
+	Reported,
 	Checked,
 	Blocked,
 	Cached,
@@ -146,8 +147,8 @@ pub enum Outcome {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MechanicUsage {
-	#[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-	pub reported_findings: BTreeSet<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub reported_findings: Vec<String>,
 	pub chat_calls: u64,
 	pub decision_calls: u64,
 	pub wall_blocking_ms: u64,
@@ -162,7 +163,9 @@ pub struct MechanicUsage {
 
 impl MechanicUsage {
 	fn include(&mut self, usage: &Usage) {
-		self.reported_findings.extend(usage.reported_findings.iter().cloned());
+		if !usage.reported_findings.is_empty() {
+			self.reported_findings = usage.reported_findings.clone();
+		}
 		self.api_ms += usage.api_time_ms;
 		self.input_tokens += usage.input_tokens;
 		self.output_tokens += usage.output_tokens;

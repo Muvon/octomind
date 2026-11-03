@@ -1541,7 +1541,11 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 	crate::supervisor::accounting::record(
 		crate::supervisor::stats::CallKind::Gate,
 		crate::supervisor::accounting::Usage {
-			reported_findings: reported.iter().cloned().collect(),
+			outcome: std::collections::BTreeMap::from([(
+				crate::supervisor::report::Outcome::Reported,
+				reported.len() as u64,
+			)]),
+			reported_findings: reported.clone(),
 			..Default::default()
 		},
 	);

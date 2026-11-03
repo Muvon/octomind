@@ -29,8 +29,12 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Usage {
-	#[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-	pub reported_findings: BTreeSet<String>,
+	/// Findings of the latest verify-gate run only. Each run replaces the
+	/// previous set and a genuine user turn clears it: the text is free-form
+	/// verifier prose that never deduplicates, so a session-lifetime union grew
+	/// without bound. `Outcome::Reported` keeps the lifetime count.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub reported_findings: Vec<String>,
 	#[serde(default)]
 	pub outcome: BTreeMap<Outcome, u64>,
 	pub calls: u64,
@@ -45,7 +49,9 @@ pub struct Usage {
 
 impl Usage {
 	fn add(&mut self, other: &Self) {
-		self.reported_findings.extend(other.reported_findings.iter().cloned());
+		if !other.reported_findings.is_empty() {
+			self.reported_findings = other.reported_findings.clone();
+		}
 		for (&key, &count) in &other.outcome {
 			*self.outcome.entry(key).or_default() += count;
 		}
@@ -59,7 +65,9 @@ impl Usage {
 		self.background_wall_time_ms += other.background_wall_time_ms;
 	}
 	fn merge_max(&mut self, other: &Self) {
-		self.reported_findings.extend(other.reported_findings.iter().cloned());
+		if !other.reported_findings.is_empty() {
+			self.reported_findings = other.reported_findings.clone();
+		}
 		for (&key, &count) in &other.outcome {
 			let own = self.outcome.entry(key).or_default();
 			*own = (*own).max(count);

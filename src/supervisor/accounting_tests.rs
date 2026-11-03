@@ -444,17 +444,20 @@ fn detached_timer_events_preserve_exact_foreground_turn_time_before_job_completi
 }
 
 #[tokio::test]
-async fn reported_gate_findings_are_session_owned_and_survive_snapshot_merges() {
+async fn reported_gate_findings_keep_only_the_latest_run_and_survive_snapshot_merges() {
 	isolated(async {
 		for owner in ["gate-a", "gate-b"] {
 			with_session_id(owner.to_string(), async {
-				record(
-					CallKind::Gate,
-					Usage {
-						reported_findings: [format!("{owner}: unseen output")].into(),
-						..Default::default()
-					},
-				);
+				for run in ["first", "latest"] {
+					record(
+						CallKind::Gate,
+						Usage {
+							outcome: BTreeMap::from([(Outcome::Reported, 1)]),
+							reported_findings: vec![format!("{owner}: {run} unseen output")],
+							..Default::default()
+						},
+					);
+				}
 			})
 			.await;
 		}
@@ -463,12 +466,13 @@ async fn reported_gate_findings_are_session_owned_and_survive_snapshot_merges() 
 			let mut merged = SupervisorAccounting::default();
 			merged.add(&delta);
 			merged.merge_max(&delta);
+			// A snapshot without findings never erases the live ones.
+			merged.merge_max(&SupervisorAccounting::default());
 			let restored: SupervisorAccounting =
 				serde_json::from_value(serde_json::to_value(&merged).unwrap()).unwrap();
-			assert_eq!(
-				restored.kinds[&CallKind::Gate].reported_findings,
-				[format!("{owner}: unseen output")].into()
-			);
+			let gate = &restored.kinds[&CallKind::Gate];
+			assert_eq!(gate.reported_findings, vec![format!("{owner}: latest unseen output")]);
+			assert_eq!(gate.outcome[&Outcome::Reported], 2);
 			assert!(take_for(owner).kinds.is_empty());
 		}
 	})

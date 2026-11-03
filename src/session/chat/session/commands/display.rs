@@ -756,6 +756,7 @@ fn supervisor_outcome(
 			Outcome::Fail => plural("fail", "fails"),
 			Outcome::Stall => counted("stalled"),
 			Outcome::RefutedGaps => plural("gap refuted", "gaps refuted"),
+			Outcome::Reported => plural("finding reported", "findings reported"),
 			Outcome::Checked => counted("checked"),
 			Outcome::Blocked => counted("blocked"),
 			Outcome::Cached => counted("cached"),

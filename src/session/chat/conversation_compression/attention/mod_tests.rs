@@ -2145,6 +2145,23 @@ async fn prune_demotes_below_threshold_with_the_unadmitted_shape() {
 }
 
 #[tokio::test]
+async fn prune_keeps_a_unit_the_model_refused() {
+	let ids = [compression_question_id(0), compression_question_id(1)];
+	let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&borrowed),
+	)])
+	.await;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
+	]);
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	assert_eq!(pact.prompt_view(), before);
+}
+
+#[tokio::test]
 async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
 	let _fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.1), unit_answers(2, |_| 0.1)]).await;
 	let applied_before = evaluate_counter(Seam::Compression, "applied");

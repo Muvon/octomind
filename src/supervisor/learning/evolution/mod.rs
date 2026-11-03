@@ -126,8 +126,9 @@ pub enum EffectClass {
 pub enum Measure {
 	/// The verify-gate verdict: 1 on pass, 0 otherwise.
 	Verdict,
-	/// The evaluation seam's probability that the turn fulfilled the request,
-	/// on turns where it also judged the artifact applicable.
+	/// The evaluation seam's normalized outcome Score position (0 off-target
+	/// … 1 fulfilled, or blocked with evidence), not a yes-probability, on
+	/// turns where it also judged the artifact applicable.
 	Graded,
 }
 

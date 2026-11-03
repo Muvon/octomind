@@ -297,6 +297,30 @@ pub(crate) fn nouls(pairs: &[(&str, f64)]) -> std::collections::BTreeMap<String,
 		.collect()
 }
 
+/// Shorthand for a Refusal answer map: the model declined each listed question.
+pub(crate) fn refusals(ids: &[&str]) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
+	ids.iter()
+		.map(|id| (id.to_string(), octolib::evaluation::Answer::Refusal))
+		.collect()
+}
+
+/// A three-level Score answer (legend keys "0", "1", "2") whose weighted
+/// position is `score`; the probabilities only need to be well-formed.
+pub(crate) fn score_answer(score: f64) -> octolib::evaluation::Answer {
+	let legend = (0..3)
+		.map(|level| (level.to_string(), serde_json::Value::String(format!("level {level}"))))
+		.collect();
+	let probabilities = (0..3)
+		.map(|level| (level.to_string(), if level == score.round() as i32 { 1.0 } else { 0.0 }))
+		.collect();
+	octolib::evaluation::Answer::Score {
+		score,
+		legend,
+		probabilities,
+		confidence: 1.0,
+	}
+}
+
 /// Shorthand for a single Choice answer under `id`.
 pub(crate) fn choice(
 	id: &str,

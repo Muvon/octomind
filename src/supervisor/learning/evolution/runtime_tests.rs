@@ -904,12 +904,14 @@ async fn skill_exposure_is_sticky_in_both_arms() {
 #[serial_test::serial]
 #[tokio::test]
 async fn graded_samples_use_evaluation_outcome_and_drop_inapplicable_turns() {
-	use crate::session::chat::test_support::{install_fake_evaluation, nouls, FakeEvaluationStep};
-	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(nouls(&[("outcome", 0.3), ("a0", 0.9)])),
-		FakeEvaluationStep::Answers(nouls(&[("outcome", 0.9), ("a0", 0.2)])),
-	])
-	.await;
+	use crate::session::chat::test_support::{install_fake_evaluation, nouls, score_answer, FakeEvaluationStep};
+	// Outcome Scores are normalized over three levels: 0.6 -> 0.3, 1.8 -> 0.9.
+	let turn_answers = |score: f64, applies: f64| {
+		let mut answers = nouls(&[("a0", applies)]);
+		answers.insert("outcome".to_string(), score_answer(score));
+		FakeEvaluationStep::Answers(answers)
+	};
+	let fake = install_fake_evaluation(vec![turn_answers(0.6, 0.9), turn_answers(1.8, 0.2)]).await;
 	let data = tempfile::tempdir().unwrap();
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
@@ -968,6 +970,64 @@ async fn graded_samples_use_evaluation_outcome_and_drop_inapplicable_turns() {
 	assert!(state.contains("fix the failing build") && state.contains("cargo build passes"));
 	assert!(state.contains("evolved-evo-graded") && !state.contains("evolved-evo-verdict-locked"));
 	drop(requests);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn refused_questions_give_no_sample_and_no_false_trigger() {
+	use crate::session::chat::test_support::{
+		install_fake_evaluation, nouls, refusals, score_answer, FakeEvaluationStep,
+	};
+	// Turn 1: the applicability question is refused. Turn 2: the outcome is refused.
+	let mut applies_refused = refusals(&["a0"]);
+	applies_refused.insert("outcome".to_string(), score_answer(1.8));
+	let mut outcome_refused = nouls(&[("a0", 0.9)]);
+	outcome_refused.extend(refusals(&["outcome"]));
+	let _fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(applies_refused),
+		FakeEvaluationStep::Answers(outcome_refused),
+	])
+	.await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let id = "evo-refused";
+	super::super::registry::create_record(
+		record(id, ArtifactKind::Guard, EvolutionState::Shadow),
+		"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
+		None,
+	)
+	.unwrap();
+	let mut supervisor = supervisor();
+	supervisor.supervisor.enabled = true;
+	supervisor.decision.supervisor = true;
+	let turn = TurnVerdict {
+		delta: 0.05,
+		api_calls: 2,
+		request: "fix the failing build",
+		answer: "fixed; cargo build passes",
+	};
+
+	let session_id = "evolution-refused-session".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		for _ in 0..2 {
+			mark_shadow_match(id);
+			reinforce_session(&session_id, &turn, &supervisor).await;
+		}
+		clear_for_session(&session_id);
+	})
+	.await;
+
+	let refused = super::super::registry::get_record(id).unwrap().unwrap();
+	assert_eq!(refused.control_successes + refused.control_failures, 0);
+	assert_eq!(refused.successes + refused.failures, 0);
+	assert_eq!(refused.false_triggers, 0);
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);

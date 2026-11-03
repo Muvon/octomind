@@ -442,7 +442,10 @@ async fn prescreen(
 	let Some(answers) = evaluate::run(config, Seam::Plan, state, questions).await else {
 		return Ok(false);
 	};
-	let probability = evaluate::probability(&answers, evaluate::PLAN_QUESTION_ID);
+	// A refused question gets no skip: the planner runs.
+	let Some(probability) = evaluate::probability(&answers, evaluate::PLAN_QUESTION_ID) else {
+		return Ok(false);
+	};
 	if probability >= evaluate::PLAN_SKIP_BELOW {
 		return Ok(false);
 	}

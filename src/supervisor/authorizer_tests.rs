@@ -482,7 +482,9 @@ async fn false_cancellation_update_does_not_interrupt_a_judgment() {
 // ENV_LOCK itself, so these tests do not lock it again.
 // ---------------------------------------------------------------------------
 
-use crate::session::chat::test_support::{evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep};
+use crate::session::chat::test_support::{
+	evaluate_counter, install_fake_evaluation, nouls, refusals, FakeEvaluationStep,
+};
 use crate::supervisor::evaluate::Seam;
 
 fn prescreen_config() -> Config {
@@ -583,6 +585,33 @@ async fn evaluate_prescreen_flag_hands_the_batch_to_the_supervisor_unchanged() {
 		clear_for_session(&id);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+}
+
+#[tokio::test]
+async fn evaluate_prescreen_refusal_hands_the_batch_to_the_supervisor() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	let mut answers = nouls(&[("0.prohibited", 0.1)]);
+	answers.extend(refusals(&["0.scope"]));
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(answers)]).await;
+	let (url, captured) = spawn_recording_stub(vec![final_response(&verdict("allow", "").to_string())]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = prescreen_config();
+	let id = "authorizer-prescreen-refusal";
+	let mut session = session(id);
+	capture(&mut session, &config);
+	let applied = evaluate_counter(Seam::Authorizer, "applied");
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let admissions = check_batch(id, &config, &[call()], &[vec![]], rx).await;
+	assert!(admissions[0].message.is_none());
+	assert_eq!(
+		captured.lock().unwrap().len(),
+		1,
+		"a refused question wakes the supervisor"
+	);
+	assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied);
+	assert_eq!(fake.requests().len(), 1);
+	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
 }
 
 /// A Noul for a property the judge cannot veto only buys a chat call that
@@ -747,17 +776,37 @@ async fn decision_confirmation_replaces_only_the_second_judge_and_fails_closed()
 		let octolib::evaluation::Question::Noul { instructions, .. } = &requests[1].questions["0"] else {
 			panic!("Noul required")
 		};
-		assert_eq!(
-			instructions.as_str().unwrap(),
-			format!(
-				"For proposed call 0, should this proposed decision be confirmed?\n{}",
-				VERIFY_PROMPT.rsplit_once("\nReturn only ").unwrap().0
-			)
-		);
+		let instructions = instructions.as_str().unwrap();
+		assert!(instructions.contains("proposed_decisions[0]"));
+		assert!(instructions.contains(VERIFY_PROMPT.rsplit_once("\nReturn only ").unwrap().0));
 		assert_eq!(authorizer_chat_calls() - chat_calls, 1);
 		clear_for_session(&id);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+}
+
+#[tokio::test]
+async fn decision_confirmation_refusal_is_not_confirmed() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(nouls(&[("0.prohibited", 0.9), ("0.scope", 0.1)])),
+		FakeEvaluationStep::Answers(refusals(&["0"])),
+	])
+	.await;
+	let (url, captured) =
+		spawn_recording_stub(vec![final_response(&verdict("block", "Do not run tests").to_string())]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = prescreen_config();
+	let id = "decision-confirmation-refusal";
+	let mut session = session(id);
+	capture(&mut session, &config);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let admissions = check_batch(id, &config, &[call()], &[vec![]], rx).await;
+	assert!(admissions[0].message.is_none(), "a refused confirmation does not block");
+	assert_eq!(fake.requests().len(), 2);
+	assert_eq!(captured.lock().unwrap().len(), 1);
+	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
 }
 
 #[tokio::test]

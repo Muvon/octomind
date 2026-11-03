@@ -1197,12 +1197,10 @@ impl PactContext {
 		let mut dead: Vec<usize> = Vec::new();
 		for (window, answers) in windows.iter().zip(answers) {
 			for (slot, (index, _)) in window.iter().enumerate() {
-				if let Some(octolib::evaluation::Answer::Noul { noul }) =
-					answers.get(&evaluate::compression_question_id(slot))
+				if evaluate::probability(&answers, &evaluate::compression_question_id(slot))
+					.is_some_and(|probability| probability < evaluate::COMPRESSION_KEEP_AT)
 				{
-					if *noul < evaluate::COMPRESSION_KEEP_AT {
-						dead.push(*index);
-					}
+					dead.push(*index);
 				}
 			}
 		}

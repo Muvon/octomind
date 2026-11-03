@@ -867,7 +867,8 @@ fn verifier_view(transcript: &str, grounding: &[(usize, &str)], candidates: &[Ca
 	view
 }
 
-/// Evaluation-model grounding: one Noul per candidate lesson over the same
+/// Evaluation-model grounding: three factor Nouls per candidate lesson,
+/// combined all-of (see `evaluate::distill_keep`), over the same
 /// excerpt the chat verifier receives. `None` means the seam is off or
 /// unavailable; the caller rejects every candidate.
 async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) -> Option<Vec<bool>> {
@@ -890,7 +891,7 @@ async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) ->
 		crate::session::estimate_tokens(&state.to_string()) + crate::session::estimate_tokens(VERIFY_LESSONS_PROMPT);
 	let answers = evaluate::run(config, Seam::Distill, state, evaluate::distill_questions(lessons.len())).await?;
 	let keep: Vec<bool> = (0..lessons.len())
-		.map(|slot| evaluate::probability(&answers, &evaluate::distill_question_id(slot)) >= evaluate::DISTILL_KEEP_AT)
+		.map(|slot| evaluate::distill_keep(&answers, slot))
 		.collect();
 	crate::log_debug!(
 		"evaluate distill: kept {} of {} lessons",
@@ -1243,7 +1244,7 @@ async fn verify_experience(
 			config,
 			Seam::Distill,
 			serde_json::Value::String(user),
-			evaluate::memory_question(),
+			evaluate::memory_questions(),
 		)
 		.await
 		else {
@@ -1251,7 +1252,7 @@ async fn verify_experience(
 		};
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::MEMORY_SUPPORT_AT;
+		return evaluate::memory_supported(&answers);
 	}
 	experience_verdict(config, candidate, messages)
 		.await

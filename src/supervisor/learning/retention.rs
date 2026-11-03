@@ -241,7 +241,8 @@ pub(super) async fn verify_user_wide(config: &Config, members: &[&Lesson]) -> bo
 		};
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::RETENTION_SUPPORT_AT;
+		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
+			.is_some_and(|probability| probability >= evaluate::RETENTION_SUPPORT_AT);
 	}
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	super::extract::call_supervisor_json(
@@ -511,13 +512,12 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 			config,
 			Seam::Distill,
 			verify_payload,
-			evaluate::retention_merge_question(),
+			evaluate::retention_merge_questions(),
 		)
 		.await?;
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return (evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::RETENTION_SUPPORT_AT)
-			.then_some(candidate);
+		return evaluate::retention_merge_supported(&answers).then_some(candidate);
 	}
 	let (_tx, verify_rx) = tokio::sync::watch::channel(false);
 	let verified = super::extract::call_supervisor_json(

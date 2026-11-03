@@ -629,10 +629,12 @@ async fn run_evaluation_choice(
 	else {
 		return;
 	};
+	// The runner answers every asked id with its own type or a refusal.
 	let Some(octolib::evaluation::Answer::Choice {
 		choice, probabilities, ..
 	}) = answers.get(evaluate::SKILL_QUESTION_ID)
 	else {
+		evaluate::unavailable(Seam::Skills, "refused");
 		return;
 	};
 	let probability = probabilities.get(choice).copied().unwrap_or(0.0);

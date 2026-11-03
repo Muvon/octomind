@@ -21,10 +21,10 @@
 
 use super::*;
 use crate::session::chat::test_support::{
-	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls, spawn_recording_stub,
-	FakeEvaluationStep,
+	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls, refusals,
+	spawn_recording_stub, FakeEvaluationStep,
 };
-use crate::supervisor::evaluate::{distill_question_id, Seam};
+use crate::supervisor::evaluate::{distill_question_id, Seam, DISTILL_FACTORS, MEMORY_FACTORS};
 use crate::supervisor::learning::TrajectoryOutcome;
 use octolib::evaluation::Question;
 
@@ -85,15 +85,38 @@ fn messages() -> Vec<crate::session::Message> {
 	]
 }
 
-/// Noul answers `l0..ln` with the given probabilities.
-fn answers(probabilities: &[f64]) -> FakeEvaluationStep {
+/// Every distill factor Noul of lessons `0..n`, all at the lesson's probability.
+fn answer_map(probabilities: &[f64]) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
 	let pairs: Vec<(String, f64)> = probabilities
 		.iter()
 		.enumerate()
-		.map(|(slot, p)| (distill_question_id(slot), *p))
+		.flat_map(|(slot, p)| {
+			DISTILL_FACTORS
+				.iter()
+				.map(move |(factor, _)| (distill_question_id(slot, factor), *p))
+		})
 		.collect();
 	let borrowed: Vec<(&str, f64)> = pairs.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-	FakeEvaluationStep::Answers(nouls(&borrowed))
+	nouls(&borrowed)
+}
+
+fn answers(probabilities: &[f64]) -> FakeEvaluationStep {
+	FakeEvaluationStep::Answers(answer_map(probabilities))
+}
+
+/// Every memory factor Noul at one probability.
+fn memory_answers(probability: f64) -> FakeEvaluationStep {
+	let pairs: Vec<(&str, f64)> = MEMORY_FACTORS
+		.iter()
+		.map(|(factor, _)| (*factor, probability))
+		.collect();
+	FakeEvaluationStep::Answers(nouls(&pairs))
+}
+
+/// Every memory factor refused.
+fn memory_refusals() -> FakeEvaluationStep {
+	let ids: Vec<&str> = MEMORY_FACTORS.iter().map(|(factor, _)| *factor).collect();
+	FakeEvaluationStep::Answers(refusals(&ids))
 }
 
 /// Chat calls under `CallKind::Distill`: the extraction call plus, when the
@@ -166,14 +189,40 @@ async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier
 	let transcript = request.state["transcript"].as_str().expect("transcript");
 	assert!(transcript.contains("use exponential backoff with jitter for retries"));
 	assert!(transcript.chars().count() <= VERIFY_TRANSCRIPT_CHARS);
-	for (slot, prefix) in [(0, "Lesson 1: "), (1, "Lesson 2: ")] {
-		match &request.questions[&distill_question_id(slot)] {
-			Question::Noul { instructions, .. } => {
-				assert!(instructions.as_str().unwrap().starts_with(prefix));
-			}
-			_ => panic!("distill questions are Nouls"),
+	for slot in 0..2 {
+		for (factor, _) in DISTILL_FACTORS {
+			assert!(
+				matches!(
+					request.questions[&distill_question_id(slot, factor)],
+					Question::Noul { .. }
+				),
+				"distill questions are Nouls"
+			);
 		}
 	}
+}
+
+#[tokio::test]
+async fn a_refused_factor_rejects_its_lesson_and_the_other_lesson_stands() {
+	let mut map = answer_map(&[0.93, 0.93]);
+	map.insert(
+		distill_question_id(1, DISTILL_FACTORS[1].0),
+		octolib::evaluation::Answer::Refusal,
+	);
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(map)]).await;
+	let _data = TestDataDir::new();
+	let (stored, memories) = extract(
+		&config(true),
+		"__distill_refusal_role",
+		"__distill_refusal_project",
+		&messages(),
+		TrajectoryOutcome::Unknown,
+		vec![final_response(EXTRACTION)],
+	)
+	.await;
+	assert_eq!(stored, 1);
+	assert_eq!(memories.len(), 1);
+	assert_eq!(memories[0].content, BACKOFF_RULE);
 }
 
 #[tokio::test]
@@ -360,8 +409,9 @@ async fn experiences_keep_the_chat_verifier_and_kept_lessons_store_the_same_fiel
 #[tokio::test]
 async fn orientation_verification_uses_jev_and_only_supported_records_supersede() {
 	for (step, expected) in [
-		(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
-		(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+		(memory_answers(0.5), true),
+		(memory_answers(0.49), false),
+		(memory_refusals(), false),
 		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
 		(FakeEvaluationStep::Answers(nouls(&[])), false),
 	] {
@@ -403,8 +453,9 @@ async fn orientation_verification_uses_jev_and_only_supported_records_supersede(
 #[tokio::test]
 async fn repaired_experience_reverification_uses_jev_while_initial_verdict_and_repair_stay_chat() {
 	for (step, expected) in [
-		(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
-		(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+		(memory_answers(0.5), true),
+		(memory_answers(0.49), false),
+		(memory_refusals(), false),
 		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
 		(FakeEvaluationStep::Answers(nouls(&[])), false),
 	] {

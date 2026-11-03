@@ -563,7 +563,9 @@ pub struct TurnVerdict<'a> {
 	pub answer: &'a str,
 }
 
-/// The evaluation seam's reading of one turn.
+/// The evaluation seam's reading of one turn. `outcome` is the normalized
+/// outcome Score position (0 off-target, 1 fulfilled or blocker-with-evidence).
+/// `applies` holds only the artifacts whose applicability the model answered.
 struct TurnGrade {
 	outcome: f64,
 	applies: HashMap<String, bool>,
@@ -572,8 +574,10 @@ struct TurnGrade {
 /// One sample for one artifact, or `None` when this turn does not count for
 /// it. The first sample fixes the measure: graded while the seam is on,
 /// verdict otherwise (and always for artifacts that already hold ungraded
-/// samples). A graded artifact skips turns the evaluation could not answer
-/// and turns where it judged the artifact inapplicable.
+/// samples). A graded artifact skips turns the evaluation could not answer,
+/// turns where the model refused its applicability question (no sample, no
+/// false trigger), and turns where it judged the artifact inapplicable. A
+/// graded sample is the normalized outcome Score position, not a probability.
 fn sample_score(record: &mut EvolutionRecord, passed: bool, seam_on: bool, grade: Option<&TurnGrade>) -> Option<f64> {
 	let sampled = record.successes + record.failures + record.control_successes + record.control_failures;
 	let measure = *record.measure.get_or_insert(if seam_on && sampled == 0 {
@@ -585,11 +589,14 @@ fn sample_score(record: &mut EvolutionRecord, passed: bool, seam_on: bool, grade
 		Measure::Verdict => Some(if passed { 1.0 } else { 0.0 }),
 		Measure::Graded => {
 			let grade = grade?;
-			if !grade.applies.get(&record.id).copied().unwrap_or(false) {
-				record.false_triggers = record.false_triggers.saturating_add(1);
-				return None;
+			match grade.applies.get(&record.id) {
+				None => None,
+				Some(false) => {
+					record.false_triggers = record.false_triggers.saturating_add(1);
+					None
+				}
+				Some(true) => Some(grade.outcome),
 			}
-			Some(grade.outcome)
 		}
 	}
 }
@@ -631,18 +638,16 @@ async fn grade_turn(config: &crate::config::Config, turn: &TurnVerdict<'_>, ids:
 		evaluate::evolution_questions(touched.len()),
 	)
 	.await?;
+	let outcome = evaluate::score_fraction(&answers, evaluate::EVOLUTION_OUTCOME_ID)?;
 	crate::supervisor::stats::evaluate_applied(Seam::Evolution, 1);
 	Some(TurnGrade {
-		outcome: evaluate::probability(&answers, evaluate::EVOLUTION_OUTCOME_ID),
+		outcome,
 		applies: touched
 			.iter()
 			.enumerate()
-			.map(|(slot, record)| {
-				(
-					record.id.clone(),
-					evaluate::probability(&answers, &evaluate::evolution_question_id(slot))
-						>= evaluate::EVOLUTION_APPLIES_AT,
-				)
+			.filter_map(|(slot, record)| {
+				let probability = evaluate::probability(&answers, &evaluate::evolution_question_id(slot))?;
+				Some((record.id.clone(), probability >= evaluate::EVOLUTION_APPLIES_AT))
 			})
 			.collect(),
 	})

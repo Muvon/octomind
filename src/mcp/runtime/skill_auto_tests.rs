@@ -1126,6 +1126,37 @@ async fn run_activation_evaluate_activation_floor_is_inclusive_and_none_is_inert
 
 #[tokio::test]
 #[serial]
+async fn run_activation_evaluate_refusal_activates_nothing() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&[SKILL_QUESTION_ID]),
+	)])
+	.await;
+	let _data = DataDirGuard::new();
+	install_tap_skill("markup-landing-page", "developer", &[]);
+
+	let sid = "__skillauto_evaluate_refused".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(vec![rule_less("markup-landing-page", "Landing page markup")]);
+	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
+	let applied = evaluate_counter(Seam::Skills, "applied");
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+
+	assert!(session.session.messages.is_empty());
+	assert!(!has_active_skill(&sid, "markup-landing-page"));
+	assert_eq!(fake.requests().len(), 1);
+	assert_eq!(evaluate_counter(Seam::Skills, "unavailable"), unavailable + 1);
+	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied);
+	cleanup_session(&sid);
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
 async fn run_activation_deterministic_match_makes_no_evaluation_call() {
 	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
 		SKILL_QUESTION_ID,

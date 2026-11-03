@@ -681,3 +681,22 @@ async fn advise_logs_the_observe_only_noul_beside_the_advice() {
 	assert_eq!(requests[0].state["role"], "Never run the test suite.");
 	assert_eq!(requests[0].state["receipts"], RECEIPTS);
 }
+
+#[serial_test::serial]
+#[tokio::test]
+async fn advise_reports_no_noul_when_the_judge_refuses() {
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&[evaluate::ADVISE_QUESTION_ID]),
+	)])
+	.await;
+	let _env = EnvGuard::new(&["OLLAMA_API_URL"]);
+	let mut config = advise_config();
+	config.decision.supervisor = true;
+	let skip = serde_json::json!({"skip": true, "class": "repetition", "evidence": "", "note": ""});
+	let url = spawn_stub(vec![final_response(&skip.to_string())]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let advised = advise(&config, &state(), rx).await;
+	assert_eq!(advised.result, AdviceResult::Skipped("skip"));
+	assert_eq!(advised.p_useful, None);
+}

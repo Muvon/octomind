@@ -1278,7 +1278,8 @@ async fn relevant_hunks<'a>(
 	for size in window_sizes {
 		let window = answers.next()?;
 		keep.extend((0..size).map(|slot| {
-			evaluate::probability(&window, &evaluate::gate_hunk_question_id(slot)) >= evaluate::GATE_HUNK_KEEP_AT
+			evaluate::probability(&window, &evaluate::gate_hunk_question_id(slot))
+				.is_none_or(|probability| probability >= evaluate::GATE_HUNK_KEEP_AT)
 		}));
 	}
 	let shown = keep.iter().filter(|kept| **kept).count();
@@ -1828,12 +1829,14 @@ fn format_violation(conditions: usize) -> String {
 	)
 }
 
-/// Evaluation-model refutation: one Noul per charged finding over the same
-/// evidence the verifier saw. Evidence over the state cap is read in
+/// Evaluation-model refutation: four factor Nouls per charged finding (see
+/// [`crate::supervisor::evaluate::GATE_FACTORS`]) over the same evidence the
+/// verifier saw. Evidence over the state cap is read in
 /// line-aligned slices that each carry every finding (see
 /// [`crate::supervisor::evaluate::text_windows`]), and a finding is refuted when
-/// any slice refutes it: a refutation cites one observation, which one slice
-/// holds, the way chunked grounding checkers take a claim's best chunk. `None`
+/// any factor in any slice refutes it: a refutation cites one observation,
+/// which one slice holds, the way chunked grounding checkers take a claim's
+/// best chunk. A refused factor does not refute. `None`
 /// means the evaluation was unavailable, and every finding stands.
 async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Option<(Vec<String>, Vec<String>)> {
 	use crate::supervisor::evaluate::{self, Seam};
@@ -1859,11 +1862,7 @@ async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Op
 		.collect();
 	let windows = evaluate::run_windows(config, Seam::Gate, requests).await?;
 	let refuted: HashSet<usize> = (0..gaps.len())
-		.filter(|slot| {
-			windows.iter().any(|answers| {
-				evaluate::probability(answers, &evaluate::gate_question_id(*slot)) >= evaluate::GATE_REFUTE_AT
-			})
-		})
+		.filter(|slot| windows.iter().any(|answers| evaluate::gate_refuted(answers, *slot)))
 		.map(|slot| slot + 1)
 		.collect();
 	crate::log_debug!(

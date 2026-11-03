@@ -193,6 +193,28 @@ async fn a_request_at_or_above_the_threshold_runs_the_planner_unchanged() {
 }
 
 #[tokio::test]
+async fn a_refused_request_runs_the_planner() {
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&[PLAN_QUESTION_ID]),
+	)])
+	.await;
+	in_plan_session("__plan_eval_refused", async {
+		let calls = planner_calls();
+		let applied = evaluate_counter(Seam::Plan, "applied");
+		let (url, captured) =
+			crate::session::chat::test_support::spawn_recording_stub(vec![final_response(CREATE)]).await;
+		let mut session = session(PlanSignal::Request);
+		reconcile(&mut session, &config(true), &url).await;
+		assert!(crate::mcp::core::plan::has_active_plan());
+		assert!(!session.planner_failed);
+		assert_eq!(planner_calls() - calls, 1);
+		assert_eq!(captured.lock().unwrap().len(), 1);
+		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 0);
+	})
+	.await;
+}
+
+#[tokio::test]
 async fn a_phase_complete_below_the_threshold_is_held_with_the_documented_reason() {
 	let fake = install_fake_evaluation(vec![answer(0.08)]).await;
 	in_plan_session("__plan_eval_held", async {

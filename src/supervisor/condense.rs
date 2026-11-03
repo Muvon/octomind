@@ -748,10 +748,8 @@ async fn evaluate_candidates(
 		for size in window_sizes {
 			let window = answers.next()?;
 			keep.extend((0..size).map(|slot| {
-				matches!(
-					window.get(&evaluate::condense_question_id(slot)),
-					Some(octolib::evaluation::Answer::Noul { noul }) if *noul >= evaluate::CONDENSE_KEEP_AT
-				)
+				evaluate::probability(&window, &evaluate::condense_question_id(slot))
+					.is_none_or(|probability| probability >= evaluate::CONDENSE_KEEP_AT)
 			}));
 		}
 		let r = &results[result_index];

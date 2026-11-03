@@ -1563,3 +1563,21 @@ async fn evaluate_pick_promotes_the_choice_only_at_the_floor_and_falls_through_o
 	assert_eq!(evaluate_counter(Seam::Capabilities, "unavailable"), unavailable + 2);
 	assert_eq!(fake.requests().len(), 5);
 }
+
+#[tokio::test]
+#[serial]
+async fn evaluate_pick_keeps_the_cosine_decision_when_the_choice_is_refused() {
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&[CAPABILITY_QUESTION_ID]),
+	)])
+	.await;
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
+	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.9, &caps[0]), (0.5, &caps[1])];
+	let unavailable = evaluate_counter(Seam::Capabilities, "unavailable");
+	let applied = evaluate_counter(Seam::Capabilities, "applied");
+
+	let picked = evaluate_pick(&evaluate_config(), "use a now please", Some(ranked[0]), &ranked).await;
+	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.9, "a")));
+	assert_eq!(evaluate_counter(Seam::Capabilities, "unavailable"), unavailable + 1);
+	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied);
+}

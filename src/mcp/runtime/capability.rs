@@ -1185,10 +1185,12 @@ async fn evaluate_pick<'a>(
 	else {
 		return cosine;
 	};
+	// The runner answers every asked id with its own type or a refusal.
 	let Some(octolib::evaluation::Answer::Choice {
 		choice, probabilities, ..
 	}) = answers.get(evaluate::CAPABILITY_QUESTION_ID)
 	else {
+		evaluate::unavailable(Seam::Capabilities, "refused");
 		return cosine;
 	};
 	let cosine_name = cosine.map(|(_, cap)| cap.name.as_str());

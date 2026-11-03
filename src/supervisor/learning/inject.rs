@@ -235,10 +235,8 @@ async fn filter_scoped_by_relevance(
 		.iter()
 		.enumerate()
 		.filter(|(index, _)| {
-			matches!(
-				answers.get(&evaluate::recall_question_id(*index)),
-				Some(octolib::evaluation::Answer::Noul { noul }) if *noul < evaluate::RECALL_KEEP_AT
-			)
+			evaluate::probability(&answers, &evaluate::recall_question_id(*index))
+				.is_some_and(|probability| probability < evaluate::RECALL_KEEP_AT)
 		})
 		.map(|(_, position)| *position)
 		.collect();

@@ -361,7 +361,7 @@ async fn judge(
 		"outputs": outputs,
 	});
 	let answers = evaluate::run(config, Seam::Advise, judged, evaluate::advise_question()).await?;
-	Some(evaluate::probability(&answers, evaluate::ADVISE_QUESTION_ID))
+	evaluate::probability(&answers, evaluate::ADVISE_QUESTION_ID)
 }
 
 /// The last `STATE_RECEIPTS` non-empty ledger lines.

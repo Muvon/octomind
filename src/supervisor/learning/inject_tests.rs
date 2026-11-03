@@ -354,6 +354,23 @@ async fn recall_gate_drops_unrelated_scoped_candidates_and_keeps_rank_order() {
 
 #[serial]
 #[tokio::test]
+async fn recall_gate_keeps_a_candidate_the_model_refused() {
+	let mut answers = nouls(&[("c0", 0.91), ("c2", 0.08)]);
+	answers.extend(crate::session::chat::test_support::refusals(&["c1"]));
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(answers)]).await;
+	let config = recall_gate_config();
+	let proj = "__inject_test_proj_gate_refusal";
+	let candidates: Vec<_> = ["kept by score", "refused", "dropped by score"]
+		.into_iter()
+		.map(|content| (lesson(proj, content, "learning", &[]), false))
+		.collect();
+	let kept = filter_scoped_by_relevance(&config, "anything", candidates).await;
+	let contents: Vec<&str> = kept.iter().map(|(l, _)| l.content.as_str()).collect();
+	assert_eq!(contents, ["kept by score", "refused"]);
+}
+
+#[serial]
+#[tokio::test]
 async fn recall_gate_skips_the_call_without_scoped_candidates_and_can_leave_globals_only() {
 	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.1)]))]).await;
 	let config = recall_gate_config();

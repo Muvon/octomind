@@ -24,7 +24,7 @@ use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls, spawn_recording_stub,
 	FakeEvaluationStep,
 };
-use crate::supervisor::evaluate::{gate_question_id, Seam};
+use crate::supervisor::evaluate::{gate_question_id, Seam, GATE_FACTORS};
 use octolib::evaluation::Question;
 
 static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
@@ -77,15 +77,23 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 	}
 }
 
-/// Noul answers `f0..fn` with the given probabilities.
-fn answers(probabilities: &[f64]) -> FakeEvaluationStep {
+/// Every gate factor Noul of findings `f0..fn`, all at the finding's probability.
+fn answer_map(probabilities: &[f64]) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
 	let pairs: Vec<(String, f64)> = probabilities
 		.iter()
 		.enumerate()
-		.map(|(slot, p)| (gate_question_id(slot), *p))
+		.flat_map(|(slot, p)| {
+			GATE_FACTORS
+				.iter()
+				.map(move |(factor, _)| (gate_question_id(slot, factor), *p))
+		})
 		.collect();
 	let borrowed: Vec<(&str, f64)> = pairs.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-	FakeEvaluationStep::Answers(nouls(&borrowed))
+	nouls(&borrowed)
+}
+
+fn answers(probabilities: &[f64]) -> FakeEvaluationStep {
+	FakeEvaluationStep::Answers(answer_map(probabilities))
 }
 
 /// Chat calls under `CallKind::Gate`: every verifier round plus, when the
@@ -138,12 +146,15 @@ async fn findings_at_the_threshold_are_refuted_and_the_rest_stand() {
 	assert_eq!(findings[0]["number"], 1);
 	assert_eq!(findings[0]["text"], TEST_FINDING);
 	assert_eq!(findings[1]["text"], README_FINDING);
-	for (slot, prefix) in [(0, "Finding 1: "), (1, "Finding 2: ")] {
-		match &request.questions[&gate_question_id(slot)] {
-			Question::Noul { instructions, .. } => {
-				assert!(instructions.as_str().unwrap().starts_with(prefix));
-			}
-			_ => panic!("gate questions are Nouls"),
+	for slot in 0..2 {
+		for (factor, _) in GATE_FACTORS {
+			assert!(
+				matches!(
+					request.questions[&gate_question_id(slot, factor)],
+					Question::Noul { .. }
+				),
+				"gate questions are Nouls"
+			);
 		}
 	}
 }
@@ -164,6 +175,27 @@ async fn a_finding_below_the_threshold_stands() {
 	let verdict = run(&config(true), ACTIONS, &[], vec![final_response(&gaps(&[TEST_GAP]))]).await;
 	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
 	assert_eq!(gate_chat_calls() - calls, 1);
+}
+
+#[tokio::test]
+async fn a_refused_finding_stands_and_one_refused_factor_does_not_block_a_refutation() {
+	let mut map = answer_map(&[0.95, 0.95]);
+	for (factor, _) in GATE_FACTORS {
+		map.insert(gate_question_id(0, factor), octolib::evaluation::Answer::Refusal);
+	}
+	map.insert(
+		gate_question_id(1, GATE_FACTORS[0].0),
+		octolib::evaluation::Answer::Refusal,
+	);
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(map)]).await;
+	let verdict = run(
+		&config(true),
+		ACTIONS,
+		&[],
+		vec![final_response(&gaps(&[TEST_GAP, README_GAP]))],
+	)
+	.await;
+	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
 }
 
 #[tokio::test]
@@ -203,7 +235,7 @@ async fn evidence_over_the_state_cap_is_read_in_slices_and_any_slice_refutes() {
 			Some(1),
 			"every slice carries every finding"
 		);
-		assert_eq!(request.questions.len(), 1);
+		assert_eq!(request.questions.len(), GATE_FACTORS.len());
 		evidence.push_str(request.state["evidence"].as_str().expect("evidence"));
 	}
 	assert!(evidence.contains(&huge), "the slices cover the evidence in order");
@@ -394,6 +426,32 @@ async fn the_evaluation_keeps_the_hunks_the_conditions_depend_on_and_stubs_the_r
 	assert_eq!(state["task"], "rename the flag");
 	assert_eq!(state["hunks"].as_array().map(Vec::len), Some(5));
 	assert_eq!(requests[0].questions.len(), 5);
+}
+
+#[tokio::test]
+async fn a_refused_hunk_is_shown_in_full() {
+	let path = "src/a.rs".to_string();
+	let mut map = nouls(&[
+		(crate::supervisor::evaluate::gate_hunk_question_id(1).as_str(), 0.1),
+		(crate::supervisor::evaluate::gate_hunk_question_id(2).as_str(), 0.9),
+	]);
+	map.insert(
+		crate::supervisor::evaluate::gate_hunk_question_id(0),
+		octolib::evaluation::Answer::Refusal,
+	);
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(map)]).await;
+	let selected = relevant_hunks(
+		&config(true),
+		"rename the flag",
+		&[],
+		&[(&path, padded_file_diff(&path, 3))],
+	)
+	.await
+	.expect("the evaluation answered");
+	let text = &selected[0].1;
+	assert!(text.contains("marker-src/a.rs-0"), "the refused hunk is shown");
+	assert!(!text.contains("marker-src/a.rs-1"));
+	assert!(text.contains("marker-src/a.rs-2"));
 }
 
 #[tokio::test]

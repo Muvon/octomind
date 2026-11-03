@@ -554,11 +554,12 @@ fn retention_chat_calls() -> u64 {
 async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
 		use crate::session::chat::test_support::{
-			install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+			install_fake_evaluation, nouls, refusals, spawn_recording_stub, FakeEvaluationStep,
 		};
 		for (step, expected) in [
 			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
 			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+			(FakeEvaluationStep::Answers(refusals(&["supported"])), false),
 			(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
 			(FakeEvaluationStep::Answers(nouls(&[])), false),
 		] {
@@ -588,11 +589,21 @@ async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_answers() {
 	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
 		use crate::session::chat::test_support::{
-			final_response, install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+			final_response, install_fake_evaluation, nouls, refusals, spawn_recording_stub, FakeEvaluationStep,
 		};
+		use crate::supervisor::evaluate::RETENTION_MERGE_FACTORS;
+		let factors = |probability: f64| {
+			let pairs: Vec<(&str, f64)> = RETENTION_MERGE_FACTORS
+				.iter()
+				.map(|(factor, _)| (*factor, probability))
+				.collect();
+			FakeEvaluationStep::Answers(nouls(&pairs))
+		};
+		let refused: Vec<&str> = RETENTION_MERGE_FACTORS.iter().map(|(factor, _)| *factor).collect();
 		for (step, expected) in [
-			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
-			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+			(factors(0.5), true),
+			(factors(0.49), false),
+			(FakeEvaluationStep::Answers(refusals(&refused)), false),
 			(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
 			(FakeEvaluationStep::Answers(nouls(&[])), false),
 		] {

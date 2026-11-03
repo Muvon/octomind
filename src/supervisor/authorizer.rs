@@ -659,7 +659,8 @@ pub async fn check_batch(
 					return Ok(proposed
 						.iter()
 						.filter(|decision| {
-							evaluate::probability(&answers, &decision.id) >= evaluate::AUTHORIZER_CONFIRM_AT
+							evaluate::probability(&answers, &decision.id)
+								.is_some_and(|probability| probability >= evaluate::AUTHORIZER_CONFIRM_AT)
 						})
 						.map(|decision| decision.id.clone())
 						.collect());
@@ -795,9 +796,12 @@ async fn prescreen_admits(
 	else {
 		return false;
 	};
-	let flagged = answers.values().any(
-		|answer| matches!(answer, octolib::evaluation::Answer::Noul { noul } if *noul >= evaluate::AUTHORIZER_FLAG_AT),
-	);
+	// A refused question is an unanswered one: the supervisor judges the batch rather than waving it through.
+	let flagged = answers.values().any(|answer| match answer {
+		octolib::evaluation::Answer::Noul { noul } => *noul >= evaluate::AUTHORIZER_FLAG_AT,
+		octolib::evaluation::Answer::Refusal => true,
+		_ => false,
+	});
 	if flagged {
 		crate::log_debug!(
 			"evaluate authorizer: batch of {} flagged, supervisor judgment runs",

@@ -330,6 +330,22 @@ async fn all_chunks_relevant_leaves_the_result_untouched() {
 }
 
 #[tokio::test]
+async fn refused_chunks_are_kept_so_the_result_stays_untouched() {
+	let ids: Vec<String> = (0..64).map(crate::supervisor::evaluate::condense_question_id).collect();
+	let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
+		crate::session::chat::test_support::refusals(&borrowed),
+	)])
+	.await;
+	let results = vec![ok("t1", &body(150))];
+	let outcomes = score(&config(true), &results, "condense-eval-refused")
+		.await
+		.expect("scored");
+	assert!(outcomes[0].content.is_none());
+	assert_eq!(outcomes[0].verdict, "keep");
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn nothing_relevant_omits_an_ok_result_and_never_an_error_result() {
 	let _data = crate::session::chat::test_support::DataDirGuard::new();

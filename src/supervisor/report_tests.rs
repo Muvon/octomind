@@ -193,3 +193,28 @@ fn advisory_only_gate_outcomes_survive_reporting_and_old_reports_still_load() {
 		.reported_findings
 		.is_empty());
 }
+
+#[test]
+fn include_replaces_findings_on_clean_gate_run_and_keeps_them_for_unrelated_usage() {
+	let mut row = MechanicUsage::default();
+	row.include(&Usage {
+		outcome: BTreeMap::from([(Outcome::Reported, 1)]),
+		reported_findings: vec!["finding 1".to_string()],
+		..Default::default()
+	});
+	assert_eq!(row.reported_findings, vec!["finding 1".to_string()]);
+	// A clean latest gate run clears the stale findings.
+	row.include(&Usage {
+		outcome: BTreeMap::from([(Outcome::Reported, 0)]),
+		..Default::default()
+	});
+	assert!(row.reported_findings.is_empty());
+	// An unrelated empty Usage (no gate run) keeps them.
+	row.include(&Usage {
+		outcome: BTreeMap::from([(Outcome::Reported, 1)]),
+		reported_findings: vec!["finding 2".to_string()],
+		..Default::default()
+	});
+	row.include(&Usage::default());
+	assert_eq!(row.reported_findings, vec!["finding 2".to_string()]);
+}

@@ -478,3 +478,30 @@ async fn reported_gate_findings_keep_only_the_latest_run_and_survive_snapshot_me
 	})
 	.await;
 }
+
+#[test]
+fn clean_gate_run_replaces_findings_but_unrelated_empty_usage_keeps_them() {
+	let findings = Usage {
+		outcome: BTreeMap::from([(Outcome::Reported, 1)]),
+		reported_findings: vec!["finding 1".to_string()],
+		..Default::default()
+	};
+	let clean_run = Usage {
+		outcome: BTreeMap::from([(Outcome::Reported, 0)]),
+		..Default::default()
+	};
+	// add: a clean latest gate run clears the previous findings.
+	let mut usage = findings.clone();
+	usage.add(&clean_run);
+	assert!(usage.reported_findings.is_empty());
+	// merge_max: same replacement, and an unrelated empty Usage never wipes findings.
+	let mut usage = findings.clone();
+	usage.merge_max(&clean_run);
+	assert!(usage.reported_findings.is_empty());
+	let mut usage = findings.clone();
+	usage.merge_max(&Usage::default());
+	assert_eq!(usage.reported_findings, vec!["finding 1".to_string()]);
+	let mut usage = findings.clone();
+	usage.add(&Usage::default());
+	assert_eq!(usage.reported_findings, vec!["finding 1".to_string()]);
+}

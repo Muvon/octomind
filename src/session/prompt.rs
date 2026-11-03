@@ -114,10 +114,10 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 /// Tells the model where its reply lands so it can pick a shape the reader can
 /// consume there: rendered markdown invites tables and diagrams, a pipe wants
 /// plain text. Guidance only — an explicit user request always wins.
-const SURFACE_TERMINAL_MARKDOWN: &str = "You run in an interactive terminal; replies render as markdown. Where it reads faster than prose, prefer tables for comparisons and multi-field lists, fenced code blocks for code, commands, trees and box-drawing diagrams, bullets for parallel items. Mermaid and images do not render here. ";
+const SURFACE_TERMINAL_MARKDOWN: &str = "You run in an interactive terminal; replies render as markdown. Put code, commands (even one-liners), trees and box-drawing diagrams in fenced code blocks. Where it reads faster than prose, prefer tables for comparisons and multi-field lists and bullets for parallel items; otherwise prose is fine. Mermaid and images do not render here. ";
 const SURFACE_TERMINAL_RAW: &str = "You run in an interactive terminal; replies print as raw text, so markdown syntax shows literally. Prefer plain text and fenced code blocks for code and commands. ";
 const SURFACE_PIPED: &str = "You run non-interactively; output goes to a program or file, not a screen. Prefer plain text and fenced code blocks for code and commands over headers, tables and other decoration. ";
-const SURFACE_CLIENT_UI: &str = "You run inside a client UI that renders markdown. Where it reads faster than prose, prefer tables for comparisons, fenced code blocks for code and commands, bullets for parallel items, and ```mermaid fences for flows, sequences and architecture. ";
+const SURFACE_CLIENT_UI: &str = "You run inside a client UI that renders markdown. Put code and commands in fenced code blocks. Where it reads faster than prose, prefer tables for comparisons, bullets for parallel items, and ```mermaid fences for flows, sequences and architecture; otherwise prose is fine. ";
 const SURFACE_USER_WINS: &str = "An explicit format request from the user overrides this.";
 
 fn output_surface_guidance(config: &crate::config::Config) -> String {

@@ -972,6 +972,13 @@ impl OctomindAgent {
 impl OctomindAgent {
 	async fn initialize(&self, args: InitializeRequest) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
+		if args
+			.client_info
+			.as_ref()
+			.is_some_and(|client| client.name == crate::mcp::agent::functions::AGENT_CLIENT_NAME)
+		{
+			crate::agent::inputs::set_process_delegated();
+		}
 		self.elicitation_support.set(ElicitationSupport::from_capabilities(
 			args.client_capabilities.elicitation.as_ref(),
 		));

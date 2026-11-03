@@ -86,6 +86,26 @@ pub fn in_non_interactive_scope() -> bool {
 	NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
 }
 
+/// One ACP process serves one client, so the client's identity is process-wide: set when that
+/// client is another octomind agent (see `AGENT_CLIENT_NAME`), never cleared in production.
+static PROCESS_DELEGATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mark this process as started by another agent, so its sessions answer as a tool result.
+pub fn set_process_delegated() {
+	PROCESS_DELEGATED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Returns `true` if the client that started this process is another octomind agent.
+pub fn is_delegated() -> bool {
+	PROCESS_DELEGATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Tests share one process; each `#[serial]` test that sets the flag starts and ends clear.
+#[cfg(test)]
+pub(crate) fn reset_process_delegated() {
+	PROCESS_DELEGATED.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Extract all unique `{{INPUT:KEY}}` keys from a raw string.
 fn extract_input_keys(raw: &str) -> Vec<String> {
 	let mut keys = Vec::new();

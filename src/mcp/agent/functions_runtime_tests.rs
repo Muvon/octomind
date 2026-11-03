@@ -24,7 +24,39 @@ fn runtime_test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
+	// The template's one retry sleeps `retry_timeout` (30s) between attempts;
+	// a failure path must surface on the first attempt.
+	config.max_retries = 0;
 	config
+}
+
+const OFFLINE_HUB: &str = "http://127.0.0.1:1";
+
+/// The probe agent registered for one test, with the default model's hub
+/// pointed at a closed port so its call fails on connect instead of reaching
+/// the hosted gateway (a slow or retrying hub hung CI past the test bound).
+/// Dropping unregisters the agent and restores the hub URL, panic or not, so a
+/// failed test cannot leave the next serial one with "already registered".
+struct ProbeAgent {
+	previous_hub: Option<String>,
+}
+
+fn register_probe_agent_offline() -> ProbeAgent {
+	let previous_hub = std::env::var(crate::account::HUB_URL_ENV).ok();
+	std::env::set_var(crate::account::HUB_URL_ENV, OFFLINE_HUB);
+	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
+	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
+	ProbeAgent { previous_hub }
+}
+
+impl Drop for ProbeAgent {
+	fn drop(&mut self) {
+		let _ = crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn");
+		match &self.previous_hub {
+			Some(url) => std::env::set_var(crate::account::HUB_URL_ENV, url),
+			None => std::env::remove_var(crate::account::HUB_URL_ENV),
+		}
+	}
 }
 
 fn agent_call(tool: &str, params: serde_json::Value) -> McpToolCall {
@@ -167,8 +199,7 @@ async fn run_dynamic_agent_in_process_cancelled_before_start_fails_fast() {
 #[tokio::test]
 #[serial]
 async fn dynamic_async_without_job_manager_is_a_tool_error() {
-	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
-	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
+	let _probe = register_probe_agent_offline();
 
 	let result = execute_agent_command(
 		&agent_call("agent_octo-probe-dyn", serde_json::json!({"task": "x", "async": true})),
@@ -183,18 +214,15 @@ async fn dynamic_async_without_job_manager_is_a_tool_error() {
 		"content: {}",
 		text_of(&result)
 	);
-
-	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn").expect("clean up probe agent");
 }
 
 #[tokio::test]
 #[serial]
 async fn dynamic_sync_api_failure_is_a_tool_error() {
-	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
-	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
+	let _probe = register_probe_agent_offline();
 
-	// The default template has no provider credentials, so the model call must
-	// fail — bounded so a hung provider still fails the test quickly.
+	// No hub listens on the offline URL, so the model call fails at connect —
+	// bounded so a regression back to a live hub still fails the test quickly.
 	let result = tokio::time::timeout(
 		std::time::Duration::from_secs(60),
 		execute_agent_command(
@@ -213,8 +241,6 @@ async fn dynamic_sync_api_failure_is_a_tool_error() {
 		"content: {}",
 		text_of(&result)
 	);
-
-	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn").expect("clean up probe agent");
 }
 
 #[tokio::test]
@@ -226,8 +252,7 @@ async fn dynamic_async_failure_releases_error_to_session_inbox() {
 	crate::session::context::with_session_id(sid.clone(), async {
 		init_job_manager();
 		crate::session::inbox::init_inbox_for_session();
-		crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
-		crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
+		let _probe = register_probe_agent_offline();
 
 		let result = execute_agent_command(
 			&agent_call("agent_octo-probe-dyn", serde_json::json!({"task": "x", "async": true})),

@@ -110,6 +110,23 @@ async fn resumed_session_gets_its_stale_system_prompt_rebuilt() {
 	assert!(session.system_prompt_built);
 }
 
+/// The delegated flag is process-global; the test owns it for its serial span and leaves it clear.
+#[tokio::test]
+#[serial_test::serial]
+async fn delegated_run_section_only_when_process_is_delegated() {
+	let config = template_config();
+	let current_dir = crate::mcp::get_thread_working_directory();
+
+	crate::agent::inputs::reset_process_delegated();
+	let before = build_system_prompt(&current_dir, &config, "assistant").await;
+	assert!(!before.contains("<delegated_run>"));
+
+	crate::agent::inputs::set_process_delegated();
+	let after = build_system_prompt(&current_dir, &config, "assistant").await;
+	crate::agent::inputs::reset_process_delegated();
+	assert!(after.contains(crate::mcp::agent::functions::DELEGATED_RUN_INSTRUCTION));
+}
+
 /// Clients re-bind a live session ahead of every turn; only the first setup
 /// after a load rebuilds, so the cached prefix is not rewritten each turn.
 #[tokio::test]

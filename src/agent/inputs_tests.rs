@@ -84,6 +84,17 @@ async fn with_non_interactive_sets_flag_inside_scope_only() {
 	assert!(!is_non_interactive(), "flag must not leak out of the scope");
 }
 
+// The flag is process-global; the test owns it for its serial span and leaves it clear.
+#[test]
+#[serial_test::serial]
+fn is_delegated_is_false_by_default_then_true_after_set() {
+	reset_process_delegated();
+	assert!(!is_delegated());
+	set_process_delegated();
+	assert!(is_delegated());
+	reset_process_delegated();
+}
+
 // --- resolve_inputs ------------------------------------------------------------
 
 #[tokio::test]

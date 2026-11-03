@@ -130,6 +130,14 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 /// compact handoff keeps fan-out cheap — the SOTA sub-agent rule.
 const AGENT_OUTPUT_CONTRACT: &str = "Return format: reply with a concise summary (≤2000 tokens) of what you did and what you found, plus the exact file paths involved. Do not paste full file contents or raw command output — the caller can open the files by path if it needs them.";
 
+/// `clientInfo.name` the ACP `initialize` of an agent-tool child carries. The child cannot tell an
+/// agent client from an IDE client otherwise, and it matches on this to learn it was delegated to.
+pub const AGENT_CLIENT_NAME: &str = "octomind-agent-tool";
+
+/// System-prompt section for a child started by another agent. Its whole reply lands in the
+/// parent's context, so it must answer as a tool result, not as a chat with a person.
+pub const DELEGATED_RUN_INSTRUCTION: &str = "<delegated_run>\nYou were started by another agent, not by a person, and your reply is consumed by that agent as a tool result. No greeting, no questions back: the caller cannot answer mid-run; when something required is missing, state exactly what is missing and stop. Lead with the outcome, then the evidence as `path:line` references and exact commands, then what you did not do. Omit narration of your process and anything the caller can open by path. Report failures as failures, never as partial success.\n</delegated_run>";
+
 pub async fn execute_agent_command(
 	call: &McpToolCall,
 	config: &crate::config::Config,
@@ -1232,7 +1240,7 @@ use crate::utils::text::truncate as truncate_action;
 fn acp_initialize_params() -> Value {
 	json!({
 		"protocolVersion": 1,
-		"clientInfo": {"name": "octomind-agent-tool", "version": "1.0"}
+		"clientInfo": {"name": AGENT_CLIENT_NAME, "version": "1.0"}
 	})
 }
 

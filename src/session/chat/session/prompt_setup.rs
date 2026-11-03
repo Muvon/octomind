@@ -25,13 +25,18 @@ use anyhow::Result;
 
 /// The system prompt for `role` as the current build and config define it.
 /// Every path that writes the system message goes through here, so a new
-/// session, a resumed one and a `/role` switch get the same text.
+/// session, a resumed one and a `/role` switch get the same text. A process started by another
+/// agent also gets the delegated-run section.
 pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role: &Config, role: &str) -> String {
 	let mut system_prompt = create_system_prompt(current_dir, config_for_role, role).await;
 	// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
 	if config_for_role.supervisor.enabled {
 		system_prompt.push_str("\n\n");
 		system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
+	}
+	if crate::agent::inputs::is_delegated() {
+		system_prompt.push_str("\n\n");
+		system_prompt.push_str(crate::mcp::agent::functions::DELEGATED_RUN_INSTRUCTION);
 	}
 	push_mcp_server_instructions(&mut system_prompt, config_for_role);
 	system_prompt.push_str("\n\n");

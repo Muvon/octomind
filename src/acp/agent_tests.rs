@@ -17,7 +17,7 @@ use crate::session::chat::test_support::EnvGuard;
 use crate::websocket::{
 	AssistantPayload, CostPayload, McpNotificationPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
 	AudioContent, ClientCapabilities, ElicitationAcceptAction, ElicitationContentValue, ElicitationFormCapabilities,
 	ElicitationMode, ElicitationScope, ElicitationUrlCapabilities, EmbeddedResource, ImageContent, McpServerHttp,
 	McpServerSse, McpServerStdio, ResourceLink, TextResourceContents,

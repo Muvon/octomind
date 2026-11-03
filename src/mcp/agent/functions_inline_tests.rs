@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 /// protocolVersion string → u16 break).
 #[test]
 fn outgoing_params_match_acp_schema() {
-	use agent_client_protocol::schema::v1::{InitializeRequest, NewSessionRequest, PromptRequest};
+	use agent_client_protocol::v1::schema::{InitializeRequest, NewSessionRequest, PromptRequest};
 
 	serde_json::from_value::<InitializeRequest>(acp_initialize_params())
 		.expect("initialize params must match ACP v1 schema");

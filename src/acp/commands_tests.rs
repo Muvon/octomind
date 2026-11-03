@@ -20,7 +20,7 @@ use super::*;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::ChatSession;
-use agent_client_protocol::schema::v1::{ExtRequest, ExtResponse};
+use agent_client_protocol::v1::schema::{ExtRequest, ExtResponse};
 use serde_json::value::RawValue;
 use std::cell::RefCell;
 use std::collections::HashMap;

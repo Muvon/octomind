@@ -277,7 +277,7 @@ commit changes. `/done` with trailing instructions is special to the prompt path
 ### Programmatic command execution
 
 Beyond the slash-command menu, clients can invoke commands programmatically through the ACP extension wire method
-`_octomind/command` (dispatched internally as `octomind/command`). The request carries `{ session_id, command, args }`
+`_octomind/command`. The request carries `{ session_id, command, args }`
 and the response returns `{ success, output, error }` with structured JSON output. The `command` value must include its
 leading slash:
 

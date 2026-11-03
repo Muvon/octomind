@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::v1::schema::{
 	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
 	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification, ClientRequest,
 	ContentBlock, ContentChunk, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
@@ -29,8 +30,8 @@ use agent_client_protocol::schema::v1::{
 	PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification, SessionUpdate,
 	StopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, UnstructuredCommandInput,
 };
-use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{ByteStreams, Client};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -1963,10 +1964,10 @@ where
 		let (tx, rx) = oneshot::channel();
 		cmd_tx
 			.send(make(tx))
-			.map_err(|_| agent_client_protocol::util::internal_error("acp actor unavailable"))?;
+			.map_err(|_| agent_client_protocol::Error::internal_error().data("acp actor unavailable"))?;
 		let result = rx
 			.await
-			.map_err(|_| agent_client_protocol::util::internal_error("acp actor dropped reply"))?;
+			.map_err(|_| agent_client_protocol::Error::internal_error().data("acp actor dropped reply"))?;
 		responder.respond_with_result(result)
 	}))
 }
@@ -1986,7 +1987,7 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 	let transport = ByteStreams::new(tokio::io::stdout().compat_write(), tokio::io::stdin().compat());
 
 	let result = agent_client_protocol::Agent
-		.builder()
+		.v1()
 		.name("octomind")
 		.on_receive_request(
 			{
@@ -2059,16 +2060,16 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 							cx.spawn(in_flight.track_future(async move {
 								let (tx, rx) = oneshot::channel();
 								cmd_tx.send(Command::Ext(ext, tx)).map_err(|_| {
-									agent_client_protocol::util::internal_error("acp actor unavailable")
+									agent_client_protocol::Error::internal_error().data("acp actor unavailable")
 								})?;
 								let value = rx
 									.await
 									.map_err(|_| {
-										agent_client_protocol::util::internal_error("acp actor dropped reply")
+										agent_client_protocol::Error::internal_error().data("acp actor dropped reply")
 									})?
 									.and_then(|resp| {
 										serde_json::to_value(resp)
-											.map_err(|e| agent_client_protocol::util::internal_error(e.to_string()))
+											.map_err(agent_client_protocol::Error::into_internal_error)
 									});
 								responder.respond_with_result(value)
 							}))

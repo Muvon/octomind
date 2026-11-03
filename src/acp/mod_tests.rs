@@ -22,8 +22,8 @@
 use super::*;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{Implementation, InitializeRequest, NewSessionRequest, PromptRequest};
 use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::v1::schema::{Implementation, InitializeRequest, NewSessionRequest, PromptRequest};
 
 fn fixture_name() -> Option<String> {
 	std::env::var("OCTOMIND_ACP_TEST_FIXTURE")

@@ -17,7 +17,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use agent_client_protocol::schema::v1::{ExtRequest, ExtResponse};
+use agent_client_protocol::v1::schema::{ExtRequest, ExtResponse};
 use agent_client_protocol::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -28,9 +28,9 @@ use crate::session::chat::session::commands::{process_command, CommandResult};
 use crate::session::chat::session::ChatSession;
 
 /// Command namespace for ACP extension methods.
-/// Note: the ACP library strips the leading '_' from the method name before routing to
-/// ext_method(), so we match against the name without the underscore prefix.
-pub const COMMAND_NAMESPACE: &str = "octomind/command";
+/// The ACP library passes extension method names exactly as sent on the wire,
+/// leading '_' included.
+pub const COMMAND_NAMESPACE: &str = "_octomind/command";
 
 /// Request payload for command execution
 #[derive(Debug, Deserialize)]
@@ -62,7 +62,7 @@ pub async fn execute_command(
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
-	conn: Option<&agent_client_protocol::ConnectionTo<agent_client_protocol::Client>>,
+	conn: Option<&agent_client_protocol::v1::ConnectionTo<agent_client_protocol::Client>>,
 ) -> CommandResponse {
 	// Acquire the same per-session exclusion lock prompt() and the inbox monitor
 	// use. Without it this path removes the session from the map with no lock, so
@@ -172,7 +172,7 @@ pub async fn handle_ext_method(
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
-	conn: Option<&agent_client_protocol::ConnectionTo<agent_client_protocol::Client>>,
+	conn: Option<&agent_client_protocol::v1::ConnectionTo<agent_client_protocol::Client>>,
 ) -> Result<ExtResponse, Error> {
 	// Only handle commands in our namespace
 	if !request.method.starts_with(COMMAND_NAMESPACE) {

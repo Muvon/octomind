@@ -264,6 +264,15 @@ impl ServerState {
 		};
 		handle.finish(chat_session, answered).await
 	}
+	/// Restarts the session's keepalive after a command frame that ends without
+	/// running a turn. `finish_keepalive` already removed the old handle, so this
+	/// cannot double-start; without it an early return (a completed `/done`, a
+	/// failed or unknown command) leaves an idle connected session with its
+	/// cache unpinged. Terminal commands (Exit/SwitchSession) must not call this.
+	async fn restart_keepalive(&self, chat_session: &ChatSession, stream: &SessionStream) {
+		let next_turn_config = session_config(&self.config, &self.role_configs, chat_session).await;
+		self.start_keepalive(chat_session, &next_turn_config, stream);
+	}
 }
 
 /// A failed load releases its admission slot; a loaded session keeps it until
@@ -1923,6 +1932,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			Ok(DoneOutcome::Failed(e)) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				let save_result = chat_session.save();
+				server.restart_keepalive(&chat_session, &stream).await;
 				server.sessions.lock().await.insert(session_id, chat_session);
 				if let Err(save_err) = save_result {
 					stream.emit(&ServerMessage::error(format!("Failed to save session: {}", save_err)))?;
@@ -1934,6 +1944,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			Err(e) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				let save_result = chat_session.save();
+				server.restart_keepalive(&chat_session, &stream).await;
 				server.sessions.lock().await.insert(session_id, chat_session);
 				if let Err(save_err) = save_result {
 					stream.emit(&ServerMessage::error(format!("Failed to save session: {}", save_err)))?;
@@ -1952,6 +1963,11 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			serde_json::json!({ "command_type": "done", "message": status_msg }),
 		);
 		let save_result = chat_session.save();
+		// A follow-up turn re-registers the keepalive itself when it ends; only a
+		// bare `/done` leaves the session idle here.
+		if args.is_empty() {
+			server.restart_keepalive(&chat_session, &stream).await;
+		}
 		server.sessions.lock().await.insert(session_id.clone(), chat_session);
 		if let Err(e) = save_result {
 			stream.emit(&ServerMessage::error(format!("Failed to save session: {}", e)))?;
@@ -1992,6 +2008,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 		Err(e) => {
 			let error = ServerMessage::error(format!("Command failed: {}", e));
 			let save_result = chat_session.save();
+			server.restart_keepalive(&chat_session, &stream).await;
 			server.sessions.lock().await.insert(session_id, chat_session);
 			if let Err(save_err) = save_result {
 				stream.emit(&ServerMessage::error(format!("Failed to save session: {}", save_err)))?;
@@ -2012,10 +2029,12 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 			.insert(session_id.clone(), Arc::new(command_config));
 	}
 
-	let restarts_keepalive = matches!(
-		command_result,
-		CommandResult::Handled | CommandResult::HandledWithOutput(_)
-	);
+	// Every non-terminal result leaves the session waiting for the client's
+	// next frame exactly like a finished turn — including an unknown command —
+	// so the keepalive the command finished above restarts; otherwise an idle
+	// session's cache expires unpinged. It runs under the config the next turn
+	// uses: a `/role` switch pinned a new one.
+	let restarts_keepalive = !matches!(command_result, CommandResult::Exit | CommandResult::SwitchSession(_));
 	let terminal = match command_result {
 		CommandResult::Handled => {
 			log_debug!("Command '{}' executed successfully", slash_command);
@@ -2064,13 +2083,8 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 		}
 	};
 
-	// A non-terminal command leaves the session waiting for the client's next
-	// frame exactly like a finished turn, so the keepalive the command finished
-	// above restarts — otherwise an idle session's cache expires unpinged. It
-	// runs under the config the next turn uses: a `/role` switch pinned a new one.
 	if restarts_keepalive {
-		let next_turn_config = session_config(&server.config, &server.role_configs, &chat_session).await;
-		server.start_keepalive(&chat_session, &next_turn_config, &stream);
+		server.restart_keepalive(&chat_session, &stream).await;
 	}
 	let save_result = chat_session.save();
 	server.sessions.lock().await.insert(session_id, chat_session);

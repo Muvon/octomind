@@ -91,9 +91,10 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 
 	prompt.push_str(
 		"\n<output-rules>\n\
-		Lead with the answer or result; <=25 words between tool calls and <=2 sentences in the final response unless more is needed. The reader is an expert: skip basics, recaps of steps taken, hedging, pleasantries, closing offers, intent narration (\"I'll now…\", \"Let me…\"), filler, and restating the request; give details, alternatives, and reasoning only when asked. Keep code, commands, paths, numbers, and errors exact, and never drop a negation or qualifier to save words.\n\
-		</output-rules>",
+		Lead with the answer or result; <=25 words between tool calls and <=2 sentences in the final response unless more is needed. The reader is an expert: skip basics, recaps of steps taken, hedging, pleasantries, closing offers, intent narration (\"I'll now…\", \"Let me…\"), filler, and restating the request; give details, alternatives, and reasoning only when asked. Keep code, commands, paths, numbers, and errors exact, and never drop a negation or qualifier to save words.\n",
 	);
+	prompt.push_str(&output_surface_guidance(config));
+	prompt.push_str("\n</output-rules>");
 
 	let commit_attribution = config.commit_attribution.trim();
 	if !commit_attribution.is_empty() {
@@ -108,6 +109,26 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 	prompt.push_str("\n</important>");
 
 	prompt
+}
+
+/// Tells the model where its reply lands so it can pick a shape the reader can
+/// consume there: rendered markdown invites tables and diagrams, a pipe wants
+/// plain text. Guidance only — an explicit user request always wins.
+const SURFACE_TERMINAL_MARKDOWN: &str = "You run in an interactive terminal; replies render as markdown. Where it reads faster than prose, prefer tables for comparisons and multi-field lists, fenced code blocks for code, commands, trees and box-drawing diagrams, bullets for parallel items. Mermaid and images do not render here. ";
+const SURFACE_TERMINAL_RAW: &str = "You run in an interactive terminal; replies print as raw text, so markdown syntax shows literally. Prefer plain text and fenced code blocks for code and commands. ";
+const SURFACE_PIPED: &str = "You run non-interactively; output goes to a program or file, not a screen. Prefer plain text and fenced code blocks for code and commands over headers, tables and other decoration. ";
+const SURFACE_CLIENT_UI: &str = "You run inside a client UI that renders markdown. Where it reads faster than prose, prefer tables for comparisons, fenced code blocks for code and commands, bullets for parallel items, and ```mermaid fences for flows, sequences and architecture. ";
+const SURFACE_USER_WINS: &str = "An explicit format request from the user overrides this.";
+
+fn output_surface_guidance(config: &crate::config::Config) -> String {
+	use crate::session::output::OutputMode;
+	let surface = match config.output_mode() {
+		OutputMode::Interactive if config.enable_markdown_rendering => SURFACE_TERMINAL_MARKDOWN,
+		OutputMode::Interactive => SURFACE_TERMINAL_RAW,
+		OutputMode::NonInteractive | OutputMode::Jsonl => SURFACE_PIPED,
+		OutputMode::WebSocket => SURFACE_CLIENT_UI,
+	};
+	format!("{surface}{SURFACE_USER_WINS}")
 }
 
 /// Static on purpose: the system prompt heads every request's cached prefix, so

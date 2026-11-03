@@ -1044,8 +1044,12 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									// Reload the configuration
 									match crate::config::Config::load() {
 										Ok(updated_config) => {
-											// Update our current config with the new role-specific config
+											// Update our current config with the new role-specific config.
+											// The output mode is resolved at startup, not stored on disk, so a
+											// reload must keep it or the rebuilt system prompt loses it.
+											let runtime_output_mode = current_config.runtime_output_mode.take();
 											current_config = updated_config.get_merged_config_for_role(&role);
+											current_config.runtime_output_mode = runtime_output_mode;
 											// Update thread config for logging macros
 											crate::config::set_thread_config(&current_config);
 											crate::config::set_thread_role(&role);

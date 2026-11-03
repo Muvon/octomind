@@ -91,6 +91,35 @@ async fn commit_attribution_is_appended_only_when_configured() {
 }
 
 #[tokio::test]
+async fn output_surface_guidance_follows_runtime_output_mode() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let cases = [
+		(Some("interactive"), true, "replies render as markdown"),
+		(Some("interactive"), false, "markdown syntax shows literally"),
+		(Some("plain"), true, "goes to a program or file"),
+		(Some("jsonl"), true, "goes to a program or file"),
+		(Some("websocket"), true, "```mermaid fences"),
+		(None, true, "goes to a program or file"),
+	];
+	for (mode, markdown, expected) in cases {
+		let mut config = template_config();
+		config.runtime_output_mode = mode.map(str::to_string);
+		config.enable_markdown_rendering = markdown;
+		let prompt = create_system_prompt(dir.path(), &config, "task_refiner").await;
+		let rules_start = prompt.find("<output-rules>").expect("output rules block");
+		let rules_end = prompt.find("</output-rules>").expect("output rules close");
+		let rules = &prompt[rules_start..rules_end];
+		assert!(rules.contains(expected), "{mode:?} markdown={markdown}: {rules}");
+		assert!(rules.contains("An explicit format request from the user overrides this."));
+		assert_eq!(
+			rules.matches("You run ").count(),
+			1,
+			"{mode:?} markdown={markdown}: {rules}"
+		);
+	}
+}
+
+#[tokio::test]
 async fn scheduling_guidance_matches_enabled_tools_and_focuses_on_tap() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	for tools in [vec![], vec!["tap"], vec!["schedule"], vec!["schedule", "tap"]] {

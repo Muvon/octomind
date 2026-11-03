@@ -3,8 +3,8 @@
     <img src="assets/logo.svg" width="560" alt="Octomind — open-source coding agent harness" />
   </a>
 
-  <h3>The open-source coding agent harness that works while you don't.</h3>
-  <p>One Rust binary, any model, MCP-native. Pipe it, schedule it, daemonize it, or embed it over ACP —<br />with guardrails as code instead of approval popups.</p>
+  <h3>Open-source coding agent harness. One Rust binary, any model, every surface.</h3>
+  <p>Run it interactively, from stdin, as a daemon, over WebSocket, or as an ACP agent in your editor — one session engine, one config.<br />A supervising model plans and checks the work. Policy lives in TOML guardrails, not approval prompts.</p>
 
   [![CI](https://github.com/Muvon/octomind/actions/workflows/ci.yml/badge.svg)](https://github.com/Muvon/octomind/actions/workflows/ci.yml)
   [![Crates.io](https://img.shields.io/crates/v/octomind?style=flat-square&color=7c3aed)](https://crates.io/crates/octomind)
@@ -21,7 +21,7 @@
 
 ---
 
-Octomind is an open-source coding agent harness. It gives an LLM real access to your repo — reading and writing files, running shells, searching code, delegating to sub-agents — through [MCP](https://modelcontextprotocol.io) tools. The same session engine works **interactively**, **piped through stdin**, as a **background daemon**, over **WebSocket**, or as an **ACP sub-agent** inside another agent's stack.
+Octomind is an open-source coding agent harness. It gives an LLM real access to your repo — reading and writing files, running shells, searching code, delegating to sub-agents — through [MCP](https://modelcontextprotocol.io) tools. The same harness runs **interactively**, **non-interactively through stdin**, as a **background daemon**, over **WebSocket**, or as an **ACP agent** inside your editor or another agent's stack.
 
 ```bash
 # Interactive
@@ -44,7 +44,7 @@ Most coding agents assume a human is watching the screen. Octomind is built for 
 - **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving while retaining task knowledge and the live exchange.
 - **Remembers your rules.** Rules and corrections you state in a session become lessons, grounded in your own words and scoped to the project and role, that come back in later sessions. See [learning](doc/usage/13-learning.md).
-- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and set spend thresholds per request and per session. A request over its threshold stops; at the session threshold a terminal session asks y/N before continuing, while a non-interactive `octomind run` stops with exit code 75.
+- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
 - **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 
 ## Quick Start
@@ -109,7 +109,7 @@ Measured on [octobench](https://github.com/Muvon/octobench) against **25 tasks h
 
 ## Guardrails: Policy as Code
 
-Drop a `.agents/guardrails.toml` in your repo. The runtime enforces it deterministically, with no code to compile and no plugin to install.
+Drop a `.agents/guardrails.toml` in your repo. Octomind enforces it deterministically, with no code to compile and no plugin to install.
 
 ```toml
 # Pre-call deny — block a class of calls before they execute
@@ -130,19 +130,21 @@ message = "Review changes before pushing."
 | **Hooks** | After a tool result | A non-zero exit injects stdout into the agent's inbox — lint and format failures become automatic corrections without restarting the turn. |
 | **Validators** | After a turn | Scripts the agent reads on its next turn. This replaces "approve this change?" prompts in autonomous loops. |
 
+If you know Claude Code hooks: guards are `PreToolUse` denies declared in TOML, hooks are `PostToolUse`, validators are `Stop` — no scripts required for the common cases.
+
 Hook and validator script examples: [Guardrails guide](doc/usage/18-guardrails.md).
 
-## Five Ways to Run It
+## One Harness, Five Surfaces
 
-The same session engine, exposed however your workflow needs it.
+The same harness, exposed wherever your workflow needs it.
 
 | Surface | Use it for | Docs |
 |---|---|---|
 | Interactive CLI | Daily work, any domain | [Sessions](doc/usage/05-sessions.md) |
-| Piped (`--format plain` / `jsonl`) | CI/CD, shell scripts, automation | [CLI reference](doc/reference/01-cli-reference.md) |
+| Non-interactive (`--format plain` / `jsonl`) | CI, scripts, scheduled jobs | [CLI reference](doc/reference/01-cli-reference.md) |
 | Daemon + `send` | Background agents, continuous monitoring | [Daemon & hooks](doc/integration/03-daemon-and-hooks.md) |
 | WebSocket (`octomind server`) | IDE plugins, dashboards, integrations | [WebSocket server](doc/integration/01-websocket-server.md) |
-| ACP (`octomind acp`) | Sub-agent inside another agent or editor | [ACP protocol](doc/integration/02-acp-protocol.md) |
+| ACP (`octomind acp`) | Agent inside Zed, JetBrains, VS Code, Neovim, or any ACP editor | [ACP protocol](doc/integration/02-acp-protocol.md) |
 
 Need machine-readable results? Pass `--schema schema.json` to constrain the final response to a JSON Schema (requires a model with structured-output support). See [Structured output](doc/usage/11-structured-output.md).
 
@@ -154,11 +156,12 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | **Roles** | Per-role model, temperature, system prompt, tools | [Roles](doc/usage/06-roles.md) |
 | **Workflows** | Multi-step pipelines, each step with its own model and toolset | [Workflows](doc/usage/09-workflows.md) |
 | **MCP client** | stdio and Streamable HTTP servers, with OAuth; enable/disable servers mid-session | [MCP tools](doc/usage/07-mcp-tools.md) |
-| **Intent-driven context** | Skills and capabilities activate on demand, keeping context small | [Skills](doc/usage/15-skills.md) |
+| **Agent Skills** | Standard `SKILL.md` skills from `.agents/skills/`, `~/.config/agents/skills/`, and taps; they activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |
 | **Local project tools** | Executable scripts in `.agents/tools/` auto-register as tools | [Local tools](doc/usage/17-local-tools.md) |
-| **Supervisor & learning** | External planning and gating; file-backed learning records | [Supervisor](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
-| **Sandbox** | `--sandbox` restricts filesystem writes to the working directory | [Config reference](doc/reference/03-config-reference.md) |
-| **Token efficiency** | Cache-aware accounting and compaction | [Token efficiency](doc/usage/16-token-efficiency.md) |
+| **Plugins & `AGENTS.md`** | Agent Plugins (`plugin.json` + skills + `mcp.json`) from taps, `.agents/plugins/`, or `~/.config/agents/plugins/`; project `AGENTS.md` loads at session start | [Configuration](doc/usage/03-configuration.md) |
+| **Supervisor & learning** | A second model plans, gates completion, and condenses tool output; lessons persist as files per project and role | [Supervisor](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
+| **Sandbox** | `--sandbox` locks writes to the working directory via Landlock (Linux) or Seatbelt (macOS), inherited by every shell, MCP server, and sub-agent | [Config reference](doc/reference/03-config-reference.md) |
+| **Token efficiency** | Cache-aware cost accounting and adaptive compression | [Token efficiency](doc/usage/16-token-efficiency.md) |
 
 ### Specialists
 
@@ -220,13 +223,13 @@ Shell completions: `octomind completion <bash|zsh|fish|elvish|powershell>`.
 
 ```toml
 [model]
-name = "openrouter:google/gemini-2.5-flash"
+name = "anthropic:claude-sonnet-5-5"
 
 [supervisor.model]
-name = "openrouter:google/gemini-2.5-flash"
+name = "anthropic:claude-haiku-5-5"
 
 [compression.model]
-name = "openrouter:google/gemini-2.5-flash"
+name = "anthropic:claude-haiku-5-5"
 ```
 
 Provider details and per-role overrides: [Providers & models](doc/usage/04-providers.md).
@@ -254,7 +257,7 @@ Full reference: [Configuration reference](doc/reference/03-config-reference.md) 
 |---|---|
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
-| `/model anthropic:claude-haiku-4-5` | Switch model mid-session |
+| `/model anthropic:claude-sonnet-5-5` | Switch model mid-session |
 | `/role developer:general` | Switch to a configured role or tap tag |
 | `/new Review auth` | Start a fresh session (title optional) |
 | `/done` | Force context compression and start background learning extraction when enabled |

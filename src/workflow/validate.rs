@@ -289,8 +289,15 @@ fn structural_check(step: &Step) -> Result<()> {
 			Ok(())
 		}
 		Step::Loop(LoopStep {
-			name, run, exit_when, ..
+			name,
+			run,
+			exit_when,
+			max_iterations,
+			..
 		}) => {
+			if *max_iterations == 0 {
+				bail!("loop step '{}': max_iterations must be >= 1", name);
+			}
 			if run.is_empty() {
 				bail!("loop step '{}' must have at least 1 sub-step", name);
 			}

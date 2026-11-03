@@ -267,11 +267,7 @@ async fn test_learning_list_rejects_invalid_token() {
 	// Tokens that are neither a page number nor a `*pattern*` must error,
 	// not silently fall back to page 1 of the unfiltered list.
 	for bad in ["bogus", "-1", "2x"] {
-		let data = learning_data(
-			handle_learning(&mut session, &["list", bad])
-				.await
-				.expect("dispatches"),
-		);
+		let data = learning_data(handle_learning(&mut session, &["list", bad]).await.expect("dispatches"));
 		assert_eq!(data["subcommand"], "error", "token {bad}: {data}");
 	}
 

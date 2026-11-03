@@ -5901,6 +5901,76 @@ async fn non_terminal_command_restarts_the_sessions_keepalive() {
 }
 
 #[tokio::test]
+async fn unknown_command_restarts_the_sessions_keepalive() {
+	let config = keepalive_config();
+	let server = LoopbackServer::start(Arc::new(config.clone())).await;
+	let session = keepalive_session("ka-unknown");
+	let stream = server.state.streams.open("ka-unknown");
+	let (sender, _receiver) = WsSender::channel();
+	stream.own(&sender);
+	server.state.start_keepalive(&session, &config, &stream);
+	server.sessions.lock().await.insert("ka-unknown".to_string(), session);
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": "ka-unknown", "command": "no-such-command"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let _error = read_until(&mut ws, |value| value["type"] == "error").await;
+	assert!(
+		server.state.keepalives.lock().unwrap().contains_key("ka-unknown"),
+		"an unknown command must not leave the session without a keepalive"
+	);
+
+	let mut session = server
+		.sessions
+		.lock()
+		.await
+		.remove("ka-unknown")
+		.expect("the session is stored back");
+	server.state.finish_keepalive(&mut session, false).await;
+	crate::session::context::cleanup_session(&"ka-unknown".to_string());
+}
+
+#[tokio::test]
+async fn bare_done_command_restarts_the_sessions_keepalive() {
+	let config = keepalive_config();
+	let server = LoopbackServer::start(Arc::new(config.clone())).await;
+	let session = keepalive_session("ka-done");
+	let stream = server.state.streams.open("ka-done");
+	let (sender, _receiver) = WsSender::channel();
+	stream.own(&sender);
+	server.state.start_keepalive(&session, &config, &stream);
+	server.sessions.lock().await.insert("ka-done".to_string(), session);
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": "ka-done", "command": "done"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let _status = read_until(&mut ws, |value| value["type"] == "status" || value["type"] == "error").await;
+	assert!(
+		server.state.keepalives.lock().unwrap().contains_key("ka-done"),
+		"a bare /done must not leave the session without a keepalive"
+	);
+
+	let mut session = server
+		.sessions
+		.lock()
+		.await
+		.remove("ka-done")
+		.expect("the session is stored back");
+	server.state.finish_keepalive(&mut session, false).await;
+	crate::session::context::cleanup_session(&"ka-done".to_string());
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 	let _data = TestDataDirGuard::new();

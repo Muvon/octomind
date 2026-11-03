@@ -1,10 +1,10 @@
 <div align="center">
   <a href="https://octomind.run">
-    <img src="assets/logo.svg" width="560" alt="Octomind — open-source AI coding agent runtime" />
+    <img src="assets/logo.svg" width="560" alt="Octomind — open-source coding agent harness" />
   </a>
 
-  <h3>The CLI-first AI coding agent runtime.</h3>
-  <p>Pipe it, schedule it, embed it. One binary, any model, MCP-native —<br />built for autonomous work, not just chat.</p>
+  <h3>The open-source coding agent harness that works while you don't.</h3>
+  <p>One Rust binary, any model, MCP-native. Pipe it, schedule it, daemonize it, or embed it over ACP —<br />with guardrails as code instead of approval popups.</p>
 
   [![CI](https://github.com/Muvon/octomind/actions/workflows/ci.yml/badge.svg)](https://github.com/Muvon/octomind/actions/workflows/ci.yml)
   [![Crates.io](https://img.shields.io/crates/v/octomind?style=flat-square&color=7c3aed)](https://crates.io/crates/octomind)
@@ -21,7 +21,7 @@
 
 ---
 
-Octomind is a CLI-first AI coding agent runtime. It gives an LLM real access to your repo — reading and writing files, running shells, searching code, delegating to sub-agents — through [MCP](https://modelcontextprotocol.io) tools. The same session engine works **interactively**, **piped through stdin**, as a **background daemon**, over **WebSocket**, or as an **ACP sub-agent** inside another agent's stack.
+Octomind is an open-source coding agent harness. It gives an LLM real access to your repo — reading and writing files, running shells, searching code, delegating to sub-agents — through [MCP](https://modelcontextprotocol.io) tools. The same session engine works **interactively**, **piped through stdin**, as a **background daemon**, over **WebSocket**, or as an **ACP sub-agent** inside another agent's stack.
 
 ```bash
 # Interactive
@@ -43,6 +43,7 @@ Most coding agents assume a human is watching the screen. Octomind is built for 
 - **Proven on real PRs.** It solved 24 of 25 held-out tasks at lower cost than the closest competitor. See the [benchmarks](#benchmarks).
 - **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving while retaining task knowledge and the live exchange.
+- **Remembers your rules.** Rules and corrections you state in a session become lessons, grounded in your own words and scoped to the project and role, that come back in later sessions. See [learning](doc/usage/13-learning.md).
 - **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and set spend thresholds per request and per session. A request over its threshold stops; at the session threshold a terminal session asks y/N before continuing, while a non-interactive `octomind run` stops with exit code 75.
 - **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 

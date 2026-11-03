@@ -743,6 +743,7 @@ Pre-flight checks (all hard-fail before any step runs):
   reachable.
 - `count` appears only on parallel sub-steps and is ≥ 2.
 - `min_success`, when set, is between 1 and the block's total replica count; `max_parallel`, when set, is ≥ 1.
+- `max_iterations` is ≥ 1.
 - A parallel block with `match` (dynamic): `source` names an available output, the regex compiles, it has **exactly
   one** sub-step, and its template does not use `count`. `min_success` (when set) is ≥ 1.
 

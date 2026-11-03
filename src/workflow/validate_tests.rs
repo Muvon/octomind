@@ -967,6 +967,62 @@ fn loop_requires_exit_when() {
 }
 
 #[test]
+fn loop_max_iterations_zero_is_rejected() {
+	let wf = parse(
+		r#"
+		name = "wf"
+		[[steps]]
+		loop = true
+		name = "spin"
+		max_iterations = 0
+		[[steps.run]]
+		name = "iter"
+		role = "developer:general"
+		prompt = "p"
+		[steps.exit_when]
+		contains = "done"
+		"#,
+	);
+	let err = validate(&wf).expect_err("loop with max iterations zero must fail");
+	assert!(err.to_string().contains("max_iterations must be >= 1"), "got: {err}");
+}
+
+#[test]
+fn loop_max_iterations_more_than_zero_passes() {
+	let wf = parse(
+		r#"
+		name = "wf"
+		[[steps]]
+		loop = true
+		name = "spin"
+		max_iterations = 1
+		[[steps.run]]
+		name = "iter"
+		role = "developer:general"
+		prompt = "p"
+		[steps.exit_when]
+		contains = "done"
+		"#,
+	);
+	validate(&wf).expect("max_iterations = 1 should pass");
+	let default_wf = parse(
+		r#"
+		name = "wf"
+		[[steps]]
+		loop = true
+		name = "spin"
+		[[steps.run]]
+		name = "iter"
+		role = "developer:general"
+		prompt = "p"
+		[steps.exit_when]
+		contains = "done"
+		"#,
+	);
+	validate(&default_wf).expect("max_iterations default should pass");
+}
+
+#[test]
 fn empty_model_and_workdir_are_rejected() {
 	let bad_model = parse(
 		r#"

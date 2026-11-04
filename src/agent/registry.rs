@@ -61,6 +61,21 @@ fn cache_path(category: &str, variant: &str) -> Result<PathBuf> {
 	fs::create_dir_all(&dir).context(format!("Failed to create agent cache dir: {}", dir.display()))?;
 	Ok(dir.join(format!("{variant}.toml")))
 }
+/// Write the manifest cache atomically: temp file in the same directory, fsync, then rename over the destination.
+///
+/// A plain `fs::write` truncates the destination first, so a concurrent reader (another process refreshing the
+/// same manifest) can observe a half-written TOML and fail to parse it. `rename()` over the destination is atomic on
+/// POSIX, so readers always see either the old or the new content.
+fn write_cache_atomic(path: &Path, content: &str) -> Result<()> {
+	let dir = path.parent().context("cache path has no parent directory")?;
+	let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+	use std::io::Write;
+	tmp.write_all(content.as_bytes())?;
+	tmp.flush()?;
+	tmp.as_file().sync_all()?;
+	tmp.persist(path).map_err(|e| e.error)?;
+	Ok(())
+}
 
 /// Check whether a cached file is stale (older than ttl).
 fn is_stale(path: &PathBuf, ttl_hours: u64) -> bool {
@@ -160,7 +175,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		tokio::spawn(async move {
 			for tap in &taps_bg {
 				if let Ok(content) = fetch_from_tap(tap, &cat, &var).await {
-					let _ = fs::write(&cache_path_bg, content);
+					let _ = write_cache_atomic(&cache_path_bg, &content);
 					return;
 				}
 			}
@@ -174,7 +189,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	for tap in &taps {
 		match fetch_from_tap(tap, &category, &variant).await {
 			Ok(content) => {
-				let _ = fs::write(&cache, &content);
+				let _ = write_cache_atomic(&cache, &content);
 				let root = tap.local_dir().unwrap_or_default();
 				return Ok((content, root));
 			}

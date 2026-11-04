@@ -130,6 +130,31 @@ fn cache_path_lives_under_agents_dir_and_creates_it() {
 	assert!(path.parent().expect("parent").is_dir(), "cache dir created");
 }
 
+/// The cache write must be atomic: a reader that opens the destination mid-write must never see truncated content.
+/// `write_cache_atomic` writes to a temp file in the same directory and renames it over the destination, so the
+/// destination is only ever the complete old or complete new content.
+#[test]
+fn write_cache_atomic_replaces_content_and_leaves_no_temp_files() {
+	let _guard = DataDirGuard::new();
+	let dir = tempfile::tempdir().expect("tempdir");
+	let dest = dir.path().join("cache.toml");
+	fs::write(&dest, "OLD").expect("seed destination");
+
+	write_cache_atomic(&dest, "NEW-CONTENT").expect("atomic write");
+
+	assert_eq!(fs::read_to_string(&dest).expect("read destination"), "NEW-CONTENT");
+	let leftovers: Vec<_> = fs::read_dir(dir.path())
+		.expect("read dir")
+		.map(|e| e.unwrap().path())
+		.collect();
+	assert_eq!(
+		leftovers.len(),
+		1,
+		"only the destination remains — no temp file left behind"
+	);
+	assert_eq!(leftovers[0], dest);
+}
+
 // ---------------------------------------------------------------------------
 // Manifest fetch
 // ---------------------------------------------------------------------------

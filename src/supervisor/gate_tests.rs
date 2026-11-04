@@ -2395,7 +2395,8 @@ fn readback_preserves_scope_after_a_ledger_preview_and_resume() {
 #[test]
 fn readback_arguments_are_bounded_and_legacy_previews_remain_explicit() {
 	let mut ledger = EvidenceLedger::default();
-	let args = serde_json::json!({"query": format!("HEAD{}TAIL", "x".repeat(READBACK_HEAD + READBACK_TAIL))});
+	// Well past the bound: a barely-oversized value is not shortened by an elision marker.
+	let args = serde_json::json!({"query": format!("HEAD{}TAIL", "x".repeat(2 * (READBACK_HEAD + READBACK_TAIL)))});
 	let seq = ledger.record("query", &args, false, false, 8);
 	ledger.record_ground(seq, "result");
 	let retained = &ledger.entries.back().unwrap().readback_args.as_ref().unwrap().text;

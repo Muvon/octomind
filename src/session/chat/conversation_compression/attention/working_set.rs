@@ -27,6 +27,11 @@ const REGION_CLOSE: &str = "[/ARTIFACT]";
 /// admitting a whole large view because one line was referenced.
 pub(super) const WORKING_WINDOWS: usize = 4;
 
+/// Lines of a failed-check log that feed the selection query. A bulk failure
+/// log is a pointer to its own recallable packet: feeding all of it lets its
+/// many terms dominate the query and crowd out the code reads under edit.
+const FAILURE_QUERY_LINES: usize = 8;
+
 static NUMBERED: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"^\+?(\d+):(?:[[:xdigit:]]+\|| ?)(.*)$").expect("numbered observation"));
 static DELETED: LazyLock<Regex> =
@@ -534,13 +539,17 @@ pub(super) fn select(
 			query.push_str(thinking);
 		}
 	}
-	// Failed checks remain subjects until a newer execution supersedes them.
+	// Failed checks remain subjects until a newer execution supersedes them,
+	// but a bulk failure log is a pointer to its own packet, not the whole text:
+	// its many terms would otherwise dominate the query and its windows crowd
+	// the code reads the open step is about to edit.
 	if let Some(failure) = messages
 		.iter()
 		.rev()
 		.find(|m| m.role == "tool" && m.content.starts_with("Command failed with exit code"))
 	{
-		query.push_str(&failure.content);
+		let head: Vec<_> = failure.content.lines().take(FAILURE_QUERY_LINES).collect();
+		query.push_str(&head.join("\n"));
 	}
 	let terms = |text: &str| -> BTreeSet<String> {
 		text.split(|c: char| !c.is_alphanumeric() && c != '_')

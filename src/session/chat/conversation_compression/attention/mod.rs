@@ -639,6 +639,20 @@ fn normalize_for_match(text: &str) -> String {
 /// silently dropped from the fold. At or above it, small packets render whole.
 const MIN_SUMMARIZE_RENDER_TOKENS: usize = 64;
 
+/// Render budget for a failed-check packet in the exact frontier. A bulk
+/// failure log is a pointer to its own recallable packet: keeping more of it
+/// exact crowds the code reads the open step is about to edit out of the
+/// frontier, which the live run then re-reads turn after turn.
+const FAILED_CHECK_RENDER_TOKENS: usize = 128;
+
+/// Whether the packet's tool result is a failed command execution: the
+/// canonical error shape the runtime emits for a non-zero exit code.
+fn is_failed_check(messages: &[Message], packet: &EvidencePacket) -> bool {
+	messages[packet.message_start..=packet.message_end]
+		.iter()
+		.any(|m| m.role == "tool" && m.content.starts_with("Command failed with exit code"))
+}
+
 /// Text of the runtime-made reference unit that covers summarize packets the
 /// folder did not cite. Deliberately a fixed pointer, not the packets'
 /// descriptors: those already render per ID in `<recall_index>`.
@@ -854,7 +868,13 @@ fn allocate_frontier(
 	let mut exact_left = exact_indices.len();
 	let mut used = 0usize;
 	for index in exact_indices {
-		let packet_budget = exact_remaining.div_ceil(exact_left);
+		let mut packet_budget = exact_remaining.div_ceil(exact_left);
+		// A failed-check log is a pointer to its own recallable packet, not
+		// frontier material: its bulk must not consume the budget the code
+		// reads under edit compete for. The failure's head/tail stays exact.
+		if is_failed_check(messages, &packets[index]) {
+			packet_budget = packet_budget.min(FAILED_CHECK_RENDER_TOKENS);
+		}
 		exact_left -= 1;
 		let mut rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
 		if let Some(pinned) = pinned.filter(|_| packets[index].kind == PacketKind::RuntimeEvent) {

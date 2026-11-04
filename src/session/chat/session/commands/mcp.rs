@@ -76,72 +76,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 		})));
 	}
 
-	// Collect server status data
-	let server_report = crate::mcp::server::get_server_status_report();
-	let mut servers_data = Vec::new();
-	let mut seen_server_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-	for server in &config_for_role.mcp.servers {
-		let (health, restart_info) = match server.connection_type() {
-			McpConnectionType::Builtin => (crate::mcp::process::ServerHealth::Running, Default::default()),
-			McpConnectionType::Http | McpConnectionType::Stdin => {
-				if let Some((h, r)) = server_report.get(server.name()) {
-					(*h, r.clone())
-				} else {
-					let health = check_server_health_on_demand(server).await;
-					(health, Default::default())
-				}
-			}
-		};
-
-		let health_str = match health {
-			crate::mcp::process::ServerHealth::Running => "running",
-			crate::mcp::process::ServerHealth::Dead => "dead",
-			crate::mcp::process::ServerHealth::Restarting => "restarting",
-			crate::mcp::process::ServerHealth::Failed => "failed",
-			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
-		};
-
-		seen_server_names.insert(server.name().to_string());
-		servers_data.push(serde_json::json!({
-			"name": server.name(),
-			"health": health_str,
-			"connection_type": server.connection_type().as_str(),
-			"tools": server.tools(),
-			"restart_count": restart_info.restart_count,
-			"consecutive_failures": restart_info.consecutive_failures,
-		}));
-	}
-
-	// Append dynamically-registered servers (capability activations, runtime
-	// `mcp add`) that aren't already in the static config — otherwise they'd
-	// show their tools under "Available Tools" but be invisible under
-	// "MCP Server Status".
-	for (name, tools, enabled) in crate::mcp::runtime::dynamic::list_servers() {
-		if !enabled || seen_server_names.contains(&name) {
-			continue;
-		}
-		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
-			(*h, r.clone())
-		} else {
-			(crate::mcp::process::ServerHealth::Running, Default::default())
-		};
-		let health_str = match health {
-			crate::mcp::process::ServerHealth::Running => "running",
-			crate::mcp::process::ServerHealth::Dead => "dead",
-			crate::mcp::process::ServerHealth::Restarting => "restarting",
-			crate::mcp::process::ServerHealth::Failed => "failed",
-			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
-		};
-		servers_data.push(serde_json::json!({
-			"name": name,
-			"health": health_str,
-			"connection_type": "dynamic",
-			"tools": tools,
-			"restart_count": restart_info.restart_count,
-			"consecutive_failures": restart_info.consecutive_failures,
-		}));
-	}
+	let mut servers_data = collect_server_status(&config_for_role).await;
 
 	// Collect tools data with short descriptions
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
@@ -188,70 +123,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 		})));
 	}
 
-	// Collect server status data
-	let server_report = crate::mcp::server::get_server_status_report();
-	let mut servers_data = Vec::new();
-	let mut seen_server_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-	for server in &config_for_role.mcp.servers {
-		let (health, restart_info) = match server.connection_type() {
-			McpConnectionType::Builtin => (crate::mcp::process::ServerHealth::Running, Default::default()),
-			McpConnectionType::Http | McpConnectionType::Stdin => {
-				if let Some((h, r)) = server_report.get(server.name()) {
-					(*h, r.clone())
-				} else {
-					let health = check_server_health_on_demand(server).await;
-					(health, Default::default())
-				}
-			}
-		};
-
-		let health_str = match health {
-			crate::mcp::process::ServerHealth::Running => "running",
-			crate::mcp::process::ServerHealth::Dead => "dead",
-			crate::mcp::process::ServerHealth::Restarting => "restarting",
-			crate::mcp::process::ServerHealth::Failed => "failed",
-			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
-		};
-
-		seen_server_names.insert(server.name().to_string());
-		servers_data.push(serde_json::json!({
-			"name": server.name(),
-			"health": health_str,
-			"connection_type": server.connection_type().as_str(),
-			"tools": server.tools(),
-			"restart_count": restart_info.restart_count,
-			"consecutive_failures": restart_info.consecutive_failures,
-		}));
-	}
-
-	// Append dynamically-registered servers (capability activations, runtime
-	// `mcp add`) that aren't already in the static config.
-	for (name, tools, enabled) in crate::mcp::runtime::dynamic::list_servers() {
-		if !enabled || seen_server_names.contains(&name) {
-			continue;
-		}
-		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
-			(*h, r.clone())
-		} else {
-			(crate::mcp::process::ServerHealth::Running, Default::default())
-		};
-		let health_str = match health {
-			crate::mcp::process::ServerHealth::Running => "running",
-			crate::mcp::process::ServerHealth::Dead => "dead",
-			crate::mcp::process::ServerHealth::Restarting => "restarting",
-			crate::mcp::process::ServerHealth::Failed => "failed",
-			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
-		};
-		servers_data.push(serde_json::json!({
-			"name": name,
-			"health": health_str,
-			"connection_type": "dynamic",
-			"tools": tools,
-			"restart_count": restart_info.restart_count,
-			"consecutive_failures": restart_info.consecutive_failures,
-		}));
-	}
+	let mut servers_data = collect_server_status(&config_for_role).await;
 
 	// Collect full tool details grouped by server
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
@@ -315,13 +187,7 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult>
 				(health, Default::default())
 			};
 
-			let health_str = match health {
-				crate::mcp::process::ServerHealth::Running => "running",
-				crate::mcp::process::ServerHealth::Dead => "dead",
-				crate::mcp::process::ServerHealth::Restarting => "restarting",
-				crate::mcp::process::ServerHealth::Failed => "failed",
-				crate::mcp::process::ServerHealth::Unreachable => "unreachable",
-			};
+			let health = health_str(health);
 
 			let last_checked_secs = restart_info
 				.last_health_check
@@ -329,7 +195,7 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult>
 
 			servers_data.push(serde_json::json!({
 				"name": server.name(),
-				"health": health_str,
+				"health": health,
 				"restart_count": restart_info.restart_count,
 				"consecutive_failures": restart_info.consecutive_failures,
 				"last_checked_secs_ago": last_checked_secs,
@@ -420,6 +286,71 @@ async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResul
 			"total_tools": available_functions.len(),
 		}),
 	})))
+}
+
+async fn collect_server_status(config_for_role: &Config) -> Vec<serde_json::Value> {
+	let server_report = crate::mcp::server::get_server_status_report();
+	let mut servers_data = Vec::new();
+	let mut seen_server_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+	for server in &config_for_role.mcp.servers {
+		let (health, restart_info) = match server.connection_type() {
+			McpConnectionType::Builtin => (crate::mcp::process::ServerHealth::Running, Default::default()),
+			McpConnectionType::Http | McpConnectionType::Stdin => {
+				if let Some((h, r)) = server_report.get(server.name()) {
+					(*h, r.clone())
+				} else {
+					let health = check_server_health_on_demand(server).await;
+					(health, Default::default())
+				}
+			}
+		};
+
+		seen_server_names.insert(server.name().to_string());
+		servers_data.push(serde_json::json!({
+			"name": server.name(),
+			"health": health_str(health),
+			"connection_type": server.connection_type().as_str(),
+			"tools": server.tools(),
+			"restart_count": restart_info.restart_count,
+			"consecutive_failures": restart_info.consecutive_failures,
+		}));
+	}
+
+	// Append dynamically-registered servers (capability activations, runtime
+	// `mcp add`) that aren't already in the static config — otherwise they'd
+	// show their tools under "Available Tools" but be invisible under
+	// "MCP Server Status".
+	for (name, tools, enabled) in crate::mcp::runtime::dynamic::list_servers() {
+		if !enabled || seen_server_names.contains(&name) {
+			continue;
+		}
+		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
+			(*h, r.clone())
+		} else {
+			(crate::mcp::process::ServerHealth::Running, Default::default())
+		};
+		servers_data.push(serde_json::json!({
+			"name": name,
+			"health": health_str(health),
+			"connection_type": "dynamic",
+			"tools": tools,
+			"restart_count": restart_info.restart_count,
+			"consecutive_failures": restart_info.consecutive_failures,
+		}));
+	}
+
+	servers_data
+}
+
+fn health_str(health: crate::mcp::process::ServerHealth) -> &'static str {
+	match health {
+		crate::mcp::process::ServerHealth::Running => "running",
+		crate::mcp::process::ServerHealth::Dead => "dead",
+		crate::mcp::process::ServerHealth::Restarting => "restarting",
+		crate::mcp::process::ServerHealth::Failed => "failed",
+		crate::mcp::process::ServerHealth::Unreachable => "unreachable",
+	}
 }
 
 /// Synthesize a `local` server entry from the project-local `.agents/tools/*`

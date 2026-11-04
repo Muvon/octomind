@@ -377,6 +377,35 @@ async fn test_dynamic_servers_appear_in_info_and_full() {
 	.await;
 }
 
+#[tokio::test]
+#[serial_test::serial]
+async fn test_info_and_full_share_server_status() {
+	let config = config_with_only_servers(vec![stdio_server("cov-shared-status")]);
+	let (_, info) = run(&config, &["info"]).await;
+	let (_, full) = run(&config, &["full"]).await;
+
+	let info_servers = info["servers"].clone();
+	let full_servers = full["servers"].clone();
+
+	// The on-demand probes write restart-info side effects; undo them before
+	// asserting so a failure cannot leak state into other tests.
+	crate::mcp::process::SERVER_RESTART_INFO
+		.write()
+		.unwrap()
+		.remove("cov-shared-status");
+
+	let servers = info_servers.as_array().expect("servers array");
+	assert!(!servers.is_empty(), "expected server status entries: {info}");
+	assert!(
+		servers.iter().any(|s| s["name"] == "cov-shared-status"),
+		"configured server missing: {info}"
+	);
+	assert_eq!(
+		info_servers, full_servers,
+		"info and full must report identical server status"
+	);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 #[serial_test::serial]

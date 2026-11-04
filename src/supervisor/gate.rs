@@ -47,7 +47,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <historical_actions trust="untrusted"> — optional, for resolved follow-ups only; bounded prior-turn calls with their earlier requests. These are historical observations, NOT actions performed this turn. Their #N outputs are available through the same readback round. Use only evidence relevant to the resolved referent; unrelated historical actions neither satisfy nor violate this turn's requirements. Earlier successful checks cannot verify subsequent changes or satisfy a request to run a fresh check.
 - <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs (cite each by its output:N, never as ground_truth), and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
-- <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative.
+- <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative. Its <action> records the tool arguments (bounded, with omissions marked) to establish execution scope; arguments are not observations of results.
 </input_format>
 
 WHAT IS REQUIRED
@@ -373,15 +373,15 @@ excuse a requirement of the request the conditions missed.
 
 const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_conditions> is present: one entry per condition, n = 1 through
    the last, each exactly once, carrying its status (matched | unmatched | unknown), its
-   observation (what demonstrates it / what shows the violation / why the evidence cannot
-   decide), on every unmatched its basis (recorded_output | ground_truth | absent_action |
+   observation (what demonstrates it / what shows the violation / the exact unresolved
+   part), on every unmatched its basis (recorded_output | ground_truth | absent_action |
    inference), and on every unknown its confidence (0..1) that it is still not demonstrated.
 "#;
 
-const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" confidence="0.0" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the confidence attribute only on an unknown line (0 to 1 that it is still not demonstrated; 1 = no supporting evidence); the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from (absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Only when an <evidence_conditions> block was given; write no condition line otherwise.
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" confidence="0.0" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the confidence attribute only on an unknown line (0 to 1 that it is still not demonstrated; 1 = no supporting evidence), whose observation names the exact unresolved part and whose sources cite omitted:N for a retained output you have not seen; the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from (sources="absent_action" for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Only when an <evidence_conditions> block was given; write no condition line otherwise.
 "#;
 
-const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources", "confidence"}; "confidence" is a number from 0 to 1 that the condition is still not demonstrated (1 = no supporting evidence) when "status" is unknown, and null otherwise; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N; absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Empty array when no <evidence_conditions> block was given.
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources", "confidence"}; "confidence" is a number from 0 to 1 that the condition is still not demonstrated (1 = no supporting evidence) when "status" is unknown, and null otherwise; on an unknown entry, "observation" names the exact unresolved part and "sources" cites omitted:N for a retained output you have not seen; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N; absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Empty array when no <evidence_conditions> block was given.
 "#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
@@ -525,6 +525,10 @@ struct LedgerEntry {
 	tool: String,
 	#[serde(default)]
 	args: String,
+	/// The ledger preview can cut off selectors and scope. Keep bounded arguments
+	/// for readback so a summary can be connected to what actually ran.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	readback_args: Option<ReadbackArguments>,
 	#[serde(default)]
 	mutation: bool,
 	#[serde(default)]
@@ -533,6 +537,30 @@ struct LedgerEntry {
 	bytes: usize,
 	#[serde(default)]
 	repeats: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ReadbackArguments {
+	text: String,
+	complete: bool,
+}
+
+impl LedgerEntry {
+	fn complete_arguments(&self) -> Option<&str> {
+		match &self.readback_args {
+			Some(args) => args.complete.then_some(args.text.as_str()),
+			None => (!self.args.is_empty() && !self.args.ends_with('…')).then_some(self.args.as_str()),
+		}
+	}
+
+	fn same_call(&self, other: &Self) -> bool {
+		self.tool == other.tool
+			&& match (self.complete_arguments(), other.complete_arguments()) {
+				(Some(a), Some(b)) => a == b,
+				// A preview cannot prove that two calls used the same selection.
+				_ => false,
+			}
+	}
 }
 
 /// Older sessions and detached jobs may have no addressable call sequence.
@@ -791,18 +819,28 @@ impl EvidenceLedger {
 				}
 			}
 		}
-		let mut args = parameters.to_string();
+		let full_args = parameters.to_string();
+		let mut args = full_args.clone();
 		if args.chars().count() > LEDGER_ARGS_MAX {
 			args = args.chars().take(LEDGER_ARGS_MAX).collect();
 			args.push('…');
 		}
+		let entry = LedgerEntry {
+			last_sequence: sequence,
+			tool: tool.to_string(),
+			args,
+			readback_args: Some(ReadbackArguments {
+				text: bounded_output(&full_args),
+				complete: full_args.chars().count() <= READBACK_HEAD + READBACK_TAIL,
+			}),
+			mutation,
+			error,
+			bytes,
+			repeats: 1,
+		};
 		if !error {
 			if let Some(last) = self.entries.back_mut() {
-				if !last.error
-					&& last.last_sequence >= self.collapse_checkpoint
-					&& last.tool == tool
-					&& last.args == args
-				{
+				if !last.error && last.last_sequence >= self.collapse_checkpoint && last.same_call(&entry) {
 					last.repeats += 1;
 					last.last_sequence = sequence;
 					last.bytes = bytes;
@@ -810,15 +848,7 @@ impl EvidenceLedger {
 				}
 			}
 		}
-		self.entries.push_back(LedgerEntry {
-			last_sequence: sequence,
-			tool: tool.to_string(),
-			args,
-			mutation,
-			error,
-			bytes,
-			repeats: 1,
-		});
+		self.entries.push_back(entry);
 		if self.entries.len() > LEDGER_CAP {
 			self.entries.pop_front();
 			self.dropped += 1;
@@ -992,13 +1022,17 @@ fn verifier_diff_budget(
 		..*input
 	};
 	let mut largest: Vec<&(u64, String)> = input.grounds.iter().collect();
-	largest.sort_by_key(|(_, output)| std::cmp::Reverse(output.chars().count()));
+	largest.sort_by_cached_key(|(sequence, _)| {
+		std::cmp::Reverse(crate::session::estimate_tokens(
+			&render_readback(input.ledger, input.grounds, &[*sequence]).text,
+		))
+	});
 	let wanted: Vec<u64> = largest
 		.iter()
 		.take(READBACK_MAX)
 		.map(|(sequence, _)| *sequence)
 		.collect();
-	let readback = render_readback(input.grounds, &wanted);
+	let readback = render_readback(input.ledger, input.grounds, &wanted);
 	let read: usize = [
 		render_gate_prompt(encoding, conditions),
 		schema,
@@ -1425,7 +1459,12 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 	// cannot answer. One bounded round lets it pull the recorded output first.
 	let wanted = report.needed_readback(&input, &visibility);
 	if !wanted.is_empty() {
-		let readback = render_readback(input.grounds, &wanted);
+		crate::supervisor::accounting::record_outcome(
+			crate::supervisor::report::Mechanic::Gate,
+			crate::supervisor::report::Outcome::Readback,
+			1,
+		);
+		let readback = render_readback(input.ledger, input.grounds, &wanted);
 		visibility = output_visibility(&input, &readback);
 		user = format!("{}{}", render_gate_input(&input), visibility.render());
 		user.push_str(&readback.text);
@@ -1451,6 +1490,11 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 		_ => None,
 	};
 	if let Some(reason) = protocol_issue {
+		crate::supervisor::accounting::record_outcome(
+			crate::supervisor::report::Mechanic::Gate,
+			crate::supervisor::report::Outcome::FormatRepair,
+			1,
+		);
 		crate::log_info!("Verify-gate protocol invalid ({}); retrying format once", reason);
 		// Do not echo parser text derived from the malformed model response back
 		// into an instruction-bearing block. The retry needs the contract, not
@@ -1642,8 +1686,8 @@ absent_action for an action <current_user_turn> explicitly requests that no reco
 Use comma-separated references in a sources attribute (tags) or sources string field (JSON).
 These references apply to gaps, yes shapes,
 and unmatched checklist entries. Unknown conditions cite omitted:N for retained outputs they
-need to see; name the specific unresolved part in the observation. A matched checklist entry names the output:N its quoted
-excerpt came from. Cite the visible observation in the finding's text.
+need to see; name the exact unresolved part in the observation. A matched checklist entry names
+the output:N its quoted excerpt came from. Cite the visible observation in the finding's text.
 A claim supported only by omitted output is a verification limit, not a task failure. The runtime
 makes it advisory only when EVERY source is omitted:N and NONE of #N's output is visible in this pass.
 A visible portion supports a finding only when it contains the quoted observation showing
@@ -2158,12 +2202,22 @@ fn outside_view(sources: &str, unseen: &HashSet<u64>) -> bool {
 /// Answer a readback request from the outputs the runtime retained. A number
 /// with nothing behind it is answered explicitly: silence would read as "that
 /// call returned nothing", which is the inference this round exists to prevent.
-fn render_readback(grounds: &[(u64, String)], wanted: &[u64]) -> RenderedEvidence {
+fn render_readback(ledger: &EvidenceLedger, grounds: &[(u64, String)], wanted: &[u64]) -> RenderedEvidence {
 	let mut block = String::from("\n\n<readback_evidence>\n");
 	let mut output_sequences = HashSet::new();
 	for sequence in wanted {
 		match grounds.iter().find(|(n, _)| n == sequence) {
 			Some((_, output)) => {
+				if let Some(entry) = ledger.entries.iter()
+					.chain(ledger.history.iter().flat_map(|turn| &turn.entries))
+					.find(|entry| entry.last_sequence == *sequence)
+				{
+					block.push_str(&format!(
+						"<action seq=\"{sequence}\">Tool: {}\n<arguments>{}</arguments></action>\n",
+						xml_text(&entry.tool),
+						xml_text(entry.readback_args.as_ref().map_or(entry.args.as_str(), |args| args.text.as_str())),
+					));
+				}
 				block.push_str(&format!(
 					"<output seq=\"{sequence}\" retained=\"yes\">\n{}\n</output>\n",
 					xml_text(&bounded_output(output))
@@ -2624,9 +2678,12 @@ impl CitationEvidence {
 					return false;
 				};
 				if last_mutation.is_some_and(|last| sequence < last)
-					|| input.ledger.entries.iter().any(|later| {
-						later.last_sequence > sequence && later.tool == entry.tool && later.args == entry.args
-					}) {
+					|| input
+						.ledger
+						.entries
+						.iter()
+						.any(|later| later.last_sequence > sequence && later.same_call(entry))
+				{
 					return false;
 				}
 				let Some((_, output)) = input.grounds.iter().find(|(n, _)| *n == sequence) else {

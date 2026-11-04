@@ -120,6 +120,8 @@ pub enum Outcome {
 	Fail,
 	Stall,
 	RefutedGaps,
+	Readback,
+	FormatRepair,
 	Reported,
 	Checked,
 	Blocked,

@@ -784,6 +784,8 @@ fn supervisor_outcome(
 			Outcome::Advised => counted("advised"),
 			Outcome::AdviceSkipped => counted("advice skipped"),
 			Outcome::AdviceControl => counted("advice control"),
+			Outcome::Readback => counted("readback"),
+			Outcome::FormatRepair => counted("format repair"),
 		};
 		parts.push(text);
 	}

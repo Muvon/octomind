@@ -207,7 +207,7 @@ fn runtime_visibility_lists_omitted_partial_and_unretained_outputs() {
 	let initial = output_visibility(&input, &EMPTY_EVIDENCE);
 	assert_eq!(initial.unseen, HashSet::from([1, 2, 3]));
 	assert!(initial.render().contains("#1: not shown in readback"));
-	let readback = output_visibility(&input, &render_readback(input.grounds, &[1, 2, 3]));
+	let readback = output_visibility(&input, &render_readback(input.ledger, input.grounds, &[1, 2, 3]));
 	assert_eq!(readback.unseen, HashSet::from([3]));
 	assert!(readback.render().contains("#2: partial: readback middle omitted"));
 	assert!(readback.render().contains("#3: not retained"));
@@ -260,7 +260,7 @@ fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
 		assert!(matches!(
 			report.verdict(
 				0,
-				&output_visibility(&input, &render_readback(input.grounds, &[1])).unseen
+				&output_visibility(&input, &render_readback(input.ledger, input.grounds, &[1])).unseen
 			),
 			GateVerdict::Gaps(_)
 		));
@@ -276,7 +276,7 @@ fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
 	};
 	ledger.record("view", &serde_json::json!({}), false, false, grounds[0].1.len());
 	let input = visibility_input(&ledger, &grounds);
-	let limited = output_visibility(&input, &render_readback(input.grounds, &[1])).unseen;
+	let limited = output_visibility(&input, &render_readback(input.ledger, input.grounds, &[1])).unseen;
 	for sources in [
 		"omitted:1",
 		"omitted:1,output:1",
@@ -304,8 +304,8 @@ fn partial_readback_blocks_omission_only_shapes_and_conditions() {
 	let seq = ledger.record("view", &serde_json::json!({}), false, false, output.len());
 	ledger.record_ground(seq, &output);
 	let input = visibility_input(&ledger, ledger.grounds());
-	let visibility = output_visibility(&input, &render_readback(input.grounds, &[seq]));
-	assert!(render_readback(input.grounds, &[seq])
+	let visibility = output_visibility(&input, &render_readback(input.ledger, input.grounds, &[seq]));
+	assert!(render_readback(input.ledger, input.grounds, &[seq])
 		.text
 		.contains("VISIBLE VIOLATION"));
 	let shapes = CLEAN_SHAPES.replace(
@@ -429,7 +429,10 @@ fn legacy_snapshot_contradictions_block_before_and_after_retention_eviction() {
 		assert!(truth.has_unknown_output_provenance);
 		let mut input = visibility_input(&ledger, ledger.grounds());
 		input.ground_truth = &truth;
-		for readback in [RenderedEvidence::default(), render_readback(input.grounds, &[1])] {
+		for readback in [
+			RenderedEvidence::default(),
+			render_readback(input.ledger, input.grounds, &[1]),
+		] {
 			let visibility = output_visibility(&input, &readback);
 			assert!(visibility.unseen.is_empty());
 			let gap = format!(
@@ -500,7 +503,7 @@ fn ground_truth_visibility_tracks_only_output_bytes_surviving_final_truncation()
 				matches!(text_report(&answer).verdict(0, &visibility.unseen), GateVerdict::Pass),
 				!visible
 			);
-			let readback = render_readback(input.grounds, &[seq]);
+			let readback = render_readback(input.ledger, input.grounds, &[seq]);
 			assert!(!output_visibility(&input, &readback).unseen.contains(&seq));
 		}
 	}
@@ -660,7 +663,7 @@ fn a_readback_resolves_the_number_the_rendered_ledger_shows() {
 	assert!(rendered.contains(&format!("#{listing} [read] view")));
 	assert!(rendered.contains(&format!("#{search} [read] search")));
 
-	let answered = render_readback(ledger.grounds(), &[listing]).text;
+	let answered = render_readback(&ledger, ledger.grounds(), &[listing]).text;
 	assert!(answered.contains(&format!("<output seq=\"{listing}\" retained=\"yes\">")));
 	assert!(answered.contains("byteplus.rs"));
 	assert!(!answered.contains("28 matches"));
@@ -670,7 +673,7 @@ fn a_readback_resolves_the_number_the_rendered_ledger_shows() {
 /// returned nothing" — the inference the whole round exists to prevent.
 #[test]
 fn an_unretained_action_is_answered_explicitly() {
-	let answered = render_readback(&[], &[7]).text;
+	let answered = render_readback(&EvidenceLedger::default(), &[], &[7]).text;
 	assert!(answered.contains(r#"<output seq="7" retained="no">"#));
 	assert!(answered.contains("says nothing about what the action returned"));
 }
@@ -1262,7 +1265,7 @@ fn record_ground_merges_a_repeated_sequence() {
 	assert_eq!(ledger.grounds().len(), 1);
 	assert!(ledger.grounds()[0].1.contains("moved to background job"));
 	assert!(ledger.grounds()[0].1.contains("status: exited with code 0"));
-	let answered = render_readback(ledger.grounds(), &[3]).text;
+	let answered = render_readback(&ledger, ledger.grounds(), &[3]).text;
 	assert!(answered.contains("moved to background job"));
 	assert!(answered.contains("status: exited with code 0"));
 }
@@ -1556,6 +1559,37 @@ mod verify_round_trip {
 		let calls = calls.lock().unwrap();
 		assert_eq!(calls.len(), 2);
 		assert!(calls[1].to_string().contains("ordinary case passed"));
+	}
+
+	#[tokio::test]
+	async fn readback_and_format_repair_are_distinct_persisted_outcomes() {
+		let _guard = ENV_LOCK.lock().await;
+		let url = spawn_stub(vec![
+			final_response(r#"<readback seq="0">show the observation</readback>"#),
+			final_response("not a valid report"),
+			final_response(&pass_answer()),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		crate::supervisor::accounting::isolated(async {
+			crate::session::context::with_session_id("gate-rounds".into(), async {
+				let grounds = vec![(0, "observed result".into())];
+				let (_tx, receiver) = rx();
+				assert_eq!(
+					verify(&gate_config(), input(&grounds, &[]), receiver).await,
+					GateVerdict::Pass
+				);
+				let accounting = crate::supervisor::accounting::take_for("gate-rounds");
+				let restored: crate::supervisor::accounting::SupervisorAccounting =
+					serde_json::from_value(serde_json::to_value(accounting).unwrap()).unwrap();
+				let outcomes = &restored.kinds[&crate::supervisor::stats::CallKind::Gate].outcome;
+				assert_eq!(outcomes[&crate::supervisor::report::Outcome::Readback], 1);
+				assert_eq!(outcomes[&crate::supervisor::report::Outcome::FormatRepair], 1);
+			})
+			.await;
+		})
+		.await;
+		std::env::remove_var("OLLAMA_API_URL");
 	}
 
 	#[tokio::test]
@@ -1863,7 +1897,9 @@ fn follow_up_evidence_survives_confirmation_turns_without_becoming_current() {
 	let (history, grounds) = ledger.verification_evidence(FollowUp);
 	assert!(history.contains("audit every provider"));
 	assert!(history.contains(&format!("#{audit}")));
-	assert!(render_readback(&grounds, &[audit]).text.contains("anthropic.rs"));
+	assert!(render_readback(&ledger, &grounds, &[audit])
+		.text
+		.contains("anthropic.rs"));
 
 	let current = ledger.record("text_editor", &serde_json::json!({"path":"new.rs"}), true, false, 8);
 	ledger.record_ground(current, "new content");
@@ -1875,8 +1911,12 @@ fn follow_up_evidence_survives_confirmation_turns_without_becoming_current() {
 		"old test success is not fresh verification"
 	);
 	let (_, grounds) = ledger.verification_evidence(FollowUp);
-	assert!(render_readback(&grounds, &[audit]).text.contains("anthropic.rs"));
-	assert!(render_readback(&grounds, &[current]).text.contains("new content"));
+	assert!(render_readback(&ledger, &grounds, &[audit])
+		.text
+		.contains("anthropic.rs"));
+	assert!(render_readback(&ledger, &grounds, &[current])
+		.text
+		.contains("new content"));
 	let (history, grounds) = ledger.verification_evidence(SelfContained);
 	assert!(history.is_empty());
 	assert_eq!(grounds, ledger.grounds());
@@ -2283,7 +2323,7 @@ fn unknown_conditions_pull_only_retained_unseen_sources_once() {
 	] {
 		let wanted = report.needed_readback(&input, &visibility);
 		assert_eq!(wanted, vec![0, 1, 2]);
-		let readback = render_readback(input.grounds, &wanted);
+		let readback = render_readback(input.ledger, input.grounds, &wanted);
 		assert!(readback.text.contains("observed result"));
 		let visible = output_visibility(&input, &readback);
 		assert!(!visible.unseen.contains(&0));
@@ -2313,4 +2353,61 @@ async fn indeterminate_diagnostics_survive_accounting_serialization() {
 		"indeterminate [protocol]: badanswer"
 	);
 	assert!(gate_diagnostic("protocol", &"x".repeat(1000)).len() < 300);
+}
+
+#[test]
+fn readback_preserves_scope_after_a_ledger_preview_and_resume() {
+	let mut ledger = EvidenceLedger::default();
+	let prefix = "nested/".repeat(LEDGER_ARGS_MAX / 7 + 1);
+	let command = format!("check {prefix}cases --filter terminal_boundary");
+	let args = serde_json::json!({"command": command});
+	let seq = ledger.record("runner", &args, false, false, 8);
+	ledger.record_ground(seq, "terminal boundary passed: 1 passed");
+	assert!(!ledger.render().contains("terminal_boundary"));
+	let restored: EvidenceLedger = serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
+	let readback = render_readback(&restored, restored.grounds(), &[seq]);
+	assert!(readback.text.contains("terminal_boundary"));
+	assert!(readback.text.contains("1 passed"));
+	assert!(readback.text.contains("<arguments>"));
+
+	// Different selections sharing the same preview must not collapse into one
+	// action and lose the earlier selection's readback address.
+	let other = serde_json::json!({"command": format!("check {prefix}cases --filter ordinary")});
+	ledger.record("runner", &other, false, false, 8);
+	assert_eq!(ledger.entries.len(), 2);
+	ledger.record("runner", &other, false, false, 8);
+	assert_eq!(ledger.entries.len(), 2);
+	assert_eq!(ledger.entries.back().unwrap().repeats, 2);
+	let observation = "\"terminal boundary passed\"";
+	assert!(CitationEvidence::observes(
+		&visibility_input(&ledger, ledger.grounds()),
+		&format!("output:{seq}"),
+		observation
+	));
+	ledger.record("runner", &args, false, false, 8);
+	assert!(!CitationEvidence::observes(
+		&visibility_input(&ledger, ledger.grounds()),
+		&format!("output:{seq}"),
+		observation
+	));
+}
+
+#[test]
+fn readback_arguments_are_bounded_and_legacy_previews_remain_explicit() {
+	let mut ledger = EvidenceLedger::default();
+	let args = serde_json::json!({"query": format!("HEAD{}TAIL", "x".repeat(READBACK_HEAD + READBACK_TAIL))});
+	let seq = ledger.record("query", &args, false, false, 8);
+	ledger.record_ground(seq, "result");
+	let retained = &ledger.entries.back().unwrap().readback_args.as_ref().unwrap().text;
+	assert!(retained.contains("HEAD"));
+	assert!(retained.contains("TAIL"));
+	assert!(retained.contains("elided from the middle"));
+	assert!(retained.len() < args.to_string().len());
+
+	let mut legacy = serde_json::to_value(&ledger).unwrap();
+	legacy["entries"][0].as_object_mut().unwrap().remove("readback_args");
+	let legacy: EvidenceLedger = serde_json::from_value(legacy).unwrap();
+	let text = render_readback(&legacy, legacy.grounds(), &[seq]).text;
+	assert!(text.contains('…'));
+	assert!(!text.contains("TAIL"));
 }

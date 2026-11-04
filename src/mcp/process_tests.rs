@@ -110,3 +110,45 @@ fn project_id_is_derived_once_per_directory() {
 	assert_ne!(octolib::utils::path_to_id(repo.path()), first);
 	assert_eq!(derive_project_id_from_path(repo.path()), first);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_workload_runs_niced_and_first_for_the_oom_killer() {
+	let read_own = |field: &str| -> i32 {
+		let stat = std::fs::read_to_string(format!("/proc/self/{field}")).expect("read /proc/self");
+		if field == "stat" {
+			// Niceness is field 19; field 2 (comm) may hold spaces, so count from its ')'.
+			let after_comm = &stat[stat.rfind(')').expect("comm end") + 2..];
+			after_comm
+				.split(' ')
+				.nth(16)
+				.expect("nice field")
+				.parse()
+				.expect("nice value")
+		} else {
+			stat.trim().parse().expect("oom_score_adj value")
+		}
+	};
+	let parent_nice = read_own("stat");
+	let parent_oom = read_own("oom_score_adj");
+
+	// The child reports its own values: `cut` and `cat` inherit the shell's.
+	let mut cmd = std::process::Command::new("sh");
+	cmd.args([
+		"-c",
+		"cut -d')' -f2 /proc/self/stat | cut -d' ' -f18; cat /proc/self/oom_score_adj",
+	]);
+	run_as_workload(&mut cmd);
+	let out = cmd.output().expect("run workload");
+	assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+	let text = String::from_utf8(out.stdout).expect("utf8");
+	let values: Vec<i32> = text.lines().map(|l| l.trim().parse().expect("number")).collect();
+
+	assert_eq!(
+		values[0],
+		(parent_nice + WORKLOAD_NICE_INCREMENT).min(19),
+		"workload niceness"
+	);
+	// A score already above 500 cannot be lowered without CAP_SYS_RESOURCE.
+	assert_eq!(values[1], parent_oom.max(500), "workload oom_score_adj");
+}

@@ -192,6 +192,7 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 	// Kill the child if this future is dropped (e.g. the timeout below elapses) —
 	// otherwise a runaway tool process is orphaned and keeps running.
 	cmd.kill_on_drop(true);
+	crate::mcp::process::run_as_workload(cmd.as_std_mut());
 
 	let mut child = {
 		let mut attempt = 0;

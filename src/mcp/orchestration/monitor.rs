@@ -433,6 +433,7 @@ async fn start_monitor(session_id: SessionId, spec: MonitorSpec, flush_interval:
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped())
 		.kill_on_drop(true);
+	crate::mcp::process::run_as_workload(command.as_std_mut());
 	let mut child = command.spawn()?;
 	let stdout = child
 		.stdout

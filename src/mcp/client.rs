@@ -704,6 +704,7 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 	cmd.process_group(0);
 	#[cfg(windows)]
 	cmd.creation_flags(0x00000200); // CREATE_NEW_PROCESS_GROUP
+	super::process::run_as_workload(cmd.as_std_mut());
 
 	let (transport, stderr) = rmcp::transport::TokioChildProcess::builder(cmd)
 		.stderr(std::process::Stdio::piped())

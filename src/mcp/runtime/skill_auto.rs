@@ -949,6 +949,7 @@ async fn run_validate_script(
 	};
 	#[cfg(not(windows))]
 	let mut command = tokio::process::Command::new(script_path);
+	crate::mcp::process::run_as_workload(command.as_std_mut());
 	let mut child = command
 		.arg("assistant")
 		.current_dir(workdir)

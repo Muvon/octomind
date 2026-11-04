@@ -375,6 +375,53 @@ fn kill_process_group(server_name: &str) {
 	}
 }
 
+/// Niceness added to every workload process: the same 10 that `nice` adds when
+/// no `-n` is given.
+#[cfg(unix)]
+const WORKLOAD_NICE_INCREMENT: libc::c_int = 10;
+
+/// OOM-killer adjustment for every workload process. Kubernetes runs its
+/// kill-first class (BestEffort) at 1000 and its own components below 0; 500
+/// puts every workload far ahead of octomind itself (0) and leaves room above.
+#[cfg(target_os = "linux")]
+const WORKLOAD_OOM_SCORE_ADJ: &[u8] = b"500";
+
+/// Start `cmd` as a workload: lower CPU priority and, on Linux, make it the OOM
+/// killer's first pick, so a heavy job an agent started can neither starve nor
+/// outlive octomind itself. This is the parent-sets-the-child pattern of nginx
+/// (`worker_priority`) and PostgreSQL (`PG_OOM_ADJUST_FILE`): both values are
+/// inherited, so only the spawning parent can tell a workload from the agent.
+///
+/// Both steps run between fork and exec, so only async-signal-safe calls are
+/// used. Their errors are ignored, as PostgreSQL ignores them: raising niceness
+/// cannot fail, and the oom write is refused only where it cannot apply (Landlock
+/// under `--sandbox` blocks /proc writes; a score already above 500 cannot drop)
+/// — the job runs either way. Windows has no inherited equivalent: unchanged.
+pub(crate) fn run_as_workload(cmd: &mut std::process::Command) {
+	#[cfg(unix)]
+	{
+		use std::os::unix::process::CommandExt;
+		// SAFETY: nice, open, write and close are async-signal-safe and touch no
+		// state shared with the parent.
+		unsafe {
+			cmd.pre_exec(|| {
+				libc::nice(WORKLOAD_NICE_INCREMENT);
+				#[cfg(target_os = "linux")]
+				{
+					let fd = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY);
+					if fd >= 0 {
+						libc::write(fd, WORKLOAD_OOM_SCORE_ADJ.as_ptr().cast(), WORKLOAD_OOM_SCORE_ADJ.len());
+						libc::close(fd);
+					}
+				}
+				Ok(())
+			});
+		}
+	}
+	#[cfg(not(unix))]
+	let _ = cmd;
+}
+
 // Locally-spawned HTTP server process. Stdio servers are owned by their rmcp
 // client connection and are not tracked here.
 pub enum ServerProcess {

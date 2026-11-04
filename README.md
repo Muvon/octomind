@@ -23,56 +23,17 @@ Octomind is an open-source coding agent harness. It gives any LLM the tools to w
 
 One diagram, the whole turn: what is assembled before the model sees the request, the tool loop, how a turn is allowed to end, and what carries over to the next session.
 
-```mermaid
-flowchart TB
-    R["Request<br/>CLI · stdin · daemon<br/>WebSocket · ACP"] --> A
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
+  <img src="assets/how-it-works-light.svg" width="100%" alt="Octomind turn flow: request, context assembly (AGENTS.md and skills, lesson recall, supervisor notes, compression), model, tool loop (guards, MCP tools, hooks, condense, detectors), verify gate, validators, response; lessons extracted after /done feed later sessions and, with evolution enabled, skill and guardrail candidates on trial">
+</picture>
 
-    subgraph A ["Context assembly — per user turn"]
-        direction LR
-        A1["AGENTS.md<br/>Agent Skills · capabilities"]
-        A2["Lesson recall<br/>one bounded pack"]
-        A3["Supervisor notes<br/>goal · plan · steer"]
-        A4["Compression<br/>fold → archive → recall tool"]
-        A1 --> A2 --> A3 --> A4
-    end
-
-    A --> M["Model<br/>any provider"]
-
-    subgraph L ["Tool loop"]
-        direction LR
-        G["Guards<br/>TOML deny rules<br/>+ optional authorizer"]
-        T["MCP tools<br/>files · shell · search · sub-agents"]
-        H["Hooks<br/>post-result scripts"]
-        C["Condense<br/>line ranges, verbatim"]
-        D["Detectors<br/>loop · no progress"]
-        G --> T --> H --> C --> D
-    end
-
-    M -->|tool calls| L
-    L -->|results| M
-
-    M -->|reports done| V["Verify gate<br/>evidence check"]
-    V -->|gaps| M
-    V -->|pass| P["Validators<br/>post-turn scripts"]
-    P --> O["Response"]
-
-    S["Supervisor model"] -.->|condense| L
-    S -.-> V
-    J["Decision model<br/>optional, calibrated"] -.-> S
-
-    O -.->|/done or exit| E["Lesson extraction"]
-    E -.-> F[("learning/project/role/")]
-    F -.->|recall| A
-    F -.->|evolution, opt-in| X["Skill + guardrail<br/>candidates on trial"]
-    X -.-> A
-```
-
-- **Context assembly** runs once per user message, not per tool round. Skills are standard `SKILL.md` folders; capabilities are tool bundles that start their own MCP servers when the prompt needs them. The lesson pack is rebuilt only on a new user message. [Skills](doc/usage/15-skills.md) · [Learning](doc/usage/13-learning.md)
+- **What the model sees** is built once per user message, not per tool round: `AGENTS.md`, the skills whose rules match the prompt (standard `SKILL.md` folders), the tool bundles those skills need (they start their own MCP servers on demand), and the few past lessons that match. [Skills](doc/usage/15-skills.md) · [Learning](doc/usage/13-learning.md)
 - **Compression** folds older turns into a summary that cites content-addressed blocks; the raw messages stay in a per-session archive and the `recall` tool brings any block back verbatim as a normal tool result, so history is never rewritten and the prompt cache survives. [Compression](doc/usage/08-compression.md)
-- **Guards, hooks, validators** are deterministic and live in `.agents/guardrails.toml` plus scripts; they run before any model opinion. The optional `[supervisor.authorizer]` (off by default) adds one supervisor-model check after the guards, blocking a call only when it independently conflicts with what you asked for. [Guardrails](doc/usage/18-guardrails.md)
-- **The supervisor** is a second model (`[supervisor.model]`): it keeps the plan and recites the goal each turn, condenses oversized tool results to line ranges (never retyped), and refuses a self-reported "done" until the evidence checks out. Detectors are fixed heuristics that fire one steer note; they never take the keyboard. [Supervisor](doc/usage/14-supervisor.md)
-- **The decision model** (`[decision]`) is optional: a calibrated classifier that answers typed yes/no questions with probabilities. When set, the supervisor routes its cheap questions there — which lessons to recall, which skill to activate, which lines to keep, whether a completion claim holds — and keeps chat calls for writing. [Calibrated decisions](doc/use-cases/23-calibrated-checks-with-evaluate.md)
-- **Learning** extracts lessons after `/done` or at exit, quoted from your own words and stored as files under `learning/<project>/<role>/`; they are recalled by relevance in later sessions. With `[supervisor.learning.evolution]` enabled, recurring lessons compile into skill and guardrail candidates that run shadow, then a randomized trial against a control arm, and go active only when they beat it. [Learning](doc/usage/13-learning.md)
+- **Guards, hooks, validators** are deterministic and live in `.agents/guardrails.toml` plus scripts; they run before any model opinion. The optional intent check (`[supervisor.authorizer]`, off by default) adds one supervisor-model look after the guards and blocks a call only when it independently conflicts with what you asked for. [Guardrails](doc/usage/18-guardrails.md)
+- **The supervisor** is a second model (`[supervisor.model]`): it keeps the plan and reminds the model of the goal each turn, cuts oversized tool results down to the lines the task needs (copied, never retyped), and refuses a self-reported "done" until the evidence checks out. The loop check is a fixed heuristic: when the model repeats itself or stalls it gets one nudge, never a takeover. [Supervisor](doc/usage/14-supervisor.md)
+- **The decision model** (`[decision]`) is optional: a classifier that answers typed yes/no questions with a probability instead of prose. When set, the supervisor sends its cheap questions there — which lessons to recall, which skill to activate, which lines to keep, whether a completion claim holds — and keeps chat calls for writing. [Calibrated decisions](doc/use-cases/23-calibrated-checks-with-evaluate.md)
+- **Learning** extracts lessons after `/done` or at exit, in your own words, into files under `learning/<project>/<role>/`; later sessions recall the ones that match. With `[supervisor.learning.evolution]` enabled, recurring lessons become skill and guardrail candidates that run in shadow first, then an A/B trial against a control arm, and go active only when they beat it. [Learning](doc/usage/13-learning.md)
 
 ## Why Octomind?
 

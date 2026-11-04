@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 740" width="1200" height="740" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8b949e"/></marker>
+<marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#A855F7"/></marker>
+</defs>
+<rect width="1200" height="740" fill="#0d1117"/>
+<rect x="216" y="16" width="960" height="96" fill="#A855F7" fill-opacity="0.07" stroke="#4c3570" stroke-width="1"/>
+<text x="228" y="32" font-size="11" letter-spacing="1.5" fill="#c4a6f0" font-weight="600">WHAT THE MODEL SEES · built per user message</text>
+<rect x="216" y="300" width="740" height="108" fill="#A855F7" fill-opacity="0.07" stroke="#4c3570" stroke-width="1"/>
+<text x="944" y="316" font-size="11" letter-spacing="1.5" fill="#c4a6f0" text-anchor="end" font-weight="600">TOOL LOOP</text>
+<path d="M192 56 L216 56" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M446 70 L466 70" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M676 70 L696 70" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M906 70 L926 70" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M636 112 L636 168" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M368 366 L378 366" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M510 366 L520 366" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M652 366 L662 366" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M794 366 L804 366" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M596 220 L596 260 L302 260 L302 334" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="440" y="254" text-anchor="middle" font-size="11" fill="#22D3EE">tool calls</text>
+<path d="M870 334 L870 260 L676 260 L676 220" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="770" y="254" text-anchor="middle" font-size="11" fill="#22D3EE">results</text>
+<path d="M716 206 L1070 206 L1070 300" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="890" y="200" text-anchor="middle" font-size="11" fill="#22D3EE">reports done</text>
+<path d="M1130 300 L1130 182 L716 182" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="890" y="176" text-anchor="middle" font-size="11" fill="#22D3EE">gaps</text>
+<path d="M1130 352 L1130 440" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1150" y="400" text-anchor="middle" font-size="11" fill="#22D3EE">pass</text>
+<path d="M1070 492 L1070 528" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M108 202 L108 232" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<path d="M108 284 L108 420 L728 420 L728 398" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<text x="400" y="434" text-anchor="middle" font-size="11" fill="#22D3EE">condense</text>
+<path d="M728 420 L1010 420 L1010 352" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<text x="870" y="434" text-anchor="middle" font-size="11" fill="#22D3EE">gate</text>
+<path d="M1070 568 L1070 620" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<path d="M964 646 L920 646" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<path d="M640 646 L596 646" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<path d="M780 672 L780 700 L1192 700 L1192 100 L1176 100" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<text x="1060" y="714" text-anchor="middle" font-size="11" fill="#22D3EE">recall</text>
+<path d="M216 646 L204 646 L204 100 L216 100" fill="none" stroke="#A855F7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#d)"/>
+<text x="300" y="714" text-anchor="middle" font-size="11" fill="#22D3EE">loads</text>
+<rect x="24" y="24" width="168" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="108.0" y="44.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Prompt</text>
+<text x="108.0" y="61.0" text-anchor="middle" font-size="11" fill="#9da7b3">CLI · stdin · daemon</text>
+<text x="108.0" y="78.0" text-anchor="middle" font-size="11" fill="#9da7b3">WebSocket · ACP</text>
+<rect x="236" y="40" width="210" height="60" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="341.0" y="66.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">AGENTS.md + skills</text>
+<text x="341.0" y="83.5" text-anchor="middle" font-size="11" fill="#9da7b3">matching tools load</text>
+<rect x="466" y="40" width="210" height="60" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="571.0" y="66.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Past lessons</text>
+<text x="571.0" y="83.5" text-anchor="middle" font-size="11" fill="#9da7b3">the few that match</text>
+<rect x="696" y="40" width="210" height="60" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="801.0" y="66.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Supervisor reminders</text>
+<text x="801.0" y="83.5" text-anchor="middle" font-size="11" fill="#9da7b3">goal · plan · nudge</text>
+<rect x="926" y="40" width="210" height="60" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="1031.0" y="58.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Compression</text>
+<text x="1031.0" y="75.0" text-anchor="middle" font-size="11" fill="#9da7b3">old turns summarized,</text>
+<text x="1031.0" y="92.0" text-anchor="middle" font-size="11" fill="#9da7b3">originals archived</text>
+<rect x="556" y="168" width="160" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="636.0" y="190.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Model</text>
+<text x="636.0" y="207.5" text-anchor="middle" font-size="11" fill="#9da7b3">any provider</text>
+<rect x="24" y="150" width="168" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="108.0" y="172.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Decision model</text>
+<text x="108.0" y="189.5" text-anchor="middle" font-size="11" fill="#9da7b3">optional yes/no judge</text>
+<rect x="24" y="232" width="168" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="108.0" y="254.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Supervisor model</text>
+<text x="108.0" y="271.5" text-anchor="middle" font-size="11" fill="#9da7b3">[supervisor.model]</text>
+<rect x="236" y="334" width="132" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="302.0" y="354.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Guards</text>
+<text x="302.0" y="371.0" text-anchor="middle" font-size="11" fill="#9da7b3">TOML deny rules</text>
+<text x="302.0" y="388.0" text-anchor="middle" font-size="11" fill="#9da7b3">+ opt. intent check</text>
+<rect x="378" y="334" width="132" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="444.0" y="354.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">MCP tools</text>
+<text x="444.0" y="371.0" text-anchor="middle" font-size="11" fill="#9da7b3">files · shell</text>
+<text x="444.0" y="388.0" text-anchor="middle" font-size="11" fill="#9da7b3">search · sub-agents</text>
+<rect x="520" y="334" width="132" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="586.0" y="354.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Hooks</text>
+<text x="586.0" y="371.0" text-anchor="middle" font-size="11" fill="#9da7b3">scripts run after</text>
+<text x="586.0" y="388.0" text-anchor="middle" font-size="11" fill="#9da7b3">each tool result</text>
+<rect x="662" y="334" width="132" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="728.0" y="354.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Condense</text>
+<text x="728.0" y="371.0" text-anchor="middle" font-size="11" fill="#9da7b3">big results cut to</text>
+<text x="728.0" y="388.0" text-anchor="middle" font-size="11" fill="#9da7b3">the lines needed</text>
+<rect x="804" y="334" width="132" height="64" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="870.0" y="354.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Loop check</text>
+<text x="870.0" y="371.0" text-anchor="middle" font-size="11" fill="#9da7b3">stuck or looping?</text>
+<text x="870.0" y="388.0" text-anchor="middle" font-size="11" fill="#9da7b3">→ one nudge</text>
+<rect x="964" y="300" width="212" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="1070.0" y="322.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Verify gate</text>
+<text x="1070.0" y="339.5" text-anchor="middle" font-size="11" fill="#9da7b3">really done?</text>
+<rect x="964" y="440" width="212" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="1070.0" y="462.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Validators</text>
+<text x="1070.0" y="479.5" text-anchor="middle" font-size="11" fill="#9da7b3">scripts run after the turn</text>
+<rect x="964" y="528" width="212" height="40" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="1070.0" y="553.0" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Response</text>
+<rect x="964" y="620" width="212" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="1070.0" y="642.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">Lessons extracted</text>
+<text x="1070.0" y="659.5" text-anchor="middle" font-size="11" fill="#9da7b3">on /done or exit</text>
+<rect x="640" y="620" width="280" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="780.0" y="642.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">learning/&lt;project&gt;/&lt;role&gt;/</text>
+<text x="780.0" y="659.5" text-anchor="middle" font-size="11" fill="#9da7b3">your rules, in your words</text>
+<rect x="216" y="620" width="380" height="52" fill="#161b22" stroke="#A855F7" stroke-width="1.5"/>
+<text x="406.0" y="642.5" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="600">New skills + guards, on trial</text>
+<text x="406.0" y="659.5" text-anchor="middle" font-size="11" fill="#9da7b3">evolution (opt-in): shadow → A/B → active</text>
+</svg>

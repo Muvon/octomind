@@ -1,0 +1,43 @@
+%% Source of truth for assets/how-it-works-{dark,light}.svg.
+%% The SVGs are hand-laid in the brand palette; regenerate from this if the flow changes.
+flowchart TB
+    R["Prompt<br/>CLI · stdin · daemon<br/>WebSocket · ACP"] --> A
+
+    subgraph A ["What the model sees — built per user message"]
+        direction LR
+        A1["AGENTS.md + skills<br/>matching tools load"]
+        A2["Past lessons<br/>the few that match"]
+        A3["Supervisor reminders<br/>goal · plan · nudge"]
+        A4["Compression<br/>old turns summarized, originals archived"]
+        A1 --> A2 --> A3 --> A4
+    end
+
+    A --> M["Model<br/>any provider"]
+
+    subgraph L ["Tool loop"]
+        direction LR
+        G["Guards<br/>TOML deny rules<br/>+ optional intent check"]
+        T["MCP tools<br/>files · shell · search · sub-agents"]
+        H["Hooks<br/>scripts run after each tool result"]
+        C["Condense<br/>big results cut to the lines needed"]
+        D["Loop check<br/>stuck or looping? → one nudge"]
+        G --> T --> H --> C --> D
+    end
+
+    M -->|tool calls| L
+    L -->|results| M
+
+    M -->|reports done| V["Verify gate<br/>really done?"]
+    V -->|gaps| M
+    V -->|pass| P["Validators<br/>scripts run after the turn"]
+    P --> O["Response"]
+
+    S["Supervisor model"] -.->|condense| L
+    S -.-> V
+    J["Decision model<br/>optional yes/no judge"] -.-> S
+
+    O -.->|/done or exit| E["Lessons extracted"]
+    E -.-> F[("learning/project/role/<br/>your rules, in your words")]
+    F -.->|recall| A
+    F -.->|evolution, opt-in| X["New skills + guards, on trial<br/>shadow → A/B → active"]
+    X -.->|loads| A

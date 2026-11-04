@@ -75,11 +75,7 @@ fn replay_saved_folds() {
 			.find_map(|line| line.strip_prefix("governance_hash: "))
 			.unwrap_or("hash")
 			.to_string();
-		pact.live_tokens = if bounded {
-			live::budget(&messages, target)
-		} else {
-			usize::MAX
-		};
+		pact.live_tokens = if bounded { live::budget(target) } else { usize::MAX };
 		// Override only the exact cap for the curve; all other deterministic
 		// selection/rendering and the residency envelope are production code.
 		let budget = if bounded {
@@ -113,7 +109,9 @@ fn replay_saved_folds() {
 		archive.path = case["archive"].as_str().unwrap_or("archive.jsonl").into();
 		archive.index_path = archive.path.with_extension("blocks.jsonl");
 		let summary = if bounded {
-			pact.render_compact(recorded, "", "replay", Some(&archive), Some(&task))
+			// Measure the view the provider receives, not the persisted full state.
+			let persisted = pact.render_compact(recorded, "", "replay", Some(&archive), Some(&task));
+			live::project(&persisted).unwrap_or(persisted)
 		} else {
 			let (_, bands) = pact.render_live_bands(Some(&archive), Some(&task), recorded);
 			let mut summary = recorded.to_string();

@@ -20,16 +20,13 @@ use super::*;
 // residency target below usually limits exact material before this cap does.
 pub(super) const MAX_FRONTIER_TOKENS: usize = 2_000;
 
-pub(super) fn budget(messages: &[Message], target: usize) -> usize {
+pub(super) fn budget(target: usize) -> usize {
 	// target_tokens prices evidence shown to the folder, not bytes to retain.
 	// Apply the controller's existing deepest fold ratio to that evidence
 	// target; otherwise exact material can consume nearly a firing threshold.
-	let target = target / super::super::decision::MAX_COMPRESSION_RATIO as usize;
-	messages
-		.iter()
-		.filter(|m| m.name.as_deref() == Some(super::super::apply::COMPRESSION_MESSAGE_NAME))
-		.map(|m| crate::session::estimate_tokens(&m.content))
-		.fold(target, usize::min)
+	// The cap follows the fold target alone: bounding it by the previous
+	// summary's size would let one small early fold pin every later one.
+	target / super::super::decision::MAX_COMPRESSION_RATIO as usize
 }
 
 pub(super) fn frontier_budget(live: usize, pinned: &PinnedState) -> usize {
@@ -40,11 +37,24 @@ pub(super) fn frontier_budget(live: usize, pinned: &PinnedState) -> usize {
 		.min(MAX_FRONTIER_TOKENS)
 }
 
+/// Wrapper attribute carrying the unit budget of the live projection, so the
+/// request-time projection reproduces the fold-time selection exactly.
+const STATE_ATTRIBUTE: &str = "state";
+const FOLDED_OPEN: &str = "<folded_state>\n";
+const FOLDED_CLOSE: &str = "</folded_state>";
+
 fn attribute<'a>(unit: &'a str, name: &str) -> &'a str {
 	unit.split(&format!("{name}=\""))
 		.nth(1)
 		.and_then(|s| s.split('"').next())
 		.unwrap_or("")
+}
+
+/// `open` through `close` inclusive.
+fn band<'a>(content: &'a str, open: &str, close: &str) -> Option<&'a str> {
+	let start = content.find(open)?;
+	let end = content[start..].find(close)? + start + close.len();
+	Some(&content[start..end])
 }
 
 fn units(body: &str) -> Vec<&str> {
@@ -62,14 +72,87 @@ fn compact_unit(unit: &str) -> String {
 	unit.replacen(&format!(" id=\"{id}\""), "", 1)
 }
 
+fn unit_text(unit: &str) -> &str {
+	unit.split_once('>').map_or("", |(_, s)| s.trim_end_matches("</unit>"))
+}
+
+/// Open work first, then failed or pending items, then corrections and
+/// decisions: those are what keeps a session from re-litigating. Plain
+/// observations and runtime reference units leave the live view first.
 fn unit_rank(unit: &str) -> (bool, bool, bool) {
+	let kind = attribute(unit, "kind");
 	(
-		attribute(unit, "kind") == "next_action" || attribute(unit, "kind") == "open_loop",
+		kind == "next_action" || kind == "open_loop",
 		matches!(attribute(unit, "status"), "pending" | "failed"),
-		attribute(unit, "kind") == "correction",
+		kind == "correction" || kind == "decision",
 	)
 }
 
+/// Units in rank order (later units first within a rank), de-duplicated by
+/// text, without those the pinned band already states. A stable sort keeps
+/// the relative order of any subsequence, so the persisted subset projects to
+/// the same sequence at request time as the full body did at fold time.
+fn ranked_units<'a>(body: &'a str, pinned: &str) -> Vec<&'a str> {
+	let mut candidates = units(body);
+	candidates.reverse();
+	candidates.sort_by_key(|unit| std::cmp::Reverse(unit_rank(unit)));
+	let mut seen = HashSet::new();
+	candidates
+		.into_iter()
+		.filter(|unit| {
+			let text = unit_text(unit);
+			seen.insert(text) && !pinned.contains(text)
+		})
+		.collect()
+}
+
+/// The live view of a folded state: whole units in rank order within
+/// `state_budget` tokens, ids dropped. Whole units are evicted, never cut into
+/// unsupported half-claims; an evicted unit stays in the persisted summary and
+/// returns to the next fold's input.
+fn projected_units(body: &str, pinned: &str, state_budget: usize) -> String {
+	let mut folded = String::new();
+	for unit in ranked_units(body, pinned) {
+		if attribute(unit, "kind") == "reference" {
+			continue;
+		}
+		let candidate = format!("{folded}{}\n", compact_unit(unit));
+		if crate::session::estimate_tokens(&candidate) <= state_budget {
+			folded = candidate;
+		}
+	}
+	folded
+}
+
+/// Every surviving unit in its original order, ids kept for provenance and
+/// reference units kept so their prior block IDs stay citable at the next fold.
+fn persisted_units(body: &str, pinned: &str) -> String {
+	let keep: HashSet<&str> = ranked_units(body, pinned).into_iter().collect();
+	units(body)
+		.into_iter()
+		.filter(|unit| keep.contains(unit))
+		.map(|unit| format!("{unit}\n"))
+		.collect()
+}
+
+/// The bounded view the provider receives for a summary written by [`render`]:
+/// `None` for a summary without a projection budget (legacy render) or one
+/// whose units already fit.
+pub(crate) fn project(content: &str) -> Option<String> {
+	let open_tag = &content[..content.find('>')?];
+	let state_budget: usize = attribute(open_tag, STATE_ATTRIBUTE).parse().ok()?;
+	let start = content.find(FOLDED_OPEN)? + FOLDED_OPEN.len();
+	let end = content[start..].find(FOLDED_CLOSE)? + start;
+	let pinned = band(content, "<pinned_state>", "</pinned_state>").unwrap_or("");
+	let projected = projected_units(&content[start..end], pinned, state_budget);
+	if projected == content[start..end] {
+		return None;
+	}
+	Some(format!("{}{}{}", &content[..start], projected, &content[end..]))
+}
+
+/// The persisted summary: every folded unit, plus the frontier and recall
+/// index sized so that the projected view ([`project`]) fits `live_tokens`.
 pub(super) fn render(
 	pact: &PactContext,
 	body: &str,
@@ -79,9 +162,6 @@ pub(super) fn render(
 	carried_request: Option<&str>,
 ) -> String {
 	let (pinned, _) = pact.render_live_bands(None, carried_request, "");
-	let wrapper = |sections: &str| {
-		format!("<conversation_summary id=\"{compression_id}\" controller=\"pact-v{}\">\n{sections}\n</conversation_summary>", CONTROLLER_VERSION)
-	};
 	let guide = archive
 		.map(|bundle| {
 			format!(
@@ -90,62 +170,50 @@ pub(super) fn render(
 			)
 		})
 		.unwrap_or_default();
-	let frame = |folded: &str, frontier: &str, index: &str| {
-		wrapper(&format!("{pinned}\n<folded_state>\n{folded}</folded_state>\n<active_frontier>\n{frontier}</active_frontier>\n<recall_index>\n{guide}{index}</recall_index>"))
+	let frame = |folded: &str, frontier: &str, index: &str, state: usize| {
+		format!(
+			"<conversation_summary id=\"{compression_id}\" controller=\"pact-v{}\" {STATE_ATTRIBUTE}=\"{state}\">\n{pinned}\n{FOLDED_OPEN}{folded}{FOLDED_CLOSE}\n<active_frontier>\n{frontier}</active_frontier>\n<recall_index>\n{guide}{index}</recall_index>\n</conversation_summary>",
+			CONTROLLER_VERSION
+		)
 	};
-	let fixed = crate::session::estimate_tokens(&frame("", "", ""));
+	let fixed = crate::session::estimate_tokens(&frame("", "", "", 0));
 	let available = pact.live_tokens.saturating_sub(fixed);
 	// Exact observations get half the discretionary space. Atomic facts and
-	// concise navigation share the other half; whole units are evicted, never
-	// cut into unsupported half-claims. The sidecar keeps every source findable.
+	// concise navigation share the other half; whole units are evicted from the
+	// view, never cut into unsupported half-claims. The sidecar keeps every
+	// source findable.
 	let mut state_budget = available / 4;
-	let mut candidates = units(body);
-	candidates.reverse();
-	candidates.sort_by_key(|unit| std::cmp::Reverse(unit_rank(unit)));
 	// Repeated folds must not halve away an already concise live action just
 	// because the prior render left unused headroom. Preserve that whole atom
 	// when it fits; optional old facts still compete in the smaller share.
-	if let Some(unit) = candidates.iter().find(|unit| attribute(unit, "kind") != "reference") {
+	if let Some(unit) = ranked_units(body, &pinned)
+		.into_iter()
+		.find(|unit| attribute(unit, "kind") != "reference")
+	{
 		let cost = crate::session::estimate_tokens(&compact_unit(unit));
 		if cost <= available {
 			state_budget = state_budget.max(cost);
 		}
 	}
-	let mut folded = String::new();
-	let mut seen = HashSet::new();
-	for unit in candidates {
-		if attribute(unit, "kind") == "reference" {
-			continue;
-		}
-		let text = unit.split_once('>').map_or("", |(_, s)| s.trim_end_matches("</unit>"));
-		if !seen.insert(text) || pinned.contains(text) {
-			continue;
-		}
-		let candidate = format!("{folded}{}\n", compact_unit(unit));
-		if crate::session::estimate_tokens(&candidate) <= state_budget {
-			folded = candidate;
-		}
-	}
-	let mut index = String::new();
+	let projected = projected_units(body, &pinned, state_budget);
+	let view = |frontier: &str, index: &str| {
+		crate::session::estimate_tokens(&frame(&projected, frontier, index, state_budget))
+	};
 
-	let frontier_budget = pact
-		.live_tokens
-		.saturating_sub(crate::session::estimate_tokens(&frame(&folded, "", &index)))
-		.min(pact.frontier_tokens);
+	let frontier_budget = pact.live_tokens.saturating_sub(view("", "")).min(pact.frontier_tokens);
 	let mut frontier = String::new();
 	for part in working_set::live_fragments(&pact.packets, &pact.pinned) {
 		let candidate = format!("{frontier}{part}\n");
-		if crate::session::estimate_tokens(&candidate) <= frontier_budget
-			&& crate::session::estimate_tokens(&frame(&folded, &candidate, &index)) <= pact.live_tokens
-		{
+		if crate::session::estimate_tokens(&candidate) <= frontier_budget && view(&candidate, "") <= pact.live_tokens {
 			frontier = candidate;
 		}
 	}
-	// Metadata yields to material already selected for the open step. The
-	// full sidecar remains linked even if no individual entry fits.
-
+	// Metadata yields to material already selected for the open step: blocks
+	// the live units cite first, then blocks any persisted unit cites. The full
+	// sidecar remains linked even if no individual entry fits.
+	let mut index = String::new();
 	let mut entries: Vec<_> = pact.packets.iter().rev().collect();
-	entries.sort_by_key(|packet| std::cmp::Reverse(folded.contains(&packet.id)));
+	entries.sort_by_key(|packet| std::cmp::Reverse((projected.contains(&packet.id), body.contains(&packet.id))));
 	for packet in entries {
 		let lines = archive
 			.and_then(|a| a.entry(&packet.id))
@@ -153,13 +221,13 @@ pub(super) fn render(
 			.unwrap_or_default();
 		let candidate = format!("{index}{}{lines} {}\n", packet.id, packet.descriptor.replace('\n', " "));
 		if crate::session::estimate_tokens(&candidate) <= available / 4
-			&& crate::session::estimate_tokens(&frame(&folded, &frontier, &candidate)) <= pact.live_tokens
+			&& view(&frontier, &candidate) <= pact.live_tokens
 		{
 			index = candidate;
 		}
 	}
 	for (id, entry) in &pact.prior_recall {
-		if !folded.contains(id) {
+		if !body.contains(id) {
 			continue;
 		}
 		let candidate = format!(
@@ -170,19 +238,17 @@ pub(super) fn render(
 			entry.descriptor.replace('\n', " ")
 		);
 		if crate::session::estimate_tokens(&candidate) <= available / 4
-			&& crate::session::estimate_tokens(&frame(&folded, &frontier, &candidate)) <= pact.live_tokens
+			&& view(&frontier, &candidate) <= pact.live_tokens
 		{
 			index = candidate;
 		}
 	}
-	let mut rendered = frame(&folded, &frontier, &index);
+	let mut rendered = frame(&persisted_units(body, &pinned), &frontier, &index, state_budget);
 	if !file_context.is_empty() {
-		let candidate = rendered.replace(
-			"</conversation_summary>",
-			&format!("<file_context>\n{file_context}\n</file_context>\n</conversation_summary>"),
-		);
-		if crate::session::estimate_tokens(&candidate) <= pact.live_tokens {
-			rendered = candidate;
+		let block = format!("<file_context>\n{file_context}\n</file_context>\n</conversation_summary>");
+		let viewed = frame(&projected, &frontier, &index, state_budget).replace("</conversation_summary>", &block);
+		if crate::session::estimate_tokens(&viewed) <= pact.live_tokens {
+			rendered = rendered.replace("</conversation_summary>", &block);
 		} else {
 			crate::log_debug!(
 				"Compression: dropped requested file context ({} tokens) — live state is capped at {} tokens",

@@ -18,7 +18,7 @@
 //! task/constraint pins, tool-call atomicity, exact active frontier, source
 //! identifiers, archive references, and attribution checks.
 
-mod live;
+pub(super) mod live;
 pub(super) mod working_set;
 
 use super::schema::{CompressionSummary, FoldedUnit};
@@ -204,7 +204,7 @@ pub(crate) async fn build(
 
 	let source_tokens = packets.iter().map(|packet| packet.tokens).sum::<usize>();
 	let target_tokens = ((source_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
-	let live_tokens = live::budget(drained, target_tokens);
+	let live_tokens = live::budget(target_tokens);
 	let frontier_tokens = live::frontier_budget(live_tokens, &pinned);
 	let grounded_hints = ground_self_report(session, drained, &packets);
 	let mut plan_focus = crate::mcp::core::plan::core::get_current_plan_display()

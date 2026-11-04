@@ -68,6 +68,28 @@ impl ChatSession {
 		self.used_memory_ids.clear();
 	}
 
+	/// Compression summaries persist every folded unit; the provider receives
+	/// the bounded projection. Swapped in right before a request and restored
+	/// with [`Self::restore_summaries_after_request`] right after, so
+	/// persistence, later folds and extraction always see the full state. The
+	/// projection is a pure function of the stored text, so the cached prefix
+	/// is byte-identical across requests.
+	pub fn project_summaries_for_request(&mut self) -> Vec<(usize, String)> {
+		let mut originals = Vec::new();
+		for (index, message) in self.session.messages.iter_mut().enumerate() {
+			if let Some(projection) = crate::session::chat::conversation_compression::summary_projection(message) {
+				originals.push((index, std::mem::replace(&mut message.content, projection)));
+			}
+		}
+		originals
+	}
+
+	pub fn restore_summaries_after_request(&mut self, originals: Vec<(usize, String)>) {
+		for (index, content) in originals {
+			self.session.messages[index].content = content;
+		}
+	}
+
 	// Sync runtime state from ChatSession fields to session.info (for persistence)
 	fn sync_runtime_state(&mut self) {
 		crate::supervisor::authorizer::sync(self);

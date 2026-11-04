@@ -15,8 +15,12 @@
 use super::super::tests::{message, pact_with};
 use super::*;
 
+fn view(summary: &str) -> String {
+	project(summary).unwrap_or_else(|| summary.to_string())
+}
+
 #[test]
-fn live_residency_is_bounded_and_nonincreasing_over_repeated_folds() {
+fn live_view_is_bounded_over_repeated_folds_while_every_unit_persists() {
 	let mut call = message("assistant", "");
 	call.tool_calls = Some(serde_json::json!([{"id":"read","name":"view","arguments":{"path":"artifact"}}]));
 	let mut result = message(
@@ -28,12 +32,15 @@ fn live_residency_is_bounded_and_nonincreasing_over_repeated_folds() {
 	);
 	result.tool_call_id = Some("read".into());
 	let mut messages = vec![call, result];
-	let mut previous = usize::MAX;
+	let facts: String = (1..=30)
+		.map(|n| format!("<unit id=\"f{n}\" kind=\"observation\" status=\"established\" refs=\"b:read\">Established fact number {n} about the artifact.</unit>"))
+		.collect();
+	let body = format!("<folded_state>{facts}<unit id=\"next\" kind=\"next_action\" status=\"pending\" refs=\"b:read\">Continue the open step.</unit></folded_state>");
 	for _ in 0..20 {
 		let mut packets = build_packets("bounded", &messages, "test");
 		link_dependencies(&mut packets);
 		let mut pact = pact_with(packets[0].clone());
-		pact.live_tokens = budget(&messages, 32_000);
+		pact.live_tokens = budget(32_000);
 		pact.frontier_tokens = frontier_budget(pact.live_tokens, &pact.pinned);
 		allocate_frontier(
 			&mut packets,
@@ -44,13 +51,19 @@ fn live_residency_is_bounded_and_nonincreasing_over_repeated_folds() {
 			Some(&pact.pinned),
 		);
 		pact.packets = packets;
-		let summary=render(&pact,"<folded_state><unit kind=\"next_action\" status=\"pending\" refs=\"b:read\">Continue the open step.</unit></folded_state>","","fold",None,Some(&pact.pinned.task.text));
-		let size = crate::session::estimate_tokens(&summary);
+		let summary = render(&pact, &body, "", "fold", None, Some(&pact.pinned.task.text));
+		assert_eq!(summary.matches("<unit ").count(), 31, "every unit persists");
+		assert!(summary.contains("id=\"f30\""), "persisted units keep their ids");
+		let view = view(&summary);
+		let size = crate::session::estimate_tokens(&view);
 		assert!(size <= pact.live_tokens, "{size} > {}", pact.live_tokens);
-		assert!(size <= previous, "{size} > {previous}");
-		assert!(summary.contains("needed material"));
-		assert!(summary.contains("Continue the open step."));
-		previous = size;
+		assert!(view.contains("needed material"));
+		assert!(view.contains("Continue the open step."));
+		assert!(
+			view.matches("<unit ").count() < 31,
+			"the view evicts, the record does not"
+		);
+		assert!(!view.contains("<unit id="));
 		let mut prior = message("assistant", &summary);
 		prior.name = Some(super::super::super::apply::COMPRESSION_MESSAGE_NAME.into());
 		messages = vec![prior];
@@ -76,6 +89,52 @@ fn duplicate_facts_and_navigation_do_not_regrow_in_live_state() {
 		Some(&pact.pinned.task.text),
 	);
 	assert_eq!(summary.matches("Continue once.").count(), 1);
-	assert!(!summary.contains("id=\"old\""));
-	assert!(crate::session::estimate_tokens(&summary) <= 1000);
+	assert!(!view(&summary).contains("id=\"old\""));
+	assert!(crate::session::estimate_tokens(&view(&summary)) <= 1000);
+}
+
+#[test]
+fn projection_evicts_observations_before_decisions_and_is_stable_across_requests() {
+	let mut pact = pact_with(super::super::tests::packet(
+		"b:read",
+		Provenance::ToolObserved,
+		Lane::KeepExact,
+	));
+	pact.live_tokens = 260;
+	pact.frontier_tokens = 0;
+	let unit = |id: &str, kind: &str, text: &str| {
+		format!("<unit id=\"{id}\" kind=\"{kind}\" status=\"established\" refs=\"b:read\">{text}</unit>")
+	};
+	let body = format!(
+		"<folded_state>{}{}{}</folded_state>",
+		unit(
+			"o1",
+			"observation",
+			"The parser module has twelve public functions and three private helpers."
+		),
+		unit(
+			"d1",
+			"decision",
+			"Use the streaming parser; the batch one was rejected for memory."
+		),
+		unit(
+			"o2",
+			"observation",
+			"The test suite takes about forty seconds on the development machine."
+		)
+	);
+	let summary = render(&pact, &body, "", "fold", None, Some(&pact.pinned.task.text));
+	assert_eq!(summary.matches("<unit ").count(), 3);
+	let first = view(&summary);
+	assert!(first.contains("streaming parser"), "{first}");
+	assert!(first.matches("<unit ").count() < 3, "{first}");
+	assert_eq!(view(&summary), first, "byte-identical across requests");
+}
+
+#[test]
+fn legacy_summaries_without_a_projection_budget_are_sent_as_stored() {
+	assert_eq!(
+		project("<conversation_summary id=\"old\" controller=\"pact-v1\">\n<folded_state>\n<unit id=\"a\" kind=\"observation\" status=\"established\" refs=\"b:x\">fact</unit>\n</folded_state>\n</conversation_summary>"),
+		None
+	);
 }

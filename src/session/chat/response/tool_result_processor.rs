@@ -265,8 +265,10 @@ pub async fn process_tool_results(
 		.add_mid_turn_inbox(delivered, config, operation_cancelled.clone())
 		.await?;
 
-	// Make follow-up API call
+	// Make follow-up API call; summaries are projected only for the request.
+	let full_summaries = chat_session.project_summaries_for_request();
 	let follow_up_result = make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
+	chat_session.restore_summaries_after_request(full_summaries);
 
 	// NOTE: Don't stop animation here - only stop when we're actually done with tools
 	// If there are more tools to call, the animation should continue running

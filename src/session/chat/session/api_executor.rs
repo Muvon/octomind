@@ -353,8 +353,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	{
 		crate::log_debug!("pre-request cache marker advance failed: {}", e);
 	}
-	// Materialize the active pack only for the provider request. It must never
-	// enter persistence, compression, extraction, or later conversation history.
+	// Materialize the active pack and the bounded summary views only for the
+	// provider request. Neither may enter persistence, compression, extraction,
+	// or later conversation history.
+	let full_summaries = chat_session.project_summaries_for_request();
 	chat_session.ensure_active_memory_pack_message();
 
 	// Make API call. `session.messages` is borrowed directly — no clone — and
@@ -372,6 +374,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		validation_params
 	};
 	let api_result = chat_completion_with_validation(validation_params).await;
+	// Restore by index before the pack removal can shift anything.
+	chat_session.restore_summaries_after_request(full_summaries);
 	chat_session.remove_active_memory_pack_message();
 
 	// DON'T stop animation here - process_response stops it before tool output.

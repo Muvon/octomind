@@ -33,6 +33,16 @@ mod prompt;
 mod range;
 mod schema;
 
+/// The bounded view of a compression summary for a provider request. `None`
+/// when the message is not a summary, or its folded units already fit: the
+/// persisted message keeps every unit, only the request sees the projection.
+pub(crate) fn summary_projection(message: &crate::session::Message) -> Option<String> {
+	if message.name.as_deref() != Some(apply::COMPRESSION_MESSAGE_NAME) {
+		return None;
+	}
+	attention::live::project(&message.content)
+}
+
 // Submodule entrypoints used by this orchestrator file:
 // - `ai::prepare_decision` + `ai::run_decision_call` run the LLM round-trip (they build the
 //   prompt internally via `prompt::build_compression_prompt`).

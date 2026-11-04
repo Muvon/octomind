@@ -52,6 +52,28 @@ fn selected(messages: &[Message], budget: usize) -> (Vec<EvidencePacket>, String
 }
 
 #[test]
+fn non_region_closure_keeps_shell_evidence_and_checkpoint() {
+	let failure = "thread panicked at src/deploy.rs:42";
+	let checkpoint = "Inspect the failure in src/deploy.rs";
+	let mut messages = interaction("shell", serde_json::json!({"cmd":"cargo test"}), failure, "check");
+	messages.push(message("assistant", checkpoint));
+	let original = build_packets("working-set-test", &messages, "test");
+	assert!(original.iter().all(|p| !has_regions(&messages, p)));
+	let budget = original
+		.iter()
+		.map(|p| crate::session::estimate_tokens(&render_packet(&messages, p, usize::MAX)))
+		.sum();
+	let (packets, frontier) = selected(&messages, budget);
+	assert!(frontier.contains(failure));
+	assert!(frontier.contains(checkpoint));
+	for packet in &packets {
+		assert_eq!(packet.lane, Lane::KeepExact);
+		assert_eq!(packet.prompt_content, render_packet(&messages, packet, usize::MAX));
+		assert!(!packet.exact_spans.is_empty());
+	}
+}
+
+#[test]
 fn keeps_current_regions_and_post_edit_text_with_shifted_coordinates() {
 	let mut messages = read("artifact", 1, &["first", "old", "tail"], "read");
 	messages.extend(interaction(

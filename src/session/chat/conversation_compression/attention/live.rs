@@ -127,12 +127,16 @@ fn projected_units(body: &str, pinned: &str, state_budget: usize) -> String {
 /// Every surviving unit in its original order, ids kept for provenance and
 /// reference units kept so their prior block IDs stay citable at the next fold.
 fn persisted_units(body: &str, pinned: &str) -> String {
-	let keep: HashSet<&str> = ranked_units(body, pinned).into_iter().collect();
-	units(body)
+	let mut keep: HashSet<&str> = ranked_units(body, pinned).into_iter().collect();
+	let retained: Vec<_> = units(body)
 		.into_iter()
-		.filter(|unit| keep.contains(unit))
-		.map(|unit| format!("{unit}\n"))
-		.collect()
+		.rev()
+		// Consume each selected value once, keeping its latest occurrence as
+		// ranking does. Keeping the first copy would reorder equal-rank units
+		// on the next projection; membership alone would restore every copy.
+		.filter(|unit| keep.remove(unit))
+		.collect();
+	retained.into_iter().rev().map(|unit| format!("{unit}\n")).collect()
 }
 
 /// The bounded view the provider receives for a summary written by [`render`]:

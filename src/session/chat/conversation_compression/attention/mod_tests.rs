@@ -778,6 +778,53 @@ async fn active_frontier_allocation_obeys_total_token_budget() {
 }
 
 #[tokio::test]
+async fn unrecoverable_frontier_packets_remain_eligible_for_fold_evidence() {
+	let evidence = "The check failed; inspect the observed failure before continuing.";
+	let messages = vec![message("assistant", evidence)];
+	let original = build_packets("small-frontier", &messages, "test");
+	let canonical = render_packet(&messages, &original[0], usize::MAX);
+	let evidence_budget = crate::session::estimate_tokens(&canonical);
+	let pinned = pact_with(original[0].clone()).pinned;
+	// Exercise zero and positive budgets too small for a recoverable line.
+	// The fold model still has room to see the entire observation.
+	for frontier_budget in 0..crate::session::estimate_tokens(canonical.lines().next().unwrap()) {
+		let mut packets = original.clone();
+		assert_eq!(
+			allocate_frontier(&mut packets, &messages, frontier_budget, false, "", Some(&pinned)),
+			0
+		);
+		assert_eq!(packets[0].lane, Lane::ArchiveReference);
+		assert!(packets[0].prompt_content.is_empty());
+		assert!(packets[0].exact_spans.is_empty());
+		allocate_lanes(
+			&mut packets,
+			&messages,
+			&pinned,
+			&[],
+			"",
+			(evidence_budget, frontier_budget),
+			false,
+		)
+		.await;
+		assert_eq!(packets[0].lane, Lane::Summarize);
+		assert_eq!(packets[0].prompt_content, canonical);
+		assert!(!packets[0].exact_spans.is_empty());
+		let mut pact = pact_with(packets.remove(0));
+		pact.target_tokens = evidence_budget;
+		let summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: evidence.into(),
+				kind: "observation".into(),
+				status: "tentative".into(),
+				refs: vec![pact.packets[0].id.clone()],
+			}],
+			..Default::default()
+		};
+		pact.validate_summary(&summary).unwrap();
+	}
+}
+
+#[tokio::test]
 async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
 	// /done is a task-phase boundary: the dependency-closure frontier of
 	// the finished task must NOT be carried exact into the next phase.
@@ -1645,10 +1692,18 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 	let pact = build(&session, 1, 3, 2.0, true, false)
 		.await
 		.expect("pact context builds");
-	assert!(pact.packets.iter().any(|p| p.lane == Lane::KeepExact));
+	// The bounded live projection reserves pins and folded units first
+	// (live::frontier_budget). This tiny session has no exact residency;
+	// requiring KeepExact here would only admit an invalid empty packet.
+	assert_eq!(pact.frontier_tokens, 0);
+	assert!(pact.packets.iter().all(|p| p.lane != Lane::KeepExact));
 	let (pinned_band, recall_band) = pact.render_live_bands(None, None, "");
 	assert!(pinned_band.contains("stabilise the deploy pipeline"));
 	assert!(recall_band.contains("<recall_index>"));
+	assert!(!recall_band.contains("<active_frontier>"));
+	for packet in &pact.packets {
+		assert!(recall_band.contains(&packet.id));
+	}
 }
 
 #[test]

@@ -848,6 +848,7 @@ fn allocate_frontier(
 	let mut used = 0usize;
 	for index in exact_indices {
 		let packet_budget = exact_remaining.div_ceil(exact_left);
+		exact_left -= 1;
 		let mut rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
 		if let Some(pinned) = pinned.filter(|_| packets[index].kind == PacketKind::RuntimeEvent) {
 			let canonical = render_packet(messages, &packets[index], usize::MAX);
@@ -856,13 +857,18 @@ fn allocate_frontier(
 				rendered = projected;
 			}
 		}
+		// Live residency can be too small for even one source line. Leave
+		// those packets eligible for the fold model's larger evidence budget;
+		// an empty KeepExact packet both hides evidence and fails validation.
+		if rendered.spans.is_empty() {
+			continue;
+		}
 		packets[index].lane = Lane::KeepExact;
 		packets[index].prompt_content = rendered.content;
 		packets[index].exact_spans = rendered.spans;
 		let cost = crate::session::estimate_tokens(&packets[index].prompt_content);
 		used = used.saturating_add(cost);
 		exact_remaining = exact_remaining.saturating_sub(cost);
-		exact_left -= 1;
 	}
 
 	if !minimal_frontier {

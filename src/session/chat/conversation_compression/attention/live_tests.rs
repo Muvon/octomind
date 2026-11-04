@@ -94,6 +94,28 @@ fn duplicate_facts_and_navigation_do_not_regrow_in_live_state() {
 }
 
 #[test]
+fn persistence_deduplicates_without_changing_ranked_metadata_or_source_order() {
+	let observation =
+		"<unit id=\"old\" kind=\"observation\" status=\"established\" refs=\"b:old\">Continue once.</unit>";
+	let action = "<unit id=\"next\" kind=\"next_action\" status=\"pending\" refs=\"b:new\">Continue once.</unit>";
+	let other_action =
+		"<unit id=\"other\" kind=\"next_action\" status=\"pending\" refs=\"b:other\">Verify separately.</unit>";
+	let fact = "<unit id=\"fact\" kind=\"observation\" status=\"established\" refs=\"b:fact\">A separate fact.</unit>";
+	let body = format!("{observation}{action}{fact}{other_action}{action}");
+	let persisted = persisted_units(&body, "");
+	assert_eq!(persisted, format!("{fact}\n{other_action}\n{action}\n"));
+	assert_eq!(persisted_units(&persisted, ""), persisted);
+	assert_eq!(
+		projected_units(&persisted, "", usize::MAX),
+		projected_units(&body, "", usize::MAX)
+	);
+	assert_eq!(
+		persisted_units(&body, "Continue once."),
+		format!("{fact}\n{other_action}\n")
+	);
+}
+
+#[test]
 fn projection_evicts_observations_before_decisions_and_is_stable_across_requests() {
 	let mut pact = pact_with(super::super::tests::packet(
 		"b:read",

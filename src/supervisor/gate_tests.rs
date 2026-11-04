@@ -82,7 +82,9 @@ fn condition_confidence_and_citations_have_the_same_contract_in_both_encodings()
 		("unknown", "Output unavailable", None, false),
 		("unknown", "Output unavailable", Some(1.1), false),
 		("matched", "The independent check passed", Some(0.0), false),
-		("matched", "\"The independent check passed\"", Some(0.0), true),
+		("matched", "\"The independent check passed\"", None, true),
+		("matched", "\"The independent check passed\"", Some(0.0), false),
+		("unmatched", "observed failure", Some(0.7), false),
 	] {
 		let confidence = score.map(|n| format!(" confidence=\"{n}\"")).unwrap_or_default();
 		let text = text_report(&format!(
@@ -1116,55 +1118,35 @@ fn the_schema_asks_for_the_protocol_the_checklist_enforces() {
 }
 
 #[test]
-fn the_condition_schema_requires_a_basis_only_when_unmatched() {
+fn the_condition_schema_enforces_status_fields_and_number_bounds() {
 	let schema = build_gate_schema(2);
-	let items = &schema["properties"]["conditions"]["items"];
-	assert_eq!(items.as_object().unwrap().len(), 1);
-	let branches = items["anyOf"].as_array().unwrap();
-	assert_eq!(branches.len(), 2);
-	for (branch, statuses, basis_type) in [
-		(&branches[0], serde_json::json!(["matched", "unknown"]), "null"),
-		(&branches[1], serde_json::json!(["unmatched"]), "string"),
-	] {
-		assert_eq!(branch.as_object().unwrap().len(), 4);
-		assert_eq!(branch["type"], "object");
-		assert_eq!(branch["additionalProperties"], false);
-		assert_eq!(
-			branch["required"],
-			serde_json::json!(["n", "status", "observation", "basis", "sources", "confidence"])
-		);
+	let branches = schema["properties"]["conditions"]["items"]["anyOf"].as_array().unwrap();
+	assert_eq!(branches.len(), 3);
+	for (branch, status) in branches.iter().zip(["matched", "unknown", "unmatched"]) {
 		let properties = &branch["properties"];
-		assert_eq!(properties.as_object().unwrap().len(), 6);
-		assert_eq!(properties["confidence"]["type"], serde_json::json!(["number", "null"]));
+		assert_eq!(properties["n"]["enum"], serde_json::json!([1, 2]));
+		assert_eq!(properties["status"]["enum"], serde_json::json!([status]));
 		assert_eq!(
-			properties["status"],
-			serde_json::json!({"type": "string", "enum": statuses})
-		);
-		assert_eq!(properties["basis"]["type"], basis_type);
-		assert_eq!(
-			properties["basis"]["description"],
-			"Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
+			properties["confidence"]["type"],
+			if status == "unknown" { "number" } else { "null" }
 		);
 		assert_eq!(
-			properties["n"],
-			serde_json::json!({"type": "integer", "description": "Condition number, 1-based."})
+			properties["basis"]["type"],
+			if status == "unmatched" { "string" } else { "null" }
 		);
 		assert_eq!(
-			properties["observation"],
-			serde_json::json!({"type": "string", "description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."})
+			branch["required"].as_array().unwrap().len(),
+			properties.as_object().unwrap().len()
 		);
-		assert_eq!(
-			properties["sources"],
-			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from, or absent_action for a prohibition satisfied by absence. Null when none applies."})
-		);
+		assert_eq!(branch["additionalProperties"], false);
 	}
-	// The only branch admitting unmatched requires a string from this enum;
-	// null is admitted only by the matched/unknown branch.
-	assert!(branches[0]["properties"]["basis"].get("enum").is_none());
+	assert_eq!(branches[1]["properties"]["confidence"]["minimum"], 0);
+	assert_eq!(branches[1]["properties"]["confidence"]["maximum"], 1);
 	assert_eq!(
-		branches[1]["properties"]["basis"]["enum"],
+		branches[2]["properties"]["basis"]["enum"],
 		serde_json::json!(["recorded_output", "ground_truth", "absent_action", "inference"])
 	);
+	assert_eq!(build_gate_schema(0)["properties"]["conditions"]["maxItems"], 0);
 	assert_eq!(
 		octolib::llm::utils::normalize_strict_schema(&schema, octolib::llm::ResponseMode::Strict),
 		schema
@@ -1535,13 +1517,55 @@ mod verify_round_trip {
 	}
 
 	#[tokio::test]
+	async fn unknown_ruling_reads_retained_evidence_then_preserves_specific_advisory() {
+		let _guard = ENV_LOCK.lock().await;
+		let first = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="1" sources="omitted:0">The boundary check output is not visible</condition><verdict>PASS</verdict>"#
+		);
+		let second = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="0.9">The ordinary case passed; the terminal boundary remains unobserved</condition><verdict>PASS</verdict>"#
+		);
+		let (url, calls) = crate::session::chat::test_support::spawn_recording_stub(vec![
+			final_response(&first),
+			final_response(&second),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let mut ledger = EvidenceLedger::default();
+		let seq = ledger.record("inspect", &serde_json::json!({}), false, false, 20);
+		ledger.record_ground(seq, "ordinary case passed");
+		let conditions = vec!["ordinary and terminal boundary cases succeed".into()];
+		let mut gate_input = input(ledger.grounds(), &conditions);
+		gate_input.ledger = &ledger;
+		let (_tx, receiver) = rx();
+		let verdict = verify(&gate_config(), gate_input, receiver).await;
+		std::env::remove_var("OLLAMA_API_URL");
+		let GateVerdict::Unsettled(unsettled) = &verdict else {
+			panic!("{verdict:?}");
+		};
+		assert_eq!(unsettled.len(), 1);
+		assert_eq!(unsettled[0].confidence, 0.9);
+		let mut config = gate_config().supervisor.gate;
+		config.unsettled_advisory = true;
+		config.unsettled_confidence_threshold = 0.8;
+		let mut sent = false;
+		assert!(take_unsettled_advisory(&verdict, &config, &mut sent)
+			.unwrap()
+			.contains("terminal boundary remains unobserved"));
+		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
+		let calls = calls.lock().unwrap();
+		assert_eq!(calls.len(), 2);
+		assert!(calls[1].to_string().contains("ordinary case passed"));
+	}
+
+	#[tokio::test]
 	async fn uncitable_match_gets_one_format_repair_without_weakening_evidence() {
 		let _guard = ENV_LOCK.lock().await;
 		let original = format!(
 			r#"{CLEAN_SHAPES}<condition n="1" status="matched" confidence="0">The feature is shipped and tested</condition><verdict>PASS</verdict>"#
 		);
 		let repaired = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="matched" confidence="0">"the feature is shipped and tested"</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched">"the feature is shipped and tested"</condition><verdict>PASS</verdict>"#
 		);
 		for (retry, passes) in [(&repaired, true), (&original, false)] {
 			let url = spawn_stub(vec![final_response(&original), final_response(retry)]).await;
@@ -2241,4 +2265,52 @@ mod grounding {
 		);
 		assert_eq!(quoted_spans("`a()` then “b c” and \"d\""), vec!["a()", "d", "b c"]);
 	}
+}
+
+#[test]
+fn unknown_conditions_pull_only_retained_unseen_sources_once() {
+	let mut ledger = EvidenceLedger::default();
+	for n in 0..READBACK_MAX + 2 {
+		let seq = ledger.record("inspect", &serde_json::json!({"item":n}), false, false, 10);
+		ledger.record_ground(seq, "observed result");
+	}
+	let input = visibility_input(&ledger, ledger.grounds());
+	let visibility = output_visibility(&input, &RenderedEvidence::default());
+	let sources = "omitted:0,omitted:0,omitted:1,omitted:2,omitted:3,omitted:999";
+	for report in [
+		text_report(&format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unknown\" confidence=\"0.9\" sources=\"{sources}\">Need the recorded boundary observation</condition><verdict>PASS</verdict>")),
+		json_report(&serde_json::json!({"conditions":[{"n":1,"status":"unknown","confidence":0.9,"sources":sources,"observation":"Need the recorded boundary observation"}],"shapes":clean_json_shapes(),"gaps":[],"readback":[],"verdict":"PASS"})),
+	] {
+		let wanted = report.needed_readback(&input, &visibility);
+		assert_eq!(wanted, vec![0, 1, 2]);
+		let readback = render_readback(input.grounds, &wanted);
+		assert!(readback.text.contains("observed result"));
+		let visible = output_visibility(&input, &readback);
+		assert!(!visible.unseen.contains(&0));
+		assert_eq!(report.needed_readback(&input, &visible), vec![3]);
+	}
+}
+
+#[tokio::test]
+async fn indeterminate_diagnostics_survive_accounting_serialization() {
+	crate::supervisor::accounting::isolated(async {
+		crate::session::context::with_session_id("gate-diagnostic".into(), async {
+			let verdict = indeterminate("transport", "recorded-output readback request failed");
+			assert!(matches!(verdict, GateVerdict::Indeterminate(_)));
+			let usage = crate::supervisor::accounting::take_for("gate-diagnostic");
+			let restored: crate::supervisor::accounting::SupervisorAccounting =
+				serde_json::from_value(serde_json::to_value(usage).unwrap()).unwrap();
+			assert_eq!(
+				restored.kinds[&crate::supervisor::stats::CallKind::Gate].reported_findings,
+				vec!["indeterminate [transport]: recorded-output readback request failed"]
+			);
+		})
+		.await;
+	})
+	.await;
+	assert_eq!(
+		gate_diagnostic("protocol", "bad\n\r\u{1b}answer"),
+		"indeterminate [protocol]: badanswer"
+	);
+	assert!(gate_diagnostic("protocol", &"x".repeat(1000)).len() < 300);
 }

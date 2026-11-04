@@ -624,6 +624,10 @@ pub(super) async fn apply_compression(
 		)
 	};
 
+	// A continuation carries the same request; dating it at compaction makes
+	// every active plan appear superseded by a user request that never happened.
+	let request_timestamp = crate::session::latest_task_timestamp(&session.session.messages);
+
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx
 	let (messages_removed, _) = session.remove_messages_in_range(start_idx, end_idx)?;
 
@@ -710,7 +714,7 @@ pub(super) async fn apply_compression(
 				continuation_action.as_deref(),
 				plan_active,
 			),
-			timestamp: now,
+			timestamp: request_timestamp.unwrap_or(now),
 			cached: false,
 			..Default::default()
 		};

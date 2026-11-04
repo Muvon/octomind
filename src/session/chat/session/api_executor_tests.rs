@@ -772,7 +772,7 @@ async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budg
 			crate::session::context::init_session_services("assistant");
 			let answer = "The protocol preserves the original request.";
 			let condition = if settled {
-				format!(r#"<condition n="1" status="matched" confidence="0">"{answer}"</condition>"#)
+				format!(r#"<condition n="1" status="matched">"{answer}"</condition>"#)
 			} else {
 				String::from(
 					r#"<condition n="1" status="unknown" confidence="0.8">The requested observation is unavailable.</condition>"#,

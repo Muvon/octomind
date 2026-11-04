@@ -1036,3 +1036,52 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 	crate::session::shell_jobs::clear_for_session(&session_id);
 	crate::session::tap_runs::clear_for_session(&session_id);
 }
+
+#[tokio::test]
+async fn repeated_compaction_preserves_request_time_for_plan_staleness() {
+	let config = default_config();
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system prompt"),
+		plain_message("user", "complete the requested outcomes"),
+		plain_message("assistant", "first outcome observed"),
+	]);
+	session.session.messages[1].timestamp = 123;
+	let request = session.session.messages[1].clone();
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "complete remaining outcomes".into(),
+		..Default::default()
+	};
+	for _ in 0..2 {
+		let count = session.session.messages.len();
+		apply_compression(
+			&mut session,
+			0,
+			count - 1,
+			count,
+			&summary,
+			500,
+			600,
+			Vec::new(),
+			Some(request.clone()),
+			None,
+			Vec::new(),
+			Vec::new(),
+			&config,
+			None,
+			None,
+			false,
+			false,
+		)
+		.await
+		.expect("compact request");
+		assert_eq!(
+			crate::session::latest_task_timestamp(&session.session.messages),
+			Some(123)
+		);
+		assert_eq!(
+			crate::session::latest_real_user_task_content(&session.session.messages),
+			Some("complete the requested outcomes")
+		);
+	}
+}

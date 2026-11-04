@@ -4,7 +4,7 @@
   </a>
 
   <h3>Open-source coding agent harness. One Rust binary, any model, every surface.</h3>
-  <p>Interactive, stdin, daemon, WebSocket, or ACP — one engine, one config.<br />A supervising model plans and checks the work.<br />Policy lives in TOML guardrails, not approval prompts.</p>
+  <p>Interactive, stdin, daemon, WebSocket, or ACP — one binary, one config.<br />A supervising model plans and checks the work.<br />Policy lives in TOML guardrails, not approval prompts.</p>
 
   [![CI](https://github.com/Muvon/octomind/actions/workflows/ci.yml/badge.svg)](https://github.com/Muvon/octomind/actions/workflows/ci.yml)
   [![Crates.io](https://img.shields.io/crates/v/octomind?style=flat-square&color=7c3aed)](https://crates.io/crates/octomind)
@@ -21,31 +21,31 @@
 
 ---
 
-Octomind is an open-source coding agent harness. It gives an LLM real access to your repo — reading and writing files, running shells, searching code, delegating to sub-agents — through [MCP](https://modelcontextprotocol.io) tools. The same harness runs **interactively**, **non-interactively through stdin**, as a **background daemon**, over **WebSocket**, or as an **ACP agent** inside your editor or another agent's stack.
+Octomind is an open-source coding agent harness. It gives any LLM the tools to work in a repository — read and edit files, run shells, search code, delegate to sub-agents — through [MCP](https://modelcontextprotocol.io), and runs the result as an interactive CLI, a stdin pipe, a daemon, a WebSocket server, or an ACP agent in your editor. Most agents stop and ask a human before each risky step, which works at a keyboard and blocks everything in CI. Octomind writes that policy down as TOML guardrails and adds a supervising model that plans and checks the work, so the same session can run with nobody watching. On 25 tasks taken from merged pull requests it solved 24; OpenCode solved 19 with the same model at about twice the cost ([benchmarks](#benchmarks)).
+
+## Why Octomind?
+
+Built for the work that keeps going after you leave:
+
+- **Policy as code, not approval popups.** Deterministic [guardrails](doc/usage/18-guardrails.md) — pre-call guards, post-result hooks, post-turn validators — live in TOML and scripts, so they work in CI, daemons, and scheduled runs.
+- **Measured, not claimed.** All four agents ran stock on the same tasks with the same judge. Per-case table, artifacts, and a reproduction guide are in the [benchmarks](#benchmarks).
+- **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). Publish your own with one repo.
+- **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving without forgetting the task or your last few messages.
+- **Learns the project as you work.** Corrections and rules you state become lessons, quoted from your own words and scoped to the project and role, and come back in later sessions. Turn on [evolution](doc/usage/13-learning.md) and recurring lessons compile into skill and guardrail candidates, trialled against a control and kept only when they help.
+- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
+- **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 
 ```bash
 # Interactive
 octomind run developer:general
 
-# Piped — CI, scripts, automation
+# Non-interactive — CI, scripts, automation
 echo "Explain the auth module" | octomind run developer:general --format plain
 
 # Daemon — keep it alive, talk to it from another terminal
 echo "watch the build" | octomind run --name watcher --daemon --format jsonl
 octomind send --name watcher "run the test suite"
 ```
-
-## Why Octomind?
-
-Most coding agents assume a human is watching the screen. Octomind is built for the work that keeps going after you leave.
-
-- **Policy as code, not approval popups.** Deterministic [guardrails](doc/usage/18-guardrails.md) — pre-call guards, post-result hooks, post-turn validators — live in TOML and scripts, so they work in CI, daemons, and scheduled runs.
-- **Proven on real PRs.** It solved 24 of 25 held-out tasks at lower cost than the closest competitor. See the [benchmarks](#benchmarks).
-- **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). Publish your own with one repo.
-- **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving while retaining task knowledge and the live exchange.
-- **Remembers your rules.** Rules and corrections you state in a session become lessons, grounded in your own words and scoped to the project and role, that come back in later sessions. See [learning](doc/usage/13-learning.md).
-- **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
-- **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 
 ## Quick Start
 
@@ -159,7 +159,7 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | **Agent Skills** | Standard `SKILL.md` skills from `.agents/skills/`, `~/.config/agents/skills/`, and taps; they activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |
 | **Local project tools** | Executable scripts in `.agents/tools/` auto-register as tools | [Local tools](doc/usage/17-local-tools.md) |
 | **Plugins & `AGENTS.md`** | Agent Plugins (`plugin.json` + skills + `mcp.json`) from taps, `.agents/plugins/`, or `~/.config/agents/plugins/`; project `AGENTS.md` loads at session start | [Configuration](doc/usage/03-configuration.md) |
-| **Supervisor & learning** | A second model plans, gates completion, and condenses tool output; lessons persist as files per project and role | [Supervisor](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
+| **Supervisor & learning** | A second model plans, checks completion, and condenses tool output; lessons persist as files per project and role | [Supervisor](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
 | **Sandbox** | `--sandbox` locks writes to the working directory via Landlock (Linux) or Seatbelt (macOS), inherited by every shell, MCP server, and sub-agent | [Config reference](doc/reference/03-config-reference.md) |
 | **Token efficiency** | Cache-aware cost accounting and adaptive compression | [Token efficiency](doc/usage/16-token-efficiency.md) |
 
@@ -290,7 +290,7 @@ Full index: [doc/README.md](doc/README.md) · Hosted: [octomind.run/docs](https:
 
 ## Contributing
 
-The most impactful contribution isn't code — **it's specialist agents.** A cardiologist publishing `doctor:medications`. A tax attorney publishing `lawyer:us`. A security researcher publishing `security:owasp`. One TOML file, and everyone facing that problem gets a specialist-grade AI.
+The most impactful contribution isn't code — **it's specialist agents.** A cardiologist publishing `doctor:medications`. A tax attorney publishing `lawyer:us`. A security researcher publishing `security:owasp`. One TOML file, and everyone with that problem gets an agent that knows the domain.
 
 - [How to write a tap agent](https://github.com/muvon/octomind-tap)
 - [Open issues](https://github.com/muvon/octomind/issues)

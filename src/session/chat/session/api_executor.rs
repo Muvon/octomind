@@ -248,60 +248,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		crate::log_debug!("Supervisor steer injected");
 	}
 
-	// Supervisor: goal and execution-boundary recitation. Once the session has
-	// compacted, the durable goal lives only in the mid-transcript summary, where
-	// attention is weak. Re-emit a tiny goal block here — at the tail, in the
-	// recency window — and crucially BEFORE the cache-marker advance below, so the
-	// cached prefix stays intact (the recited block lands after it each turn).
-	let effective_verification_policy = chat_session.session.info.verification_policy.effective(
-		chat_session
-			.gate_task
-			.as_ref()
-			.is_some_and(|task| task.forbids_verification),
-	);
-	if config.supervisor.enabled {
-		// Prefer the live plan checklist (refreshed every turn from plan storage)
-		// over the anchor's stale next_steps snapshot for the recency-slot block.
-		// A plan untouched since before the latest user message carries a
-		// staleness marker: re-anchoring the model on a plan the user may have
-		// superseded is how a session ends up chasing a dead step.
-		let plan_checklist = crate::mcp::core::plan::render_plan_checklist_with_staleness(
-			crate::session::latest_task_timestamp(&chat_session.session.messages),
-		);
-		// The live request. Its resolved checklist is recited whole — or, for a turn
-		// without one, its explicit directives verbatim (models abandon those first as
-		// attention decays) — and its signature decides whether the anchor's goal is
-		// still the one being worked on: the user may have asked for something else
-		// since the last compaction wrote that goal.
-		let live_task = crate::session::latest_real_user_task_content(&chat_session.session.messages);
-		let conditions = chat_session
-			.gate_task
-			.as_ref()
-			.map(|task| task.evidence_conditions.as_slice())
-			.unwrap_or_default();
-		let constraints = crate::supervisor::recite::active_constraints(
-			&chat_session.session.messages,
-			chat_session.gate_task.as_ref(),
-		);
-		if let Some(note) = crate::supervisor::recite::recite_note(
-			&chat_session.session.info.anchor,
-			plan_checklist.as_deref(),
-			conditions,
-			&constraints,
-			&chat_session.session.info.session_rules,
-			live_task.map(crate::session::anchor::task_sig),
-			effective_verification_policy,
-		) {
-			let waiting = crate::supervisor::recite::waiting_on_background_jobs(
-				&chat_session.session.messages,
-				crate::session::shell_jobs::has_pending(),
-			);
-			if !waiting && crate::supervisor::recite::needs_recital(&chat_session.session.messages, &note) {
-				chat_session.add_system_managed_user_message(&note)?;
-				crate::log_debug!("Supervisor recitation injected");
-			}
-		}
-	}
+	// Supervisor: goal and execution-boundary recitation (see
+	// `inject_before_request`); before the cache-marker advance below.
+	crate::supervisor::recite::inject_before_request(
+		chat_session,
+		config,
+		crate::supervisor::recite::RecitalRefresh::ByVolume,
+	)?;
 
 	// Supervisor: falsifiable plan commitments. A plan task can declare a
 	// machine-checkable `valid_if` condition (the assumption its approach rests

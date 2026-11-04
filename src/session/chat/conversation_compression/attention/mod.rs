@@ -18,6 +18,8 @@
 //! task/constraint pins, tool-call atomicity, exact active frontier, source
 //! identifiers, archive references, and attribution checks.
 
+mod working_set;
+
 use super::schema::{CompressionSummary, FoldedUnit};
 use crate::session::chat::session::ChatSession;
 use crate::session::Message;
@@ -38,6 +40,7 @@ pub(crate) enum PacketKind {
 	ToolInteraction,
 	RuntimeEvent,
 	PriorSummary,
+	ArtifactSnapshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +303,7 @@ fn build_packets(session_name: &str, messages: &[Message], model: &str) -> Vec<E
 			.map(|message| crate::session::estimate_sent_message_tokens(message, model))
 			.sum();
 		let id = stable_packet_id(session_name, slice);
+		let subjects = working_set::describe(slice);
 		packets.push(EvidencePacket {
 			id,
 			kind,
@@ -313,13 +317,29 @@ fn build_packets(session_name: &str, messages: &[Message], model: &str) -> Vec<E
 			prompt_content: String::new(),
 			exact_spans: Vec::new(),
 			descriptor: format!(
-				"{:?} / {:?}; {} message(s), approximately {} tokens",
+				"{:?} / {:?}; {} message(s), approximately {} tokens; {}",
 				kind,
 				provenance,
 				end - start + 1,
-				tokens
+				tokens,
+				subjects
 			),
 		});
+		// A previous fold's material is a source projection, not its wrapper.
+		// Sharing an archive message is safe: recall deduplicates source lines.
+		if kind == PacketKind::PriorSummary {
+			let regions = working_set::snapshot(&message.content);
+			if !regions.is_empty() {
+				let mut snapshot = packets.last().expect("packet inserted").clone();
+				snapshot.id = format!("b:{}", short_hex(&Sha256::digest(format!("{}:artifacts", snapshot.id))));
+				snapshot.kind = PacketKind::ArtifactSnapshot;
+				snapshot.tokens = crate::session::estimate_tokens(&regions);
+				let prior = packets.last_mut().expect("prior summary inserted");
+				prior.tokens = prior.tokens.saturating_sub(snapshot.tokens);
+				snapshot.descriptor = "previously observed artifact regions".into();
+				packets.push(snapshot);
+			}
+		}
 		index = end + 1;
 	}
 	packets
@@ -346,7 +366,7 @@ fn packet_linkage(messages: &[Message], kind: PacketKind) -> PacketLinkage {
 fn classify_packet(messages: &[Message]) -> (PacketKind, Provenance) {
 	let first = &messages[0];
 	if first.role == "user" {
-		if crate::session::continuation_task(&first.content).is_some() {
+		if super::apply::is_continuation_message(&first.content) {
 			return (PacketKind::TaskContinuation, Provenance::ValidatedSummary);
 		}
 		if crate::session::is_real_user_task_message(first) {
@@ -451,7 +471,7 @@ fn link_dependencies(packets: &mut [EvidencePacket]) {
 				}
 				latest_runtime_event = Some(packets[index].id.clone());
 			}
-			PacketKind::ToolInteraction => {
+			PacketKind::ToolInteraction | PacketKind::ArtifactSnapshot => {
 				if let Some(task) = latest_task.as_ref() {
 					dependencies.push(task.clone());
 				}
@@ -626,42 +646,7 @@ async fn allocate_lanes(
 		return;
 	}
 
-	// /done marks a task-phase boundary: the next turn starts a NEW task, so
-	// the heavy dependency-closure frontier of the finished one is noise, not
-	// focus. The active task text survives in pinned_state; everything else
-	// competes for the summarize lane or stays a recall pointer.
-	let exact_ids = if minimal_frontier {
-		HashSet::new()
-	} else {
-		active_dependency_closure(packets)
-	};
-	let mut exact_indices: Vec<usize> = packets
-		.iter()
-		.enumerate()
-		.filter(|(_, packet)| exact_ids.contains(&packet.id))
-		.map(|(index, _)| index)
-		.collect();
-	// Allocate the exact budget smallest-first: small closure members take only
-	// what they need and the recomputed fair share rolls the surplus into the
-	// largest packets, so truncation lands where head/tail extraction still
-	// yields recoverable spans instead of starving a late packet to zero budget
-	// (an empty-span KeepExact packet fails validation). Stable sort keeps ties
-	// deterministic; output order is untouched — only budgets are assigned here.
-	exact_indices.sort_by_key(|index| packets[*index].tokens);
-	let mut exact_remaining = target_tokens;
-	let mut exact_left = exact_indices.len();
-	let mut used = 0usize;
-	for index in exact_indices {
-		let packet_budget = exact_remaining.div_ceil(exact_left);
-		let rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
-		packets[index].lane = Lane::KeepExact;
-		packets[index].prompt_content = rendered.content;
-		packets[index].exact_spans = rendered.spans;
-		let cost = crate::session::estimate_tokens(&packets[index].prompt_content);
-		used = used.saturating_add(cost);
-		exact_remaining = exact_remaining.saturating_sub(cost);
-		exact_left -= 1;
-	}
+	let used = allocate_frontier(packets, messages, target_tokens, minimal_frontier, plan_focus);
 
 	// A prior summary is compression OUTPUT being drained this cycle: every
 	// line is already-distilled state, so the fold model must see ALL of it —
@@ -673,7 +658,19 @@ async fn allocate_lanes(
 	// extraction — that once deleted the middle 600 lines of a real session's
 	// prior summary and the model rebuilt the task state wrong from the edges.
 	for packet in packets.iter_mut() {
-		if packet.kind != PacketKind::PriorSummary || packet.lane != Lane::ArchiveReference {
+		if !matches!(packet.kind, PacketKind::PriorSummary | PacketKind::TaskContinuation)
+			|| packet.lane != Lane::ArchiveReference
+		{
+			continue;
+		}
+		if packet.kind == PacketKind::TaskContinuation
+			&& messages[packet.message_start]
+				.content
+				.split("\n<task>")
+				.nth(1)
+				.and_then(|s| s.split("</task>").next())
+				.is_some_and(|s| s.trim() == pinned.task.text.trim())
+		{
 			continue;
 		}
 		let rendered = render_packet_with_spans(messages, packet, usize::MAX);
@@ -688,7 +685,11 @@ async fn allocate_lanes(
 	let mut candidates: Vec<usize> = packets
 		.iter()
 		.enumerate()
-		.filter(|(_, packet)| packet.lane == Lane::ArchiveReference && packet.provenance != Provenance::RealUser)
+		.filter(|(_, packet)| {
+			packet.lane == Lane::ArchiveReference
+				&& packet.provenance != Provenance::RealUser
+				&& packet.kind != PacketKind::TaskContinuation
+		})
 		.map(|(index, _)| index)
 		.collect();
 	let mut remaining = target_tokens.saturating_sub(used);
@@ -801,6 +802,56 @@ async fn allocate_lanes(
 	}
 }
 
+fn allocate_frontier(
+	packets: &mut [EvidencePacket],
+	messages: &[Message],
+	target_tokens: usize,
+	minimal_frontier: bool,
+	focus: &str,
+) -> usize {
+	// /done marks a task-phase boundary: the next turn starts a NEW task, so
+	// the heavy dependency-closure frontier of the finished one is noise, not
+	// focus. The active task text survives in pinned_state; everything else
+	// competes for the summarize lane or stays a recall pointer.
+	let exact_ids = if minimal_frontier {
+		HashSet::new()
+	} else {
+		active_dependency_closure(packets)
+	};
+	let mut exact_indices: Vec<usize> = packets
+		.iter()
+		.enumerate()
+		.filter(|(_, packet)| exact_ids.contains(&packet.id) && !working_set::has_regions(messages, packet))
+		.map(|(index, _)| index)
+		.collect();
+	// Allocate the exact budget smallest-first: small closure members take only
+	// what they need and the recomputed fair share rolls the surplus into the
+	// largest packets, so truncation lands where head/tail extraction still
+	// yields recoverable spans instead of starving a late packet to zero budget
+	// (an empty-span KeepExact packet fails validation). Stable sort keeps ties
+	// deterministic; output order is untouched — only budgets are assigned here.
+	exact_indices.sort_by_key(|index| packets[*index].tokens);
+	let mut exact_remaining = target_tokens;
+	let mut exact_left = exact_indices.len();
+	let mut used = 0usize;
+	for index in exact_indices {
+		let packet_budget = exact_remaining.div_ceil(exact_left);
+		let rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
+		packets[index].lane = Lane::KeepExact;
+		packets[index].prompt_content = rendered.content;
+		packets[index].exact_spans = rendered.spans;
+		let cost = crate::session::estimate_tokens(&packets[index].prompt_content);
+		used = used.saturating_add(cost);
+		exact_remaining = exact_remaining.saturating_sub(cost);
+		exact_left -= 1;
+	}
+
+	if !minimal_frontier {
+		used += working_set::select(packets, messages, target_tokens.saturating_sub(used), focus);
+	}
+	used
+}
+
 fn summarization_closure(index: usize, packets: &[EvidencePacket]) -> Vec<usize> {
 	let by_id: BTreeMap<&str, usize> = packets
 		.iter()
@@ -826,7 +877,11 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 	let Some(active) = packets.last() else {
 		return HashSet::new();
 	};
-	if active.provenance == Provenance::RealUser || active.kind == PacketKind::PriorSummary {
+	if active.provenance == Provenance::RealUser
+		|| matches!(
+			active.kind,
+			PacketKind::PriorSummary | PacketKind::TaskContinuation | PacketKind::ArtifactSnapshot
+		) {
 		return HashSet::new();
 	}
 	let by_id: BTreeMap<&str, &EvidencePacket> = packets.iter().map(|packet| (packet.id.as_str(), packet)).collect();
@@ -845,10 +900,13 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 				// by the size of the previous one until compaction frees nothing.
 				// Its durable content re-folds through the summarize lane and
 				// stays exactly recallable by block ID.
-				if by_id
-					.get(dependency.as_str())
-					.is_some_and(|p| matches!(p.provenance, Provenance::RealUser) || p.kind == PacketKind::PriorSummary)
-				{
+				if by_id.get(dependency.as_str()).is_some_and(|p| {
+					matches!(p.provenance, Provenance::RealUser)
+						|| matches!(
+							p.kind,
+							PacketKind::PriorSummary | PacketKind::TaskContinuation | PacketKind::ArtifactSnapshot
+						)
+				}) {
 					continue;
 				}
 				stack.push(dependency);
@@ -941,7 +999,7 @@ fn structural_rank(kind: PacketKind) -> u8 {
 		PacketKind::PriorSummary => 4,
 		PacketKind::UserTask => 3,
 		PacketKind::AssistantCheckpoint => 2,
-		PacketKind::ToolInteraction => 1,
+		PacketKind::ToolInteraction | PacketKind::ArtifactSnapshot => 1,
 		PacketKind::RuntimeEvent => 0,
 	}
 }
@@ -957,6 +1015,12 @@ struct PacketRender {
 }
 
 fn render_packet_with_spans(messages: &[Message], packet: &EvidencePacket, max_tokens: usize) -> PacketRender {
+	if packet.kind == PacketKind::ArtifactSnapshot {
+		return extractive_edges(
+			&working_set::snapshot(&messages[packet.message_start].content),
+			max_tokens,
+		);
+	}
 	let mut rendered = String::new();
 	for (offset, message) in messages[packet.message_start..=packet.message_end].iter().enumerate() {
 		let source = packet.message_start + offset + 1;
@@ -986,7 +1050,7 @@ fn render_packet_with_spans(messages: &[Message], packet: &EvidencePacket, max_t
 				"[MESSAGE {source} TOOL RESULT id={} name={}]\n{}\n",
 				message.tool_call_id.as_deref().unwrap_or("unknown"),
 				message.name.as_deref().unwrap_or("tool"),
-				message.content.trim()
+				working_set::canonical_result(message, &messages[packet.message_start..=packet.message_end])
 			)),
 			"user" => rendered.push_str(&format!(
 				"[MESSAGE {source} {}]\n{}\n",
@@ -997,7 +1061,18 @@ fn render_packet_with_spans(messages: &[Message], packet: &EvidencePacket, max_t
 				} else {
 					"RUNTIME EVENT"
 				},
-				message.content.trim()
+				if packet.kind == PacketKind::TaskContinuation {
+					message
+						.content
+						.split("\n<task>")
+						.nth(1)
+						.and_then(|s| s.split("</task>").next())
+						.unwrap_or_default()
+						.trim()
+						.to_string()
+				} else {
+					message.content.trim().to_string()
+				}
 			)),
 			_ => {}
 		}
@@ -1116,6 +1191,14 @@ fn source_span(lines: &[&str], start_line: usize, end_line: usize) -> SourceSpan
 }
 
 impl PactContext {
+	pub(crate) fn revalidate_frontier(&mut self, source: &[Message], tail: &[Message]) {
+		working_set::revalidate(&mut self.packets, source, tail);
+	}
+
+	pub(crate) fn unretained_ranges(&self, path: &str, start: usize, end: usize) -> Vec<(usize, usize)> {
+		working_set::unretained_ranges(&self.packets, path, start, end)
+	}
+
 	pub(crate) fn record_metrics(&mut self, metrics: PactMetrics) {
 		self.metrics = metrics;
 	}
@@ -1280,6 +1363,7 @@ impl PactContext {
 		&self,
 		archive: Option<&super::archive::ArchiveBundle>,
 		carried_request: Option<&str>,
+		folded_body: &str,
 	) -> (String, String) {
 		let task_carried = carried_request.is_some_and(|request| request.trim() == self.pinned.task.text);
 		let pinned_band = format!(
@@ -1310,6 +1394,9 @@ impl PactContext {
 			recall.push_str(&format!("{}{} — {}\n", packet.id, lines, packet.descriptor));
 		}
 		for (id, entry) in &self.prior_recall {
+			if !folded_body.contains(id) && !frontier.contains(id) {
+				continue;
+			}
 			recall.push_str(&format!(
 				"{} {} L{}-{} — {}\n",
 				id,
@@ -1586,7 +1673,10 @@ impl PactContext {
 		let selected_tokens = self
 			.packets
 			.iter()
-			.filter(|packet| packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary)
+			.filter(|packet| {
+				packet.lane != Lane::ArchiveReference
+					&& !matches!(packet.kind, PacketKind::PriorSummary | PacketKind::TaskContinuation)
+			})
 			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 			.sum::<usize>();
 		if selected_tokens > self.target_tokens {
@@ -1644,7 +1734,7 @@ impl PactContext {
 				// where its content is still recallable by block ID. Rejecting
 				// here would veto that legitimate case.
 				if packets_by_id.get(dependency.as_str()).is_some_and(|source| {
-					source.kind != PacketKind::PriorSummary
+					!matches!(source.kind, PacketKind::PriorSummary | PacketKind::TaskContinuation)
 						&& source.provenance != Provenance::RealUser
 						&& source.lane == Lane::ArchiveReference
 				}) {
@@ -1988,3 +2078,7 @@ pub(crate) fn folded_unit_id(unit: &FoldedUnit) -> String {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod replay_tests;

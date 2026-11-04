@@ -683,6 +683,10 @@ async fn finish_fold(
 ) -> Result<bool> {
 	ai::record_decision_usage(session, usage.as_ref());
 	if let Some(pact) = ctx.pact.as_mut() {
+		pact.revalidate_frontier(
+			&session.session.messages[ctx.start_idx + 1..=ctx.end_idx],
+			&session.session.messages[ctx.end_idx + 1..],
+		);
 		pact.record_metrics(attention::PactMetrics {
 			controller_and_model_latency_ms: ctx.started.elapsed().as_millis() as u64,
 			compression_api_time_ms: usage.as_ref().and_then(|u| u.request_time_ms).unwrap_or(0),

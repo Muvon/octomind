@@ -83,7 +83,7 @@ pub(super) fn format_compressed_entry_with_pact(
 	pact: &super::attention::PactContext,
 	carried_request: Option<&str>,
 ) -> String {
-	let (pinned, frontier_and_recall) = pact.render_live_bands(archive, carried_request);
+	let (pinned, frontier_and_recall) = pact.render_live_bands(archive, carried_request, body);
 	let mut sections = pinned;
 	sections.push('\n');
 	if !body.is_empty() {
@@ -134,6 +134,10 @@ pub(super) fn format_compressed_entry_with_pact(
 /// therefore carried forward with exact coordinates.
 pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
+	// Runtime bands are rebuilt from current pins and revalidated artifact
+	// observations. Feeding their wrappers back invites recursive duplication.
+	let stripped = strip_block(&stripped, "<active_frontier>", "</active_frontier>");
+	let stripped = strip_block(&stripped, "<pinned_state>", "</pinned_state>");
 	let stripped = strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE);
 	strip_recall_index(&stripped)
 }

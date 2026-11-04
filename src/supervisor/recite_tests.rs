@@ -515,17 +515,20 @@ fn recital(constraint: &str) -> String {
 fn unchanged_recital_is_not_stacked_every_turn() {
 	let note = recital("Do not publish anything.");
 	let mut messages = vec![user("Draft posts. Do not publish anything.")];
-	assert!(needs_recital(&messages, &note), "first recital lands");
+	assert!(
+		needs_recital(&messages, &note, RecitalRefresh::ByVolume),
+		"first recital lands"
+	);
 
 	messages.push(user(&note));
 	messages.push(user("<system-note>\nshort tool completion\n</system-note>"));
 	assert!(
-		!needs_recital(&messages, &note),
+		!needs_recital(&messages, &note, RecitalRefresh::ByVolume),
 		"identical copy still in the recency slot"
 	);
 
 	assert!(
-		needs_recital(&messages, &recital("Never post as me.")),
+		needs_recital(&messages, &recital("Never post as me."), RecitalRefresh::ByVolume),
 		"a changed recital always lands"
 	);
 }
@@ -535,7 +538,43 @@ fn unchanged_recital_returns_once_buried() {
 	let note = recital("Do not publish anything.");
 	let filler = "word ".repeat(RECITE_REFRESH_TOKENS * 2);
 	let messages = vec![user(&note), user(&filler)];
-	assert!(needs_recital(&messages, &note));
+	assert!(needs_recital(&messages, &note, RecitalRefresh::ByVolume));
+}
+
+#[test]
+fn tool_loop_recital_lands_only_on_change_or_after_compaction() {
+	let note = recital("Do not publish anything.");
+	assert!(
+		needs_recital(&[user("Draft posts.")], &note, RecitalRefresh::OnChangeOnly),
+		"no copy left (first turn or compacted away) lands"
+	);
+	let filler = "word ".repeat(RECITE_REFRESH_TOKENS * 2);
+	let messages = vec![user(&note), user(&filler)];
+	assert!(
+		!needs_recital(&messages, &note, RecitalRefresh::OnChangeOnly),
+		"an unchanged copy is not repeated by volume inside the tool loop"
+	);
+	assert!(
+		needs_recital(&messages, &recital("Never post as me."), RecitalRefresh::OnChangeOnly),
+		"a changed note lands"
+	);
+}
+
+#[test]
+fn volume_refresh_counts_tool_call_arguments() {
+	let note = recital("Do not publish anything.");
+	let heavy_call = crate::session::Message {
+		role: "assistant".to_string(),
+		content: String::new(),
+		tool_calls: Some(serde_json::json!([{
+			"id": "call_1",
+			"type": "function",
+			"function": {"name": "edit", "arguments": "word ".repeat(RECITE_REFRESH_TOKENS * 2)}
+		}])),
+		..Default::default()
+	};
+	let messages = vec![user(&note), heavy_call];
+	assert!(needs_recital(&messages, &note, RecitalRefresh::ByVolume));
 }
 
 #[test]

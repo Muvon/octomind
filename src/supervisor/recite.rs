@@ -440,10 +440,24 @@ pub fn recite_note(
 	Some(s)
 }
 
+/// When an unchanged recitation may be repeated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecitalRefresh {
+	/// Turn entry: an unchanged copy returns once [`RECITE_REFRESH_TOKENS`] of
+	/// context have buried it.
+	ByVolume,
+	/// Inside the tool loop: only a changed note, or one compaction removed, lands.
+	/// Refreshing by volume there stacks a full copy every few calls (measured: 33
+	/// copies of a ~1.1k-token note on one long run, ~13% extra context), while a
+	/// state change (step done, new condition) is exactly when drift starts.
+	OnChangeOnly,
+}
+
 /// Whether `note` should be appended now: it differs from the latest
-/// recitation in history, none is left (compaction dropped it), or more than
-/// [`RECITE_REFRESH_TOKENS`] of context has landed since that copy.
-pub fn needs_recital(messages: &[crate::session::Message], note: &str) -> bool {
+/// recitation in history, none is left (compaction dropped it), or — for
+/// [`RecitalRefresh::ByVolume`] — more than [`RECITE_REFRESH_TOKENS`] of context
+/// has landed since that copy.
+pub fn needs_recital(messages: &[crate::session::Message], note: &str, refresh: RecitalRefresh) -> bool {
 	let Some(last) = messages
 		.iter()
 		.rposition(|message| message.role == "user" && message.content.starts_with(RECITE_HEADER))
@@ -453,11 +467,79 @@ pub fn needs_recital(messages: &[crate::session::Message], note: &str) -> bool {
 	if messages[last].content != note {
 		return true;
 	}
+	if refresh == RecitalRefresh::OnChangeOnly {
+		return false;
+	}
+	// Whole messages: tool-call arguments are context the model reads too, and in a
+	// tool-heavy stretch they are most of what buries the previous copy.
 	let since: usize = messages[last + 1..]
 		.iter()
-		.map(|message| crate::session::estimate_tokens(&message.content))
+		.map(crate::session::estimate_message_tokens)
 		.sum();
 	since > RECITE_REFRESH_TOKENS
+}
+
+/// Append the goal and execution-boundary recitation before a provider request.
+/// Called at turn entry and before every tool-loop follow-up: most requests of a
+/// long turn come from the tool loop and never pass through the turn-entry
+/// executor. Once the session has compacted, the durable goal lives only in the
+/// mid-transcript summary, where attention is weak; this re-emits a tiny goal
+/// block at the tail, in the recency window, BEFORE the cache-marker advance so
+/// the cached prefix stays intact.
+pub fn inject_before_request(
+	chat_session: &mut crate::session::chat::session::ChatSession,
+	config: &crate::config::Config,
+	refresh: RecitalRefresh,
+) -> anyhow::Result<()> {
+	if !config.supervisor.enabled {
+		return Ok(());
+	}
+	let effective_verification_policy = chat_session.session.info.verification_policy.effective(
+		chat_session
+			.gate_task
+			.as_ref()
+			.is_some_and(|task| task.forbids_verification),
+	);
+	// Prefer the live plan checklist (refreshed every turn from plan storage)
+	// over the anchor's stale next_steps snapshot for the recency-slot block.
+	// A plan untouched since before the latest user message carries a
+	// staleness marker: re-anchoring the model on a plan the user may have
+	// superseded is how a session ends up chasing a dead step.
+	let plan_checklist = crate::mcp::core::plan::render_plan_checklist_with_staleness(
+		crate::session::latest_task_timestamp(&chat_session.session.messages),
+	);
+	// The live request. Its resolved checklist is recited whole — or, for a turn
+	// without one, its explicit directives verbatim (models abandon those first as
+	// attention decays) — and its signature decides whether the anchor's goal is
+	// still the one being worked on: the user may have asked for something else
+	// since the last compaction wrote that goal.
+	let live_task = crate::session::latest_real_user_task_content(&chat_session.session.messages);
+	let conditions = chat_session
+		.gate_task
+		.as_ref()
+		.map(|task| task.evidence_conditions.as_slice())
+		.unwrap_or_default();
+	let constraints = active_constraints(&chat_session.session.messages, chat_session.gate_task.as_ref());
+	let Some(note) = recite_note(
+		&chat_session.session.info.anchor,
+		plan_checklist.as_deref(),
+		conditions,
+		&constraints,
+		&chat_session.session.info.session_rules,
+		live_task.map(crate::session::anchor::task_sig),
+		effective_verification_policy,
+	) else {
+		return Ok(());
+	};
+	let waiting = waiting_on_background_jobs(
+		&chat_session.session.messages,
+		crate::session::shell_jobs::has_pending(),
+	);
+	if !waiting && needs_recital(&chat_session.session.messages, &note, refresh) {
+		chat_session.add_system_managed_user_message(&note)?;
+		crate::log_debug!("Supervisor recitation injected ({refresh:?})");
+	}
+	Ok(())
 }
 
 /// Whether the model ended its last reply to wait for background jobs that are

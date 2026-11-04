@@ -114,6 +114,13 @@ pub async fn process_tool_results(
 			);
 		}
 	}
+	// Tool-loop follow-ups bypass the turn-entry executor, so recite here as well —
+	// on change only, before the ceiling check so the note is counted in it.
+	crate::supervisor::recite::inject_before_request(
+		chat_session,
+		config,
+		crate::supervisor::recite::RecitalRefresh::OnChangeOnly,
+	)?;
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 
 	// CRITICAL FIX: Check cache threshold AFTER all tool results are processed

@@ -13,7 +13,7 @@
 // limitations under the License.
 use super::*;
 
-fn message(role: &str, content: &str) -> Message {
+pub(super) fn message(role: &str, content: &str) -> Message {
 	Message {
 		role: role.to_string(),
 		content: content.to_string(),
@@ -46,7 +46,7 @@ fn packet(id: &str, provenance: Provenance, lane: Lane) -> EvidencePacket {
 	}
 }
 
-fn pact_with(packet: EvidencePacket) -> PactContext {
+pub(super) fn pact_with(packet: EvidencePacket) -> PactContext {
 	let known_provenance = BTreeMap::from([(packet.id.clone(), packet.provenance)]);
 	PactContext {
 		enabled: true,
@@ -213,7 +213,7 @@ fn genuine_user_pivot_replaces_runtime_trigger_as_action_parent() {
 }
 
 #[test]
-fn validated_continuation_keeps_protocol_and_runtime_trigger_in_active_closure() {
+fn validated_continuation_refolds_while_runtime_trigger_stays_in_active_closure() {
 	let prior = Message {
 		role: "assistant".into(),
 		content:
@@ -257,7 +257,7 @@ fn validated_continuation_keeps_protocol_and_runtime_trigger_in_active_closure()
 	// summary: compression output kept exact would nest summary inside
 	// summary and grow the fold monotonically across cycles.
 	for packet in &packets {
-		if packet.kind == PacketKind::PriorSummary {
+		if matches!(packet.kind, PacketKind::PriorSummary | PacketKind::TaskContinuation) {
 			assert!(!closure.contains(&packet.id));
 		} else {
 			assert!(closure.contains(&packet.id));
@@ -345,7 +345,8 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 		packets.iter().find(|packet| packet.id == live_packet_id).unwrap().lane,
 		Lane::KeepExact
 	);
-	assert!(packets[1].lane == Lane::KeepExact);
+	assert_eq!(packets[1].lane, Lane::ArchiveReference);
+	assert!(packets[1].prompt_content.is_empty());
 	assert!(packets[3].lane == Lane::KeepExact);
 	assert!(selected_tokens <= 100);
 	assert!(packets.iter().map(|packet| packet.tokens).sum::<usize>() > 4_000);
@@ -1169,7 +1170,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	// The live context after this cycle must NOT carry the prior render
 	// verbatim (that was the original nesting bug); it keeps only the
 	// prior's recall coordinates.
-	let (_, recall_band) = pact.render_live_bands(None, None);
+	let (_, recall_band) = pact.render_live_bands(None, None, "");
 	assert!(
 		!recall_band.contains("prior folded line"),
 		"prior summary render leaked into the live context"
@@ -1598,7 +1599,9 @@ fn repeated_compaction_keeps_visible_prior_block_recall_coordinates() {
 			descriptor: "prior exact tool packet".into(),
 		},
 	);
-	let (_, recall) = pact.render_live_bands(None, None);
+	let (_, absent) = pact.render_live_bands(None, None, "");
+	assert!(!absent.contains("b:prior"));
+	let (_, recall) = pact.render_live_bands(None, None, "supported fact refs=b:prior");
 	assert!(recall.contains("b:prior"));
 	assert!(recall.contains("/tmp/prior.jsonl"));
 	assert!(recall.contains("7"));
@@ -1633,7 +1636,7 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 		.await
 		.expect("pact context builds");
 	assert!(pact.packets.iter().any(|p| p.lane == Lane::KeepExact));
-	let (pinned_band, recall_band) = pact.render_live_bands(None, None);
+	let (pinned_band, recall_band) = pact.render_live_bands(None, None, "");
 	assert!(pinned_band.contains("stabilise the deploy pipeline"));
 	assert!(recall_band.contains("<recall_index>"));
 }
@@ -1642,7 +1645,7 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 fn render_live_bands_disabled_returns_pinned_only() {
 	let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::KeepExact));
 	pact.enabled = false;
-	let (pinned, recall) = pact.render_live_bands(None, None);
+	let (pinned, recall) = pact.render_live_bands(None, None, "");
 	assert!(pinned.contains("task: continue the task"));
 	assert!(recall.is_empty());
 }
@@ -1652,13 +1655,13 @@ fn live_pinned_band_points_at_a_request_the_user_turn_carries() {
 	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::KeepExact));
 	// The user turn below the summary holds the task verbatim: repeating it
 	// here doubles an oversized request.
-	let (carried, _) = pact.render_live_bands(None, Some("  continue the task\n"));
+	let (carried, _) = pact.render_live_bands(None, Some("  continue the task\n"), "");
 	assert!(!carried.contains("continue the task"), "{carried}");
 	assert!(carried.contains(TASK_CARRIED_BY_USER_TURN), "{carried}");
 	// A different or absent carried request leaves the band the only copy.
-	let (other, _) = pact.render_live_bands(None, Some("an unrelated follow-up"));
+	let (other, _) = pact.render_live_bands(None, Some("an unrelated follow-up"), "");
 	assert!(other.contains("task: continue the task"), "{other}");
-	let (absent, _) = pact.render_live_bands(None, None);
+	let (absent, _) = pact.render_live_bands(None, None, "");
 	assert!(absent.contains("task: continue the task"), "{absent}");
 	// The fold model's own view always keeps the full task.
 	assert!(pact.prompt_view().contains("task: continue the task"));
@@ -1777,7 +1780,7 @@ async fn standing_session_rules_are_pinned_and_governed() {
 		"{:?}",
 		pact.pinned.constraints
 	);
-	let (pinned_band, _) = pact.render_live_bands(None, None);
+	let (pinned_band, _) = pact.render_live_bands(None, None, "");
 	assert!(pinned_band.contains("constraint: never push to main"), "{pinned_band}");
 
 	let fold_point = session.session.messages.len();
@@ -1981,10 +1984,10 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 		.iter()
 		.any(|packet| packet.lane != Lane::ArchiveReference));
 	// The live context after the fold is unchanged: pinned band only.
-	let (pinned, recall) = governed.render_live_bands(None, None);
+	let (pinned, recall) = governed.render_live_bands(None, None, "");
 	assert!(pinned.starts_with("<pinned_state>"));
 	assert!(recall.is_empty());
-	let (_, attended_recall) = attended.render_live_bands(None, None);
+	let (_, attended_recall) = attended.render_live_bands(None, None, "");
 	assert!(!attended_recall.is_empty());
 }
 

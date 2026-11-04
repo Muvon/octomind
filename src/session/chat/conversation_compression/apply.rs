@@ -498,23 +498,29 @@ pub(super) async fn apply_compression(
 		let end_line = fc
 			.end_line
 			.min(fc.start_line.saturating_add(MAX_FILE_CONTEXT_ENTRY_LINES - 1));
-		let entry = (fc.filepath.clone(), fc.start_line, end_line);
-		let cost = crate::session::estimate_tokens(&file_context::generate_file_context_content(std::slice::from_ref(
-			&entry,
-		)));
-		if cost > fc_budget {
-			crate::log_debug!(
-				"Compression: dropped file context {} ({}:{}) — {} tokens over remaining budget {}",
-				entry.0,
-				entry.1,
-				entry.2,
-				cost,
-				fc_budget
-			);
-			continue;
+		let ranges = pact.filter(|_| pact_live).map_or_else(
+			|| vec![(fc.start_line, end_line)],
+			|pact| pact.unretained_ranges(&fc.filepath, fc.start_line, end_line),
+		);
+		for (start, end) in ranges {
+			let entry = (fc.filepath.clone(), start, end);
+			let cost = crate::session::estimate_tokens(&file_context::generate_file_context_content(
+				std::slice::from_ref(&entry),
+			));
+			if cost > fc_budget {
+				crate::log_debug!(
+					"Compression: dropped file context {} ({}:{}) — {} tokens over remaining budget {}",
+					entry.0,
+					entry.1,
+					entry.2,
+					cost,
+					fc_budget
+				);
+				continue;
+			}
+			fc_budget -= cost;
+			file_contexts.push(entry);
 		}
-		fc_budget -= cost;
-		file_contexts.push(entry);
 	}
 
 	let file_context_content = if !file_contexts.is_empty() {

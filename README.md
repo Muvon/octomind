@@ -15,10 +15,6 @@
   [Website](https://octomind.run) · [Docs](https://octomind.run/docs/) · [Tap Registry](https://github.com/muvon/octomind-tap) · [Benchmarks](#benchmarks) · [Issues](https://github.com/muvon/octomind/issues)
 </div>
 
-<p align="center">
-  <img src="assets/octomind-animation.gif" width="160" alt="Octomind mascot: a pixel-art purple octopus with cyan eyes and waving tentacles" />
-</p>
-
 ---
 
 Octomind is an open-source coding agent harness. It gives any LLM the tools to work in a repository — read and edit files, run shells, search code, delegate to sub-agents — through [MCP](https://modelcontextprotocol.io), and runs the result as an interactive CLI, a stdin pipe, a daemon, a WebSocket server, or an ACP agent in your editor. Most agents stop and ask a human before each risky step, which works at a keyboard and blocks everything in CI. Octomind writes that policy down as TOML guardrails and adds a supervising model that plans and checks the work, so the same session can run with nobody watching. On 25 tasks taken from merged pull requests it solved 24; OpenCode solved 19 with the same model at about twice the cost ([benchmarks](#benchmarks)).

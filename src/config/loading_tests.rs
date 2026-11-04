@@ -544,6 +544,27 @@ welcome = "agent extra role welcome"
 	);
 	assert_eq!(base.model, base_model, "the base config is not mutated");
 }
+#[test]
+fn merge_agent_toml_preserves_runtime_output_mode() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base_path = tmp.path().join("config.toml");
+	std::fs::write(&base_path, template_toml()).expect("write template");
+	let mut base = Config::load_from_path(&base_path).expect("load base");
+	base.runtime_output_mode = Some("jsonl".to_string());
+
+	let merged = merge_agent_toml(
+		&base,
+		"model = \"agent-override-model\"
+",
+	)
+	.expect("merge agent manifest");
+
+	assert_eq!(
+		merged.runtime_output_mode.as_deref(),
+		Some("jsonl"),
+		"runtime output mode survives the merge"
+	);
+}
 
 #[test]
 fn merge_agent_toml_accepts_flat_request_transport_override() {

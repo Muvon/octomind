@@ -710,6 +710,10 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 		.context("Failed to deserialize merged agent config")?;
 	merged.validate_evaluate_model()?;
 	merged.build_role_map();
+	// The TOML round-trip above drops #[serde(skip)] fields; runtime_output_mode
+	// is set by the CLI for the live process, so carry it over from the base —
+	// otherwise a /role tap switch resets the session to "plain" output.
+	merged.runtime_output_mode = base.runtime_output_mode.clone();
 	Ok(merged)
 }
 

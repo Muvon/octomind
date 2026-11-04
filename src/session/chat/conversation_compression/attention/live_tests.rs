@@ -135,8 +135,11 @@ fn duplicate_facts_and_navigation_do_not_regrow_in_live_state() {
 #[test]
 fn large_pinned_state_does_not_starve_the_working_set_of_a_deep_fold() {
 	let (messages, body) = read_session();
-	let task = "keep every constraint of the deploy pipeline in mind while editing ".repeat(40);
 	let live_tokens = budget(8_000);
+	// Sized from the residency itself so the premise holds whatever the fold ratio;
+	// doubled because repeats tokenize cheaper than the phrase alone.
+	let phrase = "keep every constraint of the deploy pipeline in mind while editing ";
+	let task = phrase.repeat(2 * live_tokens / crate::session::estimate_tokens(phrase));
 	assert!(
 		crate::session::estimate_tokens(&task) > live_tokens,
 		"the pinned task alone outweighs live residency"

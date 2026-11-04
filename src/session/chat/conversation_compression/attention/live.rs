@@ -190,7 +190,10 @@ pub(super) fn render(
 	};
 	// `live_tokens` bounds the folded units, the exact frontier and the recall
 	// index together; the wrapper and pinned bands are task context on top.
-	let cap = pact.live_tokens + crate::session::estimate_tokens(&frame("", "", "", 0));
+	// Saturating: an unbounded fold carries `usize::MAX` as its live residency.
+	let cap = pact
+		.live_tokens
+		.saturating_add(crate::session::estimate_tokens(&frame("", "", "", 0)));
 	let state_share = pact.live_tokens / STATE_SHARE;
 	// Whole units are evicted from the view, never cut into unsupported
 	// half-claims. The sidecar keeps every source findable.

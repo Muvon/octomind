@@ -1274,6 +1274,48 @@ fn display_mcp_list(data: &serde_json::Value) {
 	println!();
 }
 
+fn render_mcp_servers(data: &serde_json::Value) -> usize {
+	let Some(servers) = data.get("servers").and_then(|v| v.as_array()) else {
+		return 0;
+	};
+	if servers.is_empty() {
+		return 0;
+	}
+	let server_count = servers.len();
+	block_section("servers");
+	for server in servers {
+		let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+		let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("unknown");
+		let conn_type = server
+			.get("connection_type")
+			.and_then(|v| v.as_str())
+			.unwrap_or("unknown");
+		let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
+		let consecutive_failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
+
+		block_row_text(&format!(
+			"{}  {}  {}{}",
+			name.bright_white().bold(),
+			mcp_health_display(health),
+			format!("({})", conn_type).dimmed(),
+			if restart_count > 0 {
+				format!(" · restarts: {} · failures: {}", restart_count, consecutive_failures)
+					.dimmed()
+					.to_string()
+			} else {
+				String::new()
+			},
+		));
+		if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
+			let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
+			if !tool_names.is_empty() {
+				block_row_text(&format!("  configured: {}", tool_names.join(", ")).dimmed().to_string());
+			}
+		}
+	}
+	server_count
+}
+
 fn display_mcp_info(data: &serde_json::Value) {
 	block_open("/mcp info", None);
 
@@ -1285,46 +1327,7 @@ fn display_mcp_info(data: &serde_json::Value) {
 	}
 
 	// Server status section
-	let server_count = data
-		.get("servers")
-		.and_then(|v| v.as_array())
-		.map(|a| a.len())
-		.unwrap_or(0);
-	if server_count > 0 {
-		block_section("servers");
-		if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
-			for server in servers {
-				let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-				let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("unknown");
-				let conn_type = server
-					.get("connection_type")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown");
-				let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
-				let consecutive_failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
-
-				block_row_text(&format!(
-					"{}  {}  {}{}",
-					name.bright_white().bold(),
-					mcp_health_display(health),
-					format!("({})", conn_type).dimmed(),
-					if restart_count > 0 {
-						format!(" · restarts: {} · failures: {}", restart_count, consecutive_failures)
-							.dimmed()
-							.to_string()
-					} else {
-						String::new()
-					},
-				));
-				if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
-					let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
-					if !tool_names.is_empty() {
-						block_row_text(&format!("  configured: {}", tool_names.join(", ")).dimmed().to_string());
-					}
-				}
-			}
-		}
-	}
+	let server_count = render_mcp_servers(data);
 
 	// Tools section
 	let mut total_tools = 0usize;
@@ -1377,43 +1380,7 @@ fn display_mcp_full(data: &serde_json::Value) {
 	}
 
 	// Server status section
-	let server_count = data
-		.get("servers")
-		.and_then(|v| v.as_array())
-		.map(|a| a.len())
-		.unwrap_or(0);
-	if server_count > 0 {
-		block_section("servers");
-		if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
-			for server in servers {
-				let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("");
-				let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("");
-				let conn_type = server.get("connection_type").and_then(|v| v.as_str()).unwrap_or("");
-				let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
-				let failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
-
-				block_row_text(&format!(
-					"{}  {}  {}{}",
-					name.bright_white().bold(),
-					mcp_health_display(health),
-					format!("({})", conn_type).dimmed(),
-					if restart_count > 0 {
-						format!(" · restarts: {} · failures: {}", restart_count, failures)
-							.dimmed()
-							.to_string()
-					} else {
-						String::new()
-					},
-				));
-				if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
-					let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
-					if !tool_names.is_empty() {
-						block_row_text(&format!("  configured: {}", tool_names.join(", ")).dimmed().to_string());
-					}
-				}
-			}
-		}
-	}
+	let server_count = render_mcp_servers(data);
 
 	// Tools with parameters
 	let mut total_tools = 0usize;

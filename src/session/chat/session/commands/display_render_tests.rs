@@ -828,6 +828,20 @@ fn test_render_mcp_info_string_tools_and_empty() {
 }
 
 #[test]
+fn test_render_mcp_servers_count() {
+	let data = json!({
+		"servers": [
+			{"name": "a", "health": "running", "connection_type": "stdio"},
+			{"name": "b", "health": "dead", "connection_type": "http",
+			 "restart_count": 2, "consecutive_failures": 1}
+		]
+	});
+	assert_eq!(render_mcp_servers(&data), 2);
+	assert_eq!(render_mcp_servers(&json!({"servers": []})), 0);
+	assert_eq!(render_mcp_servers(&json!({"subcommand": "info"})), 0);
+}
+
+#[test]
 fn test_render_mcp_full_schema_edge_cases() {
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "full".to_string(),

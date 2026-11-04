@@ -83,6 +83,10 @@ pub(super) fn format_compressed_entry_with_pact(
 	pact: &super::attention::PactContext,
 	carried_request: Option<&str>,
 ) -> String {
+	if pact.live_enabled() {
+		return pact.render_compact(body, file_context, &compression_id, archive, carried_request);
+	}
+
 	let (pinned, frontier_and_recall) = pact.render_live_bands(archive, carried_request, body);
 	let mut sections = pinned;
 	sections.push('\n');
@@ -132,11 +136,16 @@ pub(super) fn format_compressed_entry_with_pact(
 /// causing the live index to grow monotonically across compactions. IDs cited
 /// by pinned, folded, or active state remain in the retained text and are
 /// therefore carried forward with exact coordinates.
+///
+/// `<pinned_state>` — rebuilt from the current pins every fold.
+///
+/// Artifact regions inside `<active_frontier>` — carried by the snapshot
+/// packet and revalidated against later mutations. The rest of that frontier
+/// stays: it is the live state the previous fold deliberately did not fold
+/// into units, so this fold is its only chance to become durable facts.
 pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
-	// Runtime bands are rebuilt from current pins and revalidated artifact
-	// observations. Feeding their wrappers back invites recursive duplication.
-	let stripped = strip_block(&stripped, "<active_frontier>", "</active_frontier>");
+	let stripped = super::attention::working_set::strip_regions(&stripped);
 	let stripped = strip_block(&stripped, "<pinned_state>", "</pinned_state>");
 	let stripped = strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE);
 	strip_recall_index(&stripped)

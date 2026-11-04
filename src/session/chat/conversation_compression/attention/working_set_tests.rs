@@ -41,7 +41,7 @@ fn read(path: &str, start: usize, lines: &[&str], id: &str) -> Vec<Message> {
 fn selected(messages: &[Message], budget: usize) -> (Vec<EvidencePacket>, String) {
 	let mut packets = build_packets("working-set-test", messages, "test");
 	link_dependencies(&mut packets);
-	allocate_frontier(&mut packets, messages, budget, false, "");
+	allocate_frontier(&mut packets, messages, budget, false, "", None);
 	let content = packets
 		.iter()
 		.filter(|p| p.lane == Lane::KeepExact)
@@ -223,4 +223,120 @@ fn runtime_expansion_skips_already_retained_regions() {
 	let messages = read("artifact", 3, &["three", "four"], "read");
 	let (packets, _) = selected(&messages, 2000);
 	assert_eq!(unretained_ranges(&packets, "artifact", 1, 6), vec![(1, 2), (5, 6)]);
+}
+
+#[test]
+fn overwritten_output_is_not_current_even_when_execution_is_a_check() {
+	let mut messages = read("result.log", 1, &["old result"], "read");
+	messages.extend(interaction(
+		"run",
+		serde_json::json!({"command":"validator > result.log 2>&1"}),
+		"finished",
+		"check",
+	));
+	let (_, frontier) = selected(&messages, 2000);
+	assert!(!frontier.contains("old result"));
+}
+
+#[test]
+fn acknowledged_replacement_inherits_batch_path_and_respects_observed_text() {
+	let args = serde_json::json!({"path":"artifact","edits":[{"old_text":"old","new_text":"one\ntwo\nthree\nfour"}]});
+	let regions = observations("+1:ab|one\n+2:cd..3:ef (2 lines as sent)\n+4:ab|four", &args);
+	assert_eq!(regions[0].lines, vec!["one", "two", "three", "four"]);
+	let regions = observations("+1:ab|one\n+2:cd|observed instead\n+4:ab|four", &args);
+	assert_eq!(regions[0].lines, vec!["one", "observed instead"]);
+	assert!(!regions.iter().any(|r| r.lines.iter().any(|s| s == "three")));
+}
+
+#[test]
+fn multi_file_search_output_is_never_attributed_to_the_argument_path() {
+	let mut messages = interaction(
+		"view",
+		serde_json::json!({"path":"src","content":"needle"}),
+		"src/a.rs:\n12:ab|needle | one\nsrc/b.rs:\n12:cd|needle | two",
+		"search",
+	);
+	messages.push(message("assistant", "Both files match."));
+	let (_, frontier) = selected(&messages, 2000);
+	assert!(!frontier.contains(REGION_OPEN));
+	assert!(frontier.contains("src/a.rs:") && frontier.contains("src/b.rs:"));
+}
+
+#[test]
+fn single_file_search_hits_keep_their_own_line_numbers() {
+	let messages = interaction(
+		"view",
+		serde_json::json!({"path":"src/a.rs","content":"needle"}),
+		"12:ab|needle one\n40:cd|needle two",
+		"search",
+	);
+	let (packets, _) = selected(&messages, 2000);
+	assert_eq!(
+		unretained_ranges(&packets, "./src/a.rs", 10, 41),
+		vec![(10, 11), (13, 39), (41, 41)]
+	);
+}
+
+#[test]
+fn closure_read_larger_than_the_budget_is_trimmed_not_dropped() {
+	let big: Vec<String> = (1..=200)
+		.map(|n| format!("line {n} of the big artifact body"))
+		.collect();
+	let big: Vec<&str> = big.iter().map(String::as_str).collect();
+	let mut messages = read("small", 1, &["tiny"], "small");
+	messages.push(message("assistant", "small small small"));
+	messages.extend(read("big", 1, &big, "big"));
+	messages.push(message("assistant", "Continue with big"));
+	let (packets, frontier) = selected(&messages, 120);
+	let read = packets.iter().find(|p| p.message_start == 3).unwrap();
+	assert_eq!(read.lane, Lane::KeepExact);
+	assert!(!read.exact_spans.is_empty());
+	let kept: usize = region_lines(&frontier)
+		.iter()
+		.filter(|(h, _, _)| h.path == "big")
+		.map(|(h, _, _)| h.lines)
+		.sum();
+	assert!(kept > 0 && kept < 200, "{kept}");
+	// One trailing newline per admitted region is outside the accounting.
+	let selected_tokens: usize = packets
+		.iter()
+		.filter(|p| p.lane == Lane::KeepExact)
+		.map(|p| crate::session::estimate_tokens(&p.prompt_content))
+		.sum();
+	assert!(selected_tokens <= 120 + packets.len(), "{selected_tokens}");
+	let dir = tempfile::tempdir().unwrap();
+	let archive =
+		super::super::super::archive::write_archive_with_index_to(dir.path(), "fold", &messages, &packets).unwrap();
+	let mut pact = super::super::tests::pact_with(packets[0].clone());
+	pact.packets = packets;
+	pact.verify_archive(&archive, &messages).unwrap();
+}
+
+#[test]
+fn tail_mutation_evicting_a_live_dependency_keeps_it_exact_as_an_observation() {
+	let mut messages = read("other", 1, &["other text"], "other");
+	messages.extend(read("artifact", 1, &["first", "second"], "read"));
+	messages.push(message("assistant", "Continue with artifact"));
+	let (mut packets, _) = selected(&messages, 2000);
+	let other = packets.iter().position(|p| p.message_start == 0).unwrap();
+	let read = packets.iter().position(|p| p.message_start == 2).unwrap();
+	assert_eq!(packets[other].lane, Lane::KeepExact);
+	assert_eq!(packets[read].lane, Lane::KeepExact);
+	let mut tail = interaction("replace", serde_json::json!({"path":"artifact"}), "updated", "edit");
+	tail.extend(interaction(
+		"replace",
+		serde_json::json!({"path":"other"}),
+		"updated",
+		"edit2",
+	));
+	revalidate(&mut packets, &messages, &tail);
+	// Nothing depends on the old read of `other`: a recall pointer now.
+	assert_eq!(packets[other].lane, Lane::ArchiveReference);
+	assert!(packets[other].prompt_content.is_empty());
+	// The checkpoint depends on the evicted read: still exact, as a transcript
+	// observation rather than a claim about the live artifact.
+	assert_eq!(packets[read].lane, Lane::KeepExact);
+	assert!(!packets[read].exact_spans.is_empty());
+	assert!(packets[read].prompt_content.contains("[MESSAGE 4 TOOL RESULT"));
+	assert_eq!(unretained_ranges(&packets, "artifact", 1, 2), vec![(1, 2)]);
 }

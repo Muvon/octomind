@@ -202,7 +202,7 @@ Hard citation rules (violations are rejected by a validator):
 - NEVER cite an archive_reference packet ID in refs — those descriptors are recall pointers, not evidence. Cite only keep_exact and summarize packet IDs.
 - A unit citing any keep_exact (active frontier) packet may only use status pending, tentative, or unknown — the frontier is live state, never completed.
 - EVERY summarize-lane packet ID must appear in the refs of at least one folded unit; a summarize packet you leave uncited fails the whole summary.
-KeepExact artifact regions already survive verbatim in the active frontier; do not copy their bodies or pinned facts into folded_units or request them again in file_context. Fold previous summaries and continuations into current facts, never embed their wrappers.
+KeepExact artifact regions already survive verbatim in the active frontier; do not copy their bodies or pinned facts into folded_units or request them again in file_context. Fold previous summaries and continuations into current facts, never embed their wrappers. The <active_frontier> inside a previous summary was live state at that fold, not now: fold what it settled as facts and carry its open items forward.
 PACT live rendering and durable model-authored state admit only folded_units; legacy narrative fields are wire compatibility only and are neither rendered nor committed. Therefore every consequential completed outcome, correction, durable protocol, open loop, and next action that is not already exact in pinned_state or keep_exact packets must appear as a supported folded unit.
 </attribution>{force_directive}{mode_appendix}",
 	);

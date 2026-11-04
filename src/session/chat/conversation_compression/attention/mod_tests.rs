@@ -21,7 +21,7 @@ pub(super) fn message(role: &str, content: &str) -> Message {
 	}
 }
 
-fn packet(id: &str, provenance: Provenance, lane: Lane) -> EvidencePacket {
+pub(super) fn packet(id: &str, provenance: Provenance, lane: Lane) -> EvidencePacket {
 	let exact_spans = (lane == Lane::KeepExact)
 		.then(|| SourceSpan {
 			start_line: 1,
@@ -66,6 +66,8 @@ pub(super) fn pact_with(packet: EvidencePacket) -> PactContext {
 		prior_recall: BTreeMap::new(),
 		source_tokens: 1,
 		target_tokens: 16,
+		live_tokens: usize::MAX,
+		frontier_tokens: usize::MAX,
 		metrics: PactMetrics::default(),
 	}
 }
@@ -323,7 +325,7 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (100, 100), false).await;
 	// The prior summary folds whole outside the context budget (fold-model
 	// input only), so the budget invariant covers everything but it.
 	let selected_tokens = packets
@@ -765,7 +767,7 @@ async fn active_frontier_allocation_obeys_total_token_budget() {
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 30, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (30, 30), false).await;
 	let selected: usize = packets
 		.iter()
 		.filter(|packet| packet.lane != Lane::ArchiveReference)
@@ -794,7 +796,7 @@ async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 1000, true).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (1000, 1000), true).await;
 	assert!(
 		packets.iter().all(|packet| packet.lane != Lane::KeepExact),
 		"minimal frontier must keep no packet exact"
@@ -829,7 +831,7 @@ async fn tight_budget_keeps_recoverable_spans_for_late_small_frontier_packets() 
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 40, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (40, 40), false).await;
 	for packet in &packets {
 		assert_eq!(packet.lane, Lane::KeepExact);
 		assert!(
@@ -894,6 +896,8 @@ fn selected_packets_require_live_dependency_closure() {
 		prior_recall: BTreeMap::new(),
 		source_tokens: 2,
 		target_tokens: 32,
+		live_tokens: usize::MAX,
+		frontier_tokens: usize::MAX,
 		metrics: PactMetrics::default(),
 	};
 	let error = pact
@@ -1001,7 +1005,7 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 	// summary tag.
 	let mut packets = build_packets("nesting-regression", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 10_000, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (10_000, 10_000), false).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1044,6 +1048,8 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 		prior_recall: BTreeMap::new(),
 		source_tokens: 2,
 		target_tokens: 40,
+		live_tokens: usize::MAX,
+		frontier_tokens: usize::MAX,
 		metrics: PactMetrics::default(),
 	};
 	assert!(pact.validate_summary(&CompressionSummary::default()).is_ok());
@@ -1111,7 +1117,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	let messages = build();
 	let mut packets = build_packets("full-fold", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (200, 200), false).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1157,6 +1163,8 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 		prior_recall: BTreeMap::new(),
 		source_tokens: 2_000,
 		target_tokens: 200,
+		live_tokens: usize::MAX,
+		frontier_tokens: usize::MAX,
 		metrics: PactMetrics::default(),
 	};
 	let view = pact.prompt_view();
@@ -1185,7 +1193,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	let messages = build();
 	let mut packets = build_packets("full-fold-done", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, true).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (200, 200), true).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1238,7 +1246,7 @@ async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
 	// 600 tokens: far below the prior summary alone, ample for the tiny
 	// frontier and candidates. If the prior render were charged, remaining
 	// would saturate to zero and the old pair would stay archived.
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 600, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (600, 600), false).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1387,7 +1395,7 @@ async fn legacy_nested_prior_summary_folds_whole_after_stripping_regrown_section
 	let mut packets = build_packets("legacy-blob", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (100, 100), false).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1432,7 +1440,7 @@ async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
 	let mut packets = build_packets("empty-prior", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (200, 200), false).await;
 	let prior_packet = packets
 		.iter()
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1454,6 +1462,8 @@ async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
 		prior_recall: BTreeMap::new(),
 		source_tokens: 100,
 		target_tokens: 200,
+		live_tokens: usize::MAX,
+		frontier_tokens: usize::MAX,
 		metrics: PactMetrics::default(),
 	};
 	assert!(pact.validate_summary(&CompressionSummary::default()).is_ok());
@@ -1483,7 +1493,7 @@ async fn every_prior_summary_folds_whole_when_a_legacy_session_carries_several()
 	let mut packets = build_packets("two-priors", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 150, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (150, 150), false).await;
 	let priors: Vec<&EvidencePacket> = packets
 		.iter()
 		.filter(|packet| packet.kind == PacketKind::PriorSummary)
@@ -1511,7 +1521,7 @@ async fn compaction_with_only_a_prior_summary_still_folds_it_whole() {
 	let mut packets = build_packets("prior-only", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 50, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (50, 50), false).await;
 	assert_eq!(packets.len(), 1);
 	assert_eq!(packets[0].kind, PacketKind::PriorSummary);
 	assert_eq!(packets[0].lane, Lane::Summarize);
@@ -1568,7 +1578,7 @@ async fn tiny_summarize_candidate_renders_whole_instead_of_poisoning_its_depende
 	let continuation_id = packets[0].id.clone();
 	let old_pair_id = packets[1].id.clone();
 	let pinned = pinned_task("check the run status now");
-	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 600, false).await;
+	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (600, 600), false).await;
 	for id in [&continuation_id, &old_pair_id] {
 		let candidate = packets
 			.iter()

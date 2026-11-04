@@ -1784,6 +1784,28 @@ fn test_file_context_stripped_from_recompression_input() {
 }
 
 #[test]
+fn test_previous_frontier_keeps_exact_text_and_drops_artifact_regions() {
+	// Regions ride the snapshot packet; the rest of the previous frontier was
+	// never folded into units, so the compressor must still see it.
+	let summary = "<conversation_summary id=\"abc\">\n\
+			<folded_state>durable</folded_state>\n\
+			<active_frontier>\n\
+			[MESSAGE 7 ASSISTANT]\n\
+			Tests fail in parser; fixing tokenizer next.\n\
+			[ARTIFACT {\"path\":\"src/lib.rs\",\"start\":3,\"lines\":1}]\n\
+			fn main() {}\n\
+			[/ARTIFACT]\n\
+			</active_frontier>\n\
+			</conversation_summary>";
+
+	let stripped = strip_regrown_sections(summary);
+
+	assert!(stripped.contains("fixing tokenizer next"));
+	assert!(!stripped.contains("fn main() {}"));
+	assert!(!stripped.contains("[ARTIFACT"));
+}
+
+#[test]
 fn test_analysis_findings_stripped_from_recompression_input() {
 	// The accumulated union is re-attached from the session at render time, so
 	// re-feeding it only invites the model to restate every entry in new words.

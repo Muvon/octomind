@@ -18,7 +18,8 @@
 //! task/constraint pins, tool-call atomicity, exact active frontier, source
 //! identifiers, archive references, and attribution checks.
 
-mod working_set;
+mod live;
+pub(super) mod working_set;
 
 use super::schema::{CompressionSummary, FoldedUnit};
 use crate::session::chat::session::ChatSession;
@@ -135,6 +136,8 @@ pub(crate) struct PactContext {
 	prior_recall: BTreeMap<String, super::archive::ArchivedBlockRef>,
 	pub source_tokens: usize,
 	pub target_tokens: usize,
+	live_tokens: usize,
+	frontier_tokens: usize,
 	metrics: PactMetrics,
 }
 
@@ -201,6 +204,8 @@ pub(crate) async fn build(
 
 	let source_tokens = packets.iter().map(|packet| packet.tokens).sum::<usize>();
 	let target_tokens = ((source_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
+	let live_tokens = live::budget(drained, target_tokens);
+	let frontier_tokens = live::frontier_budget(live_tokens, &pinned);
 	let grounded_hints = ground_self_report(session, drained, &packets);
 	let mut plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
 		.await
@@ -226,7 +231,7 @@ pub(crate) async fn build(
 		&pinned,
 		&grounded_hints,
 		&plan_focus,
-		target_tokens,
+		(target_tokens, frontier_tokens),
 		minimal_frontier,
 	)
 	.await;
@@ -263,6 +268,8 @@ pub(crate) async fn build(
 		prior_recall,
 		source_tokens,
 		target_tokens,
+		live_tokens,
+		frontier_tokens,
 		metrics: PactMetrics::default(),
 	})
 }
@@ -316,14 +323,11 @@ fn build_packets(session_name: &str, messages: &[Message], model: &str) -> Vec<E
 			lane: Lane::ArchiveReference,
 			prompt_content: String::new(),
 			exact_spans: Vec::new(),
-			descriptor: format!(
-				"{:?} / {:?}; {} message(s), approximately {} tokens; {}",
-				kind,
-				provenance,
-				end - start + 1,
-				tokens,
+			descriptor: if subjects.is_empty() {
+				format!("{kind:?}")
+			} else {
 				subjects
-			),
+			},
 		});
 		// A previous fold's material is a source projection, not its wrapper.
 		// Sharing an archive message is safe: recall deduplicates source lines.
@@ -639,14 +643,21 @@ async fn allocate_lanes(
 	pinned: &PinnedState,
 	grounded_hints: &[GroundedHint],
 	plan_focus: &str,
-	target_tokens: usize,
+	(target_tokens, frontier_tokens): (usize, usize),
 	minimal_frontier: bool,
 ) {
 	if packets.is_empty() {
 		return;
 	}
 
-	let used = allocate_frontier(packets, messages, target_tokens, minimal_frontier, plan_focus);
+	let used = allocate_frontier(
+		packets,
+		messages,
+		frontier_tokens,
+		minimal_frontier,
+		plan_focus,
+		Some(pinned),
+	);
 
 	// A prior summary is compression OUTPUT being drained this cycle: every
 	// line is already-distilled state, so the fold model must see ALL of it —
@@ -808,6 +819,7 @@ fn allocate_frontier(
 	target_tokens: usize,
 	minimal_frontier: bool,
 	focus: &str,
+	pinned: Option<&PinnedState>,
 ) -> usize {
 	// /done marks a task-phase boundary: the next turn starts a NEW task, so
 	// the heavy dependency-closure frontier of the finished one is noise, not
@@ -836,7 +848,14 @@ fn allocate_frontier(
 	let mut used = 0usize;
 	for index in exact_indices {
 		let packet_budget = exact_remaining.div_ceil(exact_left);
-		let rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
+		let mut rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
+		if let Some(pinned) = pinned.filter(|_| packets[index].kind == PacketKind::RuntimeEvent) {
+			let canonical = render_packet(messages, &packets[index], usize::MAX);
+			let projected = working_set::without_pins(&canonical, pinned);
+			if crate::session::estimate_tokens(&projected.content) <= packet_budget {
+				rendered = projected;
+			}
+		}
 		packets[index].lane = Lane::KeepExact;
 		packets[index].prompt_content = rendered.content;
 		packets[index].exact_spans = rendered.spans;
@@ -847,7 +866,7 @@ fn allocate_frontier(
 	}
 
 	if !minimal_frontier {
-		used += working_set::select(packets, messages, target_tokens.saturating_sub(used), focus);
+		used += working_set::select(packets, messages, target_tokens.saturating_sub(used), focus, &exact_ids);
 	}
 	used
 }
@@ -1191,6 +1210,21 @@ fn source_span(lines: &[&str], start_line: usize, end_line: usize) -> SourceSpan
 }
 
 impl PactContext {
+	pub(crate) fn live_enabled(&self) -> bool {
+		self.enabled
+	}
+
+	pub(crate) fn render_compact(
+		&self,
+		body: &str,
+		file_context: &str,
+		compression_id: &str,
+		archive: Option<&super::archive::ArchiveBundle>,
+		carried: Option<&str>,
+	) -> String {
+		live::render(self, body, file_context, compression_id, archive, carried)
+	}
+
 	pub(crate) fn revalidate_frontier(&mut self, source: &[Message], tail: &[Message]) {
 		working_set::revalidate(&mut self.packets, source, tail);
 	}

@@ -30,6 +30,15 @@ static DELETED: LazyLock<Regex> =
 static SHIFT: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"after (\d+):[[:xdigit:]]+ ([+-]\d+)").expect("coordinate shift"));
 
+// These are output contracts, not language-specific syntax heuristics. A
+// compact edit result may explicitly attest omitted replacement lines.
+static SENT_RANGE: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"^\+(\d+):[[:xdigit:]]+\.\.(\d+):[[:xdigit:]]+ \((\d+) lines as sent\)")
+		.expect("acknowledged replacement")
+});
+static REDIRECT: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?:^|\s)\d*>{1,2}\s*([^\s;&|]+)").expect("output destination"));
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RegionHeader {
 	path: String,
@@ -88,21 +97,38 @@ fn paths(args: &Value) -> Vec<String> {
 			}
 		}
 	}
-	found
-		.iter_mut()
-		.for_each(|p| *p = p.trim_start_matches("./").replace('\\', "/"));
+	found.iter_mut().for_each(|p| *p = normalize_path(p));
 	found.sort();
 	found.dedup();
 	found
 }
 
-fn path_header(line: &str, paths: &[String]) -> Option<String> {
-	let line = line.strip_prefix("FILE: ").unwrap_or(line).trim();
-	// An absolute spelling from the same result can resolve to a relative
-	// argument only when that suffix identifies exactly one requested artifact.
+fn normalize_path(path: &str) -> String {
+	path.trim_start_matches("./").replace('\\', "/")
+}
+
+/// A path-shaped line between observed lines (`FILE: x`, `x:` or `x`): a
+/// multi-file result names each file this way before its lines. Observed,
+/// deleted and prose lines are never headers.
+fn header_path(line: &str) -> Option<String> {
+	if NUMBERED.is_match(line) || DELETED.is_match(line) {
+		return None;
+	}
+	let line = line.trim();
+	let line = line.strip_prefix("FILE: ").unwrap_or(line).trim_end_matches(':');
+	let shaped = !line.is_empty()
+		&& !line.contains(char::is_whitespace)
+		&& (line.contains('/') || line.contains('.'))
+		&& line.chars().any(char::is_alphanumeric);
+	shaped.then(|| normalize_path(line))
+}
+
+/// The requested artifact a header names, when exactly one does. An absolute
+/// spelling resolves to its relative argument and vice versa.
+fn requested(header: &str, paths: &[String]) -> Option<String> {
 	let matches: Vec<_> = paths
 		.iter()
-		.filter(|p| line == p.as_str() || line.ends_with(&format!("/{p}")))
+		.filter(|p| header == p.as_str() || header.ends_with(&format!("/{p}")) || p.ends_with(&format!("/{header}")))
 		.collect();
 	(matches.len() == 1).then(|| matches[0].clone())
 }
@@ -111,8 +137,12 @@ fn sections<'a>(content: &'a str, paths: &[String]) -> Vec<(String, Vec<&'a str>
 	let mut out: Vec<(String, Vec<&str>)> = Vec::new();
 	let mut path = (paths.len() == 1).then(|| paths[0].clone());
 	for line in content.lines() {
-		if let Some(header) = path_header(line, paths) {
-			path = Some(header);
+		if let Some(header) = header_path(line) {
+			// A file the call did not name (a directory search, a multi-file
+			// result) never inherits the argument path: its line numbers belong
+			// to that file, and attributing them would merge every file's lines
+			// into one bogus artifact that then replaces the whole result.
+			path = requested(&header, paths);
 		}
 		if let Some(path) = &path {
 			if out.last().is_none_or(|(p, _)| p != path) {
@@ -126,7 +156,13 @@ fn sections<'a>(content: &'a str, paths: &[String]) -> Vec<(String, Vec<&'a str>
 
 fn changes<'a>(args: &'a Value, path: &str) -> Vec<&'a Value> {
 	if let Some(edits) = args.get("edits").and_then(Value::as_array) {
-		return edits.iter().filter(|e| paths(e).iter().any(|p| p == path)).collect();
+		return edits
+			.iter()
+			.filter(|e| {
+				let own = paths(e);
+				own.iter().any(|p| p == path) || (own.is_empty() && paths(args).iter().any(|p| p == path))
+			})
+			.collect();
 	}
 	if let Some(operations) = args.get("operations").and_then(Value::as_array) {
 		return operations.iter().collect();
@@ -176,7 +212,20 @@ fn observations(content: &str, args: &Value) -> Vec<Observation> {
 					})
 					.map(|(n, _)| *n)
 					.collect();
-				if starts.len() == 1 {
+				if starts.len() == 1
+					&& added
+						.range(starts[0]..starts[0] + replacement.len())
+						.all(|(n, text)| replacement[*n - starts[0]] == text)
+					&& replacement.iter().enumerate().all(|(offset, _)| {
+						let n = starts[0] + offset;
+						added.contains_key(&n)
+							|| lines.iter().filter_map(|line| SENT_RANGE.captures(line)).any(|c| {
+								let start: usize = c[1].parse().expect("digits");
+								let end: usize = c[2].parse().expect("digits");
+								let count: usize = c[3].parse().expect("digits");
+								start <= n && n <= end && end.checked_sub(start).is_some_and(|span| span + 1 == count)
+							})
+					}) {
 					for (offset, line) in replacement.iter().enumerate() {
 						numbered.insert(starts[0] + offset, (*line).to_string());
 					}
@@ -271,6 +320,15 @@ fn region_lines(content: &str) -> Vec<(RegionHeader, usize, Vec<String>)> {
 }
 
 fn invalidate(artifacts: &mut Artifacts, name: &str, args: &Value, content: &str) {
+	// Execution can replace an observed output even when the command is a
+	// check rather than an editor. Redirection invalidates only that subject.
+	if let Some(command) = args.get("command").or_else(|| args.get("cmd")).and_then(Value::as_str) {
+		for capture in REDIRECT.captures_iter(command) {
+			let path = capture[1].trim_matches(['\'', '"']).trim_start_matches("./");
+			artifacts.remove(path);
+		}
+	}
+
 	if !crate::supervisor::detect::is_mutation_call(name, args)
 		&& args.get("new_text").is_none()
 		&& args.get("edits").is_none()
@@ -370,18 +428,56 @@ fn current_lines(packets: &[EvidencePacket], messages: &[Message]) -> Artifacts 
 	artifacts
 }
 
+/// Active-closure regions outrank plan-focused ones, which outrank the rest.
+fn region_priority(in_closure: bool, focused: bool) -> u8 {
+	(u8::from(in_closure) << 1) | u8::from(focused)
+}
+
+/// Longest leading run of `text` whose rendered region fits `budget` tokens.
+fn fitting_prefix(path: &str, start: usize, text: &[String], budget: usize) -> usize {
+	let fits = |n: usize| crate::session::estimate_tokens(&render_region(path, start, &text[..n])) <= budget;
+	if text.is_empty() || !fits(1) {
+		return 0;
+	}
+	let (mut low, mut high) = (1, text.len());
+	while low < high {
+		let mid = low + (high - low).div_ceil(2);
+		if fits(mid) {
+			low = mid;
+		} else {
+			high = mid - 1;
+		}
+	}
+	low
+}
+
 /// Every admitted region stays in its source packet's KeepExact lane. Regions
 /// can span several old reads, but their union has only one value per line.
-pub(super) fn select(packets: &mut [EvidencePacket], messages: &[Message], budget: usize, focus: &str) -> usize {
+/// Windows of `closure` packets (the active dependency closure) are admitted
+/// first and trimmed to the remaining budget instead of dropped: a closure
+/// packet left archive-only is a missing live dependency, which vetoes the fold.
+pub(super) fn select(
+	packets: &mut [EvidencePacket],
+	messages: &[Message],
+	budget: usize,
+	focus: &str,
+	closure: &HashSet<String>,
+) -> usize {
 	let artifacts = current_lines(packets, messages);
-	let mut regions: Vec<(String, usize, Vec<KnownLine>, usize, f64)> = Vec::new();
+	// One haystack per message, scanned once per artifact path.
+	let haystacks: Vec<String> = messages
+		.iter()
+		.map(|m| match &m.tool_calls {
+			Some(calls) => format!("{}\n{}", m.content, calls),
+			None => m.content.clone(),
+		})
+		.collect();
+	let mut regions: Vec<(String, usize, Vec<KnownLine>, u8, f64)> = Vec::new();
 	for (path, lines) in artifacts {
-		let references: Vec<_> = messages
+		let references: Vec<usize> = haystacks
 			.iter()
 			.enumerate()
-			.filter(|(_, m)| {
-				m.content.contains(&path) || m.tool_calls.as_ref().is_some_and(|c| c.to_string().contains(&path))
-			})
+			.filter(|(_, haystack)| haystack.contains(&path))
 			.map(|(i, _)| i)
 			.collect();
 		let last_reference = references.last().copied().unwrap_or_default();
@@ -389,7 +485,7 @@ pub(super) fn select(packets: &mut [EvidencePacket], messages: &[Message], budge
 		// below so one large observation cannot crowd out the working set.
 		let utility = references.len() as f64 + last_reference as f64 / messages.len().max(1) as f64;
 
-		let focused = usize::from(focus.contains(&path));
+		let focused = focus.contains(&path);
 		for (n, line) in lines {
 			if let Some((_, _, held, _, _)) = regions.last_mut().filter(|(p, start, held, _, _)| {
 				*p == path
@@ -400,40 +496,110 @@ pub(super) fn select(packets: &mut [EvidencePacket], messages: &[Message], budge
 			}) {
 				held.push(line);
 			} else {
-				regions.push((path.clone(), n, vec![line], focused, utility));
+				let priority = region_priority(closure.contains(&packets[line.packet].id), focused);
+				regions.push((path.clone(), n, vec![line], priority, utility));
 			}
 		}
 	}
-	let score = |region: &(String, usize, Vec<KnownLine>, usize, f64)| {
-		let text: Vec<_> = region.2.iter().map(|line| line.text.clone()).collect();
-		let cost = crate::session::estimate_tokens(&render_region(&region.0, region.1, &text));
-		(region.4 + region.2[0].observed as f64 / messages.len().max(1) as f64) / cost.max(1) as f64
+	// Four windows leave room for several subjects of the open step instead
+	// of admitting a whole large view because one line was referenced.
+	const WORKING_WINDOWS: usize = 4;
+	let window_budget = budget.div_ceil(WORKING_WINDOWS).max(MIN_SUMMARIZE_RENDER_TOKENS);
+	let mut windows = Vec::new();
+	for (path, start, lines, priority, utility) in regions {
+		let mut offset = 0;
+		while offset < lines.len() {
+			let mut end = offset;
+			let mut cost = 0;
+			while end < lines.len() {
+				let next = crate::session::estimate_tokens(&lines[end].text);
+				if end > offset && cost + next > window_budget {
+					break;
+				}
+				cost += next;
+				end += 1;
+			}
+			let held = lines[offset..end].to_vec();
+			if held.iter().any(|l| !l.text.trim().is_empty()) {
+				windows.push((path.clone(), start + offset, held, priority, utility));
+			}
+			offset = end;
+		}
+	}
+	let mut query = focus.to_string();
+	if let Some(message) = messages.iter().rev().find(|m| m.tool_calls.is_some()) {
+		query.push_str(&message.tool_calls.as_ref().expect("selected calls").to_string());
+		if let Some(thinking) = crate::session::message_thinking_content(message) {
+			query.push_str(thinking);
+		}
+	}
+	// Failed checks remain subjects until a newer execution supersedes them.
+	if let Some(failure) = messages
+		.iter()
+		.rev()
+		.find(|m| m.role == "tool" && m.content.starts_with("Command failed with exit code"))
+	{
+		query.push_str(&failure.content);
+	}
+	let terms = |text: &str| -> BTreeSet<String> {
+		text.split(|c: char| !c.is_alphanumeric() && c != '_')
+			.filter(|w| !w.is_empty())
+			.map(str::to_lowercase)
+			.collect()
 	};
-	regions.sort_by(|a, b| {
+	let query = terms(&query);
+	let terms_by_window: Vec<_> = windows
+		.iter()
+		.map(|r| terms(&r.2.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")))
+		.collect();
+	let mut frequencies: BTreeMap<String, usize> = BTreeMap::new();
+	for terms in &terms_by_window {
+		for term in terms {
+			*frequencies.entry(term.clone()).or_default() += 1;
+		}
+	}
+	let document_count = windows.len().max(1) as f64;
+	let mut ranked: Vec<_> = windows
+		.into_iter()
+		.zip(terms_by_window)
+		.map(|(region, terms)| {
+			let text: Vec<_> = region.2.iter().map(|line| line.text.clone()).collect();
+			let cost = crate::session::estimate_tokens(&render_region(&region.0, region.1, &text));
+			let relevance: f64 = terms
+				.intersection(&query)
+				.map(|term| (document_count / frequencies[term] as f64).ln())
+				.sum();
+			let recency = region.2[0].observed as f64 / messages.len().max(1) as f64;
+			let score = (relevance + recency + region.4 / messages.len().max(1) as f64) / cost.max(1) as f64;
+			(region, score)
+		})
+		.collect();
+	ranked.sort_by(|(a, sa), (b, sb)| {
 		b.3.cmp(&a.3)
-			.then_with(|| score(b).total_cmp(&score(a)))
+			.then_with(|| sb.total_cmp(sa))
 			.then_with(|| b.2[0].observed.cmp(&a.2[0].observed))
 			.then_with(|| a.0.cmp(&b.0))
 			.then(a.1.cmp(&b.1))
 	});
+	let regions = ranked.into_iter().map(|(r, _)| r);
 
 	let canonical: Vec<_> = packets.iter().map(|p| render_packet(messages, p, usize::MAX)).collect();
 	let mut used = 0;
 	for (path, start, lines, _, _) in regions {
 		let index = lines[0].packet;
-		let text: Vec<_> = lines.iter().map(|line| line.text.clone()).collect();
-		let region = render_region(&path, start, &text);
-		let header_cost = if packets[index].lane == Lane::KeepExact {
-			0
-		} else {
-			let mut packet = packets[index].clone();
-			packet.lane = Lane::KeepExact;
-			crate::session::estimate_tokens(&packet_header(&packet))
-		};
-		let cost = crate::session::estimate_tokens(&region) + header_cost;
-		if cost > budget.saturating_sub(used) {
-			continue;
+		let available = budget.saturating_sub(used);
+		let mut text: Vec<_> = lines.iter().map(|line| line.text.clone()).collect();
+		if crate::session::estimate_tokens(&render_region(&path, start, &text)) > available {
+			if !closure.contains(&packets[index].id) {
+				continue;
+			}
+			let keep = fitting_prefix(&path, start, &text, available);
+			if keep == 0 {
+				continue;
+			}
+			text.truncate(keep);
 		}
+		let region = render_region(&path, start, &text);
 		let source: Vec<_> = canonical[index].lines().collect();
 		let packet = &mut packets[index];
 		packet.lane = Lane::KeepExact;
@@ -445,11 +611,30 @@ pub(super) fn select(packets: &mut [EvidencePacket], messages: &[Message], budge
 		packet.exact_spans.push(source_span(
 			&source,
 			lines[0].source_line,
-			lines.last().expect("nonempty region").source_line,
+			lines[text.len() - 1].source_line,
 		));
-		used += cost;
+		used += crate::session::estimate_tokens(&region);
 	}
 	used
+}
+
+/// Drop every artifact region block, keeping the text around it.
+pub(crate) fn strip_regions(text: &str) -> String {
+	let lines: Vec<&str> = text.lines().collect();
+	let mut skip = vec![false; lines.len()];
+	for (header, source, _) in region_lines(text) {
+		let first = source - 2;
+		for flag in &mut skip[first..=first + header.lines + 1] {
+			*flag = true;
+		}
+	}
+	lines
+		.iter()
+		.zip(skip)
+		.filter(|(_, skipped)| !*skipped)
+		.map(|(line, _)| *line)
+		.collect::<Vec<_>>()
+		.join("\n")
 }
 
 #[cfg(test)]
@@ -477,11 +662,15 @@ pub(super) fn unretained_ranges(
 	start: usize,
 	end: usize,
 ) -> Vec<(usize, usize)> {
+	let path = normalize_path(path);
+	// Only a packet rendered as nothing but current regions holds lines. A
+	// whole transcript render that happens to contain region blocks (see
+	// `revalidate`) is an observation, not a claim about the live artifact.
 	let held: BTreeSet<usize> = packets
 		.iter()
-		.filter(|p| p.lane == Lane::KeepExact)
+		.filter(|p| p.lane == Lane::KeepExact && strip_regions(&p.prompt_content).trim().is_empty())
 		.flat_map(|p| region_lines(&p.prompt_content))
-		.filter(|(h, _, _)| h.path == path.trim_start_matches("./"))
+		.filter(|(h, _, _)| h.path == path)
 		.flat_map(|(h, _, _)| h.start..h.start + h.lines)
 		.collect();
 	let mut ranges: Vec<(usize, usize)> = Vec::new();
@@ -520,10 +709,14 @@ pub(super) fn revalidate(packets: &mut [EvidencePacket], source: &[Message], tai
 		}
 	}
 	let canonical: Vec<_> = packets.iter().map(|p| render_packet(source, p, usize::MAX)).collect();
-	for packet in packets
-		.iter_mut()
-		.filter(|p| p.lane == Lane::KeepExact && !region_lines(&p.prompt_content).is_empty())
-	{
+	let cleared: Vec<(usize, usize)> = packets
+		.iter()
+		.enumerate()
+		.filter(|(_, p)| p.lane == Lane::KeepExact && !region_lines(&p.prompt_content).is_empty())
+		.map(|(index, p)| (index, crate::session::estimate_tokens(&p.prompt_content)))
+		.collect();
+	for (index, _) in &cleared {
+		let packet = &mut packets[*index];
 		packet.prompt_content.clear();
 		packet.exact_spans.clear();
 		packet.lane = Lane::ArchiveReference;
@@ -558,5 +751,74 @@ pub(super) fn revalidate(packets: &mut [EvidencePacket], source: &[Message], tai
 				lines.last().expect("region").source_line,
 			));
 		}
+	}
+	// A packet whose every observation the tail invalidated may still be the
+	// live dependency of a selected packet; archive-only, it would veto the fold
+	// the model already produced against it (`validate_summary`). Keep it exact
+	// as the transcript observation it is, within the budget its regions had.
+	// Snapshots have no dependents and simply become recall pointers.
+	for (index, cost) in cleared {
+		if packets[index].lane != Lane::ArchiveReference || packets[index].kind == PacketKind::ArtifactSnapshot {
+			continue;
+		}
+		let id = packets[index].id.as_str();
+		let depended_on = packets
+			.iter()
+			.any(|p| p.lane != Lane::ArchiveReference && p.depends_on.iter().any(|d| d == id));
+		if !depended_on {
+			continue;
+		}
+		let rendered = render_packet_with_spans(source, &packets[index], cost.max(MIN_SUMMARIZE_RENDER_TOKENS));
+		if rendered.spans.is_empty() {
+			continue;
+		}
+		let packet = &mut packets[index];
+		packet.lane = Lane::KeepExact;
+		packet.prompt_content = rendered.content;
+		packet.exact_spans = rendered.spans;
+	}
+}
+
+pub(super) fn live_fragments(packets: &[EvidencePacket], pinned: &PinnedState) -> Vec<String> {
+	let mut selected: Vec<_> = packets.iter().filter(|p| p.lane == Lane::KeepExact).collect();
+	selected.sort_by_key(|p| std::cmp::Reverse(p.message_end));
+	let mut out = Vec::new();
+	for packet in selected {
+		let regions = region_lines(&packet.prompt_content);
+		if regions.is_empty() {
+			let text = packet
+				.prompt_content
+				.lines()
+				.filter(|line| {
+					let text = line.trim().trim_start_matches("- ").trim_start_matches("constraint: ");
+					!pinned.constraints.iter().any(|pin| pin.text.trim() == text)
+				})
+				.collect::<Vec<_>>()
+				.join("\n");
+			out.push(text);
+		} else {
+			for (header, _, lines) in regions {
+				out.push(render_region(&header.path, header.start, &lines));
+			}
+		}
+	}
+	out
+}
+
+pub(super) fn without_pins(canonical: &str, pinned: &PinnedState) -> PacketRender {
+	let lines: Vec<_> = canonical.lines().collect();
+	let mut content = Vec::new();
+	let mut spans = Vec::new();
+	for (i, line) in lines.iter().enumerate() {
+		let text = line.trim().trim_start_matches("- ").trim_start_matches("constraint: ");
+		if pinned.constraints.iter().any(|pin| pin.text.trim() == text) {
+			continue;
+		}
+		content.push(*line);
+		spans.push(source_span(&lines, i + 1, i + 1));
+	}
+	PacketRender {
+		content: content.join("\n"),
+		spans,
 	}
 }

@@ -19,6 +19,61 @@
 
 Octomind is an open-source coding agent harness. It gives any LLM the tools to work in a repository — read and edit files, run shells, search code, delegate to sub-agents — through [MCP](https://modelcontextprotocol.io), and runs the result as an interactive CLI, a stdin pipe, a daemon, a WebSocket server, or an ACP agent in your editor. Most agents stop and ask a human before each risky step, which works at a keyboard and blocks everything in CI. Octomind writes that policy down as TOML guardrails and adds a supervising model that plans and checks the work, so the same session can run with nobody watching. On 25 tasks taken from merged pull requests it solved 24; OpenCode solved 19 with the same model at about twice the cost ([benchmarks](#benchmarks)).
 
+## How It Works
+
+One diagram, the whole turn: what is assembled before the model sees the request, the tool loop, how a turn is allowed to end, and what carries over to the next session.
+
+```mermaid
+flowchart TB
+    R["Request<br/>CLI · stdin · daemon<br/>WebSocket · ACP"] --> A
+
+    subgraph A ["Context assembly — per user turn"]
+        direction LR
+        A1["AGENTS.md<br/>Agent Skills · capabilities"]
+        A2["Lesson recall<br/>one bounded pack"]
+        A3["Supervisor notes<br/>goal · plan · steer"]
+        A4["Compression<br/>fold → archive → recall tool"]
+        A1 --> A2 --> A3 --> A4
+    end
+
+    A --> M["Model<br/>any provider"]
+
+    subgraph L ["Tool loop"]
+        direction LR
+        G["Guards<br/>TOML deny rules<br/>+ optional authorizer"]
+        T["MCP tools<br/>files · shell · search · sub-agents"]
+        H["Hooks<br/>post-result scripts"]
+        C["Condense<br/>line ranges, verbatim"]
+        D["Detectors<br/>loop · no progress"]
+        G --> T --> H --> C --> D
+    end
+
+    M -->|tool calls| L
+    L -->|results| M
+
+    M -->|reports done| V["Verify gate<br/>evidence check"]
+    V -->|gaps| M
+    V -->|pass| P["Validators<br/>post-turn scripts"]
+    P --> O["Response"]
+
+    S["Supervisor model"] -.->|condense| L
+    S -.-> V
+    J["Decision model<br/>optional, calibrated"] -.-> S
+
+    O -.->|/done or exit| E["Lesson extraction"]
+    E -.-> F[("learning/project/role/")]
+    F -.->|recall| A
+    F -.->|evolution, opt-in| X["Skill + guardrail<br/>candidates on trial"]
+    X -.-> A
+```
+
+- **Context assembly** runs once per user message, not per tool round. Skills are standard `SKILL.md` folders; capabilities are tool bundles that start their own MCP servers when the prompt needs them. The lesson pack is rebuilt only on a new user message. [Skills](doc/usage/15-skills.md) · [Learning](doc/usage/13-learning.md)
+- **Compression** folds older turns into a summary that cites content-addressed blocks; the raw messages stay in a per-session archive and the `recall` tool brings any block back verbatim as a normal tool result, so history is never rewritten and the prompt cache survives. [Compression](doc/usage/08-compression.md)
+- **Guards, hooks, validators** are deterministic and live in `.agents/guardrails.toml` plus scripts; they run before any model opinion. The optional `[supervisor.authorizer]` (off by default) adds one supervisor-model check after the guards, blocking a call only when it independently conflicts with what you asked for. [Guardrails](doc/usage/18-guardrails.md)
+- **The supervisor** is a second model (`[supervisor.model]`): it keeps the plan and recites the goal each turn, condenses oversized tool results to line ranges (never retyped), and refuses a self-reported "done" until the evidence checks out. Detectors are fixed heuristics that fire one steer note; they never take the keyboard. [Supervisor](doc/usage/14-supervisor.md)
+- **The decision model** (`[decision]`) is optional: a calibrated classifier that answers typed yes/no questions with probabilities. When set, the supervisor routes its cheap questions there — which lessons to recall, which skill to activate, which lines to keep, whether a completion claim holds — and keeps chat calls for writing. [Calibrated decisions](doc/use-cases/23-calibrated-checks-with-evaluate.md)
+- **Learning** extracts lessons after `/done` or at exit, quoted from your own words and stored as files under `learning/<project>/<role>/`; they are recalled by relevance in later sessions. With `[supervisor.learning.evolution]` enabled, recurring lessons compile into skill and guardrail candidates that run shadow, then a randomized trial against a control arm, and go active only when they beat it. [Learning](doc/usage/13-learning.md)
+
 ## Why Octomind?
 
 Built for the work that keeps going after you leave:

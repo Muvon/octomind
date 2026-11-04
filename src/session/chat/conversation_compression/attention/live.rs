@@ -16,9 +16,19 @@
 use super::*;
 
 // The cap curve saturates once the complete live-state envelope is enforced.
-// It is an upper bound, not an allocation: the available half of the fold's
-// residency target below usually limits exact material before this cap does.
+// It is an upper bound, not an allocation: the frontier share of live
+// residency below usually limits exact material before this cap does.
 pub(super) const MAX_FRONTIER_TOKENS: usize = 2_000;
+
+/// A deep fold still keeps the working set: exact residency for every working
+/// window of `working_set::select`, even when live residency is smaller.
+pub(super) const MIN_FRONTIER_TOKENS: usize = working_set::WORKING_WINDOWS * MIN_SUMMARIZE_RENDER_TOKENS;
+
+/// Share of live residency the folded units keep in the view. The exact
+/// frontier gets the rest and the recall index what the frontier leaves.
+/// Allocation and rendering split on this one ratio, so material admitted at
+/// allocation time is not evicted again at render time.
+const STATE_SHARE: usize = 4;
 
 pub(super) fn budget(target: usize) -> usize {
 	// target_tokens prices evidence shown to the folder, not bytes to retain.
@@ -29,12 +39,10 @@ pub(super) fn budget(target: usize) -> usize {
 	target / super::super::decision::MAX_COMPRESSION_RATIO as usize
 }
 
-pub(super) fn frontier_budget(live: usize, pinned: &PinnedState) -> usize {
-	// Reserve two minimum fold units for facts/navigation while the model
-	// runs. Rendering later charges their actual size before exact material.
-	live.saturating_sub(crate::session::estimate_tokens(&render_pinned_lines(pinned, true)))
-		.saturating_sub(2 * MIN_SUMMARIZE_RENDER_TOKENS)
-		.min(MAX_FRONTIER_TOKENS)
+pub(super) fn frontier_budget(live: usize) -> usize {
+	// Pinned state and the carried request are task context, not folded
+	// evidence: they are never charged against live residency.
+	(live - live / STATE_SHARE).clamp(MIN_FRONTIER_TOKENS, MAX_FRONTIER_TOKENS)
 }
 
 /// Wrapper attribute carrying the unit budget of the live projection, so the
@@ -180,13 +188,13 @@ pub(super) fn render(
 			CONTROLLER_VERSION
 		)
 	};
-	let fixed = crate::session::estimate_tokens(&frame("", "", "", 0));
-	let available = pact.live_tokens.saturating_sub(fixed);
-	// Exact observations get half the discretionary space. Atomic facts and
-	// concise navigation share the other half; whole units are evicted from the
-	// view, never cut into unsupported half-claims. The sidecar keeps every
-	// source findable.
-	let mut state_budget = available / 4;
+	// `live_tokens` bounds the folded units, the exact frontier and the recall
+	// index together; the wrapper and pinned bands are task context on top.
+	let cap = pact.live_tokens + crate::session::estimate_tokens(&frame("", "", "", 0));
+	let state_share = pact.live_tokens / STATE_SHARE;
+	// Whole units are evicted from the view, never cut into unsupported
+	// half-claims. The sidecar keeps every source findable.
+	let mut state_budget = state_share;
 	// Repeated folds must not halve away an already concise live action just
 	// because the prior render left unused headroom. Preserve that whole atom
 	// when it fits; optional old facts still compete in the smaller share.
@@ -195,7 +203,7 @@ pub(super) fn render(
 		.find(|unit| attribute(unit, "kind") != "reference")
 	{
 		let cost = crate::session::estimate_tokens(&compact_unit(unit));
-		if cost <= available {
+		if cost <= pact.live_tokens {
 			state_budget = state_budget.max(cost);
 		}
 	}
@@ -204,12 +212,19 @@ pub(super) fn render(
 		crate::session::estimate_tokens(&frame(&projected, frontier, index, state_budget))
 	};
 
-	let frontier_budget = pact.live_tokens.saturating_sub(view("", "")).min(pact.frontier_tokens);
+	// Allocation already sized the frontier against `frontier_tokens` with the
+	// same state share, so the view exceeds the cap only by what the open
+	// step's first unit took beyond that share. Parts are priced one by one,
+	// as allocation priced them: a tokenizer boundary at a join must not
+	// evict an admitted window.
 	let mut frontier = String::new();
+	let mut frontier_cost = 0;
 	for part in working_set::live_fragments(&pact.packets, &pact.pinned) {
-		let candidate = format!("{frontier}{part}\n");
-		if crate::session::estimate_tokens(&candidate) <= frontier_budget && view(&candidate, "") <= pact.live_tokens {
-			frontier = candidate;
+		let cost = crate::session::estimate_tokens(&part);
+		if frontier_cost + cost <= pact.frontier_tokens {
+			frontier.push_str(&part);
+			frontier.push('\n');
+			frontier_cost += cost;
 		}
 	}
 	// Metadata yields to material already selected for the open step: blocks
@@ -224,9 +239,7 @@ pub(super) fn render(
 			.map(|e| format!(" L{}-{}", e.archive_line_start, e.archive_line_end))
 			.unwrap_or_default();
 		let candidate = format!("{index}{}{lines} {}\n", packet.id, packet.descriptor.replace('\n', " "));
-		if crate::session::estimate_tokens(&candidate) <= available / 4
-			&& view(&frontier, &candidate) <= pact.live_tokens
-		{
+		if crate::session::estimate_tokens(&candidate) <= state_share && view(&frontier, &candidate) <= cap {
 			index = candidate;
 		}
 	}
@@ -241,9 +254,7 @@ pub(super) fn render(
 			entry.archive_line_end,
 			entry.descriptor.replace('\n', " ")
 		);
-		if crate::session::estimate_tokens(&candidate) <= available / 4
-			&& view(&frontier, &candidate) <= pact.live_tokens
-		{
+		if crate::session::estimate_tokens(&candidate) <= state_share && view(&frontier, &candidate) <= cap {
 			index = candidate;
 		}
 	}
@@ -251,7 +262,7 @@ pub(super) fn render(
 	if !file_context.is_empty() {
 		let block = format!("<file_context>\n{file_context}\n</file_context>\n</conversation_summary>");
 		let viewed = frame(&projected, &frontier, &index, state_budget).replace("</conversation_summary>", &block);
-		if crate::session::estimate_tokens(&viewed) <= pact.live_tokens {
+		if crate::session::estimate_tokens(&viewed) <= cap {
 			rendered = rendered.replace("</conversation_summary>", &block);
 		} else {
 			crate::log_debug!(

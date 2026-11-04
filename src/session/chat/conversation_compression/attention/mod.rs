@@ -205,7 +205,14 @@ pub(crate) async fn build(
 	let source_tokens = packets.iter().map(|packet| packet.tokens).sum::<usize>();
 	let target_tokens = ((source_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
 	let live_tokens = live::budget(target_tokens);
-	let frontier_tokens = live::frontier_budget(live_tokens, &pinned);
+	let frontier_tokens = live::frontier_budget(live_tokens);
+	crate::log_debug!(
+		"Compression: live residency {} tokens (source {}, target {}), exact frontier {} tokens",
+		live_tokens,
+		source_tokens,
+		target_tokens,
+		frontier_tokens
+	);
 	let grounded_hints = ground_self_report(session, drained, &packets);
 	let mut plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
 		.await

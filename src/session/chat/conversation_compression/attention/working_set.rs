@@ -23,6 +23,10 @@ use std::sync::LazyLock;
 const REGION_OPEN: &str = "[ARTIFACT ";
 const REGION_CLOSE: &str = "[/ARTIFACT]";
 
+/// Four windows leave room for several subjects of the open step instead of
+/// admitting a whole large view because one line was referenced.
+pub(super) const WORKING_WINDOWS: usize = 4;
+
 static NUMBERED: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"^\+?(\d+):(?:[[:xdigit:]]+\|| ?)(.*)$").expect("numbered observation"));
 static DELETED: LazyLock<Regex> =
@@ -501,9 +505,6 @@ pub(super) fn select(
 			}
 		}
 	}
-	// Four windows leave room for several subjects of the open step instead
-	// of admitting a whole large view because one line was referenced.
-	const WORKING_WINDOWS: usize = 4;
 	let window_budget = budget.div_ceil(WORKING_WINDOWS).max(MIN_SUMMARIZE_RENDER_TOKENS);
 	let mut windows = Vec::new();
 	for (path, start, lines, priority, utility) in regions {

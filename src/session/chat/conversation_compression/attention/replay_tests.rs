@@ -79,13 +79,7 @@ fn replay_saved_folds() {
 		// Override only the exact cap for the curve; all other deterministic
 		// selection/rendering and the residency envelope are production code.
 		let budget = if bounded {
-			pact.live_tokens
-				.saturating_sub(crate::session::estimate_tokens(&render_pinned_lines(
-					&pact.pinned,
-					true,
-				)))
-				.saturating_sub(2 * MIN_SUMMARIZE_RENDER_TOKENS)
-				.min(cap)
+			live::frontier_budget(pact.live_tokens).min(cap)
 		} else {
 			cap
 		};

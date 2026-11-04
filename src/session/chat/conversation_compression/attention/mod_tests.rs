@@ -1692,17 +1692,16 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 	let pact = build(&session, 1, 3, 2.0, true, false)
 		.await
 		.expect("pact context builds");
-	// The bounded live projection reserves pins and folded units first
-	// (live::frontier_budget). This tiny session has no exact residency;
-	// requiring KeepExact here would only admit an invalid empty packet.
-	assert_eq!(pact.frontier_tokens, 0);
-	assert!(pact.packets.iter().all(|p| p.lane != Lane::KeepExact));
+	// Live residency of this tiny session is far below the floor; the exact
+	// frontier keeps the floor so deep folds still carry the working set.
+	assert_eq!(pact.frontier_tokens, live::MIN_FRONTIER_TOKENS);
 	let (pinned_band, recall_band) = pact.render_live_bands(None, None, "");
 	assert!(pinned_band.contains("stabilise the deploy pipeline"));
 	assert!(recall_band.contains("<recall_index>"));
-	assert!(!recall_band.contains("<active_frontier>"));
+	// Every packet is reachable: exact ones in the frontier band, the rest
+	// through the recall index.
 	for packet in &pact.packets {
-		assert!(recall_band.contains(&packet.id));
+		assert!(recall_band.contains(&packet.id), "{}", packet.id);
 	}
 }
 

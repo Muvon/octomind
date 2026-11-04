@@ -27,7 +27,20 @@ use tokio::sync::watch;
 /// ACP children are local protocol servers and must answer each startup
 /// request promptly. Without a deadline, a silent or malformed child can keep
 /// an agent, tap run, or layer waiting forever while its stdout stays open.
-const ACP_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+///
+/// The default is generous because a child under memory pressure (swap thrash, OOM killer) can take well over 30s
+/// to finish its startup requests; a too-short deadline fails the call spuriously. `OCTOMIND_ACP_HANDSHAKE_TIMEOUT_SECS`
+/// overrides it for constrained or slow environments.
+const ACP_HANDSHAKE_TIMEOUT_DEFAULT_SECS: u64 = 120;
+
+fn acp_handshake_timeout() -> std::time::Duration {
+	let secs = std::env::var("OCTOMIND_ACP_HANDSHAKE_TIMEOUT_SECS")
+		.ok()
+		.and_then(|v| v.trim().parse::<u64>().ok())
+		.filter(|&v| v > 0)
+		.unwrap_or(ACP_HANDSHAKE_TIMEOUT_DEFAULT_SECS);
+	std::time::Duration::from_secs(secs)
+}
 
 /// Global singleton — created once when the first async agent call arrives.
 /// Used as fallback for CLI mode when not in a session context.
@@ -776,7 +789,7 @@ pub async fn run_acp_command(
 		}),
 	)
 	.await?;
-	if let Err(error) = wait_for_response(&mut lines, 1, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
+	if let Err(error) = wait_for_response(&mut lines, 1, &mut cancel_rx, acp_handshake_timeout()).await {
 		terminate_acp_child(&mut child).await;
 		return Err(error);
 	}
@@ -793,7 +806,7 @@ pub async fn run_acp_command(
 	)
 	.await?;
 
-	let session_resp = match wait_for_response(&mut lines, 2, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
+	let session_resp = match wait_for_response(&mut lines, 2, &mut cancel_rx, acp_handshake_timeout()).await {
 		Ok(response) => response,
 		Err(error) => {
 			terminate_acp_child(&mut child).await;

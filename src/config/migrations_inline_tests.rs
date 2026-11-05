@@ -274,7 +274,10 @@ fn v3_without_pressure_levels_takes_template_threshold() {
 		.expect("v3 must migrate");
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	assert_eq!(migrated["compression"]["threshold"].as_integer(), Some(70000));
+	assert_eq!(
+		migrated["compression"]["threshold"].as_integer().unwrap(),
+		template_document()["compression"]["threshold"].as_integer().unwrap()
+	);
 }
 
 #[test]
@@ -617,7 +620,10 @@ fn collapse_pressure_levels_falls_back_to_the_template_without_usable_levels() {
 	collapse_pressure_levels(&mut document, &template).unwrap();
 
 	let compression = roundtrip(&document)["compression"].clone();
-	assert_eq!(compression["threshold"].as_integer(), Some(70000));
+	assert_eq!(
+		compression["threshold"].as_integer().unwrap(),
+		template["compression"]["threshold"].as_integer().unwrap()
+	);
 	assert_eq!(compression["knowledge_retention"].as_integer(), Some(17));
 }
 

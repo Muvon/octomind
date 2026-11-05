@@ -1615,6 +1615,27 @@ mod verify_round_trip {
 		}
 	}
 
+	/// One weak citation must not void a valid report: the uncited match is
+	/// unsettled and the scored unknown beside it still reaches the advisory.
+	#[tokio::test]
+	async fn an_uncited_match_after_repair_leaves_the_report_unsettled() {
+		let _guard = ENV_LOCK.lock().await;
+		let answer = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched">recorded run shows "5888 passed"</condition><condition n="2" status="unknown" confidence="0.9">The bounded-length message for a known-length input is not observed</condition><verdict>PASS</verdict>"#
+		);
+		let url = spawn_stub(vec![final_response(&answer), final_response(&answer)]).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let conditions = vec!["describe the feature".into(), "report bounded lengths".into()];
+		let (_tx, receiver) = rx();
+		let verdict = verify(&gate_config(), input(&[], &conditions), receiver).await;
+		std::env::remove_var("OLLAMA_API_URL");
+		let GateVerdict::Unsettled(unsettled) = &verdict else {
+			panic!("{verdict:?}");
+		};
+		assert_eq!(unsettled.len(), 1);
+		assert_eq!((unsettled[0].number, unsettled[0].confidence), (2, 0.9));
+	}
+
 	#[tokio::test]
 	async fn an_empty_task_or_result_never_reaches_a_model() {
 		let (_tx, rx1) = rx();

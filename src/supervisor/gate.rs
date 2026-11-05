@@ -1514,11 +1514,12 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 		}
 	}
 	if let Some(reason) = report
-		.evidence_format_issue(&citation_evidence)
+		.confidence_issue()
 		.filter(|_| matches!(verdict, GateVerdict::Pass))
 	{
 		// A second malformed response must remain unverified; no invented score
-		// or citation may manufacture either success or a main-model advisory.
+		// may manufacture either success or a main-model advisory. An uncited
+		// match is not malformed: it is unsettled below, never a pass.
 		verdict = GateVerdict::Indeterminate(reason);
 	}
 	if let GateVerdict::Indeterminate(reason) = &verdict {
@@ -2792,21 +2793,28 @@ impl VerifierReport {
 
 	/// Repair citation syntax and absent scores before returning work to the agent.
 	fn evidence_format_issue(&self, evidence: &CitationEvidence) -> Option<String> {
-		for condition in &self.conditions {
-			if condition.confidence.is_some_and(|score| !valid_confidence(score))
-				|| (condition.status == "unknown" && condition.confidence.is_none())
-				|| (condition.status != "unknown" && condition.confidence.is_some())
-			{
-				return Some(format!("condition {:?} lacks a valid confidence", condition.index));
-			}
-			if condition.status == "matched" && !evidence.cites(condition) {
-				return Some(format!(
-					"condition {:?} matched without a citable observation",
-					condition.index
-				));
-			}
-		}
-		None
+		self.confidence_issue().or_else(|| self.citation_issue(evidence))
+	}
+
+	/// A score the contract forbids or omits: the report itself is malformed.
+	fn confidence_issue(&self) -> Option<String> {
+		self.conditions
+			.iter()
+			.find(|condition| {
+				condition.confidence.is_some_and(|score| !valid_confidence(score))
+					|| (condition.status == "unknown" && condition.confidence.is_none())
+					|| (condition.status != "unknown" && condition.confidence.is_some())
+			})
+			.map(|condition| format!("condition {:?} lacks a valid confidence", condition.index))
+	}
+
+	/// A match whose quote the runtime cannot trace: a weak claim, which
+	/// [`Self::unsettled_conditions`] already counts as unsettled.
+	fn citation_issue(&self, evidence: &CitationEvidence) -> Option<String> {
+		self.conditions
+			.iter()
+			.find(|condition| condition.status == "matched" && !evidence.cites(condition))
+			.map(|condition| format!("condition {:?} matched without a citable observation", condition.index))
 	}
 
 	/// Itemized observed violations outrank the holistic verdict in both encodings.

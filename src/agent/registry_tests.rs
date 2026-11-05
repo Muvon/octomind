@@ -134,6 +134,7 @@ fn cache_path_lives_under_agents_dir_and_creates_it() {
 /// `write_cache_atomic` writes to a temp file in the same directory and renames it over the destination, so the
 /// destination is only ever the complete old or complete new content.
 #[test]
+#[serial]
 fn write_cache_atomic_replaces_content_and_leaves_no_temp_files() {
 	let _guard = DataDirGuard::new();
 	let dir = tempfile::tempdir().expect("tempdir");

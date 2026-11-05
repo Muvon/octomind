@@ -148,6 +148,7 @@ async fn extract(
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier() {
 	let fake = install_fake_evaluation(vec![answers(&[0.93, 0.11])]).await;
 	let _data = TestDataDir::new();
@@ -203,6 +204,7 @@ async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_refused_factor_rejects_its_lesson_and_the_other_lesson_stands() {
 	let mut map = answer_map(&[0.93, 0.93]);
 	map.insert(
@@ -226,6 +228,7 @@ async fn a_refused_factor_rejects_its_lesson_and_the_other_lesson_stands() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_quote_past_the_transcript_head_reaches_the_judge_in_its_own_turn() {
 	let fake = install_fake_evaluation(vec![answers(&[0.93, 0.11])]).await;
 	let _data = TestDataDir::new();
@@ -263,6 +266,7 @@ async fn a_quote_past_the_transcript_head_reaches_the_judge_in_its_own_turn() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_unavailable_evaluation_rejects_every_candidate_without_chat_verification() {
 	let fake = install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
 	let _data = TestDataDir::new();
@@ -287,6 +291,7 @@ async fn an_unavailable_evaluation_rejects_every_candidate_without_chat_verifica
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn the_seam_off_makes_no_evaluation_request_and_keeps_the_chat_verifier() {
 	let fake = install_fake_evaluation(vec![answers(&[0.9, 0.9])]).await;
 	let _data = TestDataDir::new();
@@ -331,6 +336,7 @@ fn stored_fields(memories: &[Lesson]) -> Vec<(String, String, String, String, St
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn experiences_keep_the_chat_verifier_and_kept_lessons_store_the_same_fields() {
 	let fake = install_fake_evaluation(vec![answers(&[0.9, 0.9])]).await;
 	let _data = TestDataDir::new();
@@ -407,6 +413,7 @@ async fn experiences_keep_the_chat_verifier_and_kept_lessons_store_the_same_fiel
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn orientation_verification_uses_jev_and_only_supported_records_supersede() {
 	for (step, expected) in [
 		(memory_answers(0.5), true),
@@ -462,6 +469,7 @@ async fn orientation_verification_uses_jev_and_only_supported_records_supersede(
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn repaired_experience_reverification_uses_jev_while_initial_verdict_and_repair_stay_chat() {
 	for (step, expected) in [
 		(memory_answers(0.5), true),

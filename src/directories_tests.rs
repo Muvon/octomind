@@ -15,6 +15,7 @@
 use super::*;
 
 #[test]
+#[serial_test::serial]
 fn test_get_octomind_data_dir() {
 	let result = get_octomind_data_dir();
 	assert!(result.is_ok());

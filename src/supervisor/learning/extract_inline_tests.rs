@@ -141,6 +141,7 @@ fn experience_parser_rejects_synthetic_or_assistant_only_evidence() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn extraction_stores_verified_long_lived_experience_end_to_end() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -198,6 +199,7 @@ async fn extraction_stores_verified_long_lived_experience_end_to_end() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn rejected_experience_gets_one_grounded_repair_then_stores() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -254,6 +256,7 @@ async fn rejected_experience_gets_one_grounded_repair_then_stores() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn failed_trajectory_is_retained_only_as_failed_experience() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -337,6 +340,7 @@ fn replay_session_transcript_is_bounded_and_origin_clean() {
 
 #[tokio::test]
 #[ignore = "live replay: uses configured learning/verifier models and a real session"]
+#[serial_test::serial]
 async fn live_replay_extracts_only_grounded_memory_records() {
 	let path = std::env::var("OCTOMIND_LEARNING_REPLAY_SESSION").expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
 	let messages = load_replay_messages(std::path::Path::new(&path));
@@ -912,6 +916,7 @@ fn test_format_existing_emits_ids_and_scope() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -992,6 +997,7 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 /// project. Observed live: "never modify README.md, the docs team owns it" was
 /// stored user-wide and would have steered unrelated repositories.
 #[tokio::test]
+#[serial_test::serial]
 async fn global_claim_needs_user_wide_confirmation_or_stays_scoped() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1053,6 +1059,7 @@ async fn global_claim_needs_user_wide_confirmation_or_stays_scoped() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn learn_path_rejects_fabricated_evidence_entirely() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1089,6 +1096,7 @@ async fn learn_path_rejects_fabricated_evidence_entirely() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1125,6 +1133,7 @@ async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn duplicate_experience_trajectory_is_skipped() {
 	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1188,6 +1197,7 @@ async fn duplicate_experience_trajectory_is_skipped() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 	use crate::session::chat::test_support::{fake_provider_config, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1279,6 +1289,7 @@ fn experience_tag(body: &str) -> String {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_failed_experience_call_never_costs_the_short_memory_path() {
 	use crate::session::chat::test_support::{final_response, spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1313,6 +1324,7 @@ async fn a_failed_experience_call_never_costs_the_short_memory_path() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_same_source_near_duplicate_experience_is_skipped() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1373,6 +1385,7 @@ async fn a_same_source_near_duplicate_experience_is_skipped() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1410,6 +1423,7 @@ async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_experience_with_no_verifier_answer_is_rejected() {
 	use crate::session::chat::test_support::{final_response, spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1444,6 +1458,7 @@ async fn an_experience_with_no_verifier_answer_is_rejected() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_orientation_stored_alongside_experience_links_to_it() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1492,6 +1507,7 @@ async fn an_orientation_stored_alongside_experience_links_to_it() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_identical_orientation_is_not_stored_twice() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1530,6 +1546,7 @@ async fn an_identical_orientation_is_not_stored_twice() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_refining_orientation_archives_the_one_it_restates() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1591,6 +1608,7 @@ async fn a_refining_orientation_archives_the_one_it_restates() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn an_orientation_the_grounding_verifier_rejects_is_not_stored() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1627,6 +1645,7 @@ async fn an_orientation_the_grounding_verifier_rejects_is_not_stored() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1656,6 +1675,7 @@ async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_learned_lesson_cites_a_stored_experience_and_duplicates_are_skipped() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
@@ -1767,6 +1787,7 @@ async fn verify_lessons_rejects_everything_on_an_unusable_answer() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn detached_extraction_reports_zero_without_learning_enabled() {
 	use crate::supervisor::learning::backend::FileBackend;
 	// OCTOMIND_DATA_DIR is process-global: every test that points it at a

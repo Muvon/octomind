@@ -103,6 +103,7 @@ fn retention_utility_rewards_proven_use_without_overriding_truth_credit() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn cold_archive_is_lossless_and_leaves_the_hot_scan() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -134,6 +135,7 @@ async fn cold_archive_is_lossless_and_leaves_the_hot_scan() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn short_rules_obey_hard_budget_without_synthetic_merge_or_deletion() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -275,6 +277,7 @@ fn retention_utility_weighs_confidence_and_falls_back_to_created() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn archive_record_requires_the_hot_file_and_suffixes_collisions() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -298,6 +301,7 @@ async fn archive_record_requires_the_hot_file_and_suffixes_collisions() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn replace_with_consolidation_rolls_back_when_a_source_is_missing() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -466,6 +470,7 @@ async fn promotion_verdict(supported: bool) -> Config {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -507,6 +512,7 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn recurring_rule_the_verifier_declines_stays_scoped() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -527,6 +533,7 @@ async fn recurring_rule_the_verifier_declines_stays_scoped() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn recurring_rule_is_reviewed_only_when_this_session_restated_it() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();

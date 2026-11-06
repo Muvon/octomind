@@ -556,6 +556,32 @@ async fn verified_rules_still_need_to_apply_to_the_current_request() {
 
 #[serial]
 #[tokio::test]
+async fn unmatched_scoped_verified_rules_fill_the_remaining_budget_by_importance() {
+	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.0), ("c1", 0.0)]))]).await;
+	let _data = TestDataDir::new();
+	let project = "rule-leftover";
+	let mut low = lesson(project, "Never run builds locally; use the dev box", "learning", &[]);
+	low.importance = 0.6;
+	low.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&low, &low.content));
+	let mut high = lesson(project, "Never push directly to main", "learning", &[]);
+	high.importance = 0.9;
+	high.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&high, &high.content));
+	FileBackend.store(&low).await.unwrap();
+	FileBackend.store(&high).await.unwrap();
+
+	// The relevance gate rejects both for this wording, yet a restriction
+	// targets actions, so both still stand, ordered by importance.
+	let (_tx, rx) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&recall_gate_config(), "fix the bug", ROLE, project, false, rx)
+		.await
+		.unwrap();
+	let rules: Vec<_> = selected.iter().map(|item| item.user_rule.clone()).collect();
+	assert_eq!(rules, [high.user_rule, low.user_rule]);
+	assert!(text.contains("use the dev box"));
+}
+
+#[serial]
+#[tokio::test]
 async fn equal_summaries_do_not_discard_distinct_user_quotes_or_scopes() {
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();

@@ -290,7 +290,7 @@ instructed to be conservative: most lessons are `scoped`, and a lesson only beco
 
 | Scope | Stored in | Retrieved how |
 |-------|-----------|---------------|
-| `scoped` (default) | `learning/{project}/{role_base}/` | By relevance to your current request (hybrid keyword + embedding search) |
+| `scoped` (default) | `learning/{project}/{role_base}/` | By relevance to your current request (hybrid keyword + embedding search); verified user rules then fill the remaining pack budget by importance |
 | `global` | `learning/_/` | Reconsidered for each active pack, ranked by importance, within the pack budget; cold records require lexical matches |
 
 A worked example: you tell the agent *"always open a single PR"* while working in project `octofs` as
@@ -485,7 +485,9 @@ Every genuine user turn **replaces** the previous runtime pack:
 The file backend ranks candidates for the request and expands explicit relationships one hop in either direction.
 The complete rendered pack, including verified rules and framing, fits a 2,000-token budget under Octomind's token
 estimator, with a 512-token global allowance. Task-matched global records, including cold matches, precede standing
-global preferences. Scoped rules use the same retrieval and applicability filter as other scoped memories.
+global preferences. Scoped verified rules first compete in the same relevance retrieval and applicability filter as
+other scoped memories; the hot ones not selected that way then fill the remaining budget by importance (ties by file
+name), because a restriction targets actions rather than request wording.
 
 Admission selects whole records. A verified rule's summary and original quote are never truncated to fit; a record
 that does not fit stays in storage for later recall or inspection with `/learning show`. Verification determines the

@@ -65,7 +65,8 @@ Draw from the request's tool names, error names, domain terms, API names, and ac
 /// injection. Two tiers:
 ///   - global (user-wide): reconsidered for every replacement pack, ranked by
 ///     importance, no semantic gating — they apply to every task;
-///   - scoped (project×role): retrieved by relevance to the current message.
+///   - scoped (project×role): retrieved by relevance to the current message;
+///     verified user rules then fill the remaining budget by importance.
 ///
 /// `first_call` is true for the first injection of the session (full hybrid
 /// retrieval); follow-up user messages pass false (embedding-only scoped recall,
@@ -143,6 +144,18 @@ pub async fn retrieve_and_format(
 	if crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Recall) {
 		candidates = filter_scoped_by_relevance(config, user_input, candidates).await;
 	}
+	// Scoped verified rules then fill the remaining budget by importance, as
+	// global rules do: a user restriction targets actions, not request wording,
+	// so relevance ranking alone can miss it. Relevance-matched ones above keep
+	// priority; the dedup below skips their repeats.
+	candidates.extend(
+		backend
+			.retrieve_all(role, project)
+			.await?
+			.into_iter()
+			.filter(|lesson| lesson.is_verified_user_rule())
+			.map(|lesson| (lesson, false)),
+	);
 
 	// Dedup global/scoped overlap, then greedily admit ranked candidates under a
 	// real token budget. Re-rendering the tiny prospective pack gives an exact

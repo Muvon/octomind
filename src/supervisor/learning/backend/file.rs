@@ -255,7 +255,8 @@ impl FileBackend {
 	}
 
 	/// Read all lesson `.md` files from a directory, parsed and sorted by
-	/// importance descending. A missing directory is an empty store.
+	/// importance descending, ties by file path so bounded admission never
+	/// depends on directory iteration order. A missing directory is an empty store.
 	/// Shared by `retrieve_all` (scoped) and `retrieve_global`.
 	fn read_lessons_sorted(dir: &std::path::Path) -> Result<Vec<Lesson>> {
 		let entries = match std::fs::read_dir(dir) {
@@ -279,6 +280,7 @@ impl FileBackend {
 			b.importance
 				.partial_cmp(&a.importance)
 				.unwrap_or(std::cmp::Ordering::Equal)
+				.then_with(|| a.storage_path.cmp(&b.storage_path))
 		});
 		Ok(lessons)
 	}

@@ -1162,8 +1162,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						chat_session.add_system_managed_turn_message(&final_input)?;
 					} else {
 						chat_session.add_user_message(&final_input)?;
-						// New real user message → run per-message lesson recall on the next API call.
-						chat_session.pending_recall = true;
 					}
 
 					// Create operation context for tracking
@@ -1613,8 +1611,6 @@ pub async fn run_interactive_session_with_input(
 			// Add user message - same as interactive.
 			let user_message_index = chat_session.session.messages.len();
 			chat_session.add_user_message(&input)?;
-			// New user message → run per-message lesson recall on the next API call.
-			chat_session.pending_recall = true;
 
 			// Prepare for API call using helper function
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;

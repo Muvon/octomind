@@ -118,7 +118,8 @@ async fn cold_archive_is_lossless_and_leaves_the_hot_scan() {
 	assert!(!hot.exists());
 	assert!(cold.exists());
 	let recalled =
-		super::super::backend::file::FileBackend::retrieve_archived(&hot_dir, &["archived".to_string()], "", 2);
+		super::super::backend::file::FileBackend::retrieve_archived(&hot_dir, &["archived".to_string()], "", 2)
+			.unwrap();
 	assert_eq!(recalled.len(), 1);
 	assert_eq!(recalled[0].content, item.content);
 	assert_eq!(recalled[0].storage_path, cold.display().to_string());
@@ -448,6 +449,7 @@ async fn store_recurring_rule(backend: &super::super::backend::file::FileBackend
 		item.use_count = use_count;
 		item.source = format!("{project}-session");
 		item.evidence = vec![format!("session://{project}/message/1")];
+		item.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&item, RECURRING_RULE));
 		item
 	};
 	backend.store(&rule("octomind", 1, 0.9, 4)).await.unwrap();
@@ -491,6 +493,10 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 	let global = backend.retrieve_global().await.unwrap();
 	assert_eq!(global.len(), 1);
 	let keeper = &global[0];
+	assert!(keeper.is_verified_user_rule());
+	assert_eq!(keeper.user_rule.as_ref().unwrap().quote, RECURRING_RULE);
+	assert_eq!(keeper.user_rule.as_ref().unwrap().scope, "global");
+	keeper.validate_user_rule().unwrap();
 	assert_eq!(keeper.project, "octomind");
 	assert_eq!(keeper.importance, 0.9);
 	assert_eq!(keeper.use_count, 7);
@@ -505,7 +511,8 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 	for project in ["octolib", "octofs"] {
 		let cold = super::super::backend::file::FileBackend::read_archived(
 			&crate::directories::get_learning_dir("developer", project).unwrap(),
-		);
+		)
+		.unwrap();
 		assert_eq!(cold.len(), 1);
 	}
 	assert_eq!(promote_recurring(&backend, &config, "fresh-session").await.unwrap(), 0);
@@ -583,7 +590,7 @@ async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 			assert_eq!(fake.requests().len(), 1);
 			assert_eq!(
 				fake.requests()[0].state,
-				serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content}]})
+				serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content,"provenance":member.user_rule}]})
 			);
 			assert_eq!(retention_chat_calls() - chat_calls, 0);
 			std::env::remove_var("OLLAMA_API_URL");
@@ -696,7 +703,7 @@ async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
 			serde_json::from_str(requests[0]["messages"][1]["content"].as_str().unwrap()).unwrap();
 		assert_eq!(
 			promotion,
-			serde_json::json!({"instances":[{"project":sources[0].project,"role":sources[0].role,"rule":sources[0].content}]})
+			serde_json::json!({"instances":[{"project":sources[0].project,"role":sources[0].role,"rule":sources[0].content,"provenance":sources[0].user_rule}]})
 		);
 		let merge: serde_json::Value =
 			serde_json::from_str(requests[2]["messages"][1]["content"].as_str().unwrap()).unwrap();
@@ -709,4 +716,40 @@ async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
 		std::env::remove_var("OLLAMA_API_URL");
 	}
 	}).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn legacy_instances_cannot_supply_a_promotion_quorum() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = FileBackend;
+	store_recurring_rule(&backend, "fresh-session").await;
+	let mut legacy = backend.retrieve_all("developer", "octomind").await.unwrap().remove(0);
+	legacy.user_rule = None;
+	backend.store(&legacy).await.unwrap();
+	let config = crate::session::chat::test_support::fake_provider_config();
+	assert_eq!(promote_recurring(&backend, &config, "fresh-session").await.unwrap(), 0);
+	assert!(backend.retrieve_global().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn retention_does_not_archive_verified_standing_rules() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let mut rule = memory(
+		&"conditional user rule ".repeat(SCOPED_LEARNING_HARD_TOKENS),
+		"learning",
+	);
+	rule.importance = 0.05;
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
+	let backend = FileBackend;
+	backend.store(&rule).await.unwrap();
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let report = maintain_scope(&backend, &config, vec![rule.clone()], false)
+		.await
+		.unwrap();
+	assert_eq!(report.archived, 0);
+	assert_eq!(backend.retrieve_all(&rule.role, &rule.project).await.unwrap().len(), 1);
 }

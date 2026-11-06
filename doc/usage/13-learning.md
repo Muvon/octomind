@@ -401,7 +401,14 @@ preference, `confidence=medium`) → `importance 0.6`.
 **Dedup and supersede.** The extraction LLM receives a bounded, ID-labelled view of existing scoped and global lessons.
 Identical content is skipped. A refinement or reversal removes an older lesson only when the new quote-backed candidate
 explicitly names its ID through `supersedes` and both records have the same scope. Similarity alone never deletes a
-short user rule.
+short user rule. The replacement is stored first and retains the superseded IDs, so interrupted cleanup cannot make
+the old rule active again.
+
+New verified rules retain the original user quote, source message identity, and the exact summary and scope accepted
+by verification. Recall labels the summary separately from the quote. Records without verified provenance remain
+contextual memories. Malformed records are moved intact to `.invalid/`
+with an error naming the file and reason; other records remain usable. Changes to verified content or scope cannot
+silently retain verified status.
 
 ### Long-run retention
 
@@ -410,7 +417,7 @@ soft watermark is 80% of the hard bound:
 
 | Memory type | Scoped hard bound | Global hard bound |
 |-------------|------------------:|------------------:|
-| Short user-backed rules | 16,000 tokens | 4,000 tokens |
+| Unverified short rules | 16,000 tokens | 4,000 tokens |
 | Orientation | 24,000 tokens | 8,000 tokens |
 | Experience | 48,000 tokens | 16,000 tokens |
 
@@ -424,9 +431,11 @@ their evidence, inherits the lower importance, and does not strengthen confidenc
 
 Short user-backed rules are never synthesized by this pass because a generated merge would break their quote-first
 contract. They continue to change only through explicit, separately verified extraction and `supersedes`.
+Verified standing rules stay hot until explicitly replaced or deleted. Neither negative task outcomes, age nor storage
+budgets invalidate a user's instruction.
 
 Maintenance also reviews recurrence. When a scoped short rule appears near-verbatim (word Jaccard about 0.6 or higher)
-in three or more projects, recurrence only nominates it: three projects that share a language or toolchain produce the
+in three or more projects with verified provenance, recurrence only nominates it: three projects that share a language or toolchain produce the
 same stack-specific rule. A separate supervisor-model review must confirm the rule governs how you work in every
 project and role; otherwise the instances stay scoped. A cluster is reviewed only when the extraction that triggered
 maintenance just restated it, so a declined rule is asked again on new evidence, not on every extraction. On
@@ -465,10 +474,17 @@ Every genuine user turn **replaces** the previous runtime pack:
 - **Tool follow-up rounds** — reuse the same pack without another retrieval.
 
 The file backend may rank up to 20 scoped candidates and expands explicit relationships one hop in either direction, but
-only items fitting the 2,000-token pack budget under Octomind’s token estimator reach the specialist; global rules may
-consume at most 512 of those tokens. Each selected item gets a short pack-local ID (`M1`, `M2`, …). The specialist
+optional memories fit a 2,000-token budget under Octomind’s token estimator, including a 512-token sub-budget for
+optional global memories. Verified global and project/domain standing rules are admitted separately, without
+relevance filtering. They may exceed the optional memory allowance; the actual provider context ceiling still applies.
+Each selected item gets a short pack-local ID (`M1`, `M2`, …). The specialist
 reports only IDs that materially affected its answer or action in the hidden supervisor status, and verify-gate outcomes
-reinforce or weaken only those used items. Mere exposure receives no credit.
+reinforce or weaken only those used items; verified user rules cannot receive negative outcome credit.
+Mere exposure receives no credit.
+
+The specialist and tool authorizer receive the same verified rules, including their original quotes, scope and
+conditions. Applicable user instructions take precedence over project defaults, while higher-priority instructions
+and current explicit user corrections still take precedence. Remembered preferences do not grant unrelated permissions.
 
 Long experience bodies are represented by a compact card (up to 320 inline tokens) plus the exact `.md` file path,
 outcome, evidence handles, and related IDs. The specialist can inspect the full file with its normal local reader when
@@ -476,8 +492,8 @@ the card is insufficient; selected records keep their full body on disk even whe
 
 The pack is materialized as a system-managed user-role message only around the provider request. It is removed
 immediately afterwards, never appended to the session log, never accumulated across turns, and rebuilt automatically on
-the next genuine request. If the bounded pack alone would cross the model's usable context ceiling, it is dropped for
-that turn rather than blocking the user's task.
+the next genuine request. If the pack would cross the model's usable context ceiling, optional memories are removed
+while verified rules remain. If the required context still cannot fit, no provider request is sent.
 
 ### Retrieval (File Backend)
 

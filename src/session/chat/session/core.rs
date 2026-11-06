@@ -277,6 +277,7 @@ pub struct ChatSession {
 	/// One runtime-only memory pack materialized as a non-persisted, replaceable
 	/// system-managed message before specialist calls in the active user turn.
 	pub active_memory_pack: Option<String>,
+	pub active_user_rules: Vec<(String, crate::supervisor::learning::UserRuleProvenance)>,
 	/// The messages of the latest provider request, as sent. `session.messages`
 	/// holds the stored form; the cache keepalive replays this copy so a ping
 	/// matches the cached prefix without rebuilding the request.
@@ -461,6 +462,7 @@ impl ChatSession {
 			analysis_findings: Vec::new(),
 			learning_injected: false,
 			active_memory_pack: None,
+			active_user_rules: Vec::new(),
 			last_sent_messages: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
 			pending_recall: false,
@@ -684,6 +686,7 @@ impl ChatSession {
 						analysis_findings: Vec::new(),
 						learning_injected: false,
 						active_memory_pack: None,
+						active_user_rules: Vec::new(),
 						last_sent_messages: Vec::new(),
 						used_memory_ids: std::collections::HashSet::new(),
 						pending_recall: false,
@@ -1520,6 +1523,7 @@ impl ChatSession {
 			analysis_findings: Vec::new(),
 			learning_injected: false,
 			active_memory_pack: None,
+			active_user_rules: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
 			pending_recall: false,
 			learning_extracted: false,

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::super::Lesson;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +105,10 @@ fn parse_string_list(value: &str) -> Vec<String> {
 	})
 }
 
+fn superseded_keys(lessons: &[Lesson]) -> std::collections::HashSet<String> {
+	lessons.iter().flat_map(|lesson| lesson.supersedes.clone()).collect()
+}
+
 impl FileBackend {
 	fn learning_dir(role: &str, project: &str) -> Result<PathBuf> {
 		crate::directories::get_learning_dir(role, project)
@@ -112,13 +116,15 @@ impl FileBackend {
 
 	/// Parse a lesson `.md` file with YAML frontmatter.
 	/// Simple key-value parser — no serde_yaml dependency needed.
-	fn parse_lesson_file(content: &str) -> Option<Lesson> {
+	fn parse_lesson_file(content: &str) -> Result<Option<Lesson>> {
 		let content = content.trim();
 		if !content.starts_with("---") {
-			return None;
+			return Ok(None);
 		}
 		let after_first = &content[3..];
-		let end = after_first.find("---")?;
+		let Some(end) = after_first.find("\n---") else {
+			return Ok(None);
+		};
 		let yaml_str = after_first[..end].trim();
 
 		let mut lesson = Lesson::default();
@@ -155,6 +161,12 @@ impl FileBackend {
 				"created" => lesson.created = unescape(val),
 				"related" => lesson.related = parse_string_list(val),
 				"evidence" => lesson.evidence = parse_string_list(val),
+				"user_rule" => {
+					lesson.user_rule = serde_json::from_str(val).context("invalid user_rule provenance")?;
+				}
+				"supersedes" => {
+					lesson.supersedes = serde_json::from_str(val).context("invalid supersedes record IDs")?;
+				}
 				"artifacts" => lesson.artifacts = parse_string_list(val),
 				"outcome" => {
 					lesson.outcome = val.parse().unwrap_or_default();
@@ -165,63 +177,80 @@ impl FileBackend {
 			}
 		}
 
-		if lesson.content.is_empty() {
-			None
-		} else {
-			Some(lesson)
+		lesson.validate_user_rule()?;
+		Ok((!lesson.content.is_empty()).then_some(lesson))
+	}
+
+	fn parse_stored_record(path: &std::path::Path, content: &str) -> Result<Option<Lesson>> {
+		match Self::parse_lesson_file(content) {
+			Ok(lesson) => Ok(lesson),
+			Err(error) => {
+				let directory = path
+					.parent()
+					.context("learning record has no parent directory")?
+					.join(".invalid");
+				std::fs::create_dir_all(&directory)?;
+				let filename = path.file_name().context("learning record has no filename")?;
+				let destination = directory.join(format!("{}-{}", uuid::Uuid::new_v4(), filename.to_string_lossy()));
+				std::fs::rename(path, &destination)
+					.with_context(|| format!("quarantine invalid learning record {}", path.display()))?;
+				crate::log_error!(
+					"Invalid learning record {} moved to {}: {:#}",
+					path.display(),
+					destination.display(),
+					error
+				);
+				Ok(None)
+			}
 		}
 	}
 
 	/// Read all lesson `.md` files from a directory, parsed and sorted by
-	/// importance descending. Missing dir or unreadable files → empty/skipped.
+	/// importance descending. A missing directory is an empty store.
 	/// Shared by `retrieve_all` (scoped) and `retrieve_global`.
-	fn read_lessons_sorted(dir: &std::path::Path) -> Vec<Lesson> {
-		let Ok(entries) = std::fs::read_dir(dir) else {
-			return Vec::new();
+	fn read_lessons_sorted(dir: &std::path::Path) -> Result<Vec<Lesson>> {
+		let entries = match std::fs::read_dir(dir) {
+			Ok(entries) => entries,
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+			Err(error) => return Err(error).with_context(|| format!("read learning directory {}", dir.display())),
 		};
 		let mut lessons = Vec::new();
-		for entry in entries.flatten() {
-			let path = entry.path();
+		for entry in entries {
+			let path = entry?.path();
 			if path.extension().is_some_and(|e| e == "md") {
-				if let Ok(content) = std::fs::read_to_string(&path) {
-					if let Some(mut lesson) = Self::parse_lesson_file(&content) {
-						lesson.storage_path = path.display().to_string();
-						lessons.push(lesson);
-					}
+				let content = std::fs::read_to_string(&path)
+					.with_context(|| format!("read learning record {}", path.display()))?;
+				if let Some(mut lesson) = Self::parse_stored_record(&path, &content)? {
+					lesson.storage_path = path.display().to_string();
+					lessons.push(lesson);
 				}
 			}
 		}
+		let superseded = superseded_keys(&lessons);
+		lessons.retain(|lesson| !superseded.contains(&lesson.record_key()));
 		lessons.sort_by(|a, b| {
 			b.importance
 				.partial_cmp(&a.importance)
 				.unwrap_or(std::cmp::Ordering::Equal)
 		});
-		lessons
+		Ok(lessons)
 	}
 
-	pub(crate) fn read_archived(dir: &std::path::Path) -> Vec<Lesson> {
+	pub(crate) fn read_archived(dir: &std::path::Path) -> Result<Vec<Lesson>> {
 		let archive = dir.join(".archive");
-		let Ok(types) = std::fs::read_dir(archive) else {
-			return Vec::new();
+		let types = match std::fs::read_dir(&archive) {
+			Ok(types) => types,
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+			Err(error) => return Err(error).with_context(|| format!("read learning archive {}", archive.display())),
 		};
 		let mut lessons = Vec::new();
-		for type_dir in types.flatten().filter(|entry| entry.path().is_dir()) {
-			let Ok(entries) = std::fs::read_dir(type_dir.path()) else {
-				continue;
-			};
-			for entry in entries.flatten() {
-				let path = entry.path();
-				if path.extension().is_some_and(|extension| extension == "md") {
-					if let Ok(content) = std::fs::read_to_string(&path) {
-						if let Some(mut lesson) = Self::parse_lesson_file(&content) {
-							lesson.storage_path = path.display().to_string();
-							lessons.push(lesson);
-						}
-					}
-				}
+		for type_dir in types {
+			let path = type_dir?.path();
+			if path.is_dir() {
+				lessons.extend(Self::read_lessons_sorted(&path)?);
 			}
 		}
-		lessons
+		Ok(lessons)
 	}
 
 	/// Page a tiny exact-match slice from cold storage. The append-only catalog
@@ -232,9 +261,9 @@ impl FileBackend {
 		patterns: &[String],
 		intent: &str,
 		limit: usize,
-	) -> Vec<Lesson> {
+	) -> Result<Vec<Lesson>> {
 		if limit == 0 {
-			return Vec::new();
+			return Ok(Vec::new());
 		}
 		let mut pattern_terms: Vec<String> = patterns
 			.iter()
@@ -256,12 +285,14 @@ impl FileBackend {
 		intent_terms.sort();
 		intent_terms.dedup();
 		if pattern_terms.is_empty() && intent_terms.is_empty() {
-			return Vec::new();
+			return Ok(Vec::new());
 		}
 
 		let catalog = dir.join(".archive").join("catalog.jsonl");
-		let Ok(content) = std::fs::read_to_string(catalog) else {
-			return Vec::new();
+		let content = match std::fs::read_to_string(&catalog) {
+			Ok(content) => content,
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+			Err(error) => return Err(error).with_context(|| format!("read learning catalog {}", catalog.display())),
 		};
 		let mut ranked = content
 			.lines()
@@ -288,6 +319,7 @@ impl FileBackend {
 
 		let mut recalled = Vec::new();
 		let mut seen = std::collections::HashSet::new();
+		let superseded = superseded_keys(&Self::read_lessons_sorted(dir)?);
 		for (_, _, entry) in ranked {
 			let path = entry.path(dir);
 			if !seen.insert(path.clone()) {
@@ -296,7 +328,10 @@ impl FileBackend {
 			let Ok(content) = std::fs::read_to_string(&path) else {
 				continue;
 			};
-			if let Some(mut lesson) = Self::parse_lesson_file(&content) {
+			if let Some(mut lesson) = Self::parse_stored_record(&path, &content)? {
+				if superseded.contains(&lesson.record_key()) {
+					continue;
+				}
 				lesson.storage_path = path.display().to_string();
 				recalled.push(lesson);
 				if recalled.len() >= limit {
@@ -304,11 +339,15 @@ impl FileBackend {
 				}
 			}
 		}
-		recalled
+		Ok(recalled)
 	}
 
-	fn find_archived_by_content(dir: &std::path::Path, content: &str) -> Option<Lesson> {
-		let catalog = std::fs::read_to_string(dir.join(".archive").join("catalog.jsonl")).ok()?;
+	fn find_archived_by_content(dir: &std::path::Path, content: &str) -> Result<Option<Lesson>> {
+		let catalog = match std::fs::read_to_string(dir.join(".archive").join("catalog.jsonl")) {
+			Ok(catalog) => catalog,
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+			Err(error) => return Err(error.into()),
+		};
 		for line in catalog.lines().rev() {
 			let Ok(entry) = serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line) else {
 				continue;
@@ -317,15 +356,15 @@ impl FileBackend {
 			let Ok(stored) = std::fs::read_to_string(&path) else {
 				continue;
 			};
-			let Some(mut lesson) = Self::parse_lesson_file(&stored) else {
+			let Some(mut lesson) = Self::parse_stored_record(&path, &stored)? else {
 				continue;
 			};
 			if lesson.content.trim() == content.trim() {
 				lesson.storage_path = path.display().to_string();
-				return Some(lesson);
+				return Ok(Some(lesson));
 			}
 		}
-		None
+		Ok(None)
 	}
 
 	fn reactivate_archived(item: &mut Lesson) -> Result<()> {
@@ -358,6 +397,7 @@ const PRUNE_THRESHOLD: f64 = 0.4;
 
 impl FileBackend {
 	pub(crate) async fn store(&self, lesson: &Lesson) -> Result<()> {
+		lesson.validate_user_rule()?;
 		// Global lessons live in the shared `learning/_/` dir; scoped lessons
 		// in `learning/{project}/{role}/`. Filename is the canonical file_id.
 		let dir = if lesson.scope == "global" {
@@ -369,7 +409,7 @@ impl FileBackend {
 
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\nartifacts: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\nuser_rule: {}\nsupersedes: {}\nartifacts: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
 			escape(&lesson.title),
 			escape(&lesson.content),
 			lesson.memory_type,
@@ -383,6 +423,8 @@ impl FileBackend {
 			escape(&lesson.created),
 			serde_json::to_string(&lesson.related)?,
 			serde_json::to_string(&lesson.evidence)?,
+			serde_json::to_string(&lesson.user_rule)?,
+			serde_json::to_string(&lesson.supersedes)?,
 			serde_json::to_string(&lesson.artifacts)?,
 			lesson.outcome.as_str(),
 			escape(&lesson.last_used),
@@ -413,7 +455,11 @@ impl FileBackend {
 		if patterns.is_empty() && intent.trim().is_empty() {
 			return Ok(all.into_iter().take(limit).collect());
 		}
-		let cold = Self::retrieve_archived(&dir, patterns, intent, COLD_RECALL_LIMIT.min(limit));
+		let superseded = superseded_keys(&self.retrieve_global().await?);
+		let cold: Vec<_> = Self::retrieve_archived(&dir, patterns, intent, COLD_RECALL_LIMIT.min(limit))?
+			.into_iter()
+			.filter(|lesson| !superseded.contains(&lesson.record_key()))
+			.collect();
 		if all.is_empty() {
 			return Ok(cold);
 		}
@@ -507,19 +553,23 @@ impl FileBackend {
 
 	pub(crate) async fn retrieve_all(&self, role: &str, project: &str) -> Result<Vec<Lesson>> {
 		let dir = Self::learning_dir(role, project)?;
-		Ok(Self::read_lessons_sorted(&dir))
+		let superseded = superseded_keys(&self.retrieve_global().await?);
+		Ok(Self::read_lessons_sorted(&dir)?
+			.into_iter()
+			.filter(|lesson| !superseded.contains(&lesson.record_key()))
+			.collect())
 	}
 
 	pub(crate) async fn retrieve_global(&self) -> Result<Vec<Lesson>> {
 		let dir = crate::directories::get_global_learning_dir()?;
-		Ok(Self::read_lessons_sorted(&dir))
+		Self::read_lessons_sorted(&dir)
 	}
 
 	/// Every hot record across all projects, roles, and the global scope.
 	/// Only detached cross-store passes (recurrence promotion, store
 	/// synthesis) read the whole corpus; nothing on the user-turn path does.
 	pub(crate) async fn retrieve_store(&self) -> Result<Vec<Lesson>> {
-		let mut lessons = Self::read_lessons_sorted(&crate::directories::get_global_learning_dir()?);
+		let mut lessons = Self::read_lessons_sorted(&crate::directories::get_global_learning_dir()?)?;
 		let root = crate::directories::get_octomind_data_dir()?.join("learning");
 		let Ok(projects) = std::fs::read_dir(&root) else {
 			return Ok(lessons);
@@ -537,9 +587,11 @@ impl FileBackend {
 				if role.file_name().to_string_lossy().starts_with('.') {
 					continue;
 				}
-				lessons.extend(Self::read_lessons_sorted(&role.path()));
+				lessons.extend(Self::read_lessons_sorted(&role.path())?);
 			}
 		}
+		let superseded = superseded_keys(&lessons);
+		lessons.retain(|lesson| !superseded.contains(&lesson.record_key()));
 		Ok(lessons)
 	}
 
@@ -550,12 +602,7 @@ impl FileBackend {
 		limit: usize,
 	) -> Result<Vec<Lesson>> {
 		let dir = crate::directories::get_global_learning_dir()?;
-		Ok(Self::retrieve_archived(
-			&dir,
-			patterns,
-			intent,
-			limit.min(COLD_RECALL_LIMIT),
-		))
+		Self::retrieve_archived(&dir, patterns, intent, limit.min(COLD_RECALL_LIMIT))
 	}
 
 	/// Dir scan only — no parsing: the caller just needs to know whether the
@@ -573,19 +620,24 @@ impl FileBackend {
 	}
 
 	pub(crate) async fn reinforce(&self, content: &str, role: &str, project: &str, delta: f64) -> Result<()> {
-		// Find the recalled entry (scoped first, then global) by content.
-		let mut entries = Self::read_lessons_sorted(&Self::learning_dir(role, project)?);
-		entries.extend(Self::read_lessons_sorted(
-			&crate::directories::get_global_learning_dir()?
-		));
-		let mut entry = entries
-			.into_iter()
-			.find(|l| l.content.trim() == content.trim())
-			.or_else(|| Self::find_archived_by_content(&Self::learning_dir(role, project).ok()?, content))
-			.or_else(|| Self::find_archived_by_content(&crate::directories::get_global_learning_dir().ok()?, content));
-		let Some(mut entry) = entry.take() else {
+		let scoped = Self::learning_dir(role, project)?;
+		let global = crate::directories::get_global_learning_dir()?;
+		let mut entries = Self::read_lessons_sorted(&scoped)?;
+		entries.extend(Self::read_lessons_sorted(&global)?);
+		let superseded = superseded_keys(&entries);
+		let mut found = entries.into_iter().find(|l| l.content.trim() == content.trim());
+		if found.is_none() {
+			found = Self::find_archived_by_content(&scoped, content)?;
+		}
+		if found.is_none() {
+			found = Self::find_archived_by_content(&global, content)?;
+		}
+		let Some(mut entry) = found else {
 			return Ok(());
 		};
+		if superseded.contains(&entry.record_key()) {
+			return Ok(());
+		}
 		Self::reactivate_archived(&mut entry)?;
 		// Outcome credit scores learner-formed hypotheses. A user's verified quoted
 		// rule is not disproved by one failed turn, so it is never debited or
@@ -620,8 +672,8 @@ impl FileBackend {
 		let cutoff_secs = (decay_days * 86_400) as i64;
 		let now = chrono::Utc::now();
 		let mut archived = 0;
-		for entry in Self::read_lessons_sorted(&Self::learning_dir(role, project)?) {
-			if entry.importance > PRUNE_THRESHOLD {
+		for entry in Self::read_lessons_sorted(&Self::learning_dir(role, project)?)? {
+			if entry.is_verified_user_rule() || entry.importance > PRUNE_THRESHOLD {
 				continue; // proven useful — keep regardless of age
 			}
 			// Age counts from the last material use: a weak record the specialist

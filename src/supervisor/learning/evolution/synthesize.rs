@@ -351,6 +351,7 @@ impl<'a> Synthesis<'a> {
 				json!({
 					"id": memory.file_id(),
 					"type": memory.memory_type,
+				"user_rule": memory.user_rule,
 					"content": memory.content,
 					"scope": memory.scope,
 					"project": memory.project,
@@ -531,10 +532,8 @@ impl<'a> Synthesis<'a> {
 			})
 			.collect::<Vec<_>>();
 		validate_runtime_references(&proposal, kind, available_capabilities, loaded_servers)?;
-		let explicit_authorization = proposal.explicit_authorization
-			&& source
-				.iter()
-				.any(|memory| memory.memory_type == "learning" && !memory.evidence.is_empty());
+		let explicit_authorization =
+			proposal.explicit_authorization && source.iter().any(|memory| memory.is_verified_user_rule());
 		let id = make_id(&proposal.name);
 		let native_name = format!("evolved-{}-{}", slug(&proposal.name), &id[id.len() - 6..]);
 		let (native, script, artifact_path) = render_native(&proposal, kind, &scope, &native_name, &id)?;
@@ -558,6 +557,7 @@ impl<'a> Synthesis<'a> {
 			"source_memories": source.iter().map(|memory| json!({
 				"id": memory.file_id(),
 				"type": memory.memory_type,
+				"user_rule": memory.user_rule,
 				"content": memory.content,
 				"scope": memory.scope,
 				"outcome": memory.outcome.as_str(),
@@ -664,9 +664,10 @@ async fn source_memories(role: &str, project: &str, session_name: &str) -> Resul
 	memories.extend(backend.retrieve_global().await?);
 	memories.retain(|memory| {
 		memory.source == session_name
-			&& !memory.evidence.is_empty()
-			&& (memory.memory_type == "learning"
-				|| (memory.memory_type == "experience" && memory.outcome == super::super::TrajectoryOutcome::Verified))
+			&& (memory.is_verified_user_rule()
+				|| (memory.memory_type == "experience"
+					&& memory.outcome == super::super::TrajectoryOutcome::Verified
+					&& !memory.evidence.is_empty()))
 	});
 	memories.sort_by(|a, b| b.created.cmp(&a.created));
 	memories.truncate(MAX_SOURCE_MEMORIES);
@@ -682,13 +683,13 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 		.retrieve_store()
 		.await?
 		.into_iter()
-		.filter(|memory| {
-			!memory.evidence.is_empty()
-				&& match memory.memory_type.as_str() {
-					"learning" => memory.use_count >= STORE_USE_COUNT_MIN || memory.importance >= STORE_IMPORTANCE_MIN,
-					"experience" => memory.outcome == TrajectoryOutcome::Verified,
-					_ => false,
-				}
+		.filter(|memory| match memory.memory_type.as_str() {
+			"learning" => {
+				memory.is_verified_user_rule()
+					&& (memory.use_count >= STORE_USE_COUNT_MIN || memory.importance >= STORE_IMPORTANCE_MIN)
+			}
+			"experience" => memory.outcome == TrajectoryOutcome::Verified && !memory.evidence.is_empty(),
+			_ => false,
 		})
 		.collect();
 	if records.len() < 2 {
@@ -775,7 +776,7 @@ fn standing_global_rule(records: &[Lesson]) -> Vec<Lesson> {
 	records
 		.iter()
 		.filter(|memory| {
-			memory.scope == "global" && memory.memory_type == "learning" && memory.use_count >= STORE_STANDING_RULE_USES
+			memory.scope == "global" && memory.is_verified_user_rule() && memory.use_count >= STORE_STANDING_RULE_USES
 		})
 		.max_by_key(|memory| memory.use_count)
 		.cloned()

@@ -503,7 +503,7 @@ async fn structured_synthesis(
 	std::env::set_var("OPENAI_API_KEY", "test-key");
 
 	let session_name = "evolution-structured-e2e";
-	let lesson = crate::supervisor::learning::Lesson {
+	let mut lesson = crate::supervisor::learning::Lesson {
 		content: "After schema changes run ./scripts/schema-check.".to_string(),
 		title: "Run schema check after schema changes".to_string(),
 		memory_type: "learning".to_string(),
@@ -517,12 +517,18 @@ async fn structured_synthesis(
 		created: chrono::Utc::now().to_rfc3339(),
 		related: Vec::new(),
 		evidence: vec![format!("session://{session_name}/message/1")],
+		user_rule: None,
+		supersedes: Vec::new(),
 		artifacts: Vec::new(),
 		outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
 		last_used: String::new(),
 		use_count: 0,
 		storage_path: String::new(),
 	};
+	lesson.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&lesson,
+		&lesson.content,
+	));
 	let memory_id = lesson.file_id();
 	crate::supervisor::learning::backend::FileBackend
 		.store(&lesson)

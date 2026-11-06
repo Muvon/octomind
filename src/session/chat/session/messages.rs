@@ -64,6 +64,7 @@ impl ChatSession {
 	pub fn clear_active_memory_pack(&mut self) {
 		self.remove_active_memory_pack_message();
 		self.active_memory_pack = None;
+		self.active_user_rules.clear();
 		self.recalled_refs.clear();
 		self.used_memory_ids.clear();
 	}
@@ -316,6 +317,7 @@ impl ChatSession {
 		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime
 		// pack only after persistence succeeds, preserving the atomic-add contract.
 		self.clear_active_memory_pack();
+		self.pending_recall = true;
 		// A genuine user turn starts a new adaptive-compression phase. Preserve
 		// the exact post-compression watermark, but reset autonomous runway
 		// expansion so this request gets the normal short safety horizon. Keeping

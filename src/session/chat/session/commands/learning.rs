@@ -456,8 +456,8 @@ fn learning_storage_summary(
 ) -> Result<serde_json::Value> {
 	let scoped_dir = crate::directories::get_learning_dir(role, project)?;
 	let global_dir = crate::directories::get_global_learning_dir()?;
-	let scoped_cold = crate::supervisor::learning::backend::FileBackend::read_archived(&scoped_dir);
-	let global_cold = crate::supervisor::learning::backend::FileBackend::read_archived(&global_dir);
+	let scoped_cold = crate::supervisor::learning::backend::FileBackend::read_archived(&scoped_dir)?;
+	let global_cold = crate::supervisor::learning::backend::FileBackend::read_archived(&global_dir)?;
 	let mut by_type: BTreeMap<String, (usize, usize)> = BTreeMap::new();
 	for memory in hot {
 		by_type.entry(memory.memory_type.clone()).or_default().0 += 1;

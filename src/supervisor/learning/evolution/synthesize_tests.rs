@@ -71,6 +71,8 @@ fn memory(scope: &str) -> Lesson {
 		created: chrono::Utc::now().to_rfc3339(),
 		related: Vec::new(),
 		evidence: vec!["session://session/message/1".to_string()],
+		user_rule: None,
+		supersedes: Vec::new(),
 		artifacts: Vec::new(),
 		outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
 		last_used: String::new(),
@@ -649,6 +651,9 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 		item.content = content.to_string();
 		item.memory_type = memory_type.to_string();
 		item.outcome = outcome;
+		if memory_type == "learning" {
+			item.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&item, content));
+		}
 		item
 	};
 	let mut wrong_source = lesson(
@@ -660,7 +665,7 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 	backend.store(&wrong_source).await.unwrap();
 	let mut no_evidence = lesson(
 		"no evidence",
-		"learning",
+		"experience",
 		crate::supervisor::learning::TrajectoryOutcome::Verified,
 	);
 	no_evidence.evidence = Vec::new();
@@ -823,6 +828,7 @@ fn global_source_makes_both_scope_dimensions_global() {
 fn standing_global_rule_needs_global_learning_with_enough_uses() {
 	let mut rule = memory("global");
 	rule.use_count = STORE_STANDING_RULE_USES;
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
 	let mut busier = rule.clone();
 	busier.title = "busier".to_string();
 	busier.use_count = STORE_STANDING_RULE_USES + 5;
@@ -830,6 +836,7 @@ fn standing_global_rule_needs_global_learning_with_enough_uses() {
 	scoped.use_count = STORE_STANDING_RULE_USES * 10;
 	let mut orientation = rule.clone();
 	orientation.memory_type = "orientation".to_string();
+	orientation.user_rule = None;
 	let mut unproven = rule.clone();
 	unproven.use_count = STORE_STANDING_RULE_USES - 1;
 
@@ -855,6 +862,7 @@ async fn recurring_store_cluster_requires_two_projects_and_demonstrated_value() 
 		item.source = format!("session-{project}");
 		item.use_count = use_count;
 		item.importance = 0.6;
+		item.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&item, content));
 		item
 	};
 	let wording = "Never run cargo build locally; the user builds on the dev server";
@@ -885,5 +893,39 @@ async fn recurring_store_cluster_requires_two_projects_and_demonstrated_value() 
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
 	} else {
 		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn unverified_records_cannot_seed_or_authorize_effectful_evolution() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut unverified = memory("global");
+	unverified.use_count = STORE_STANDING_RULE_USES + 1;
+	FileBackend.store(&unverified).await.unwrap();
+	assert!(source_memories("developer", "project", "session")
+		.await
+		.unwrap()
+		.is_empty());
+	assert!(standing_global_rule(std::slice::from_ref(&unverified)).is_empty());
+	assert!(recurring_store_cluster().await.unwrap().is_empty());
+
+	let mut candidate = proposal("pipe");
+	candidate.when.clear();
+	candidate.source_memory_ids = vec![unverified.file_id()];
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let memories = [unverified];
+	let synthesis = Synthesis::new(&memories, &[], None, &config, "developer", "project", "session");
+	let error = synthesis.admit(candidate, "test").await.unwrap_err();
+	assert!(error
+		.to_string()
+		.contains("effectful generated behavior lacks explicit user authorization"));
+	assert!(super::super::registry::list_records().unwrap().is_empty());
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
 	}
 }

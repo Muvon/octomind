@@ -64,6 +64,12 @@ pub struct Lesson {
 	/// Addressable provenance handles, currently `session://<name>/message/<n>`.
 	#[serde(default)]
 	pub evidence: Vec<String>,
+	/// Absent on legacy records. A citation alone does not establish verification.
+	#[serde(default)]
+	pub user_rule: Option<UserRuleProvenance>,
+	/// Replaced scope-qualified IDs; interrupted cleanup cannot revive an old rule.
+	#[serde(default)]
+	pub supersedes: Vec<String>,
 	/// Evolution record IDs of the generated behavior applied in the session
 	/// that produced this record: the harness it ran under. Recall names the
 	/// ones applied in the recalling session alongside the record.
@@ -84,6 +90,21 @@ pub struct Lesson {
 	/// serialized into records: hot/cold moves must not make stored metadata stale.
 	#[serde(skip)]
 	pub storage_path: String,
+}
+
+/// The exact rule and scope accepted by extraction's grounding verifier.
+/// This is provenance in the trusted local store, not authentication against
+/// a writer who can replace both the rule and its provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct UserRuleProvenance {
+	pub quote: String,
+	pub session: String,
+	pub message_id: String,
+	pub content: String,
+	pub scope: String,
+	pub project: String,
+	pub role: String,
 }
 
 /// Runtime outcome label handed to detached extraction. Unknown is honest: a
@@ -149,6 +170,8 @@ impl Default for Lesson {
 			created: String::new(),
 			related: Vec::new(),
 			evidence: Vec::new(),
+			user_rule: None,
+			supersedes: Vec::new(),
 			artifacts: Vec::new(),
 			outcome: TrajectoryOutcome::Unknown,
 			last_used: String::new(),
@@ -187,17 +210,40 @@ impl Lesson {
 		}
 	}
 
-	/// A user rule with grounded provenance. Extraction attaches the
-	/// `session://…/message/N` handle only once the quote is found verbatim in a
-	/// real user turn, and stores the record only after the grounding verifier
-	/// accepts it. Legacy, hand-written or evidence-free `learning` records lack
-	/// the handle and stay contextual memory: no user authority, no credit shield.
 	pub fn is_verified_user_rule(&self) -> bool {
-		self.memory_type == "learning"
-			&& self
-				.evidence
-				.iter()
-				.any(|handle| handle.starts_with("session://") && handle.contains("/message/"))
+		self.user_rule.is_some()
+	}
+
+	pub(crate) fn record_key(&self) -> String {
+		if self.scope == "global" {
+			format!("_/{}", self.file_id())
+		} else {
+			let role = self.role.split(':').next().expect("split always returns a role base");
+			format!("{}/{}/{}", self.project, role, self.file_id())
+		}
+	}
+
+	pub(crate) fn validate_user_rule(&self) -> anyhow::Result<()> {
+		let Some(rule) = &self.user_rule else {
+			return Ok(());
+		};
+		anyhow::ensure!(
+			!rule.quote.trim().is_empty()
+				&& !rule.session.is_empty()
+				&& !rule.message_id.is_empty()
+				&& !rule.content.trim().is_empty(),
+			"user_rule requires non-empty quote, session, message_id and content"
+		);
+		anyhow::ensure!(
+			self.memory_type == "learning"
+				&& rule.content == self.content
+				&& rule.scope == self.scope
+				&& matches!(rule.scope.as_str(), "scoped" | "global")
+				&& rule.project == self.project
+				&& rule.role == self.role,
+			"user_rule no longer matches the verified content, type or scope"
+		);
+		Ok(())
 	}
 }
 
@@ -217,4 +263,4 @@ pub const DECAY_DAYS: u64 = 90;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
-mod mod_tests;
+pub(crate) mod mod_tests;

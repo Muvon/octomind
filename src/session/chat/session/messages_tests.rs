@@ -38,7 +38,16 @@ fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
 		.recalled_refs
 		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
 	session.used_memory_ids.insert("M1".into());
+	let lesson = crate::supervisor::learning::Lesson {
+		content: "Build remotely".into(),
+		..Default::default()
+	};
+	session.active_user_rules.push((
+		"M1".into(),
+		crate::supervisor::learning::mod_tests::user_rule(&lesson, "Build remotely."),
+	));
 	session.clear_active_memory_pack();
+	assert!(session.active_user_rules.is_empty());
 	assert!(session.session.messages.is_empty());
 	assert!(session.recalled_refs.is_empty());
 	assert!(session.used_memory_ids.is_empty());
@@ -456,4 +465,33 @@ fn genuine_turn_archives_evidence_but_system_messages_do_not() {
 	assert!(history.contains("audit every provider"));
 	assert!(!history.contains("so we are good?"));
 	assert_eq!(grounds, vec![(seq, "anthropic.rs\nopenai.rs".into())]);
+}
+
+#[test]
+fn real_user_turns_request_recall_at_the_shared_message_boundary() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.learning_injected = true;
+	session.set_active_memory_pack(Some("previous turn's memory".into()));
+	session.add_user_message("Next task").unwrap();
+	assert!(session.pending_recall);
+	assert!(session.active_memory_pack.is_none());
+	session.pending_recall = false;
+	session
+		.add_user_message_with_attachments("Client request", Vec::new(), Vec::new())
+		.unwrap();
+	assert!(session.pending_recall);
+	session.pending_recall = false;
+	session
+		.add_system_managed_user_message("<system-note>tool follow-up</system-note>")
+		.unwrap();
+	assert!(!session.pending_recall);
+	session
+		.add_system_managed_turn_message("Scheduled background result")
+		.unwrap();
+	assert!(!session.pending_recall);
+	let config = crate::session::chat::test_support::fake_provider_config();
+	session
+		.add_tool_message("Tool result", "call-1", "shell", &config, Vec::new())
+		.unwrap();
+	assert!(!session.pending_recall);
 }

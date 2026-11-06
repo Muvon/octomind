@@ -1744,3 +1744,123 @@ async fn strict_json_review_allows_rebuttal_without_repeating_unchanged_findings
 		}
 	}
 }
+
+#[tokio::test]
+async fn context_pressure_keeps_user_rules_on_the_provider_request() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = spawn_recording_stub(vec![final_response("Done")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.enabled = true;
+	config.compression.threshold = 0;
+	let lesson = crate::supervisor::learning::Lesson {
+		content: "Build remotely".into(),
+		role: "assistant".into(),
+		project: "project".into(),
+		..Default::default()
+	};
+	let rule =
+		crate::supervisor::learning::mod_tests::user_rule(&lesson, "When building this project, use the dev box.");
+	let required = crate::supervisor::learning::inject::format_user_rules([("M1", &rule)]);
+	let mut session = fake_session("Explain this code");
+	session.learning_injected = true;
+	session.pending_recall = false;
+	session.active_user_rules = vec![("M1".into(), rule.clone())];
+	session.set_active_memory_pack(Some(required.clone()));
+	config.max_session_tokens_threshold = session.get_full_context_tokens(&config).await + 256;
+	session.set_active_memory_pack(Some(format!("{required}{}", "OPTIONAL_CONTEXT ".repeat(4_000))));
+	run_turn(&mut session, &config).await.unwrap();
+	assert_eq!(session.active_memory_pack.as_deref(), Some(required.as_str()));
+	assert_eq!(session.active_user_rules, vec![("M1".into(), rule.clone())]);
+	let sent = requests.lock().unwrap();
+	assert_eq!(sent.len(), 1);
+	assert!(sent[0].contains(&rule.quote));
+	assert!(!sent[0].contains("OPTIONAL_CONTEXT"));
+	drop(sent);
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn required_rules_that_exceed_context_prevent_the_provider_request() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = spawn_recording_stub(Vec::new()).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.enabled = true;
+	config.compression.threshold = 0;
+	let mut session = fake_session("Explain this code");
+	session.learning_injected = true;
+	session.pending_recall = false;
+	config.max_session_tokens_threshold = session.get_full_context_tokens(&config).await + 32;
+	let lesson = crate::supervisor::learning::Lesson {
+		content: "Build remotely".into(),
+		..Default::default()
+	};
+	let rule = crate::supervisor::learning::mod_tests::user_rule(&lesson, "When building, use the dev box.");
+	let required = crate::supervisor::learning::inject::format_user_rules([("M1", &rule)]);
+	session.active_user_rules = vec![("M1".into(), rule)];
+	session.set_active_memory_pack(Some(required.clone()));
+	let error = run_turn(&mut session, &config).await.unwrap_err();
+	assert!(error.to_string().contains("context remains above the usable ceiling"));
+	assert_eq!(session.active_memory_pack.as_deref(), Some(required.as_str()));
+	assert!(requests.lock().unwrap().is_empty());
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn many_verified_rules_do_not_block_successive_turns_and_bad_records_are_isolated() {
+	let _guard = ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = crate::supervisor::learning::backend::FileBackend;
+	for index in 0..24 {
+		let mut rule = crate::supervisor::learning::Lesson {
+			content: format!(
+				"Rule {index}: {}",
+				"Keep the documented condition and use the project build host. ".repeat(12)
+			),
+			scope: "global".into(),
+			created: format!("2026-01-01T00:00:{index:02}Z"),
+			..Default::default()
+		};
+		rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
+		backend.store(&rule).await.unwrap();
+	}
+	let directory = crate::directories::get_global_learning_dir().unwrap();
+	let broken = directory.join("broken.md");
+	let malformed = "---\ncontent: \"untrusted instruction\"\nuser_rule: {broken\n---\n";
+	std::fs::write(&broken, malformed).unwrap();
+	let (url, requests) =
+		spawn_recording_stub(vec![final_response("First answer"), final_response("Second answer")]).await;
+	std::env::set_var("OLLAMA_API_URL", url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.enabled = true;
+	let mut session = fake_session("Explain a database query");
+	for turn in 0..2 {
+		if turn > 0 {
+			session.add_user_message("Now explain its index").unwrap();
+		}
+		run_turn(&mut session, &config).await.unwrap();
+		assert_eq!(session.active_user_rules.len(), 24);
+		assert!(
+			crate::session::estimate_tokens(session.active_memory_pack.as_ref().unwrap())
+				> crate::supervisor::learning::inject::MAX_MEMORY_PACK_TOKENS
+		);
+	}
+	assert_eq!(requests.lock().unwrap().len(), 2);
+	assert!(!broken.exists());
+	let isolated = std::fs::read_dir(directory.join(".invalid"))
+		.unwrap()
+		.next()
+		.unwrap()
+		.unwrap()
+		.path();
+	assert_eq!(std::fs::read_to_string(isolated).unwrap(), malformed);
+	std::env::remove_var("OLLAMA_API_URL");
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+}

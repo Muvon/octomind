@@ -54,8 +54,9 @@ If you cannot copy a verbatim user line for a candidate rule, drop it — a less
   (e.g. "always open a single PR", "never add silent fallbacks", "the user runs build/test
   commands themselves"). Use ONLY when the quote is clearly about the user's general way of
   working — NOT tied to this task, this project, or this role.
-- scope="scoped" (default): a rule about THIS project, role, or task.
+- scope="scoped" (default): a durable rule about THIS project or role across sessions.
 Most lessons are scoped. When unsure, use "scoped".
+Do not persist a restriction limited to the current turn, task, or session. It belongs to that conversation, not to future sessions.
 
 # Rules
 - Max 3 lessons; copy a distinct verbatim quote for each. One strong lesson beats three weak ones.
@@ -442,16 +443,35 @@ pub async fn run_extraction(
 	//    holds everywhere, so a global candidate passes the same user-wide check
 	//    recurrence promotion uses; otherwise it stays with this project.
 	let mut candidates = candidates;
-	for candidate in candidates
-		.iter_mut()
-		.filter(|candidate| candidate.lesson.scope == "global")
-	{
-		if !super::retention::verify_user_wide(config, &[&candidate.lesson]).await {
+	for candidate in &mut candidates {
+		let message = messages
+			.iter()
+			.find(|message| {
+				crate::session::is_real_user_task_message(message) && message.content.contains(&candidate.evidence)
+			})
+			.expect("accepted lesson has a verbatim quote in a real user message");
+		candidate.lesson.user_rule = Some(super::UserRuleProvenance {
+			quote: candidate.evidence.clone(),
+			session: session_name.to_string(),
+			message_id: crate::supervisor::authorizer::message_key(message),
+			content: candidate.lesson.content.clone(),
+			scope: candidate.lesson.scope.clone(),
+			project: candidate.lesson.project.clone(),
+			role: candidate.lesson.role.clone(),
+		});
+		if candidate.lesson.scope == "global" && !super::retention::verify_user_wide(config, &[&candidate.lesson]).await
+		{
 			crate::log_debug!(
 				"Learning kept scoped (not confirmed user-wide): {}",
 				candidate.lesson.content
 			);
 			candidate.lesson.scope = "scoped".to_string();
+			candidate
+				.lesson
+				.user_rule
+				.as_mut()
+				.expect("grounded candidate has provenance")
+				.scope = "scoped".to_string();
 		}
 	}
 
@@ -485,30 +505,28 @@ pub async fn run_extraction(
 
 		// A scoped rule may not delete a user-wide one: crossing scopes here
 		// would let one project erase a preference that holds everywhere.
-		if let Some(old) = candidate
+		let old = candidate
 			.supersedes
 			.and_then(|i| reconcile.get(i))
-			.filter(|old| old.scope == lesson.scope)
-		{
-			if let Err(e) = backend.delete(&old.file_id(), &old.role, &old.project).await {
-				crate::log_debug!("Learning supersede delete failed: {}", e);
-			} else {
-				crate::log_debug!("Learning superseded: {} → {}", old.content, lesson.content);
-			}
+			.filter(|old| old.scope == lesson.scope && old.record_key() != lesson.record_key());
+		if let Some(old) = old {
+			lesson.supersedes = old.supersedes.clone();
+			lesson.supersedes.push(old.record_key());
 		}
 
-		if let Err(e) = backend.store(&lesson).await {
-			crate::log_debug!("Learning store failed: {}", e);
-		} else {
-			stored += 1;
-			crate::supervisor::stats::lessons(1);
-			crate::log_debug!(
-				"Learning stored: [{}/{}] {}",
-				lesson.scope,
-				lesson.confidence,
-				lesson.content
-			);
+		backend.store(&lesson).await?;
+		if let Some(old) = old {
+			backend.delete(&old.file_id(), &old.role, &old.project).await?;
+			crate::log_debug!("Learning superseded: {} → {}", old.content, lesson.content);
 		}
+		stored += 1;
+		crate::supervisor::stats::lessons(1);
+		crate::log_debug!(
+			"Learning stored: [{}/{}] {}",
+			lesson.scope,
+			lesson.confidence,
+			lesson.content
+		);
 	}
 
 	finish_extraction(&backend, config, role, project, session_name, messages, stored).await
@@ -811,6 +829,8 @@ fn parse_lessons_with_evidence(
 					created: now.clone(),
 					related: Vec::new(),
 					evidence: Vec::new(),
+					user_rule: None,
+					supersedes: Vec::new(),
 					artifacts: Vec::new(),
 					outcome: super::TrajectoryOutcome::Unknown,
 					last_used: String::new(),
@@ -841,7 +861,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 A lesson is SUPPORTED when the cited quote actually says what the lesson claims — the rule
 follows from the quote without stretching, generalizing beyond what the user stated, or
 adding requirements the user never expressed. It is UNSUPPORTED when the lesson overreaches
-its quote, misreads it, or invents scope the quote does not establish.
+its quote, misreads it, invents scope the quote does not establish, or carries a restriction limited to the current turn, task, or session into future sessions.
 
 Judge each lesson independently. Return one JSON object and nothing else:
 {"unsupported":[<1-based lesson numbers>, ...]}
@@ -1043,6 +1063,8 @@ fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>)
 					created: now.clone(),
 					related: Vec::new(),
 					evidence,
+					user_rule: None,
+					supersedes: Vec::new(),
 					artifacts: Vec::new(),
 					outcome: super::TrajectoryOutcome::Unknown,
 					last_used: String::new(),
@@ -1218,6 +1240,8 @@ fn parse_experience_tag(response: &str, context: &ExperienceParseContext<'_>) ->
 			created: chrono::Utc::now().to_rfc3339(),
 			related,
 			evidence,
+			user_rule: None,
+			supersedes: Vec::new(),
 			artifacts: Vec::new(),
 			outcome,
 			last_used: String::new(),

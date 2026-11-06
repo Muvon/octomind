@@ -206,8 +206,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	let mut memory_pack_rebuilt = false;
 	if config.supervisor.learning.enabled && (!chat_session.learning_injected || chat_session.pending_recall) {
 		let first_call = !chat_session.learning_injected;
-		chat_session.learning_injected = true;
-		chat_session.pending_recall = false;
 		crate::log_debug!("Learning injection triggered (first_call={})", first_call);
 		// Same scope key extraction stores under, or recall reads a different dir.
 		let project = crate::supervisor::learning::evolution::project_name(None);
@@ -216,7 +214,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or_default()
 			.to_string();
 		animation_manager.set_phase("Recalling lessons …").await;
-		let (block, selected) = crate::supervisor::learning::inject::retrieve_and_format(
+		let recalled = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
 			&user_input,
 			role,
@@ -226,6 +224,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		)
 		.await;
 		animation_manager.clear_phase();
+		let (block, selected) = recalled?;
+		chat_session.learning_injected = true;
+		chat_session.pending_recall = false;
+		chat_session.active_user_rules = selected
+			.iter()
+			.filter_map(|memory| memory.user_rule.clone().map(|rule| (memory.id.clone(), rule)))
+			.collect();
 		chat_session.recalled_refs = selected
 			.iter()
 			.map(|memory| {
@@ -313,16 +318,28 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		animation_manager.clear_phase();
 	}
 
-	// The pack is optional context. If it is the only reason the fully assembled
-	// request crosses the model's usable ceiling, drop it rather than blocking the
-	// user's task; then re-check so unrelated injected state still fails closed.
+	// Optional memories may yield headroom, but accepted user restrictions must
+	// remain visible to both the specialist and the authorizer.
 	if chat_session.active_memory_pack.is_some()
 		&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config)
 			.await
 			.is_err()
 	{
-		crate::log_debug!("Active memory pack dropped: insufficient context headroom");
-		chat_session.clear_active_memory_pack();
+		crate::log_debug!("Optional memory dropped: insufficient context headroom");
+		if chat_session.active_user_rules.is_empty() {
+			chat_session.clear_active_memory_pack();
+		} else {
+			let rules = crate::supervisor::learning::inject::format_user_rules(
+				chat_session
+					.active_user_rules
+					.iter()
+					.map(|(id, rule)| (id.as_str(), rule)),
+			);
+			chat_session.set_active_memory_pack(Some(rules));
+			chat_session
+				.recalled_refs
+				.retain(|(id, _, _, _)| chat_session.active_user_rules.iter().any(|(rule_id, _)| rule_id == id));
+		}
 	}
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 	if memory_pack_rebuilt {

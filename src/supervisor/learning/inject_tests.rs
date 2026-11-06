@@ -86,18 +86,17 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	cleanup(proj);
 	let config = fake_provider_config();
 	let backend = FileBackend;
-	backend
-		.store(&Lesson {
-			evidence: vec!["session://inject-test/message/3".to_string()],
-			..lesson(
-				proj,
-				"always run the test suite on the dev box",
-				"learning",
-				&["testing", "box"],
-			)
-		})
-		.await
-		.expect("store lesson");
+	let mut rule = lesson(
+		proj,
+		"always run the test suite on the dev box",
+		"learning",
+		&["testing", "box"],
+	);
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&rule,
+		"Always run the test suite on the dev box.",
+	));
+	backend.store(&rule).await.expect("store lesson");
 	// Legacy record: `learning` type but no grounded provenance handle.
 	backend
 		.store(&lesson(
@@ -123,7 +122,7 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	// recency listing); a non-empty one would need the MiniLM warmup, which
 	// only other tests happen to trigger — never depend on that here.
 	let (_tx1, rx1) = cancel_pair();
-	let (text, injected_now) = retrieve_and_format(&config, "", ROLE, proj, false, rx1).await;
+	let (text, injected_now) = retrieve_and_format(&config, "", ROLE, proj, false, rx1).await.unwrap();
 	let dir = crate::directories::get_learning_dir(ROLE, proj).expect("dir");
 	let files: Vec<String> = std::fs::read_dir(&dir)
 		.map(|entries| {
@@ -150,7 +149,8 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	let rule_at = text.find("always run the test suite on the dev box").unwrap();
 	assert!(rule_at < rules_end, "user rule rendered outside user_rules:\n{text}");
 	assert!(rules_end < wrapper_at);
-	assert!(text.contains("override conflicting project docs"));
+	assert!(text.contains("Original user quote: Always run the test suite on the dev box."));
+	assert_eq!(injected_now[0].user_rule, rule.user_rule);
 	let legacy_at = text
 		.find("skip the linter on hotfix branches")
 		.expect("legacy lesson missing");
@@ -161,7 +161,7 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	// A replacement pack may deliberately select the same relevant memory again;
 	// it replaces the previous pack instead of accumulating beside it.
 	let (_tx2, rx2) = cancel_pair();
-	let (text2, selected2) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await;
+	let (text2, selected2) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await.unwrap();
 	assert!(text2.contains("always run the test suite on the dev box"));
 	assert!(!selected2.is_empty());
 	assert!(
@@ -197,7 +197,9 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let (_tx3, rx3) = cancel_pair();
-	let (text, _) = retrieve_and_format(&config, "deploy the service to the box", ROLE, proj, true, rx3).await;
+	let (text, _) = retrieve_and_format(&config, "deploy the service to the box", ROLE, proj, true, rx3)
+		.await
+		.unwrap();
 	assert!(
 		text.contains("prefer rsync over scp"),
 		"scoped lesson missing on first call:\n{text}"
@@ -212,8 +214,9 @@ async fn test_disabled_learning_injects_nothing() {
 	let mut config = fake_provider_config();
 	config.supervisor.learning.enabled = false;
 	let (_tx4, rx4) = cancel_pair();
-	let (text, injected) =
-		retrieve_and_format(&config, "anything", ROLE, "__inject_test_proj_disabled", true, rx4).await;
+	let (text, injected) = retrieve_and_format(&config, "anything", ROLE, "__inject_test_proj_disabled", true, rx4)
+		.await
+		.unwrap();
 	assert!(text.is_empty());
 	assert!(injected.is_empty());
 }
@@ -240,7 +243,7 @@ async fn test_active_pack_is_token_bounded_with_stable_pack_ids() {
 	}
 
 	let (_tx, rx) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx).await;
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx).await.unwrap();
 	assert!(!selected.is_empty());
 	assert!(selected.len() < 20, "long memories must be budget-pruned");
 	assert!(crate::session::estimate_tokens(&text) <= MAX_MEMORY_PACK_TOKENS);
@@ -277,7 +280,7 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 	backend.store(&experience).await.expect("store experience");
 
 	let (_tx, rx) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx).await;
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx).await.unwrap();
 	assert!(text.contains("<experiences>"));
 	assert!(text.contains("Provider continuation recovery"));
 	assert!(text.contains("full memory:"));
@@ -440,7 +443,7 @@ async fn recall_gate_end_to_end_empties_the_pack_or_falls_through_when_unavailab
 
 	// Every scoped candidate excluded, no global rules: the pack is empty.
 	let (_tx1, rx1) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx1).await;
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx1).await.unwrap();
 	assert!(text.is_empty(), "pack should be empty, got: {text}");
 	assert!(selected.is_empty());
 	assert_eq!(fake.requests().len(), 1);
@@ -448,7 +451,7 @@ async fn recall_gate_end_to_end_empties_the_pack_or_falls_through_when_unavailab
 	// Provider unavailable: the pre-change pack, one unavailable, no panic.
 	let unavailable = evaluate_counter(Seam::Recall, "unavailable");
 	let (_tx2, rx2) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await;
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await.unwrap();
 	assert!(text.contains("always run the test suite on the dev box"));
 	assert_eq!(selected.len(), 1);
 	assert_eq!(evaluate_counter(Seam::Recall, "unavailable"), unavailable + 1);
@@ -469,4 +472,91 @@ fn decoded_memory_pack_keeps_memory_ids_without_source_line_ids() {
 		rendered,
 		"- [M1 scope=scoped confidence=high ref=/tmp/memory.md] Keep the first rule.\n  Keep the second rule.\n"
 	);
+}
+
+#[serial]
+#[tokio::test]
+async fn standing_rules_survive_unrelated_queries_beyond_the_optional_memory_budget() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let config = fake_provider_config();
+	let project = "standing-rules";
+	let mut rule = lesson(project, "Use remote builds", "learning", &["build"]);
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&rule,
+		"When building this project, use the dev box.",
+	));
+	FileBackend.store(&rule).await.unwrap();
+	let (_tx, rx) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&config, "Explain a database query", ROLE, project, false, rx)
+		.await
+		.unwrap();
+	assert_eq!(selected.len(), 1);
+	assert_eq!(selected[0].user_rule, rule.user_rule);
+	assert!(text.contains("When building this project, use the dev box."));
+	let rules_only = format_user_rules(
+		selected
+			.iter()
+			.filter_map(|item| item.user_rule.as_ref().map(|rule| (item.id.as_str(), rule))),
+	);
+	assert_eq!(text, rules_only);
+
+	let mut oversized = lesson(
+		project,
+		"required condition ".repeat(MAX_MEMORY_PACK_TOKENS).as_str(),
+		"learning",
+		&[],
+	);
+	oversized.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&oversized,
+		&oversized.content,
+	));
+	FileBackend.store(&oversized).await.unwrap();
+	let (_tx, rx) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&config, "Explain a database query", ROLE, project, false, rx)
+		.await
+		.unwrap();
+	assert!(crate::session::estimate_tokens(&text) > MAX_MEMORY_PACK_TOKENS);
+	assert_eq!(selected.len(), 2);
+	assert!(selected.iter().all(|item| item.user_rule.is_some()));
+}
+
+#[tokio::test]
+async fn relevance_filter_does_not_remove_standing_rules() {
+	let config = fake_provider_config();
+	let mut rule = lesson("project", "Use remote builds", "learning", &[]);
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&rule,
+		"Build on the dev box.",
+	));
+	let filtered = filter_scoped_by_relevance(&config, "unrelated query", vec![(rule.clone(), false)]).await;
+	assert_eq!(filtered.len(), 1);
+	assert_eq!(filtered[0].0.user_rule, rule.user_rule);
+}
+
+#[serial]
+#[tokio::test]
+async fn equal_summaries_do_not_discard_distinct_user_quotes_or_scopes() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let mut global = lesson("project", "Use the build host for the environment", "learning", &[]);
+	global.scope = "global".into();
+	global.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&global,
+		"For production builds, use prod-builder.",
+	));
+	let mut scoped = lesson("project", &global.content, "learning", &[]);
+	scoped.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&scoped,
+		"For development builds in this project, use dev-builder.",
+	));
+	FileBackend.store(&global).await.unwrap();
+	FileBackend.store(&scoped).await.unwrap();
+	let (_tx, rx) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&fake_provider_config(), "Explain the UI", ROLE, "project", false, rx)
+		.await
+		.unwrap();
+	assert_eq!(selected.iter().filter(|item| item.user_rule.is_some()).count(), 2);
+	assert!(text.contains("prod-builder"));
+	assert!(text.contains("dev-builder"));
 }

@@ -44,7 +44,7 @@ fn test_escaping_roundtrip() {
 			escape(content),
 			escape(project),
 		);
-	let lesson = FileBackend::parse_lesson_file(&record).unwrap();
+	let lesson = FileBackend::parse_lesson_file(&record).unwrap().unwrap();
 	assert_eq!(lesson.title, title);
 	assert_eq!(lesson.content, content);
 	assert_eq!(lesson.project, project);
@@ -69,7 +69,7 @@ last_used: "2026-08-28T00:00:00Z"
 use_count: 7
 ---
 "#;
-	let lesson = FileBackend::parse_lesson_file(content).unwrap();
+	let lesson = FileBackend::parse_lesson_file(content).unwrap().unwrap();
 	assert_eq!(lesson.content, "Bearer token auth required");
 	assert_eq!(lesson.importance, 0.8);
 	assert_eq!(lesson.confidence, "high");
@@ -86,7 +86,7 @@ use_count: 7
 #[test]
 fn test_parse_lesson_file_missing_frontmatter() {
 	let content = "Just some text without frontmatter";
-	assert!(FileBackend::parse_lesson_file(content).is_none());
+	assert!(FileBackend::parse_lesson_file(content).unwrap().is_none());
 }
 
 #[test]
@@ -97,7 +97,7 @@ importance: 0.5
 ---
 "#;
 	// content field is empty -> should return None
-	assert!(FileBackend::parse_lesson_file(content).is_none());
+	assert!(FileBackend::parse_lesson_file(content).unwrap().is_none());
 }
 
 #[test]
@@ -148,7 +148,7 @@ created: "2026-04-05T00:00:00Z"
 	for entry in std::fs::read_dir(&learning_dir).unwrap() {
 		let entry = entry.unwrap();
 		if let Ok(file_content) = std::fs::read_to_string(entry.path()) {
-			if let Some(lesson) = FileBackend::parse_lesson_file(&file_content) {
+			if let Some(lesson) = FileBackend::parse_lesson_file(&file_content).unwrap() {
 				lessons.push(lesson);
 			}
 		}
@@ -431,14 +431,16 @@ not a key value line
 related: not json
 ---
 "#;
-	let lesson = FileBackend::parse_lesson_file(content).unwrap();
+	let lesson = FileBackend::parse_lesson_file(content).unwrap().unwrap();
 	assert_eq!(lesson.importance, 0.5);
 	assert_eq!(lesson.outcome, crate::supervisor::learning::TrajectoryOutcome::Unknown);
 	assert_eq!(lesson.use_count, 0);
 	assert_eq!(lesson.related, vec!["not json".to_string()]);
 
 	// No closing frontmatter delimiter -> nothing to parse.
-	assert!(FileBackend::parse_lesson_file("---\ncontent: \"x\"\n").is_none());
+	assert!(FileBackend::parse_lesson_file("---\ncontent: \"x\"\n")
+		.unwrap()
+		.is_none());
 }
 
 #[test]
@@ -451,7 +453,7 @@ fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
 	std::fs::write(dir.path().join("broken.md"), "not a lesson").unwrap();
 	std::fs::write(dir.path().join("ignored.txt"), record("1.0")).unwrap();
 
-	let lessons = FileBackend::read_lessons_sorted(dir.path());
+	let lessons = FileBackend::read_lessons_sorted(dir.path()).unwrap();
 	assert_eq!(
 		lessons.iter().map(|lesson| lesson.content.as_str()).collect::<Vec<_>>(),
 		vec!["record 0.9", "record 0.6", "record 0.3"]
@@ -459,7 +461,9 @@ fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
 	assert!(lessons[0].storage_path.ends_with("high.md"));
 
 	// A missing directory is an empty scope, not an error.
-	assert!(FileBackend::read_lessons_sorted(&dir.path().join("absent")).is_empty());
+	assert!(FileBackend::read_lessons_sorted(&dir.path().join("absent"))
+		.unwrap()
+		.is_empty());
 }
 
 fn write_catalog(dir: &std::path::Path, rows: &[serde_json::Value]) {
@@ -495,14 +499,14 @@ fn read_archived_walks_type_dirs_and_skips_non_markdown() {
 	write_archived_lesson(dir.path(), "learning", "note.txt", "ignored");
 	std::fs::write(dir.path().join(".archive").join("learning").join("bad.md"), "garbage").unwrap();
 
-	let lessons = FileBackend::read_archived(dir.path());
+	let lessons = FileBackend::read_archived(dir.path()).unwrap();
 	assert_eq!(lessons.len(), 2);
 	assert!(lessons.iter().any(|lesson| lesson.content == "archived learning"));
 	assert!(lessons.iter().any(|lesson| lesson.content == "archived orientation"));
 
 	// No archive at all -> empty.
 	let empty = tempfile::tempdir().unwrap();
-	assert!(FileBackend::read_archived(empty.path()).is_empty());
+	assert!(FileBackend::read_archived(empty.path()).unwrap().is_empty());
 }
 
 #[test]
@@ -521,20 +525,32 @@ fn retrieve_archived_guards_limit_terms_and_ranking() {
 		],
 	);
 
-	assert!(FileBackend::retrieve_archived(dir.path(), &[], "", 2).is_empty());
-	assert!(FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "", 0).is_empty());
+	assert!(FileBackend::retrieve_archived(dir.path(), &[], "", 2)
+		.unwrap()
+		.is_empty());
+	assert!(
+		FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "", 0)
+			.unwrap()
+			.is_empty()
+	);
 
 	let no_catalog = tempfile::tempdir().unwrap();
-	assert!(FileBackend::retrieve_archived(no_catalog.path(), &["postgres".to_string()], "", 2).is_empty());
+	assert!(
+		FileBackend::retrieve_archived(no_catalog.path(), &["postgres".to_string()], "", 2)
+			.unwrap()
+			.is_empty()
+	);
 
 	// One generic intent term never pages noise; two independent terms do.
-	assert!(FileBackend::retrieve_archived(dir.path(), &[], "oauth", 2).is_empty());
-	let intent_hits = FileBackend::retrieve_archived(dir.path(), &[], "oauth callback", 2);
+	assert!(FileBackend::retrieve_archived(dir.path(), &[], "oauth", 2)
+		.unwrap()
+		.is_empty());
+	let intent_hits = FileBackend::retrieve_archived(dir.path(), &[], "oauth callback", 2).unwrap();
 	assert_eq!(intent_hits.len(), 1);
 	assert_eq!(intent_hits[0].content, "oauth callback state");
 
 	// Exact patterns outrank intent-only hits; duplicate rows dedup to one file.
-	let ranked = FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "oauth callback", 2);
+	let ranked = FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "oauth callback", 2).unwrap();
 	assert_eq!(ranked.len(), 2);
 	assert_eq!(ranked[0].content, "postgres migration notes");
 	assert_eq!(ranked[1].content, "oauth callback state");
@@ -552,7 +568,7 @@ fn find_archived_by_content_prefers_the_latest_row_and_returns_none_when_absent(
 			catalog_row("learning", "new.md", "new title", 0.5),
 		],
 	);
-	let found = FileBackend::find_archived_by_content(dir.path(), "same durable content");
+	let found = FileBackend::find_archived_by_content(dir.path(), "same durable content").unwrap();
 	assert_eq!(
 		found.unwrap().storage_path,
 		dir.path()
@@ -563,9 +579,15 @@ fn find_archived_by_content_prefers_the_latest_row_and_returns_none_when_absent(
 			.to_string()
 	);
 
-	assert!(FileBackend::find_archived_by_content(dir.path(), "absent content").is_none());
+	assert!(FileBackend::find_archived_by_content(dir.path(), "absent content")
+		.unwrap()
+		.is_none());
 	let no_catalog = tempfile::tempdir().unwrap();
-	assert!(FileBackend::find_archived_by_content(no_catalog.path(), "same durable content").is_none());
+	assert!(
+		FileBackend::find_archived_by_content(no_catalog.path(), "same durable content")
+			.unwrap()
+			.is_none()
+	);
 }
 
 #[test]
@@ -641,7 +663,9 @@ async fn experience_harness_survives_store_and_parse() {
 	assert_eq!(stored.len(), 1);
 	assert_eq!(stored[0].artifacts, experience.artifacts);
 	// Records written before the field existed parse with no harness.
-	let legacy = FileBackend::parse_lesson_file("---\ncontent: \"x\"\n---\n").unwrap();
+	let legacy = FileBackend::parse_lesson_file("---\ncontent: \"x\"\n---\n")
+		.unwrap()
+		.unwrap();
 	assert!(legacy.artifacts.is_empty());
 
 	if let Some(value) = previous {
@@ -738,7 +762,8 @@ async fn reinforce_cold_archives_floor_importance_and_ignores_unknown_content() 
 		.unwrap();
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
 	assert!(hot.is_empty());
-	let cold = FileBackend::read_archived(&crate::directories::get_learning_dir("developer", "project").unwrap());
+	let cold =
+		FileBackend::read_archived(&crate::directories::get_learning_dir("developer", "project").unwrap()).unwrap();
 	assert_eq!(cold.len(), 1);
 	assert_eq!(cold[0].importance, 0.0);
 
@@ -764,6 +789,10 @@ async fn reinforce_never_debits_or_archives_user_rules() {
 	rule.project = "project".to_string();
 	rule.created = "2026-01-01T00:00:00Z".to_string();
 	rule.importance = 0.05;
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&rule,
+		"Never run builds locally; use ssh dev.",
+	));
 	backend.store(&rule).await.unwrap();
 
 	backend
@@ -971,5 +1000,106 @@ async fn retrieve_archived_global_pages_the_shared_archive() {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
 	} else {
 		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn user_rule_provenance_roundtrips_and_invalid_records_are_quarantined() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut rule = lesson_with("Build remotely", &[]);
+	rule.role = "developer".into();
+	rule.project = "project".into();
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&rule,
+		"Only on this project --- build on the dev box.\nKeep the local tree untouched.",
+	));
+	FileBackend.store(&rule).await.unwrap();
+	let records = FileBackend.retrieve_all(&rule.role, &rule.project).await.unwrap();
+	assert_eq!(records[0].user_rule, rule.user_rule);
+	let path = &records[0].storage_path;
+	let original = std::fs::read_to_string(path).unwrap();
+	let mut valid = lesson_with("Valid contextual memory", &[]);
+	valid.role = rule.role.clone();
+	valid.project = rule.project.clone();
+	FileBackend.store(&valid).await.unwrap();
+	let edited = original.replacen("content: \"Build remotely\"", "content: \"Build locally\"", 1);
+	std::fs::write(path, &edited).unwrap();
+	let remaining = FileBackend.retrieve_all(&rule.role, &rule.project).await.unwrap();
+	assert_eq!(remaining.len(), 1);
+	assert_eq!(remaining[0].content, valid.content);
+	assert!(!std::path::Path::new(path).exists());
+	let invalid = std::path::Path::new(path).parent().unwrap().join(".invalid");
+	let quarantined: Vec<_> = std::fs::read_dir(&invalid)
+		.unwrap()
+		.map(|entry| entry.unwrap().path())
+		.collect();
+	assert_eq!(quarantined.len(), 1);
+	assert_eq!(std::fs::read_to_string(&quarantined[0]).unwrap(), edited);
+	std::fs::write(path, original.replace("user_rule: {", "user_rule: malformed {")).unwrap();
+	assert_eq!(
+		FileBackend.retrieve_all(&rule.role, &rule.project).await.unwrap().len(),
+		1
+	);
+	assert_eq!(std::fs::read_dir(invalid).unwrap().count(), 2);
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn durable_supersession_hides_old_hot_and_cold_records_before_cleanup() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut old = lesson_with("Run builds locally", &["builds"]);
+	old.role = "developer".into();
+	old.project = "project".into();
+	old.created = "2026-01-01T00:00:00Z".into();
+	FileBackend.store(&old).await.unwrap();
+	let mut replacement = old.clone();
+	replacement.content = "Run builds remotely".into();
+	replacement.supersedes = vec![old.record_key()];
+	replacement.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&replacement,
+		"Run builds remotely.",
+	));
+	let dir = crate::directories::get_learning_dir(&old.role, &old.project).unwrap();
+	let destination = dir.join(format!("{}.md", replacement.file_id()));
+	std::fs::create_dir(&destination).unwrap();
+	assert!(FileBackend.store(&replacement).await.is_err());
+	std::fs::remove_dir(&destination).unwrap();
+	assert_eq!(
+		FileBackend.retrieve_all(&old.role, &old.project).await.unwrap()[0].content,
+		old.content
+	);
+
+	FileBackend.store(&replacement).await.unwrap();
+	let hot = FileBackend.retrieve_all(&old.role, &old.project).await.unwrap();
+	assert_eq!(hot.len(), 1);
+	assert_eq!(hot[0].content, replacement.content);
+	super::super::super::retention::archive_record(&old).unwrap();
+	assert!(FileBackend::retrieve_archived(&dir, &["locally".into()], "", 2)
+		.unwrap()
+		.is_empty());
+	FileBackend
+		.reinforce(&old.content, &old.role, &old.project, 0.1)
+		.await
+		.unwrap();
+	assert!(!dir.join(format!("{}.md", old.file_id())).exists());
+	FileBackend.prune_stale(&old.role, &old.project, 1).await.unwrap();
+	assert_eq!(
+		FileBackend.retrieve_all(&old.role, &old.project).await.unwrap().len(),
+		1
+	);
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
 	}
 }

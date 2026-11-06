@@ -978,6 +978,16 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 	assert!(lesson_stored
 		.evidence
 		.contains(&"session://learn-session/message/1".to_string()));
+	assert!(lesson_stored.is_verified_user_rule());
+	let provenance = lesson_stored.user_rule.as_ref().unwrap();
+	assert_eq!(provenance.quote, messages[0].content);
+	assert_eq!(
+		provenance.message_id,
+		crate::supervisor::authorizer::message_key(&messages[0])
+	);
+	assert_eq!(provenance.session, "learn-session");
+	assert_eq!(provenance.content, lesson_stored.content);
+	assert!(lesson_stored.supersedes.contains(&old.record_key()));
 	// The superseded stale rule is gone.
 	assert!(!memories.iter().any(|memory| memory.content == old.content));
 	let orientation = memories
@@ -1601,7 +1611,7 @@ async fn a_refining_orientation_archives_the_one_it_restates() {
 	let orientations: Vec<&Lesson> = memories.iter().filter(|m| m.memory_type == "orientation").collect();
 	assert_eq!(orientations.len(), 1, "the restated original leaves the hot store");
 	assert!(orientations[0].content.contains("forbids silent model fallback"));
-	let cold = FileBackend::read_archived(&dir);
+	let cold = FileBackend::read_archived(&dir).unwrap();
 	assert_eq!(cold.len(), 1, "the restated original is archived, not deleted");
 	assert!(!cold[0].content.contains("forbids silent model fallback"));
 	let _ = std::fs::remove_dir_all(&dir);

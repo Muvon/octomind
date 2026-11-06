@@ -880,3 +880,92 @@ async fn decision_confirmation_failure_preserves_native_guards() {
 		std::env::remove_var("OLLAMA_API_URL");
 	}
 }
+
+#[tokio::test]
+async fn remembered_user_rules_use_typed_sources_and_current_corrections_invalidate_denials() {
+	let _guard = ENV_LOCK.lock().await;
+	let id = "authorizer-remembered-rule";
+	let lesson = crate::supervisor::learning::Lesson {
+		content: "Use remote builds".into(),
+		role: "developer".into(),
+		project: "project".into(),
+		..Default::default()
+	};
+	let rule = crate::supervisor::learning::mod_tests::user_rule(
+		&lesson,
+		"When building this project, use the dev box; do not build locally.",
+	);
+	let mut session = ChatSession::for_tests(vec![message("user", "Fix the compilation error.")]);
+	session.session.info.name = id.into();
+	session.active_user_rules = vec![("M1".into(), rule.clone())];
+	session.set_active_memory_pack(Some(crate::supervisor::learning::inject::format_user_rules([(
+		"M1", &rule,
+	)])));
+	let config = config();
+	capture(&mut session, &config);
+	let context = context_for_session(id).unwrap();
+	assert_eq!(context.user_rules, vec![rule.clone()]);
+	let sources = instruction_sources(&context);
+	let source = sources.iter().find(|source| source.kind == "remembered_user").unwrap();
+	assert!(!source.current_user);
+	assert!(source.text.contains(&rule.quote));
+	assert!(source.text.contains("project=project"));
+	assert!(sources
+		.iter()
+		.any(|source| source.kind == "user" && source.current_user));
+
+	let mut block = verdict("block", "");
+	block["decisions"][0]["source_id"] = json!(source.id);
+	let url = spawn_stub(vec![
+		final_response(&block.to_string()),
+		final_response(&confirmation(true).to_string()),
+		final_response(&verdict("allow", "").to_string()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", url);
+	let proposed = McpToolCall {
+		parameters: json!({"command":"cargo build"}),
+		..call()
+	};
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let result = check_batch(id, &config, std::slice::from_ref(&proposed), &[vec![]], rx.clone()).await;
+	assert!(result[0].message.as_ref().unwrap().contains("remembered_user:0:0"));
+	assert_eq!(
+		result[0].message,
+		check_batch(id, &config, std::slice::from_ref(&proposed), &[vec![]], rx.clone()).await[0].message
+	);
+
+	session
+		.add_user_message("For this turn, explicitly build locally.")
+		.unwrap();
+	session.active_user_rules = vec![("M1".into(), rule)];
+	capture(&mut session, &config);
+	assert!(check_batch(id, &config, &[proposed], &[vec![]], rx).await[0]
+		.message
+		.is_none());
+	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[test]
+fn remembered_rules_cannot_pose_as_current_user_guard_overrides() {
+	let lesson = crate::supervisor::learning::Lesson {
+		content: "Use remote builds".into(),
+		..Default::default()
+	};
+	let rule = crate::supervisor::learning::mod_tests::user_rule(&lesson, "Use the dev box.");
+	let mut ctx = context();
+	ctx.user_rules = vec![rule];
+	let mut value = verdict("allow", "");
+	value["decisions"][0]["source_id"] = json!("remembered_user:0:0");
+	value["decisions"][0]["overridden_guards"] = json!(["g1"]);
+	let decisions = validate(
+		value,
+		&[0],
+		&instruction_sources(&ctx),
+		&[call()],
+		&[vec![("g1".into(), "guard".into())]],
+	)
+	.unwrap();
+	assert!(decisions[0].overridden_guards.is_empty());
+}

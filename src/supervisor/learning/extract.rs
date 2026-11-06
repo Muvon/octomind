@@ -458,6 +458,7 @@ pub async fn run_extraction(
 			scope: candidate.lesson.scope.clone(),
 			project: candidate.lesson.project.clone(),
 			role: candidate.lesson.role.clone(),
+			extensions: Default::default(),
 		});
 		if candidate.lesson.scope == "global" && !super::retention::verify_user_wide(config, &[&candidate.lesson]).await
 		{
@@ -836,6 +837,7 @@ fn parse_lessons_with_evidence(
 					last_used: String::new(),
 					use_count: 0,
 					storage_path: String::new(),
+					extra_fields: Default::default(),
 				},
 				evidence,
 				supersedes: parse_supersedes(attrs, candidate_count),
@@ -1070,6 +1072,7 @@ fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>)
 					last_used: String::new(),
 					use_count: 0,
 					storage_path: String::new(),
+					extra_fields: Default::default(),
 				},
 				message_numbers,
 			});
@@ -1247,6 +1250,7 @@ fn parse_experience_tag(response: &str, context: &ExperienceParseContext<'_>) ->
 			last_used: String::new(),
 			use_count: 0,
 			storage_path: String::new(),
+			extra_fields: Default::default(),
 		},
 		message_numbers,
 	})

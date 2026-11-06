@@ -1843,10 +1843,12 @@ async fn many_verified_rules_do_not_block_successive_turns_and_bad_records_are_i
 			session.add_user_message("Now explain its index").unwrap();
 		}
 		run_turn(&mut session, &config).await.unwrap();
-		assert_eq!(session.active_user_rules.len(), 24);
+		assert!(!session.active_user_rules.is_empty());
+		assert!(session.active_user_rules.len() < 24);
+		assert_eq!(backend.retrieve_global().await.unwrap().len(), 24);
 		assert!(
 			crate::session::estimate_tokens(session.active_memory_pack.as_ref().unwrap())
-				> crate::supervisor::learning::inject::MAX_MEMORY_PACK_TOKENS
+				<= crate::supervisor::learning::inject::MAX_MEMORY_PACK_TOKENS
 		);
 	}
 	assert_eq!(requests.lock().unwrap().len(), 2);

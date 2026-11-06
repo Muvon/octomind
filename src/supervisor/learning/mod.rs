@@ -90,13 +90,15 @@ pub struct Lesson {
 	/// serialized into records: hot/cold moves must not make stored metadata stale.
 	#[serde(skip)]
 	pub storage_path: String,
+	/// Unrecognized frontmatter survives read-modify-write by older readers.
+	#[serde(skip)]
+	pub extra_fields: std::collections::BTreeMap<String, String>,
 }
 
 /// The exact rule and scope accepted by extraction's grounding verifier.
 /// This is provenance in the trusted local store, not authentication against
 /// a writer who can replace both the rule and its provenance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(deny_unknown_fields)]
 pub struct UserRuleProvenance {
 	pub quote: String,
 	pub session: String,
@@ -105,6 +107,9 @@ pub struct UserRuleProvenance {
 	pub scope: String,
 	pub project: String,
 	pub role: String,
+	/// Additive metadata cannot grant authority, but must survive round trips.
+	#[serde(flatten)]
+	pub extensions: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Runtime outcome label handed to detached extraction. Unknown is honest: a
@@ -177,6 +182,7 @@ impl Default for Lesson {
 			last_used: String::new(),
 			use_count: 0,
 			storage_path: String::new(),
+			extra_fields: std::collections::BTreeMap::new(),
 		}
 	}
 }

@@ -19,11 +19,10 @@ use super::backend::FileBackend;
 use crate::config::Config;
 use anyhow::Result;
 
-/// Context budget for optional recalled memories. Verified user instructions
-/// are bounded by the provider context ceiling, not this retrieval allowance.
+/// Working-context budget for complete recalled records, including user rules.
+/// Records not admitted here remain available in the durable store.
 pub const MAX_MEMORY_PACK_TOKENS: usize = 2_000;
-/// Optional global context must leave room for scoped retrieval within the
-/// optional memory allowance.
+/// Global context must leave room for request-specific scoped records.
 const MAX_GLOBAL_PACK_TOKENS: usize = 512;
 const FILE_RETRIEVAL_CANDIDATES: usize = 20;
 const EXPERIENCE_INLINE_TOKENS: usize = 320;
@@ -100,23 +99,7 @@ pub async fn retrieve_and_format(
 
 	let mut candidates: Vec<(crate::supervisor::learning::Lesson, bool)> = Vec::new();
 
-	// Global tier: durable user-wide preferences. Reconsider them every turn so
-	// replacing the active pack never accidentally drops standing user rules.
-	candidates.extend(
-		backend
-			.retrieve_global()
-			.await?
-			.into_iter()
-			.map(|lesson| (lesson, true)),
-	);
-	candidates.extend(
-		backend
-			.retrieve_all(role, project)
-			.await?
-			.into_iter()
-			.filter(|lesson| lesson.is_verified_user_rule())
-			.map(|lesson| (lesson, false)),
-	);
+	let global = backend.retrieve_global().await?;
 
 	// Scoped tier: contextual lessons retrieved by relevance to this message.
 	// First call uses the full hybrid (LLM keywords + embedding); follow-up
@@ -136,16 +119,16 @@ pub async fn retrieve_and_format(
 	if !patterns.is_empty() {
 		crate::log_debug!("Learning retrieval: query keywords: {}", patterns.join(", "));
 	}
-	// Cold global rules are not injected unconditionally: page only exact
-	// lexical matches from their compact catalog, then charge them to the same
-	// 512-token global sub-budget as hot global rules.
+	// Task-matched global records get first use of the bounded global allowance;
+	// standing preferences fill the remaining space in importance order.
 	candidates.extend(
 		backend
-			.retrieve_archived_global(user_input, &patterns, 2)
+			.retrieve_global_for_query(user_input, &patterns, FILE_RETRIEVAL_CANDIDATES)
 			.await?
 			.into_iter()
 			.map(|lesson| (lesson, true)),
 	);
+	candidates.extend(global.into_iter().map(|lesson| (lesson, true)));
 	candidates.extend(
 		backend
 			.retrieve(user_input, &patterns, role, project, FILE_RETRIEVAL_CANDIDATES)
@@ -161,9 +144,6 @@ pub async fn retrieve_and_format(
 		candidates = filter_scoped_by_relevance(config, user_input, candidates).await;
 	}
 
-	// Standing instructions are admitted before optional context is budgeted.
-	candidates.sort_by_key(|(lesson, _)| !lesson.is_verified_user_rule());
-
 	// Dedup global/scoped overlap, then greedily admit ranked candidates under a
 	// real token budget. Re-rendering the tiny prospective pack gives an exact
 	// bound including XML framing and escaped content; no count heuristic can do
@@ -171,7 +151,6 @@ pub async fn retrieve_and_format(
 	let mut batch_seen = std::collections::HashSet::new();
 	let mut selected = Vec::new();
 	let mut global_tokens = 0usize;
-	let mut optional_start = 0usize;
 	for (lesson, global) in candidates {
 		if !batch_seen.insert((lesson.content.clone(), lesson.user_rule.clone())) {
 			continue;
@@ -181,8 +160,7 @@ pub async fn retrieve_and_format(
 		let skills = crate::supervisor::learning::evolution::applied_skill_names(&lesson.artifacts);
 		let item_tokens =
 			crate::session::estimate_tokens(&render_item(&id, &lesson, global, reference.as_deref(), &skills));
-		let user_rule = lesson.is_verified_user_rule();
-		if global && !user_rule && global_tokens.saturating_add(item_tokens) > MAX_GLOBAL_PACK_TOKENS {
+		if global && global_tokens.saturating_add(item_tokens) > MAX_GLOBAL_PACK_TOKENS {
 			continue;
 		}
 		selected.push(SelectedMemory {
@@ -192,13 +170,11 @@ pub async fn retrieve_and_format(
 			reference,
 			skills,
 		});
-		if user_rule {
-			optional_start = selected.len();
-		} else if crate::session::estimate_tokens(&format_pack(&selected[optional_start..])) > MAX_MEMORY_PACK_TOKENS {
+		if crate::session::estimate_tokens(&format_pack(&selected)) > MAX_MEMORY_PACK_TOKENS {
 			selected.pop();
 			continue;
 		}
-		if global && !user_rule {
+		if global {
 			global_tokens = global_tokens.saturating_add(item_tokens);
 		}
 	}
@@ -232,7 +208,11 @@ async fn filter_scoped_by_relevance(
 	let scoped: Vec<usize> = candidates
 		.iter()
 		.enumerate()
-		.filter(|(_, (lesson, global))| !global && !lesson.is_verified_user_rule())
+		.filter(|(_, (lesson, global))| {
+			!global
+				&& (!lesson.is_verified_user_rule()
+					|| crate::session::estimate_tokens(&lesson.content) <= evaluate::RECALL_CANDIDATE_TOKENS)
+		})
 		.map(|(position, _)| position)
 		.collect();
 	if scoped.is_empty() {
@@ -245,7 +225,11 @@ async fn filter_scoped_by_relevance(
 			serde_json::json!({
 				"index": index,
 				"title": lesson.title,
-				"content": crate::session::truncate_to_tokens(&lesson.content, evaluate::RECALL_CANDIDATE_TOKENS),
+				"content": if lesson.is_verified_user_rule() {
+					lesson.content.clone()
+				} else {
+					crate::session::truncate_to_tokens(&lesson.content, evaluate::RECALL_CANDIDATE_TOKENS)
+				},
 			})
 		}).collect::<Vec<_>>(),
 	});

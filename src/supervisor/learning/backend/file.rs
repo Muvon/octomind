@@ -21,7 +21,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct FileBackend;
 
 const COLD_RECALL_LIMIT: usize = 2;
+const RECORD_FORMAT_VERSION: u32 = 1;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, thiserror::Error)]
+#[error("learning record format {0} is newer than supported format {RECORD_FORMAT_VERSION}")]
+struct UnsupportedRecordFormat(u32);
 
 /// Write beside the destination, sync, then rename into place. Same-directory
 /// rename gives the learning authority an atomic old-or-new view without
@@ -126,6 +131,17 @@ impl FileBackend {
 			return Ok(None);
 		};
 		let yaml_str = after_first[..end].trim();
+		// Check the envelope before interpreting any future payload fields.
+		for (_, value) in yaml_str
+			.lines()
+			.filter_map(|line| line.split_once(':'))
+			.filter(|(key, _)| key.trim() == "format_version")
+		{
+			let version: u32 = value.trim().parse().context("invalid learning format_version")?;
+			if version > RECORD_FORMAT_VERSION {
+				return Err(UnsupportedRecordFormat(version).into());
+			}
+		}
 
 		let mut lesson = Lesson::default();
 		for line in yaml_str.lines() {
@@ -137,9 +153,13 @@ impl FileBackend {
 			// Strip exactly one surrounding quote pair (store wraps in one).
 			// `trim_matches('"')` would greedily eat an escaped trailing quote
 			// (`"…\""`) and leave a dangling backslash for `unescape` to mangle.
-			let val = val.trim();
-			let val = val.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(val);
+			let raw_value = val.trim();
+			let val = raw_value
+				.strip_prefix('"')
+				.and_then(|v| v.strip_suffix('"'))
+				.unwrap_or(raw_value);
 			match key {
+				"format_version" => {}
 				"title" => lesson.title = unescape(val),
 				"content" => lesson.content = unescape(val),
 				"memory_type" => lesson.memory_type = val.to_string(),
@@ -173,7 +193,9 @@ impl FileBackend {
 				}
 				"last_used" => lesson.last_used = unescape(val),
 				"use_count" => lesson.use_count = val.parse().unwrap_or(0),
-				_ => {}
+				_ => {
+					lesson.extra_fields.insert(key.to_string(), raw_value.to_string());
+				}
 			}
 		}
 
@@ -184,6 +206,10 @@ impl FileBackend {
 	fn parse_stored_record(path: &std::path::Path, content: &str) -> Result<Option<Lesson>> {
 		match Self::parse_lesson_file(content) {
 			Ok(lesson) => Ok(lesson),
+			Err(error) if error.is::<UnsupportedRecordFormat>() => {
+				crate::log_error!("Learning record {} left unchanged: {}", path.display(), error);
+				Ok(None)
+			}
 			Err(error) => {
 				let directory = path
 					.parent()
@@ -192,8 +218,21 @@ impl FileBackend {
 				std::fs::create_dir_all(&directory)?;
 				let filename = path.file_name().context("learning record has no filename")?;
 				let destination = directory.join(format!("{}-{}", uuid::Uuid::new_v4(), filename.to_string_lossy()));
-				std::fs::rename(path, &destination)
-					.with_context(|| format!("quarantine invalid learning record {}", path.display()))?;
+				match std::fs::rename(path, &destination) {
+					Ok(()) => {}
+					Err(move_error)
+						if move_error.kind() == std::io::ErrorKind::NotFound
+							&& path
+								.symlink_metadata()
+								.is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+					{
+						return Ok(None);
+					}
+					Err(move_error) => {
+						return Err(move_error)
+							.with_context(|| format!("quarantine invalid learning record {}", path.display()))
+					}
+				}
 				crate::log_error!(
 					"Invalid learning record {} moved to {}: {:#}",
 					path.display(),
@@ -203,6 +242,16 @@ impl FileBackend {
 				Ok(None)
 			}
 		}
+	}
+
+	fn read_stored_record(path: &std::path::Path) -> Result<Option<Lesson>> {
+		let content = match std::fs::read_to_string(path) {
+			Ok(content) => content,
+			// Directory entries and archive catalog rows can outlive a moved record.
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+			Err(error) => return Err(error).with_context(|| format!("read learning record {}", path.display())),
+		};
+		Self::parse_stored_record(path, &content).with_context(|| format!("load learning record {}", path.display()))
 	}
 
 	/// Read all lesson `.md` files from a directory, parsed and sorted by
@@ -218,9 +267,7 @@ impl FileBackend {
 		for entry in entries {
 			let path = entry?.path();
 			if path.extension().is_some_and(|e| e == "md") {
-				let content = std::fs::read_to_string(&path)
-					.with_context(|| format!("read learning record {}", path.display()))?;
-				if let Some(mut lesson) = Self::parse_stored_record(&path, &content)? {
+				if let Some(mut lesson) = Self::read_stored_record(&path)? {
 					lesson.storage_path = path.display().to_string();
 					lessons.push(lesson);
 				}
@@ -325,10 +372,7 @@ impl FileBackend {
 			if !seen.insert(path.clone()) {
 				continue;
 			}
-			let Ok(content) = std::fs::read_to_string(&path) else {
-				continue;
-			};
-			if let Some(mut lesson) = Self::parse_stored_record(&path, &content)? {
+			if let Some(mut lesson) = Self::read_stored_record(&path)? {
 				if superseded.contains(&lesson.record_key()) {
 					continue;
 				}
@@ -353,10 +397,7 @@ impl FileBackend {
 				continue;
 			};
 			let path = entry.path(dir);
-			let Ok(stored) = std::fs::read_to_string(&path) else {
-				continue;
-			};
-			let Some(mut lesson) = Self::parse_stored_record(&path, &stored)? else {
+			let Some(mut lesson) = Self::read_stored_record(&path)? else {
 				continue;
 			};
 			if lesson.content.trim() == content.trim() {
@@ -408,8 +449,8 @@ impl FileBackend {
 		let filename = format!("{}.md", lesson.file_id());
 
 		let tags_str = lesson.tags.join(", ");
-		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\nuser_rule: {}\nsupersedes: {}\nartifacts: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
+		let mut content = format!(
+			"---\nformat_version: {RECORD_FORMAT_VERSION}\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\nuser_rule: {}\nsupersedes: {}\nartifacts: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n",
 			escape(&lesson.title),
 			escape(&lesson.content),
 			lesson.memory_type,
@@ -430,6 +471,11 @@ impl FileBackend {
 			escape(&lesson.last_used),
 			lesson.use_count,
 		);
+
+		for (key, value) in &lesson.extra_fields {
+			content.push_str(&format!("{key}: {value}\n"));
+		}
+		content.push_str("---\n");
 
 		// A consolidation stores its replacement before moving source files. Make
 		// that ordering crash-safe: a partial write must never become the durable
@@ -452,11 +498,33 @@ impl FileBackend {
 		}
 
 		let all = self.retrieve_all(role, project).await?;
+		self.retrieve_ranked(&dir, all, intent, patterns, limit).await
+	}
+
+	pub(crate) async fn retrieve_global_for_query(
+		&self,
+		intent: &str,
+		patterns: &[String],
+		limit: usize,
+	) -> Result<Vec<Lesson>> {
+		let dir = crate::directories::get_global_learning_dir()?;
+		self.retrieve_ranked(&dir, self.retrieve_global().await?, intent, patterns, limit)
+			.await
+	}
+
+	async fn retrieve_ranked(
+		&self,
+		dir: &std::path::Path,
+		all: Vec<Lesson>,
+		intent: &str,
+		patterns: &[String],
+		limit: usize,
+	) -> Result<Vec<Lesson>> {
 		if patterns.is_empty() && intent.trim().is_empty() {
 			return Ok(all.into_iter().take(limit).collect());
 		}
 		let superseded = superseded_keys(&self.retrieve_global().await?);
-		let cold: Vec<_> = Self::retrieve_archived(&dir, patterns, intent, COLD_RECALL_LIMIT.min(limit))?
+		let cold: Vec<_> = Self::retrieve_archived(dir, patterns, intent, COLD_RECALL_LIMIT.min(limit))?
 			.into_iter()
 			.filter(|lesson| !superseded.contains(&lesson.record_key()))
 			.collect();
@@ -593,16 +661,6 @@ impl FileBackend {
 		let superseded = superseded_keys(&lessons);
 		lessons.retain(|lesson| !superseded.contains(&lesson.record_key()));
 		Ok(lessons)
-	}
-
-	pub(crate) async fn retrieve_archived_global(
-		&self,
-		intent: &str,
-		patterns: &[String],
-		limit: usize,
-	) -> Result<Vec<Lesson>> {
-		let dir = crate::directories::get_global_learning_dir()?;
-		Self::retrieve_archived(&dir, patterns, intent, limit.min(COLD_RECALL_LIMIT))
 	}
 
 	/// Dir scan only — no parsing: the caller just needs to know whether the

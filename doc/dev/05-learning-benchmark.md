@@ -197,8 +197,8 @@ consolidation harness calls `propose_and_verify`; it does not run file archival 
 
 Production retrieval uses 128-token semantic chunks with max-chunk scoring in `src/supervisor/learning/backend/file.rs`.
 In `src/session/chat/session/api_executor.rs`, the first session recall uses hybrid retrieval; later genuine user turns
-use embedding-only scoped retrieval. The runtime replaces a bounded memory pack and drops it when request headroom is
-insufficient. Benchmark rewrite caches are test artifacts, not the session pack.
+use embedding-only scoped retrieval. The runtime replaces a bounded memory pack. Under context pressure it removes optional memories while preserving
+selected user-rule evidence. Benchmark rewrite caches are test artifacts, not the session pack.
 
 | Source | Contract |
 |--------|----------|
@@ -208,6 +208,23 @@ insufficient. Benchmark rewrite caches are test artifacts, not the session pack.
 | [File backend](../../src/supervisor/learning/backend/file.rs) | Retrieval, chunk scoring, cold recall |
 | [Retention](../../src/supervisor/learning/retention.rs) | Budgets, verifier, archival |
 | [Memory injection](../../src/supervisor/learning/inject.rs) | Rewrite validation and Active Memory Pack |
+
+## Rule working-set validation
+
+The active pack admits complete verified rules within the same total context budget as other recalled records.
+Hot/cold placement preserves their full text and provenance; material use can promote a cold rule. Verification and
+applicability are separate decisions. Retrieval runs at the existing user-request and post-compression boundaries,
+not on ordinary tool rounds.
+
+This follows the separation of durable storage from active context in [MemGPT](https://arxiv.org/abs/2310.08560) and
+Anthropic's [context engineering guidance](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents).
+[LongMemEval](https://arxiv.org/abs/2410.10813) motivates checking retrieval, updates and unsupported answers separately.
+These sources support the architecture; they do not establish that Octomind's budgets or ranking are optimal.
+
+Regression tests cover full-record admission, token bounds with growing rule sets, relevance filtering without cutting
+conditions, cold global matches ahead of standing preferences, and lossless archival/reactivation. Filesystem tests
+cover simultaneous quarantine, genuine destination failures, additive metadata round trips, and future-format files
+remaining unchanged. These are lifecycle and boundedness checks, not live-model quality scores or a SOTA benchmark claim.
 
 ## See also
 

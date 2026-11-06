@@ -25,6 +25,7 @@ pub(crate) fn user_rule(lesson: &Lesson, quote: &str) -> UserRuleProvenance {
 		scope: lesson.scope.clone(),
 		project: lesson.project.clone(),
 		role: lesson.role.clone(),
+		extensions: Default::default(),
 	}
 }
 

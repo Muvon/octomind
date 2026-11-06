@@ -975,7 +975,7 @@ async fn retrieve_pages_cold_archive_when_hot_scope_is_empty() {
 
 #[serial_test::serial]
 #[tokio::test]
-async fn retrieve_archived_global_pages_the_shared_archive() {
+async fn global_query_pages_the_shared_archive() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
@@ -990,7 +990,7 @@ async fn retrieve_archived_global_pages_the_shared_archive() {
 	crate::supervisor::learning::retention::archive_record(&item).unwrap();
 
 	let recalled = backend
-		.retrieve_archived_global("", &["deployments".to_string()], 5)
+		.retrieve_global_for_query("", &["deployments".to_string()], 5)
 		.await
 		.unwrap();
 	assert_eq!(recalled.len(), 1);
@@ -1098,6 +1098,106 @@ async fn durable_supersession_hides_old_hot_and_cold_records_before_cleanup() {
 		FileBackend.retrieve_all(&old.role, &old.project).await.unwrap().len(),
 		1
 	);
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+}
+
+#[test]
+fn concurrent_quarantine_and_disappearing_entries_are_idempotent() {
+	let directory = tempfile::tempdir().unwrap();
+	let path = directory.path().join("bad.md");
+	let raw = "---\ncontent: \"bad\"\nuser_rule: {broken\n---\n";
+	std::fs::write(&path, raw).unwrap();
+	let barrier = std::sync::Barrier::new(2);
+	std::thread::scope(|scope| {
+		let first = scope.spawn(|| {
+			barrier.wait();
+			FileBackend::parse_stored_record(&path, raw)
+		});
+		let second = scope.spawn(|| {
+			barrier.wait();
+			FileBackend::parse_stored_record(&path, raw)
+		});
+		assert!(first.join().unwrap().unwrap().is_none());
+		assert!(second.join().unwrap().unwrap().is_none());
+	});
+	assert!(!path.exists());
+	assert!(FileBackend::read_stored_record(&path).unwrap().is_none());
+	let copies: Vec<_> = std::fs::read_dir(directory.path().join(".invalid"))
+		.unwrap()
+		.map(|entry| entry.unwrap().path())
+		.collect();
+	assert_eq!(copies.len(), 1);
+	assert_eq!(std::fs::read_to_string(&copies[0]).unwrap(), raw);
+}
+
+#[test]
+fn quarantine_does_not_hide_a_real_destination_failure() {
+	let directory = tempfile::tempdir().unwrap();
+	let path = directory.path().join("bad.md");
+	let raw = "---\ncontent: \"bad\"\nuser_rule: {broken\n---\n";
+	std::fs::write(&path, raw).unwrap();
+	std::fs::write(directory.path().join(".invalid"), "not a directory").unwrap();
+	assert!(FileBackend::read_stored_record(&path).is_err());
+	assert_eq!(std::fs::read_to_string(path).unwrap(), raw);
+}
+
+#[test]
+fn future_record_format_is_preserved_without_parsing_or_quarantine() {
+	let directory = tempfile::tempdir().unwrap();
+	let path = directory.path().join("future.md");
+	let raw = format!(
+		"---\nuser_rule: a future representation\nformat_version: {}\n---\n",
+		RECORD_FORMAT_VERSION + 1
+	);
+	std::fs::write(&path, &raw).unwrap();
+	std::fs::write(
+		directory.path().join("current.md"),
+		"---\ncontent: \"current rule\"\n---\n",
+	)
+	.unwrap();
+	let records = FileBackend::read_lessons_sorted(directory.path()).unwrap();
+	assert_eq!(records.len(), 1);
+	assert_eq!(records[0].content, "current rule");
+	assert_eq!(std::fs::read_to_string(path).unwrap(), raw);
+	assert!(!directory.path().join(".invalid").exists());
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn additive_metadata_survives_reinforcement_without_gaining_authority() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut rule = lesson_with("Build remotely for releases", &[]);
+	rule.role = "developer".into();
+	rule.project = "project".into();
+	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
+	rule.user_rule.as_mut().unwrap().extensions.insert(
+		"future_annotation".into(),
+		serde_json::json!({"note":"not an instruction"}),
+	);
+	rule.extra_fields.insert(
+		"future_index".into(),
+		r#"{"revision":2,"note":"opaque metadata"}"#.into(),
+	);
+	FileBackend.store(&rule).await.unwrap();
+	FileBackend
+		.reinforce(&rule.content, &rule.role, &rule.project, 0.1)
+		.await
+		.unwrap();
+	let records = FileBackend.retrieve_all(&rule.role, &rule.project).await.unwrap();
+	assert_eq!(records.len(), 1);
+	assert_eq!(records[0].user_rule, rule.user_rule);
+	assert_eq!(records[0].extra_fields, rule.extra_fields);
+	assert_eq!(records[0].use_count, 1);
+	let rendered =
+		crate::supervisor::learning::inject::format_user_rules([("M1", records[0].user_rule.as_ref().unwrap())]);
+	assert!(!rendered.contains("future_annotation"));
+	assert!(!rendered.contains("opaque metadata"));
 	match previous {
 		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
 		None => std::env::remove_var("OCTOMIND_DATA_DIR"),

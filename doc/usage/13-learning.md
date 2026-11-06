@@ -408,7 +408,15 @@ New verified rules retain the original user quote, source message identity, and 
 by verification. Recall labels the summary separately from the quote. Records without verified provenance remain
 contextual memories. Malformed records are moved intact to `.invalid/`
 with an error naming the file and reason; other records remain usable. Changes to verified content or scope cannot
-silently retain verified status.
+silently retain verified status. Concurrent readers that find a record already quarantined or removed skip that
+record without failing the turn; other I/O failures remain errors.
+
+Files carry `format_version: 1` in their frontmatter. Unstamped files use the same existing field layout and remain
+readable without a startup migration. Additive provenance and frontmatter fields are preserved across reinforcement
+and other read/write cycles, but do not grant instruction authority. A higher format version is reported and left
+untouched; it is not parsed as the current format or moved to `.invalid/`. Writers must bump the record format for
+incompatible semantics. This protection applies to readers with the version check; older released binaries cannot
+be retroactively made safe readers of future formats.
 
 ### Long-run retention
 
@@ -417,7 +425,7 @@ soft watermark is 80% of the hard bound:
 
 | Memory type | Scoped hard bound | Global hard bound |
 |-------------|------------------:|------------------:|
-| Unverified short rules | 16,000 tokens | 4,000 tokens |
+| Short rules, including verified user rules | 16,000 tokens | 4,000 tokens |
 | Orientation | 24,000 tokens | 8,000 tokens |
 | Experience | 48,000 tokens | 16,000 tokens |
 
@@ -431,8 +439,9 @@ their evidence, inherits the lower importance, and does not strengthen confidenc
 
 Short user-backed rules are never synthesized by this pass because a generated merge would break their quote-first
 contract. They continue to change only through explicit, separately verified extraction and `supersedes`.
-Verified standing rules stay hot until explicitly replaced or deleted. Neither negative task outcomes, age nor storage
-budgets invalidate a user's instruction.
+Verification establishes provenance, not permanent residence in the hot store. Storage pressure can move a verified
+rule intact to the cold archive; it does not revoke the rule, lower its importance or rewrite its quote. Retention
+counts both rule text and the stored user quote. Negative task outcomes still cannot debit a verified rule.
 
 Maintenance also reviews recurrence. When a scoped short rule appears near-verbatim (word Jaccard about 0.6 or higher)
 in three or more projects with verified provenance, recurrence only nominates it: three projects that share a language or toolchain produce the
@@ -473,10 +482,16 @@ Every genuine user turn **replaces** the previous runtime pack:
   retrieval-prep LLM call.
 - **Tool follow-up rounds** — reuse the same pack without another retrieval.
 
-The file backend may rank up to 20 scoped candidates and expands explicit relationships one hop in either direction, but
-optional memories fit a 2,000-token budget under Octomind’s token estimator, including a 512-token sub-budget for
-optional global memories. Verified global and project/domain standing rules are admitted separately, without
-relevance filtering. They may exceed the optional memory allowance; the actual provider context ceiling still applies.
+The file backend ranks candidates for the request and expands explicit relationships one hop in either direction.
+The complete rendered pack, including verified rules and framing, fits a 2,000-token budget under Octomind's token
+estimator, with a 512-token global allowance. Task-matched global records, including cold matches, precede standing
+global preferences. Scoped rules use the same retrieval and applicability filter as other scoped memories.
+
+Admission selects whole records. A verified rule's summary and original quote are never truncated to fit; a record
+that does not fit stays in storage for later recall or inspection with `/learning show`. Verification determines the
+authority of a selected rule, not whether every stored rule appears on every request. This is bounded retrieval, not
+a guarantee of perfect recall. The optional relevance judge also receives a complete rule or does not judge that
+candidate; it never classifies a rule using text with a condition cut off.
 Each selected item gets a short pack-local ID (`M1`, `M2`, …). The specialist
 reports only IDs that materially affected its answer or action in the hidden supervisor status, and verify-gate outcomes
 reinforce or weaken only those used items; verified user rules cannot receive negative outcome credit.

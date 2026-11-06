@@ -524,6 +524,7 @@ async fn structured_synthesis(
 		last_used: String::new(),
 		use_count: 0,
 		storage_path: String::new(),
+		extra_fields: Default::default(),
 	};
 	lesson.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
 		&lesson,

@@ -150,7 +150,14 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	assert!(rule_at < rules_end, "user rule rendered outside user_rules:\n{text}");
 	assert!(rules_end < wrapper_at);
 	assert!(text.contains("Original user quote: Always run the test suite on the dev box."));
-	assert_eq!(injected_now[0].user_rule, rule.user_rule);
+	assert_eq!(
+		injected_now
+			.iter()
+			.find(|item| item.content == rule.content)
+			.unwrap()
+			.user_rule,
+		rule.user_rule
+	);
 	let legacy_at = text
 		.find("skip the linter on hotfix branches")
 		.expect("legacy lesson missing");
@@ -476,62 +483,75 @@ fn decoded_memory_pack_keeps_memory_ids_without_source_line_ids() {
 
 #[serial]
 #[tokio::test]
-async fn standing_rules_survive_unrelated_queries_beyond_the_optional_memory_budget() {
+async fn verified_rules_are_selected_whole_within_the_pack_budget() {
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let config = fake_provider_config();
-	let project = "standing-rules";
-	let mut rule = lesson(project, "Use remote builds", "learning", &["build"]);
-	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
-		&rule,
-		"When building this project, use the dev box.",
-	));
-	FileBackend.store(&rule).await.unwrap();
+	let project = "rule-budget";
+	let mut originals = Vec::new();
+	for index in 0..24 {
+		let content = format!(
+			"Rule {index}: {}",
+			"For release builds only, use the documented remote build host. ".repeat(12)
+		);
+		let mut rule = lesson(project, &content, "learning", &["release"]);
+		rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &content));
+		FileBackend.store(&rule).await.unwrap();
+		originals.push(rule);
+	}
 	let (_tx, rx) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "Explain a database query", ROLE, project, false, rx)
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, project, false, rx)
 		.await
 		.unwrap();
-	assert_eq!(selected.len(), 1);
-	assert_eq!(selected[0].user_rule, rule.user_rule);
-	assert!(text.contains("When building this project, use the dev box."));
-	let rules_only = format_user_rules(
-		selected
+	assert!(!selected.is_empty());
+	assert!(selected.len() < originals.len());
+	assert!(crate::session::estimate_tokens(&text) <= MAX_MEMORY_PACK_TOKENS);
+	for item in &selected {
+		let rule = item.user_rule.as_ref().unwrap();
+		assert!(
+			text.contains(&rule.quote),
+			"a selected rule's condition must not be cut"
+		);
+		assert!(text.contains(&rule.content));
+	}
+	let stored = FileBackend.retrieve_all(ROLE, project).await.unwrap();
+	assert_eq!(stored.len(), originals.len());
+	for original in originals {
+		assert!(stored
 			.iter()
-			.filter_map(|item| item.user_rule.as_ref().map(|rule| (item.id.as_str(), rule))),
-	);
-	assert_eq!(text, rules_only);
-
-	let mut oversized = lesson(
-		project,
-		"required condition ".repeat(MAX_MEMORY_PACK_TOKENS).as_str(),
-		"learning",
-		&[],
-	);
-	oversized.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
-		&oversized,
-		&oversized.content,
-	));
-	FileBackend.store(&oversized).await.unwrap();
-	let (_tx, rx) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&config, "Explain a database query", ROLE, project, false, rx)
-		.await
-		.unwrap();
-	assert!(crate::session::estimate_tokens(&text) > MAX_MEMORY_PACK_TOKENS);
-	assert_eq!(selected.len(), 2);
-	assert!(selected.iter().all(|item| item.user_rule.is_some()));
+			.any(|item| item.content == original.content && item.user_rule == original.user_rule));
+	}
 }
 
 #[tokio::test]
-async fn relevance_filter_does_not_remove_standing_rules() {
-	let config = fake_provider_config();
-	let mut rule = lesson("project", "Use remote builds", "learning", &[]);
-	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
-		&rule,
-		"Build on the dev box.",
+#[serial]
+async fn verified_rules_still_need_to_apply_to_the_current_request() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.9), ("c1", 0.0)]))]).await;
+	let config = recall_gate_config();
+	let mut applicable = lesson("project", "For release builds, use the dev box", "learning", &[]);
+	applicable.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&applicable,
+		&applicable.content,
 	));
-	let filtered = filter_scoped_by_relevance(&config, "unrelated query", vec![(rule.clone(), false)]).await;
+	let mut unrelated = lesson(
+		"project",
+		"For product screenshots, use the staging site",
+		"learning",
+		&[],
+	);
+	unrelated.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&unrelated,
+		&unrelated.content,
+	));
+	let filtered = filter_scoped_by_relevance(
+		&config,
+		"Build a release",
+		vec![(applicable.clone(), false), (unrelated, false)],
+	)
+	.await;
 	assert_eq!(filtered.len(), 1);
-	assert_eq!(filtered[0].0.user_rule, rule.user_rule);
+	assert_eq!(filtered[0].0.user_rule, applicable.user_rule);
+	assert_eq!(fake.requests()[0].state["candidates"][0]["content"], applicable.content);
 }
 
 #[serial]
@@ -553,10 +573,52 @@ async fn equal_summaries_do_not_discard_distinct_user_quotes_or_scopes() {
 	FileBackend.store(&global).await.unwrap();
 	FileBackend.store(&scoped).await.unwrap();
 	let (_tx, rx) = cancel_pair();
-	let (text, selected) = retrieve_and_format(&fake_provider_config(), "Explain the UI", ROLE, "project", false, rx)
+	let (text, selected) = retrieve_and_format(&fake_provider_config(), "", ROLE, "project", false, rx)
 		.await
 		.unwrap();
 	assert_eq!(selected.iter().filter(|item| item.user_rule.is_some()).count(), 2);
 	assert!(text.contains("prod-builder"));
 	assert!(text.contains("dev-builder"));
+}
+
+#[serial]
+#[tokio::test]
+async fn task_matched_cold_global_rule_precedes_standing_preferences() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let config = fake_provider_config();
+	for index in 0..12 {
+		let mut rule = lesson(
+			"project",
+			&format!("Formatting preference {index}: keep code comments concise"),
+			"learning",
+			&[],
+		);
+		rule.scope = "global".into();
+		rule.importance = 0.9;
+		rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
+		FileBackend.store(&rule).await.unwrap();
+	}
+	let mut target = lesson(
+		"project",
+		"Before a database rollback, preserve the audit trail",
+		"learning",
+		&["postgres", "transaction"],
+	);
+	target.scope = "global".into();
+	target.importance = 0.05;
+	target.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(
+		&target,
+		"Across my projects, preserve the audit trail before any database rollback.",
+	));
+	FileBackend.store(&target).await.unwrap();
+	let (_, archived) = crate::supervisor::learning::retention::archive_record(&target).unwrap();
+	let (_tx, rx) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&config, "postgres transaction rollback", ROLE, "project", false, rx)
+		.await
+		.unwrap();
+	assert_eq!(selected[0].user_rule, target.user_rule);
+	assert!(text.contains(&target.user_rule.as_ref().unwrap().quote));
+	assert!(crate::session::estimate_tokens(&text) <= MAX_MEMORY_PACK_TOKENS);
+	assert!(archived.exists(), "exposure must not reactivate or rewrite a record");
 }

@@ -735,21 +735,81 @@ async fn legacy_instances_cannot_supply_a_promotion_quorum() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn retention_does_not_archive_verified_standing_rules() {
+async fn verified_rules_are_paged_losslessly_and_material_use_restores_them() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
-	let mut rule = memory(
-		&"conditional user rule ".repeat(SCOPED_LEARNING_HARD_TOKENS),
-		"learning",
-	);
-	rule.importance = 0.05;
-	rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
 	let backend = FileBackend;
-	backend.store(&rule).await.unwrap();
+	let mut originals = Vec::new();
+	for index in 0..24 {
+		let content = if index == 0 {
+			"For postgres transaction rollback, preserve the audit trail and only restore a verified backup".to_string()
+		} else {
+			format!(
+				"Release rule {index}: {}",
+				"only for release builds use the documented host ".repeat(128)
+			)
+		};
+		let mut rule = memory(&content, "learning");
+		rule.created = format!("2026-01-01T00:00:{index:02}Z");
+		rule.importance = if index == 0 { 0.05 } else { 0.9 };
+		rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
+		backend.store(&rule).await.unwrap();
+		originals.push(rule);
+	}
 	let config = crate::session::chat::test_support::fake_provider_config();
-	let report = maintain_scope(&backend, &config, vec![rule.clone()], false)
+	let report = maintain_scope(&backend, &config, originals.clone(), false)
 		.await
 		.unwrap();
-	assert_eq!(report.archived, 0);
-	assert_eq!(backend.retrieve_all(&rule.role, &rule.project).await.unwrap().len(), 1);
+	assert!(report.archived > 0);
+	let target = &originals[0];
+	let hot = backend.retrieve_all(&target.role, &target.project).await.unwrap();
+	let cold =
+		FileBackend::read_archived(&crate::directories::get_learning_dir(&target.role, &target.project).unwrap())
+			.unwrap();
+	assert!(storage_tokens(&hot) <= SCOPED_LEARNING_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR);
+	assert_eq!(hot.len() + cold.len(), originals.len());
+	for original in &originals {
+		assert!(hot
+			.iter()
+			.chain(&cold)
+			.any(|record| record.content == original.content && record.user_rule == original.user_rule));
+	}
+	assert!(cold.iter().any(|record| record.file_id() == target.file_id()));
+	let recalled = backend
+		.retrieve(
+			"postgres transaction rollback",
+			&["postgres".into()],
+			&target.role,
+			&target.project,
+			2,
+		)
+		.await
+		.unwrap();
+	assert_eq!(recalled[0].user_rule, target.user_rule);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let (pack, selected) = super::super::inject::retrieve_and_format(
+		&config,
+		"postgres transaction rollback",
+		&target.role,
+		&target.project,
+		false,
+		rx,
+	)
+	.await
+	.unwrap();
+	let applied = selected
+		.iter()
+		.find(|record| record.content == target.content)
+		.expect("cold rule is available in the bounded working set");
+	assert!(pack.contains(&target.user_rule.as_ref().unwrap().quote));
+	assert!(crate::session::estimate_tokens(&pack) <= super::super::inject::MAX_MEMORY_PACK_TOKENS);
+	backend
+		.reinforce(&applied.content, &target.role, &target.project, -0.15)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all(&target.role, &target.project).await.unwrap();
+	let restored = hot.iter().find(|record| record.file_id() == target.file_id()).unwrap();
+	assert_eq!(restored.importance, target.importance);
+	assert_eq!(restored.user_rule, target.user_rule);
+	assert_eq!(restored.use_count, 1);
 }

@@ -324,7 +324,7 @@ async fn maintain_scope(
 	for kind in kinds {
 		let mut bucket: Vec<Lesson> = records
 			.iter()
-			.filter(|item| item.memory_type == kind && !item.is_verified_user_rule())
+			.filter(|item| item.memory_type == kind)
 			.cloned()
 			.collect();
 		let hard = hard_budget(&kind, global);
@@ -399,14 +399,19 @@ fn hard_budget(kind: &str, global: bool) -> usize {
 }
 
 fn memory_tokens(item: &Lesson) -> usize {
-	crate::session::estimate_tokens(&format!(
-		"{}\n{}\n{}\n{}\n{}",
-		item.title,
-		item.content,
-		item.tags.join(" "),
-		item.related.join(" "),
-		item.evidence.join(" ")
-	))
+	let provenance = item
+		.user_rule
+		.as_ref()
+		.map_or(0, |rule| crate::session::estimate_tokens(&rule.quote));
+	provenance
+		+ crate::session::estimate_tokens(&format!(
+			"{}\n{}\n{}\n{}\n{}",
+			item.title,
+			item.content,
+			item.tags.join(" "),
+			item.related.join(" "),
+			item.evidence.join(" ")
+		))
 }
 
 fn storage_tokens(items: &[Lesson]) -> usize {
@@ -632,6 +637,7 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 			.map(|item| item.use_count)
 			.fold(0_u64, u64::saturating_add),
 		storage_path: String::new(),
+		extra_fields: Default::default(),
 	}
 }
 

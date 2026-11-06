@@ -719,6 +719,7 @@ async fn reinforce_cold_archives_floor_importance_and_ignores_unknown_content() 
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let backend = FileBackend;
 
+	// A legacy `learning` record without grounded provenance gets ordinary credit.
 	let mut weak = lesson_with("barely useful rule", &[]);
 	weak.role = "developer".to_string();
 	weak.project = "project".to_string();
@@ -740,6 +741,46 @@ async fn reinforce_cold_archives_floor_importance_and_ignores_unknown_content() 
 	let cold = FileBackend::read_archived(&crate::directories::get_learning_dir("developer", "project").unwrap());
 	assert_eq!(cold.len(), 1);
 	assert_eq!(cold[0].importance, 0.0);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn reinforce_never_debits_or_archives_user_rules() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut rule = lesson_with("never run builds locally; use ssh dev", &[]);
+	rule.evidence = vec!["session://260829-synx-1930-80ae/message/33".to_string()];
+	rule.role = "developer".to_string();
+	rule.project = "project".to_string();
+	rule.created = "2026-01-01T00:00:00Z".to_string();
+	rule.importance = 0.05;
+	backend.store(&rule).await.unwrap();
+
+	backend
+		.reinforce(&rule.content, "developer", "project", -0.15)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all("developer", "project").await.unwrap();
+	assert_eq!(hot.len(), 1, "a debited user rule must stay hot");
+	assert_eq!(hot[0].importance, 0.05);
+	assert_eq!(hot[0].use_count, 1);
+
+	backend
+		.reinforce(&rule.content, "developer", "project", 0.1)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all("developer", "project").await.unwrap();
+	assert!((hot[0].importance - 0.15).abs() < 1e-9, "positive credit still applies");
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);

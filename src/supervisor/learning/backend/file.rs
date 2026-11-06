@@ -587,10 +587,15 @@ impl FileBackend {
 			return Ok(());
 		};
 		Self::reactivate_archived(&mut entry)?;
-		let new_importance = (entry.importance + delta).clamp(0.0, 1.0);
+		// Outcome credit scores learner-formed hypotheses. A user's verified quoted
+		// rule is not disproved by one failed turn, so it is never debited or
+		// floor-archived; only the user correcting or superseding it retires it.
+		let user_rule = entry.is_verified_user_rule();
+		let credit = if user_rule { delta.max(0.0) } else { delta };
+		let new_importance = (entry.importance + credit).clamp(0.0, 1.0);
 		entry.last_used = chrono::Utc::now().to_rfc3339();
 		entry.use_count = entry.use_count.saturating_add(1);
-		if new_importance <= IMPORTANCE_FLOOR {
+		if !user_rule && new_importance <= IMPORTANCE_FLOOR {
 			entry.importance = new_importance;
 			self.store(&entry).await?;
 			super::super::retention::archive_record(&entry)?;

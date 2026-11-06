@@ -87,14 +87,27 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	let config = fake_provider_config();
 	let backend = FileBackend;
 	backend
-		.store(&lesson(
-			proj,
-			"always run the test suite on the dev box",
-			"learning",
-			&["testing", "box"],
-		))
+		.store(&Lesson {
+			evidence: vec!["session://inject-test/message/3".to_string()],
+			..lesson(
+				proj,
+				"always run the test suite on the dev box",
+				"learning",
+				&["testing", "box"],
+			)
+		})
 		.await
 		.expect("store lesson");
+	// Legacy record: `learning` type but no grounded provenance handle.
+	backend
+		.store(&lesson(
+			proj,
+			"skip the linter on hotfix branches",
+			"learning",
+			&["lint"],
+		))
+		.await
+		.expect("store legacy lesson");
 	backend
 		.store(&lesson(
 			proj,
@@ -130,6 +143,19 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 		"missing active memory wrapper:\n{text}"
 	);
 	assert!(text.contains("<orientation"), "orientation block missing:\n{text}");
+	// The verified user rule carries user authority, outside the data-only wrapper;
+	// the legacy rule stays contextual inside it.
+	let rules_end = text.find("</user_rules>").expect("user_rules block missing");
+	let wrapper_at = text.find("<active_memory_pack ").unwrap();
+	let rule_at = text.find("always run the test suite on the dev box").unwrap();
+	assert!(rule_at < rules_end, "user rule rendered outside user_rules:\n{text}");
+	assert!(rules_end < wrapper_at);
+	assert!(text.contains("override conflicting project docs"));
+	let legacy_at = text
+		.find("skip the linter on hotfix branches")
+		.expect("legacy lesson missing");
+	assert!(legacy_at > wrapper_at, "legacy rule gained user authority:\n{text}");
+	assert!(text.contains("<lessons>"));
 	assert!(!injected_now.is_empty());
 
 	// A replacement pack may deliberately select the same relevant memory again;

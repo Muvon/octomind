@@ -186,6 +186,19 @@ impl Lesson {
 			format!("{}-{}", ts, slug)
 		}
 	}
+
+	/// A user rule with grounded provenance. Extraction attaches the
+	/// `session://…/message/N` handle only once the quote is found verbatim in a
+	/// real user turn, and stores the record only after the grounding verifier
+	/// accepts it. Legacy, hand-written or evidence-free `learning` records lack
+	/// the handle and stay contextual memory: no user authority, no credit shield.
+	pub fn is_verified_user_rule(&self) -> bool {
+		self.memory_type == "learning"
+			&& self
+				.evidence
+				.iter()
+				.any(|handle| handle.starts_with("session://") && handle.contains("/message/"))
+	}
 }
 
 /// Learning configuration — added to the main Config struct.

@@ -5977,12 +5977,12 @@ async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 	let _env = StubEnv::new(Vec::new()).await;
 	let mut config = ws_fake_config();
 	config.cache_keepalive_enabled = true;
-	config.model = "anthropic:claude-sonnet-5-5".to_string();
 	config.runtime_output_mode = Some("websocket".to_string());
 	// Keep the model, tools and prompt identical so the role switch preserves
 	// the cached prefix whose keepalive this test expects to restart.
 	let mut outbound = config.role_map["assistant"].clone();
 	outbound.name = "outbound".to_string();
+	outbound.config.model.model = Some("anthropic:claude-sonnet-5-5".to_string());
 	config.roles.push(outbound.clone());
 	config.role_map.insert(outbound.name.clone(), outbound);
 	crate::mcp::initialize_mcp_for_role("assistant", &config)
@@ -5999,6 +5999,8 @@ async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 		.await
 		.remove(&id)
 		.expect("created session is in memory");
+	// Session creation uses the fake provider so this offline fixture needs no credentials.
+	session.apply_model_profile(&config.get_model_profile_for_role("outbound"));
 	session.session.messages[0].cached = true;
 	session.last_sent_messages = session.session.messages.clone();
 	server.sessions.lock().await.insert(id.clone(), session);

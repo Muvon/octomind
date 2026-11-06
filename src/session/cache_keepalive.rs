@@ -130,6 +130,8 @@ pub struct Wait {
 pub enum BudgetBasis {
 	/// The next request folds or trims the prefix: nothing to keep warm.
 	PrefixReplaced,
+	/// A ping of this session missed the cache: another would pay the same rewrite.
+	PingMissed,
 	/// A scheduled wake within the bound, bridged exactly.
 	KnownWake,
 	/// Fewer than [`COLD_START_WAITS`] waits measured: capped at [`COLD_START_PINGS`].
@@ -166,6 +168,7 @@ pub struct WaitHistory {
 	pings_sent: u64,
 	ping_cost: f64,
 	last_budget: Option<BudgetDecision>,
+	ping_missed: bool,
 }
 
 impl WaitHistory {
@@ -227,15 +230,10 @@ impl KeepaliveHandle {
 			WaitKind::Reply if !crate::mcp::orchestration::is_session_idle() => WaitKind::Background,
 			other => other,
 		};
-		let messages = &chat_session.session.messages;
-		// The ping replays exactly the prefix the last request cached: up to
-		// its newest marker. Anything after it (the assistant reply, the
-		// runtime memory pack) was never cached and would only add input.
-		let last_cached = messages.iter().rposition(|m| m.cached)?;
-		let snapshot = messages[..=last_cached].to_vec();
+		let snapshot = ping_prefix(chat_session)?;
 		let profile = chat_session.model_profile(config);
 		let (provider, actual_model) = ProviderFactory::get_provider_for_model(&profile.model).ok()?;
-		let long_ttl = snapshot[last_cached].cache_ttl.as_deref() == Some(LONG_CACHE_TTL);
+		let long_ttl = snapshot.last()?.cache_ttl.as_deref() == Some(LONG_CACHE_TTL);
 		let policy = provider.keepalive_policy(&actual_model, long_ttl)?;
 		let pricing = provider.get_model_pricing(&actual_model)?;
 
@@ -255,7 +253,9 @@ impl KeepaliveHandle {
 			config,
 			kind == WaitKind::Reply,
 		);
-		let (pings, basis) = if prefix_replaced {
+		let (pings, basis) = if chat_session.wait_history.ping_missed {
+			(0, BudgetBasis::PingMissed)
+		} else if prefix_replaced {
 			(0, BudgetBasis::PrefixReplaced)
 		} else {
 			ping_budget(
@@ -333,6 +333,7 @@ impl KeepaliveHandle {
 			.filter_map(|exchange| exchange.usage.as_ref().and_then(|usage| usage.cost))
 			.sum::<f64>();
 		history.last_budget = Some(self.budget);
+		history.ping_missed |= exchanges.iter().any(ping_missed_cache);
 		bill_pings(&mut chat_session.session.info, &exchanges);
 		chat_session.estimated_cost = chat_session.session.info.total_cost;
 		crate::log_debug!(
@@ -345,6 +346,26 @@ impl KeepaliveHandle {
 		);
 		exchanges.len()
 	}
+}
+
+/// The messages a ping replays: what the latest request sent, up to its newest
+/// cache marker. Anything after the marker was never cached and would only add
+/// input. `None` when nothing was sent yet, or when a fold, rollback or clear
+/// replaced that marker since: the next request can't reuse that prefix.
+fn ping_prefix(chat_session: &ChatSession) -> Option<Vec<Message>> {
+	let sent = &chat_session.last_sent_messages;
+	let last_cached = sent.iter().rposition(|m| m.cached)?;
+	let live = chat_session.session.messages.get(last_cached)?;
+	(live.content == sent[last_cached].content).then(|| sent[..=last_cached].to_vec())
+}
+
+/// A ping replays a prefix the last request already cached, so a hit writes
+/// nothing. Reading the 1h head while re-writing the tail is still a miss.
+fn ping_missed_cache(exchange: &ProviderExchange) -> bool {
+	exchange
+		.usage
+		.as_ref()
+		.is_none_or(|usage| usage.cache_read_tokens == 0 || usage.cache_write_tokens > 0)
 }
 
 /// Pings are billed for their cost only. They are not conversation requests:
@@ -511,10 +532,10 @@ async fn run(
 		// A keepalive must never abort the session.
 		match send_ping(&snapshot, &profile, &config, cancel_rx.clone()).await {
 			Ok(exchange) => {
-				// A ping that read nothing re-wrote the prefix at the write
-				// price: its request differs from the real one. Stop instead of
-				// paying that again every interval.
-				let missed = exchange.usage.as_ref().is_none_or(|u| u.cache_read_tokens == 0);
+				// A missed ping re-wrote the prefix at the write price: its
+				// request differs from the real one. Stop instead of paying
+				// that again every interval.
+				let missed = ping_missed_cache(&exchange);
 				exchanges.push(exchange);
 				if missed {
 					crate::log_info!("Cache keepalive: ping missed the cache, stopping");

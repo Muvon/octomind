@@ -536,6 +536,151 @@ async fn run_stops_after_a_ping_that_misses_the_cache() {
 	);
 }
 
+#[test]
+fn a_ping_that_reads_the_head_but_writes_the_tail_missed_the_cache() {
+	let mut exchange = ping_exchange(None);
+	assert!(!ping_missed_cache(&exchange), "a clean read is a hit");
+	exchange.usage.as_mut().expect("usage").cache_write_tokens = 58_000;
+	assert!(ping_missed_cache(&exchange));
+}
+
+#[tokio::test]
+async fn one_missed_ping_ends_pinging_for_the_session() {
+	let config = keepalive_config();
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![user_message(true)]);
+
+	let mut handle = KeepaliveHandle::spawn(&chat, &config, WaitKind::Reply).expect("cached Anthropic session spawns");
+	handle.task.abort();
+	handle.task = tokio::spawn(async {
+		let mut missed = ping_exchange(Some(0.3));
+		missed.usage.as_mut().expect("usage").cache_write_tokens = 58_000;
+		vec![missed]
+	});
+	handle.finish(&mut chat, true).await;
+
+	let next = KeepaliveHandle::spawn(&chat, &config, WaitKind::Reply).expect("the wait is still measured");
+	assert_eq!(next.budget.pings, 0);
+	assert_eq!(next.budget.basis, BudgetBasis::PingMissed);
+	next.finish(&mut chat, true).await;
+}
+
+/// A summary whose folded units exceed its budget, so real requests send a
+/// shorter view than the session stores.
+fn oversized_summary() -> Message {
+	let mut summary = message(
+		"assistant",
+		"<conversation_summary id=\"c\" controller=\"pact-v1\" state=\"1\">\n<folded_state>\n<unit id=\"s:a\" kind=\"observation\" status=\"established\">a fact too long for the budget</unit>\n</folded_state>\n</conversation_summary>",
+		false,
+		None,
+	);
+	summary.name = Some("plan_compression".to_string());
+	summary
+}
+
+#[test]
+fn a_ping_replays_the_sent_summary_while_the_session_keeps_the_full_one() {
+	let full = oversized_summary();
+	let projection = crate::session::chat::conversation_compression::summary_projection(&full)
+		.expect("the folded units exceed the budget");
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![full.clone(), user_message(true)]);
+
+	let originals = chat.prepare_request_messages();
+	chat.restore_summaries_after_request(originals);
+
+	let prefix = ping_prefix(&chat).expect("a request was sent");
+	assert_eq!(prefix[0].content, projection);
+	assert_eq!(chat.session.messages[0].content, full.content);
+}
+
+#[test]
+fn a_ping_stops_at_the_newest_marker() {
+	let messages = vec![
+		user_message(true),
+		message("assistant", "reply", false, None),
+		message("user", "uncached", false, None),
+	];
+	let chat = session("anthropic:claude-sonnet-5-5", messages);
+	assert_eq!(ping_prefix(&chat).expect("a request was sent").len(), 1);
+}
+
+#[test]
+fn nothing_to_ping_before_the_first_request() {
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![user_message(true)]);
+	chat.last_sent_messages.clear();
+	assert!(ping_prefix(&chat).is_none());
+}
+
+#[test]
+fn nothing_to_ping_after_the_session_replaced_the_sent_marker() {
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![user_message(true)]);
+	chat.session.messages[0].content = "a fold replaced this".to_string();
+	assert!(ping_prefix(&chat).is_none(), "different message at the marker");
+
+	chat.session.messages.clear();
+	assert!(ping_prefix(&chat).is_none(), "the conversation was cleared");
+}
+
+/// The exact-prefix cache only hits when the ping repeats the real request:
+/// the whole body must match except the two fields that make it a pre-warm.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_ping_sends_the_same_body_as_the_real_request() {
+	let _lock = test_support::ENV_LOCK.lock().await;
+	let _env = test_support::EnvGuard::new(&["ANTHROPIC_API_URL", "ANTHROPIC_API_KEY"]);
+	let (url, captured) = test_support::spawn_recording_stub(vec![cache_hit_response(), cache_hit_response()]).await;
+	std::env::set_var("ANTHROPIC_API_URL", url.replace("/v1/chat/completions", "/v1/messages"));
+	std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+
+	let config = keepalive_config();
+	let mut chat = session(
+		"anthropic:claude-sonnet-5-5",
+		vec![
+			message("system", "rules", true, None),
+			oversized_summary(),
+			message("user", "cached question", true, None),
+		],
+	);
+	let model_profile = chat.model_profile(&config);
+
+	let full_summaries = chat.prepare_request_messages();
+	// The stub answers a streaming request with plain JSON, so the call fails
+	// after sending; only the recorded body matters here.
+	let _ = crate::session::chat_completion_with_validation(
+		crate::session::ChatCompletionWithValidationParams::from_profile(
+			&chat.session.messages,
+			&model_profile,
+			&config,
+		)
+		.with_max_retries(0),
+	)
+	.await;
+	chat.restore_summaries_after_request(full_summaries);
+
+	let (_tx, rx) = watch::channel(false);
+	run(
+		ping_prefix(&chat).expect("a request was sent"),
+		model_profile,
+		config.clone(),
+		Duration::from_millis(10),
+		1,
+		rx,
+	)
+	.await;
+
+	let mut requests = captured.lock().expect("captured requests").clone();
+	assert_eq!(requests.len(), 2, "one real request, one ping");
+	let mut ping = requests.pop().expect("ping body");
+	let mut real = requests.pop().expect("real body");
+	assert_eq!(ping["max_tokens"], 0);
+	assert_eq!(ping["stream"], false);
+	for body in [&mut ping, &mut real] {
+		let fields = body.as_object_mut().expect("request object");
+		fields.remove("max_tokens");
+		fields.remove("stream");
+	}
+	assert_eq!(ping, real);
+}
+
 /// A pre-warm answers with no content and the whole prefix read from cache.
 fn cache_hit_response() -> serde_json::Value {
 	serde_json::json!({

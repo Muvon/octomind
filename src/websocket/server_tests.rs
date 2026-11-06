@@ -5997,6 +5997,7 @@ async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 		.remove(&id)
 		.expect("created session is in memory");
 	session.session.messages[0].cached = true;
+	session.last_sent_messages = session.session.messages.clone();
 	server.sessions.lock().await.insert(id.clone(), session);
 	// The previous role's pinned config has keepalive off: a restart that
 	// still used it would start nothing.

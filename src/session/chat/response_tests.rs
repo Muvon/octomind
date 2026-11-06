@@ -678,6 +678,7 @@ async fn test_process_response_tool_round_without_keepalive_policy_records_no_to
 	config.cache_keepalive_enabled = true;
 	let mut session = fake_session("run the thing");
 	session.session.messages[0].cached = true;
+	session.last_sent_messages = session.session.messages.clone();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
 	let exchange = ProviderExchange::new(

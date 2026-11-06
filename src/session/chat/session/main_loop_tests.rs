@@ -1138,6 +1138,7 @@ fn spawn_reply_keepalive(chat_session: &mut ChatSession) -> Option<KeepaliveHand
 		cached: true,
 		..Default::default()
 	}];
+	chat_session.last_sent_messages = chat_session.session.messages.clone();
 	let mut config = fake_provider_config();
 	config.cache_keepalive_enabled = true;
 	KeepaliveHandle::spawn(chat_session, &config, WaitKind::Reply)

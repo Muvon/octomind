@@ -277,6 +277,10 @@ pub struct ChatSession {
 	/// One runtime-only memory pack materialized as a non-persisted, replaceable
 	/// system-managed message before specialist calls in the active user turn.
 	pub active_memory_pack: Option<String>,
+	/// The messages of the latest provider request, as sent. `session.messages`
+	/// holds the stored form; the cache keepalive replays this copy so a ping
+	/// matches the cached prefix without rebuilding the request.
+	pub last_sent_messages: Vec<crate::session::Message>,
 	/// Pack-local IDs the specialist reported materially using this turn. Unioned
 	/// across tool rounds and consumed by outcome-driven reinforcement.
 	pub used_memory_ids: std::collections::HashSet<String>,
@@ -457,6 +461,7 @@ impl ChatSession {
 			analysis_findings: Vec::new(),
 			learning_injected: false,
 			active_memory_pack: None,
+			last_sent_messages: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
 			pending_recall: false,
 			learning_extracted: false,
@@ -679,6 +684,7 @@ impl ChatSession {
 						analysis_findings: Vec::new(),
 						learning_injected: false,
 						active_memory_pack: None,
+						last_sent_messages: Vec::new(),
 						used_memory_ids: std::collections::HashSet::new(),
 						pending_recall: false,
 						learning_extracted: false,
@@ -1473,6 +1479,8 @@ impl ChatSession {
 			..Default::default()
 		};
 		ChatSession {
+			// Tests start from a conversation already sent to the provider.
+			last_sent_messages: messages.clone(),
 			session: crate::session::Session {
 				info,
 				messages,

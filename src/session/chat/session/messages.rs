@@ -73,14 +73,17 @@ impl ChatSession {
 	/// with [`Self::restore_summaries_after_request`] right after, so
 	/// persistence, later folds and extraction always see the full state. The
 	/// projection is a pure function of the stored text, so the cached prefix
-	/// is byte-identical across requests.
-	pub fn project_summaries_for_request(&mut self) -> Vec<(usize, String)> {
+	/// is byte-identical across requests. Records the result as
+	/// `last_sent_messages`: the runtime memory pack joins after the newest
+	/// cache marker, so this copy already holds the whole cached prefix.
+	pub fn prepare_request_messages(&mut self) -> Vec<(usize, String)> {
 		let mut originals = Vec::new();
 		for (index, message) in self.session.messages.iter_mut().enumerate() {
 			if let Some(projection) = crate::session::chat::conversation_compression::summary_projection(message) {
 				originals.push((index, std::mem::replace(&mut message.content, projection)));
 			}
 		}
+		self.last_sent_messages = self.session.messages.clone();
 		originals
 	}
 

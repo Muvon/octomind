@@ -356,7 +356,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// Materialize the active pack and the bounded summary views only for the
 	// provider request. Neither may enter persistence, compression, extraction,
 	// or later conversation history.
-	let full_summaries = chat_session.project_summaries_for_request();
+	let full_summaries = chat_session.prepare_request_messages();
 	chat_session.ensure_active_memory_pack_message();
 
 	// Make API call. `session.messages` is borrowed directly — no clone — and

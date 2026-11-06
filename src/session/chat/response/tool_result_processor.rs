@@ -266,7 +266,7 @@ pub async fn process_tool_results(
 		.await?;
 
 	// Make follow-up API call; summaries are projected only for the request.
-	let full_summaries = chat_session.project_summaries_for_request();
+	let full_summaries = chat_session.prepare_request_messages();
 	let follow_up_result = make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
 	chat_session.restore_summaries_after_request(full_summaries);
 

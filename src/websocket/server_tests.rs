@@ -5975,13 +5975,16 @@ async fn bare_done_command_restarts_the_sessions_keepalive() {
 async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(Vec::new()).await;
-	let mut config = two_role_config();
+	let mut config = ws_fake_config();
 	config.cache_keepalive_enabled = true;
-	let keepalive_model = Some("anthropic:claude-sonnet-5-5".to_string());
-	let outbound = config.role_map.get_mut("outbound").expect("outbound role");
-	outbound.config.model.model = keepalive_model.clone();
-	let outbound = config.roles.iter_mut().find(|role| role.name == "outbound");
-	outbound.expect("outbound role").config.model.model = keepalive_model;
+	config.model = "anthropic:claude-sonnet-5-5".to_string();
+	config.runtime_output_mode = Some("websocket".to_string());
+	// Keep the model, tools and prompt identical so the role switch preserves
+	// the cached prefix whose keepalive this test expects to restart.
+	let mut outbound = config.role_map["assistant"].clone();
+	outbound.name = "outbound".to_string();
+	config.roles.push(outbound.clone());
+	config.role_map.insert(outbound.name.clone(), outbound);
 	crate::mcp::initialize_mcp_for_role("assistant", &config)
 		.await
 		.expect("server MCP init");
@@ -6028,6 +6031,18 @@ async fn role_switch_restarts_the_keepalive_under_the_new_roles_config() {
 		.await
 		.remove(&id)
 		.expect("the session is stored back");
+	assert_eq!(
+		session.session.messages[0].content,
+		session.last_sent_messages[0].content
+	);
 	server.state.finish_keepalive(&mut session, false).await;
+
+	// A changed cache marker must still prevent a restart under the new config.
+	session.session.messages[0]
+		.content
+		.push_str("\nChanged role instructions");
+	let stream = server.state.streams.open(&id);
+	server.state.restart_keepalive(&session, &stream).await;
+	assert!(!server.state.keepalives.lock().unwrap().contains_key(&id));
 	crate::session::context::cleanup_session(&id);
 }

@@ -399,3 +399,18 @@ async fn test_learning_evolution_command_lifecycle() {
 	);
 	assert_eq!(rejected["record"]["state"], "rejected");
 }
+
+#[tokio::test]
+async fn test_learning_evolution_requires_id() {
+	let mut session = test_session();
+	for action in ["show", "approve", "reject", "rollback"] {
+		for params in [vec!["evolution", action], vec!["evolution", action, ""]] {
+			let data = learning_data(handle_learning(&mut session, &params).await.unwrap());
+			assert_eq!(data["subcommand"], "error", "action {action}");
+			assert!(
+				data["message"].as_str().unwrap_or_default().contains("usage"),
+				"action {action}"
+			);
+		}
+	}
+}

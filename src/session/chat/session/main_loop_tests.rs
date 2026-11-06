@@ -158,7 +158,7 @@ fn background_job_unchanged_status_asks_the_model_to_judge_whether_it_is_stuck()
 		 The job's status has not changed since the previous check at least 600 seconds ago. \
 		 A command that prints only when it finishes looks the same while it is still working, so \
 		 judge from what it runs and how long that should take: if it is stuck, stop it using the \
-		 method the tool provided when it started; otherwise reply with a brief status to keep waiting.\n\
+		 method the tool provided when it started; otherwise end your turn with a brief status to keep waiting.\n\
 		 </background_job>"
 	);
 }

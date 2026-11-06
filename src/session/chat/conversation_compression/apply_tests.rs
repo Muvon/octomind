@@ -1029,7 +1029,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 		"launch variants of them, poll them, or wait on them by hand. While they run, keep working on anything ",
 		"that does not need their results (read or review related code, write or update tests, prepare the next edit); ",
 		"only when nothing like that is left, ",
-		"reply with a brief status and no tool call: each result arrives as your next message."
+		"end your turn with a brief status: each result arrives as your next user message."
 	)));
 	assert!(wrapper.content.contains("<tap_runs_running>"));
 	assert!(wrapper.content.contains("developer:general (tap-unit-1)"));

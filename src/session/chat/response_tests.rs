@@ -796,7 +796,9 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 		let (index, advisory) = advisories[0];
 		assert!(crate::session::is_system_managed_user_content(&advisory.content));
 		assert!(advisory.content.contains("identical calls"));
-		assert!(advisory.content.contains("arrives on its own as your next message"));
+		assert!(advisory
+			.content
+			.contains("arrives on its own as your next user message"));
 		assert!(advisory
 			.content
 			.contains("If the tool registered automatic background-result delivery"));

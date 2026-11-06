@@ -1334,9 +1334,9 @@ fn background_task(
 		.unwrap_or_else(|| format!("MCP task {}", task.task.task_id));
 	let stop = shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
 	let notice = format!(
-		"Still running as background task `{key}` ({label}). Its result arrives on its own when it \
-		 finishes. Do only work that doesn't need it; to wait for it, reply with a brief status and \
-		 no tool call. To stop it early, call `monitor` with action `stop` and id `{key}`."
+		"Still running as background task `{key}` ({label}). Do only work that doesn't need it; to wait \
+		 for it, end your turn with a brief status: its result arrives as your next user message when it \
+		 finishes. To stop it early, call `monitor` with action `stop` and id `{key}`."
 	);
 
 	// Task-locals do not cross `tokio::spawn`: re-enter the session so a reconnect

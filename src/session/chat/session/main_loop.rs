@@ -2178,7 +2178,7 @@ fn background_job_status_message(
 			"\nThe job's status has not changed since the previous check at least {} seconds ago. \
 			 A command that prints only when it finishes looks the same while it is still working, so \
 			 judge from what it runs and how long that should take: if it is stuck, stop it using the \
-			 method the tool provided when it started; otherwise reply with a brief status to keep waiting.",
+			 method the tool provided when it started; otherwise end your turn with a brief status to keep waiting.",
 			reconcile_window.as_secs()
 		)
 	} else {

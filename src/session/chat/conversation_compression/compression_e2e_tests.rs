@@ -1268,7 +1268,9 @@ fn assert_new_message_follows_the_summary(session: &mut ChatSession) {
 			.session
 			.messages
 			.iter()
-			.any(|m| m.content.contains("request 0:")),
+			// The summary quotes earlier requests verbatim, so only a message that
+			// still starts with one is an original that survived the fold.
+			.any(|m| m.content.starts_with("request 0:")),
 		"the folded history must be gone"
 	);
 

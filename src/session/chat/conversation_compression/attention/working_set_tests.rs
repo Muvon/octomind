@@ -362,3 +362,37 @@ fn tail_mutation_evicting_a_live_dependency_keeps_it_exact_as_an_observation() {
 	assert!(packets[read].prompt_content.contains("[MESSAGE 4 TOOL RESULT"));
 	assert_eq!(unretained_ranges(&packets, "artifact", 1, 2), vec![(1, 2)]);
 }
+
+#[test]
+fn failed_check_log_does_not_evict_recent_code_reads() {
+	// The live failure mode: a large failed-test log sits in the active
+	// closure right before compaction, while the file under edit was read
+	// just before. The kept block must retain the code reads, and the
+	// failure log only as a bounded pointer.
+	let code: Vec<String> = (1..=120)
+		.map(|n| format!("impl line {n} of the module under edit"))
+		.collect();
+	let code: Vec<&str> = code.iter().map(String::as_str).collect();
+	let mut messages = read("src/vdom_interop.ts", 1, &code, "read");
+	let failure_body: Vec<String> = (1..=400)
+		.map(|n| format!("FAILED test_case_{n} expected vdom assertion at src/vdom_interop.ts:{n}"))
+		.collect();
+	messages.extend(interaction(
+		"shell",
+		serde_json::json!({"command":"npm test"}),
+		&format!("Command failed with exit code 1\n{}", failure_body.join("\n")),
+		"check",
+	));
+	messages.push(message("assistant", "Fix the failing tests in src/vdom_interop.ts"));
+	let (packets, frontier) = selected(&messages, 600);
+	// The code reads survive: the file under edit stays in the kept block.
+	assert!(frontier.contains("[ARTIFACT "), "no code region kept: {frontier}");
+	assert!(frontier.contains("src/vdom_interop.ts"));
+	assert!(frontier.contains("impl line 1 of the module under edit"));
+	// The failure log is kept only as a bounded pointer, not in bulk.
+	let failure_lines = frontier.lines().filter(|l| l.contains("FAILED test_case_")).count();
+	assert!(failure_lines <= 16, "{failure_lines} failure lines kept");
+	for packet in packets.iter().filter(|p| p.lane == Lane::KeepExact) {
+		assert!(!packet.exact_spans.is_empty());
+	}
+}

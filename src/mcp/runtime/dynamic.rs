@@ -119,6 +119,9 @@ pub async fn enable_server(name: &str, filter_tools: Option<Vec<String>>) -> Res
 			.ok_or_else(|| anyhow::anyhow!("Server '{}' not registered. Use 'add' first.", name))?
 	};
 
+	// The grant sent with tools/list depends on what the server exposes, which
+	// this enable changes; see the re-fetch below.
+	let listed_grant = crate::mcp::shell_granted(&server);
 	let functions = crate::mcp::server::get_server_functions(&server)
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to connect to server '{}': {}", name, e))?;
@@ -149,10 +152,52 @@ pub async fn enable_server(name: &str, filter_tools: Option<Vec<String>>) -> Res
 		state.enabled.insert(name.to_string(), true);
 	}
 
+	// Tool schemas depend on the `shell` grant the list was fetched under. When
+	// this enable flips the grant, the list (and any list stored by an earlier
+	// capability) was fetched under the old one: fetch it again.
+	let functions = if crate::mcp::shell_granted(&server) != listed_grant {
+		refresh_stored_functions(&server).await?;
+		get_functions(name)
+			.unwrap_or_default()
+			.into_iter()
+			.filter(|f| tool_names.contains(&f.name))
+			.collect()
+	} else {
+		functions
+	};
+
 	// Register tools in the global tool map
 	crate::mcp::tool_map::register_dynamic_server_tools(name, &server, &tool_names);
 
 	Ok(functions)
+}
+
+/// Re-fetch the schemas of the tools stored for a dynamic server, replacing the
+/// stored copies (merging would keep the stale ones).
+async fn refresh_stored_functions(server: &McpServerConfig) -> Result<()> {
+	let name = server.name();
+	let stored: std::collections::HashSet<String> = get_functions(name)
+		.unwrap_or_default()
+		.into_iter()
+		.map(|f| f.name)
+		.collect();
+	let refreshed: Vec<McpFunction> = crate::mcp::server::get_server_functions(server)
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to refresh tools of server '{}': {}", name, e))?
+		.into_iter()
+		.filter(|f| stored.contains(&f.name))
+		.collect();
+	if let Some(session_id) = crate::session::context::current_session_id() {
+		crate::session::context::disable_dynamic_server_for_session(&session_id, name);
+		crate::session::context::enable_dynamic_server_for_session(&session_id, name, refreshed);
+	} else {
+		get_manager()
+			.write()
+			.unwrap()
+			.functions
+			.insert(name.to_string(), refreshed);
+	}
+	Ok(())
 }
 
 /// Disable an enabled server fully. Strips ALL of its tools from the global
@@ -219,9 +264,10 @@ pub fn disable_server_tools(
 			anyhow::bail!("Server '{}' not found", name);
 		}
 
-		// kill_server == false: leave the server enabled and the function
-		// cache intact (other caps still need it). Just strip THIS cap's
-		// tools from the global tool_map.
+		// kill_server == false: leave the server enabled, but drop its cached
+		// tool list — it was fetched under a `shell` grant that may have
+		// included this cap. Other caps' lists are refetched on demand.
+		crate::mcp::server::clear_function_cache_for_server(name);
 		crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
 		return Ok(());
 	}
@@ -257,7 +303,9 @@ pub fn disable_server_tools(
 
 		anyhow::bail!("Server '{}' not found", name)
 	} else {
-		// kill_server == false in CLI mode: still just strip the tools.
+		// kill_server == false in CLI mode: drop the cached list (see above) and
+		// strip the tools.
+		crate::mcp::server::clear_function_cache_for_server(name);
 		crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
 		Ok(())
 	}

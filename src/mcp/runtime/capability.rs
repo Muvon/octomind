@@ -581,7 +581,6 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			// the role's static filter never listed it.
 			if !bare_names.is_empty() {
 				crate::mcp::tool_map::register_dynamic_server_tools(&server_name, server_config, &bare_names);
-				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
 
@@ -622,6 +621,11 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// Publish overlay entries so the next config merge picks up this
 	// capability's contributions to static servers' filters.
 	crate::config::runtime_overlay::set_capability_extras(&resolved.name, overlay_per_server);
+	// Only after the overlay is published: it changes the `shell` grant sent
+	// with tools/list, so any list fetched under the old grant must go.
+	for server_name in &activated_servers {
+		crate::mcp::server::clear_function_cache_for_server(server_name);
+	}
 
 	mark_active(&resolved.name, activated_server_tools);
 
@@ -1387,7 +1391,6 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 			let bare_names = static_server_grant(server_config, filter, config).await;
 			if !bare_names.is_empty() {
 				crate::mcp::tool_map::register_dynamic_server_tools(&server_name, server_config, &bare_names);
-				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
 			activated_server_tools.push((server_name.clone(), bare_names));
@@ -1405,6 +1408,10 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 	}
 
 	crate::config::runtime_overlay::set_capability_extras(&resolved.name, overlay_per_server);
+	// Only after the overlay is published (see `handle_enable`).
+	for server_name in &activated_servers {
+		crate::mcp::server::clear_function_cache_for_server(server_name);
+	}
 	mark_active(&resolved.name, activated_server_tools);
 	Ok(activated_servers)
 }

@@ -291,6 +291,7 @@ async fn public_models(url: &str) -> Result<Vec<String>> {
 		id: String,
 		#[serde(default)]
 		created: i64,
+		supported_parameters: Option<Vec<String>>,
 	}
 	let mut catalog: Catalog = reqwest::Client::new()
 		.get(url)
@@ -302,7 +303,16 @@ async fn public_models(url: &str) -> Result<Vec<String>> {
 		.await?;
 	// Newest first: a fresh setup most likely wants a current model.
 	catalog.data.sort_by_key(|entry| std::cmp::Reverse(entry.created));
-	Ok(catalog.data.into_iter().map(|entry| entry.id).collect())
+	// Octomind's agents work through tool calls; a catalog that says a model has no tools is no use here.
+	Ok(catalog
+		.data
+		.into_iter()
+		.filter(|entry| match &entry.supported_parameters {
+			Some(params) => params.iter().any(|p| p == "tools"),
+			None => true,
+		})
+		.map(|entry| entry.id)
+		.collect())
 }
 
 fn choose_model(provider: &str, slot: &str, models: &[String], default: Option<&str>) -> Result<String> {

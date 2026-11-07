@@ -29,6 +29,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 const LESSONS_PER_PAGE: usize = 15;
+const EVOLUTION_USAGE: &str =
+	"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>|distill]";
 
 pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	match params.first().copied() {
@@ -115,6 +117,16 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 	let (role, project) = role_and_project(session);
 	let domain = crate::supervisor::learning::evolution::domain_name(&role);
 	let action = params.first().copied().unwrap_or("list");
+	if matches!(action, "show" | "approve" | "reject" | "rollback")
+		&& params.get(1).is_none_or(|id| id.trim().is_empty())
+	{
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": EVOLUTION_USAGE,
+			}),
+		})));
+	}
 	let output = match action {
 		"list" => {
 			let records = crate::supervisor::learning::evolution::list_records()?
@@ -222,7 +234,7 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 		}
 		_ => json!({
 			"subcommand":"error",
-			"message":"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>|distill]"
+			"message":EVOLUTION_USAGE
 		}),
 	};
 	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {

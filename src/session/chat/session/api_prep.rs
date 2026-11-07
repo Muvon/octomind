@@ -20,6 +20,55 @@ use crate::log_info;
 use crate::session::model_supports_caching;
 use anyhow::Result;
 
+/// The turn's task resolution while its supervisor call runs in the background.
+/// Nothing before the first model request needs it: the authorizer judges tool
+/// calls from the raw user turns and learned rules, the recited checklist is
+/// most useful once the request has left the recency window, and only the
+/// completion gate cannot run without it. Owning the cancellation channel ties
+/// the request's lifetime to the job, as for background folds: dropping the job
+/// (a newer user turn) cancels it.
+pub struct ResolveJob {
+	handle: tokio::task::JoinHandle<crate::supervisor::resolve::ResolvedTask>,
+	_cancel: tokio::sync::watch::Sender<bool>,
+}
+
+/// Apply the turn's resolution once its background call has finished, or with
+/// `wait`, once it finishes.
+pub async fn settle_resolution(chat_session: &mut ChatSession, wait: bool) {
+	if !chat_session
+		.resolve_job
+		.as_ref()
+		.is_some_and(|job| wait || job.handle.is_finished())
+	{
+		return;
+	}
+	let job = chat_session.resolve_job.take().expect("resolve job checked above");
+	match job.handle.await {
+		Ok(resolved) => apply_resolution(chat_session, resolved),
+		Err(error) => crate::log_debug!("Task resolution did not complete: {}", error),
+	}
+}
+
+fn apply_resolution(chat_session: &mut ChatSession, resolved: crate::supervisor::resolve::ResolvedTask) {
+	let policy_changed = chat_session
+		.session
+		.info
+		.verification_policy
+		.apply(resolved.verification_policy_update);
+	let rules_changed = resolved
+		.session_rules_update
+		.apply(&mut chat_session.session.info.session_rules);
+	chat_session.evidence.retain_history(resolved.scope);
+	chat_session.gate_task = Some(resolved);
+	if policy_changed || rules_changed {
+		// Persist at the ownership boundary. Most modes also save after the
+		// response, but cancellation and ACP monitor paths can return earlier.
+		if let Err(error) = chat_session.save() {
+			crate::log_debug!("Failed to persist standing user policy update: {}", error);
+		}
+	}
+}
+
 // Helper function to prepare for API call (context truncation and caching)
 pub async fn prepare_for_api_call(
 	chat_session: &mut ChatSession,
@@ -33,17 +82,17 @@ pub async fn prepare_for_api_call(
 
 	crate::supervisor::authorizer::capture(chat_session, config);
 
-	// Resolve each genuine user turn before compression or agent work. The same
-	// cached resolution later serves planning and completion, so this is one
-	// semantic pass, not a second policy classifier. Doing it at turn admission
-	// is essential: an answer-only turn may never claim completion, but its
-	// explicit "I will test it; do not run checks" policy must still govern the
-	// next mutation turn. System-managed turns are ineligible and cannot update
-	// user-owned policy.
+	// Resolve each genuine user turn at admission. The same cached resolution
+	// later serves planning, recitation and completion, so this is one semantic
+	// pass, not a second policy classifier. It runs in the background (see
+	// `ResolveJob`) and lands at the first request boundary after it finishes.
+	// System-managed turns are ineligible and cannot update user-owned policy.
+	settle_resolution(chat_session, false).await;
 	if config.supervisor.enabled
 		&& chat_session.completion_gate_eligible
 		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled || config.supervisor.authorizer.enabled)
 		&& chat_session.gate_task.is_none()
+		&& chat_session.resolve_job.is_none()
 	{
 		let session_context = chat_session.session.info.anchor.to_xml();
 		let active_plan = crate::mcp::core::plan::render_plan_details();
@@ -54,40 +103,19 @@ pub async fn prepare_for_api_call(
 			chat_session.session.info.verification_policy,
 			&chat_session.session.info.session_rules,
 		) {
-			let animation_manager = crate::session::chat::get_animation_manager();
-			animation_manager.set_phase("Resolving current task …").await;
-			// The condenser's specialist brief is independent of the resolution;
-			// compacting it alongside keeps the first turn from waiting twice.
-			let (resolved, ()) = tokio::join!(
-				crate::supervisor::resolve::resolve(config, &context, operation_rx.clone()),
-				crate::supervisor::condense::refresh_specialist_brief(
-					&mut chat_session.specialist_brief,
-					&chat_session.session.messages,
-					config,
-					operation_rx.clone(),
-				),
-			);
-			animation_manager.clear_phase();
-			let policy_changed = chat_session
-				.session
-				.info
-				.verification_policy
-				.apply(resolved.verification_policy_update);
-			let rules_changed = resolved
-				.session_rules_update
-				.apply(&mut chat_session.session.info.session_rules);
-			chat_session.evidence.retain_history(resolved.scope);
-			chat_session.gate_task = Some(resolved);
-			if policy_changed || rules_changed {
-				// Persist at the ownership boundary. Most modes also save after the
-				// response, but cancellation and ACP monitor paths can return earlier.
-				if let Err(error) = chat_session.save() {
-					crate::log_debug!("Failed to persist standing user policy update: {}", error);
-				}
-			}
-			if *operation_rx.borrow() {
-				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
-			}
+			let config = config.clone();
+			let (cancel, cancel_rx) = tokio::sync::watch::channel(false);
+			let resolve = crate::supervisor::accounting::background(async move {
+				crate::supervisor::resolve::resolve(&config, &context, cancel_rx).await
+			});
+			let handle = match crate::session::context::current_session_id() {
+				Some(session_id) => tokio::spawn(crate::session::context::with_session_id(session_id, resolve)),
+				None => tokio::spawn(resolve),
+			};
+			chat_session.resolve_job = Some(ResolveJob {
+				handle,
+				_cancel: cancel,
+			});
 		}
 	}
 	// Turns that skip resolution, and standing context that changed mid-turn
@@ -165,3 +193,7 @@ pub async fn prepare_for_api_call(
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "api_prep_tests.rs"]
+mod tests;

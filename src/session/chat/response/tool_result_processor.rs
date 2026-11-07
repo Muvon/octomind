@@ -114,6 +114,9 @@ pub async fn process_tool_results(
 			);
 		}
 	}
+	// A background task resolution that finished lands before the recitation, so
+	// the next note carries its checklist.
+	crate::session::chat::session::settle_resolution(chat_session, false).await;
 	// Tool-loop follow-ups bypass the turn-entry executor, so recite here as well —
 	// on change only, before the ceiling check so the note is counted in it.
 	crate::supervisor::recite::inject_before_request(

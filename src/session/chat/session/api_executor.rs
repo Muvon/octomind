@@ -546,6 +546,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// and the gate judges that later turn instead of accusing this one of
 	// delivering a status line.
 	chat_session.gate_deferred = chat_session.completion_gate_eligible && pending_async;
+	// A stop of the user's turn is judged against its resolution (checklist,
+	// follow-up request, answer-only): one still running in the background lands now.
+	if chat_session.completion_gate_eligible && !pending_async {
+		super::settle_resolution(chat_session, true).await;
+	}
 	if config.supervisor.enabled
 		&& config.supervisor.gate.enabled
 		&& !pending_async

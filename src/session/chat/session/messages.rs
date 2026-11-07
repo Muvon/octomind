@@ -354,6 +354,8 @@ impl ChatSession {
 		// only by a later PASS.
 		self.evidence.begin_turn(&previous_request);
 		self.gate_task = None;
+		// The previous turn's resolution no longer applies; dropping its job cancels the call.
+		self.resolve_job = None;
 		self.gate_iterations = 0;
 		self.nudge_iterations = 0;
 		self.last_gate_gaps.clear();

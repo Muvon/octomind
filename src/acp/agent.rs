@@ -1545,6 +1545,10 @@ impl OctomindAgent {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd));
+				// The only error is cancellation; report it like a cancelled main call.
+				if crate::session::cancellation::is_cancelled(&e) {
+					return Ok(PromptResponse::new(StopReason::Cancelled));
+				}
 				return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
 			}
 			if let Err(e) = chat_session.add_user_message_with_attachments(&processed_input, images, videos) {

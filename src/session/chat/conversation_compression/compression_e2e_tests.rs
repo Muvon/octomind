@@ -1309,12 +1309,19 @@ async fn idle_compaction_folds_before_the_user_message_when_the_cache_expired() 
 
 	let mut config = idle_config(IDLE_CHEAP_FOLDER_MODEL);
 	let mut session = idle_expired_session(IDLE_SESSION_MODEL, &mut config).await;
-	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let (tx, rx) = tokio::sync::watch::channel(false);
 
 	let folded = compact_if_cache_expired(&mut session, &config, IDLE_NOW, rx)
 		.await
 		.expect("idle compaction");
 	assert!(folded, "an expired cache with a paying fold must compact");
+	// A second check before the next main request (an inbox batch, then the
+	// user message) must not fold the already compacted transcript again.
+	assert_eq!(session.session.info.last_cache_touch, None);
+	let folded_again = compact_if_cache_expired(&mut session, &config, IDLE_NOW, tx.subscribe())
+		.await
+		.expect("second check");
+	assert!(!folded_again, "one idle fold per turn");
 	assert_new_message_follows_the_summary(&mut session);
 
 	std::env::remove_var("OLLAMA_API_URL");

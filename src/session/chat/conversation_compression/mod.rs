@@ -404,7 +404,9 @@ fn user_turn_fold(session: &ChatSession, config: &Config) -> Option<UserTurnFold
 /// when a compaction was applied.
 ///
 /// The fold runs on the compression model, so it does not warm the session
-/// model's cache: the next main request writes it and records the touch.
+/// model's cache: the next main request writes it and records the touch. Until
+/// then the old touch is cleared, because no cache holds the compacted
+/// transcript; a second check before that request has nothing to fold for.
 /// A failed compaction only costs the saving, so it is logged and the message
 /// goes through uncompacted. Cancellation is the exception: it is returned as
 /// an error so the caller stops the turn instead of appending the message.
@@ -445,7 +447,12 @@ pub async fn compact_if_cache_expired(
 		fold.target_after
 	);
 	match check_and_compress_conversation(session, config, operation_rx, CompressionTrigger::Idle).await {
-		Ok(applied) => Ok(applied),
+		Ok(applied) => {
+			if applied {
+				session.session.info.last_cache_touch = None;
+			}
+			Ok(applied)
+		}
 		Err(error) if crate::session::cancellation::is_cancelled(&error) => Err(error),
 		Err(error) => {
 			log_debug!("Idle compaction skipped: {:#}", error);

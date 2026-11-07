@@ -350,12 +350,9 @@ Every condition gets exactly one of three statuses:
     stop.
 - unknown — the supplied evidence can establish neither satisfaction nor violation, and no
   basis fits. A verification limit, not a violation. Prefer the bounded readback round when
-  an already-recorded output would decide it. Give its confidence: how sure you are, from 0 to
-  1, that it is still NOT demonstrated (1 = no supporting evidence, 0.5 = partial, near 0 =
-  almost shown). This scores missing evidence, not whether the work is wrong; matched and
-  unmatched conditions carry no confidence. The runtime may offer one
-  nonblocking advisory opportunity to supply evidence or a fix; this score never turns
-  uncertainty into a violation. Score each condition independently. Name the exact part, combination, boundary, or context
+  an already-recorded output would decide it. The runtime may offer one nonblocking advisory
+  opportunity to supply evidence or a fix; uncertainty never becomes a violation.
+  Name the exact part, combination, boundary, or context
   still unobserved, distinguishing it from the parts already supported. Do not substitute a
   blanket visibility note for checking each requested case. When an unseen retained output
   would settle it, cite omitted:N in sources and spend the readback round before ruling.
@@ -375,13 +372,13 @@ const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_condit
    the last, each exactly once, carrying its status (matched | unmatched | unknown), its
    observation (what demonstrates it / what shows the violation / the exact unresolved
    part), on every unmatched its basis (recorded_output | ground_truth | absent_action |
-   inference), and on every unknown its confidence (0..1) that it is still not demonstrated.
+   inference).
 "#;
 
-const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" confidence="0.0" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — the confidence attribute only on an unknown line (0 to 1 that it is still not demonstrated; 1 = no supporting evidence), whose observation names the exact unresolved part and whose sources cite omitted:N for a retained output you have not seen; the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from (sources="absent_action" for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Only when an <evidence_conditions> block was given; write no condition line otherwise.
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference" sources="output:N">observation</condition> — on an unknown line, the observation names the exact unresolved part and sources cite omitted:N for a retained output you have not seen; the basis attribute only on an unmatched line; on a matched line, the observation quotes its excerpt verbatim and sources names the recorded action it came from (sources="absent_action" for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Only when an <evidence_conditions> block was given; write no condition line otherwise.
 "#;
 
-const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources", "confidence"}; "confidence" is a number from 0 to 1 that the condition is still not demonstrated (1 = no supporting evidence) when "status" is unknown, and null otherwise; on an unknown entry, "observation" names the exact unresolved part and "sources" cites omitted:N for a retained output you have not seen; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N; absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Empty array when no <evidence_conditions> block was given.
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis", "sources"}; on an unknown entry, "observation" names the exact unresolved part and "sources" cites omitted:N for a retained output you have not seen; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise; on a matched entry, "observation" quotes its excerpt verbatim and "sources" names the recorded action it came from (output:N; absent_action for a prohibition satisfied by absence, whose "absent:" observation quotes the request). Empty array when no <evidence_conditions> block was given.
 "#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
@@ -436,46 +433,34 @@ pub struct UnsettledCondition {
 	pub number: usize,
 	pub requirement: String,
 	pub observation: String,
-	pub confidence: f64,
 }
 
 /// Consume at most one advisory opportunity for the whole genuine user turn,
-/// including gate retries and background continuations. Scores alone select it.
+/// including gate retries and background continuations.
 pub fn take_unsettled_advisory(verdict: &GateVerdict, config: &super::GateConfig, sent: &mut bool) -> Option<String> {
-	if *sent || !config.unsettled_advisory || !valid_confidence(config.unsettled_confidence_threshold) {
+	if *sent || !config.unsettled_advisory {
 		return None;
 	}
 	let GateVerdict::Unsettled(conditions) = verdict else {
 		return None;
 	};
-	let selected: Vec<_> = conditions
-		.iter()
-		.filter(|condition| {
-			valid_confidence(condition.confidence) && condition.confidence >= config.unsettled_confidence_threshold
-		})
-		.collect();
-	if selected.is_empty() {
+	if conditions.is_empty() {
 		return None;
 	}
 	let mut note = String::from(
-		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below; each number is its confidence that the condition is still not demonstrated, not that your work is wrong. For each one, decide whether it is a real gap. If it is, close it: check that exact case and fix what fails. If it is already covered or out of scope, ignore it. Then finish normally; completion will be checked again, without another note.\n",
+		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below. For each one, decide whether it is a real gap. If it is, close it: check that exact case and fix what fails. If it is already covered or out of scope, ignore it. Then finish normally; completion will be checked again, without another note.\n",
 	);
-	for condition in selected {
+	for condition in conditions {
 		note.push_str(&format!(
-			"- Condition {}: {} (confidence not demonstrated: {:.2}). {}\n",
+			"- Condition {}: {}. {}\n",
 			condition.number,
 			xml_text(&condition.requirement),
-			condition.confidence,
 			xml_text(&condition.observation),
 		));
 	}
 	note.push_str("</pay-attention>");
 	*sent = true;
 	Some(note)
-}
-
-fn valid_confidence(confidence: f64) -> bool {
-	confidence.is_finite() && (0.0..=1.0).contains(&confidence)
 }
 
 /// True when a message is a supervisor-injected note (a `<pay-attention>` advisory
@@ -1486,7 +1471,7 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 	let citation_evidence = CitationEvidence::from_input(&input);
 	let protocol_issue = match &verdict {
 		GateVerdict::Indeterminate(reason) => Some(reason.clone()),
-		GateVerdict::Pass => report.evidence_format_issue(&citation_evidence),
+		GateVerdict::Pass => report.citation_issue(&citation_evidence),
 		_ => None,
 	};
 	if let Some(reason) = protocol_issue {
@@ -1512,15 +1497,6 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 				verdict = GateVerdict::Indeterminate("format repair request failed before a usable report".into());
 			}
 		}
-	}
-	if let Some(reason) = report
-		.confidence_issue()
-		.filter(|_| matches!(verdict, GateVerdict::Pass))
-	{
-		// A second malformed response must remain unverified; no invented score
-		// may manufacture either success or a main-model advisory. An uncited
-		// match is not malformed: it is unsettled below, never a pass.
-		verdict = GateVerdict::Indeterminate(reason);
 	}
 	if let GateVerdict::Indeterminate(reason) = &verdict {
 		crate::log_debug!("Verify-gate protocol failure: {}", reason);
@@ -1577,20 +1553,46 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 	if matches!(verdict, GateVerdict::Pass)
 		&& (!unsettled.is_empty() || report.shapes.iter().any(|shape| shape.found == "unknown"))
 	{
-		verdict = GateVerdict::Unsettled(
-			unsettled
-				.into_iter()
-				.filter_map(|condition| {
-					let number = condition.index?;
-					Some(UnsettledCondition {
-						number,
-						requirement: input.evidence_conditions.get(number.checked_sub(1)?)?.clone(),
-						observation: condition.observation.clone(),
-						confidence: condition.confidence?,
-					})
+		use crate::supervisor::evaluate::{self, Seam};
+		let mut unsettled: Vec<_> = unsettled
+			.into_iter()
+			.filter_map(|condition| {
+				let number = condition.index?;
+				Some(UnsettledCondition {
+					number,
+					requirement: input.evidence_conditions.get(number.checked_sub(1)?)?.clone(),
+					observation: condition.observation.clone(),
 				})
-				.collect(),
-		);
+			})
+			.collect();
+		if !unsettled.is_empty() && evaluate::enabled(config, Seam::Gate) {
+			let header = serde_json::json!({
+				"evidence": "",
+				"conditions": unsettled.iter().map(|condition| &condition.requirement).collect::<Vec<_>>(),
+			});
+			if let Some(windows) = evaluate_evidence(
+				config,
+				&user,
+				header,
+				evaluate::gate_exercised_questions(unsettled.len()),
+			)
+			.await
+			{
+				unsettled = unsettled
+					.into_iter()
+					.enumerate()
+					.filter_map(|(slot, condition)| {
+						if windows.iter().any(|answers| evaluate::gate_exercised(answers, slot)) {
+							reported.push(format!("condition {} exercised per evaluation", condition.number));
+							None
+						} else {
+							Some(condition)
+						}
+					})
+					.collect();
+			}
+		}
+		verdict = GateVerdict::Unsettled(unsettled);
 	}
 	if let GateVerdict::Indeterminate(reason) = &verdict {
 		reported.push(gate_diagnostic(diagnostic_class, reason));
@@ -1771,8 +1773,6 @@ async fn ask_verifier(
 /// [`VerifierReport::verdict`] checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. On a matched condition: the output:N its quoted excerpt came from, or absent_action for a prohibition satisfied by absence. Null when none applies." });
-	// Status-dependent fields belong in the schema: prose alone allowed unknown
-	// conditions with null scores, making otherwise useful evidence unreadable.
 	let mut number = serde_json::json!({ "type": "integer", "description": "Condition number, 1-based." });
 	if expected_conditions > 0 {
 		number["enum"] = serde_json::json!((1..=expected_conditions).collect::<Vec<_>>());
@@ -1786,15 +1786,11 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 				"status": { "type": "string", "enum": [status] },
 				"observation": { "type": "string", "description": "The observation that demonstrates it, the observation that shows the violation, or the exact unresolved part of this condition." },
 				"sources": sources,
-				"confidence": if status == "unknown" {
-					serde_json::json!({ "type": "number", "minimum": 0, "maximum": 1,
-						"description": "Confidence this condition is still not demonstrated; not confidence the work is wrong." })
-				} else { serde_json::json!({ "type": "null" }) },
 				"basis": if status == "unmatched" {
 					serde_json::json!({ "type": "string", "enum": [CONDITION_BASES[0], CONDITION_BASES[1], CONDITION_BASES[2], BASIS_INFERENCE] })
 				} else { serde_json::json!({ "type": "null" }) }
 			},
-			"required": ["n", "status", "observation", "basis", "sources", "confidence"]
+			"required": ["n", "status", "observation", "basis", "sources"]
 		})
 	}).collect();
 	serde_json::json!({
@@ -1894,8 +1890,31 @@ fn format_violation(conditions: usize) -> String {
 		format!("conditions 1 through {conditions}, each exactly once (an unmatched one with its basis)")
 	};
 	format!(
-		"\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Each matched condition must quote a decisive excerpt verbatim from the supplied evidence and cite its source; a paraphrase is not a citation. If that evidence cannot demonstrate the condition, mark it unknown. Each unknown condition must include confidence from 0 to 1 that it is still not demonstrated (1 = no supporting evidence), not that the work is wrong. Do not omit a line and do not add alternate fields.\n</format_violation>"
+		"\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Each matched condition must quote a decisive excerpt verbatim from the supplied evidence and cite its source; a paraphrase is not a citation. If that evidence cannot demonstrate the condition, mark it unknown. Do not omit a line and do not add alternate fields.\n</format_violation>"
 	)
+}
+
+/// Both gate judgments read the same line-aligned evidence slices, with their
+/// complete candidate lists in each slice so any recorded observation can count.
+async fn evaluate_evidence(
+	config: &Config,
+	evidence: &str,
+	header: serde_json::Value,
+	questions: std::collections::BTreeMap<String, octolib::evaluation::Question>,
+) -> Option<Vec<std::collections::BTreeMap<String, octolib::evaluation::Answer>>> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let header_tokens = crate::session::estimate_tokens(&header.to_string());
+	let requests = evaluate::text_windows(evidence, header_tokens)
+		.into_iter()
+		.map(|slice| {
+			let mut state = header.clone();
+			state["evidence"] = slice.into();
+			(state, questions.clone())
+		})
+		.collect();
+	let windows = evaluate::run_windows(config, Seam::Gate, requests).await?;
+	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
+	Some(windows)
 }
 
 /// Evaluation-model refutation: four factor Nouls per charged finding (see
@@ -1917,19 +1936,10 @@ async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Op
 			.map(|(i, gap)| serde_json::json!({ "number": i + 1, "text": gap }))
 			.collect::<Vec<_>>(),
 	});
-	let header_tokens = crate::session::estimate_tokens(&header.to_string());
 	let mut whole = header.clone();
 	whole["evidence"] = evidence.into();
 	let replaced = crate::session::estimate_tokens(&whole.to_string()) + crate::session::estimate_tokens(REFUTE_PROMPT);
-	let requests = evaluate::text_windows(evidence, header_tokens)
-		.into_iter()
-		.map(|slice| {
-			let mut state = header.clone();
-			state["evidence"] = slice.into();
-			(state, evaluate::gate_questions(gaps.len()))
-		})
-		.collect();
-	let windows = evaluate::run_windows(config, Seam::Gate, requests).await?;
+	let windows = evaluate_evidence(config, evidence, header, evaluate::gate_questions(gaps.len())).await?;
 	let refuted: HashSet<usize> = (0..gaps.len())
 		.filter(|slot| windows.iter().any(|answers| evaluate::gate_refuted(answers, *slot)))
 		.map(|slot| slot + 1)
@@ -1940,7 +1950,6 @@ async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Op
 		gaps.len(),
 		windows.len()
 	);
-	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
 	evaluate::avoided(config, Seam::Gate, replaced);
 	Some(split_refuted(gaps, &refuted))
 }
@@ -2440,7 +2449,6 @@ struct ReportedCondition {
 	/// irrelevant for the others.
 	basis: String,
 	sources: String,
-	confidence: Option<f64>,
 }
 
 /// One `<shape>` line / `shapes[]` entry, as written.
@@ -2475,7 +2483,6 @@ fn text_report(resp: &str) -> VerifierReport {
 				observation: body.to_string(),
 				basis: attr(attributes, "basis").to_string(),
 				sources: attr(attributes, "sources").to_string(),
-				confidence: attr(attributes, "confidence").parse().ok(),
 			})
 			.collect(),
 		shapes: elements(resp, "shape")
@@ -2538,7 +2545,6 @@ fn json_report(value: &serde_json::Value) -> VerifierReport {
 				observation: field(condition, "observation"),
 				basis: field(condition, "basis"),
 				sources: field(condition, "sources"),
-				confidence: condition.get("confidence").and_then(serde_json::Value::as_f64),
 			})
 			.collect(),
 		shapes: entries(value, "shapes")
@@ -2791,23 +2797,6 @@ impl VerifierReport {
 		wanted
 	}
 
-	/// Repair citation syntax and absent scores before returning work to the agent.
-	fn evidence_format_issue(&self, evidence: &CitationEvidence) -> Option<String> {
-		self.confidence_issue().or_else(|| self.citation_issue(evidence))
-	}
-
-	/// A score the contract forbids or omits: the report itself is malformed.
-	fn confidence_issue(&self) -> Option<String> {
-		self.conditions
-			.iter()
-			.find(|condition| {
-				condition.confidence.is_some_and(|score| !valid_confidence(score))
-					|| (condition.status == "unknown" && condition.confidence.is_none())
-					|| (condition.status != "unknown" && condition.confidence.is_some())
-			})
-			.map(|condition| format!("condition {:?} lacks a valid confidence", condition.index))
-	}
-
 	/// A match whose quote the runtime cannot trace: a weak claim, which
 	/// [`Self::unsettled_conditions`] already counts as unsettled.
 	fn citation_issue(&self, evidence: &CitationEvidence) -> Option<String> {
@@ -2943,15 +2932,7 @@ impl VerifierReport {
 				.index
 				.map(|n| n.to_string())
 				.unwrap_or_else(|| "?".to_string());
-			let confidence = condition
-				.confidence
-				.filter(|score| valid_confidence(*score))
-				.map(|score| format!(" (confidence not demonstrated: {score:.2})"))
-				.unwrap_or_default();
-			reported.push(format!(
-				"condition {number} {limit}: {}{confidence}",
-				condition.observation
-			));
+			reported.push(format!("condition {number} {limit}: {}", condition.observation));
 		}
 		for shape in &self.shapes {
 			match shape.found.as_str() {

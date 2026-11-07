@@ -1120,10 +1120,7 @@ fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
 	let gate = &value["supervisor"]["gate"];
 	assert_eq!(gate["enabled"].as_bool(), Some(false));
 	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(true));
-	assert_eq!(
-		gate["unsettled_confidence_threshold"].as_float(),
-		Some(crate::supervisor::DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD)
-	);
+	assert!(gate.get("unsettled_confidence_threshold").is_none());
 
 	let migration = plan()
 		.migrate(
@@ -1135,7 +1132,29 @@ fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	let gate = &value["supervisor"]["gate"];
 	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(false));
-	assert_eq!(gate["unsettled_confidence_threshold"].as_float(), Some(0.9));
+	assert!(gate.get("unsettled_confidence_threshold").is_none());
+}
+
+#[test]
+fn v29_removes_unsettled_confidence_threshold_and_preserves_the_switch() {
+	let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+	document["version"] = toml_edit::value(28);
+	document["supervisor"]["gate"]["unsettled_advisory"] = toml_edit::value(false);
+	document["supervisor"]["gate"]["unsettled_confidence_threshold"] = toml_edit::value(0.9);
+	let migration = plan()
+		.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(migration.from_version, 28);
+	assert_eq!(migration.to_version, 29);
+	assert!(value["supervisor"]["gate"]
+		.get("unsettled_confidence_threshold")
+		.is_none());
+	let (config, ignored) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	assert!(!config.supervisor.gate.unsettled_advisory);
+	assert!(ignored.is_empty());
+	config.validate().expect("migrated config validates");
 }
 
 #[test]

@@ -21,9 +21,9 @@
 //! packets in the PACT evidence set, grounding of extracted lessons in place
 //! of the chat verifier, confirmation of authorizer decisions and boolean-only
 //! learning verifiers, a pre-screen before the external planner,
-//! per-finding refutation of a blocking verify-gate verdict, the choice of
-//! which diff hunks the verify-gate reads in full, and graded,
-//! applicability-filtered samples for evolved-behavior trials.
+//! per-finding refutation of a blocking verify-gate verdict, case coverage for
+//! unsettled conditions, the choice of diff hunks the verify-gate reads in full,
+//! and graded, applicability-filtered samples for evolved-behavior trials.
 //!
 //! This is the only module that builds evaluation requests. It owns every
 //! question text and threshold, applies the master and per-seam switches,
@@ -43,10 +43,10 @@
 //! answers can only drop or demote text, never author it. The distill, plan,
 //! and gate seams receive exactly the payload the chat model they replace
 //! receives, and may only reject a lesson, skip a planner call, or drop a
-//! finding (a gate payload over the state cap is read in line-aligned slices,
-//! and a finding is dropped when any slice cites its refutation); the gate's
-//! hunk selection reads the agent's diff by design and can only shorten a hunk
-//! to a stub marked unseen; it never authors text or hides that the hunk
+//! finding or an unsettled condition (a gate payload over the state cap is read
+//! in line-aligned slices, and any slice can refute a finding or show a condition
+//! exercised); the gate's hunk selection reads the agent's diff by design and
+//! can only shorten a hunk to a stub marked unseen; it never authors text or hides that the hunk
 //! exists. Authorizer confirmation and learning verifiers use the existing
 //! verification payloads and can only confirm or reject candidates. The evolution seam reads
 //! the request and the turn's final answer; its answers only grade or drop a
@@ -192,6 +192,8 @@ pub const PLAN_SKIP_BELOW: f64 = 0.2;
 /// Gate: a charged finding at or above this is refuted. High on purpose:
 /// "doubt is not refutation" is the pre-change rule.
 pub const GATE_REFUTE_AT: f64 = 0.8;
+/// Gate: the answer is calibrated, so 0.5 means more likely exercised than not.
+pub const GATE_EXERCISED_AT: f64 = 0.5;
 /// Gate: a diff hunk whose "must the verifier read it" probability is at or
 /// above this is shown in full; the rest are stubbed.
 pub const GATE_HUNK_KEEP_AT: f64 = 0.5;
@@ -435,6 +437,7 @@ pub const GATE_FACTORS: [(&str, &str); 4] = [
 		"`findings[{slot}]`: Does request text in `evidence` show that the demand `findings[{slot}].text` charges as unmet was never made? Yes only when the request text visibly lacks that demand; no when the evidence merely makes the finding doubtful, since doubt is not refutation.",
 	),
 ];
+const GATE_EXERCISED_QUESTION: &str = "`conditions[{slot}]`: Did a recorded action in `evidence` exercise the specific case `conditions[{slot}]` states — that case itself, not only the suite, file or feature around it? Yes only when a recorded check's command or output visibly targets that case; no when the evidence shows only an aggregate result, a check of a different surface, or the agent's narration.";
 const GATE_HUNK_QUESTION: &str = "Must the verifier read this hunk to judge whether the request's conditions hold? Yes when it makes or changes something a condition names, or is a check the agent produced for one (a test, an assertion, a worked example, a verification script); no when it is a rename, formatting, rewording, generated output or boilerplate that no condition depends on.";
 const EVOLUTION_OUTCOME_QUESTION: &str = "How far does `final_answer` fulfil `request`?";
 /// Levels of the evolution outcome Score, lowest first.
@@ -650,6 +653,26 @@ pub fn gate_refuted(answers: &BTreeMap<String, Answer>, slot: usize) -> bool {
 	GATE_FACTORS.iter().any(|(factor, _)| {
 		probability(answers, &gate_question_id(slot, factor)).is_some_and(|noul| noul >= GATE_REFUTE_AT)
 	})
+}
+
+pub fn gate_exercised_question_id(slot: usize) -> String {
+	format!("c{slot}")
+}
+
+/// One Noul per unsettled requirement, with no verifier observation in the state.
+pub fn gate_exercised_questions(count: usize) -> BTreeMap<String, Question> {
+	(0..count)
+		.map(|slot| {
+			(
+				gate_exercised_question_id(slot),
+				Question::noul(GATE_EXERCISED_QUESTION.replace(SLOT_PLACEHOLDER, &slot.to_string())),
+			)
+		})
+		.collect()
+}
+
+pub fn gate_exercised(answers: &BTreeMap<String, Answer>, slot: usize) -> bool {
+	probability(answers, &gate_exercised_question_id(slot)).is_some_and(|noul| noul >= GATE_EXERCISED_AT)
 }
 
 pub fn gate_hunk_question_id(slot: usize) -> String {

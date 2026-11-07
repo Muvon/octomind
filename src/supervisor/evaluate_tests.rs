@@ -615,6 +615,16 @@ fn distill_plan_and_gate_questions_name_their_item() {
 		assert!(!text.contains(SLOT_PLACEHOLDER), "{factor}");
 	}
 
+	let exercised = gate_exercised_questions(2);
+	assert_eq!(exercised.len(), 2);
+	for slot in 0..2 {
+		let question = &exercised[&gate_exercised_question_id(slot)];
+		assert!(matches!(question, Question::Noul { .. }));
+		let text = instructions_of(question);
+		assert!(text.starts_with(&format!("`conditions[{slot}]`: ")));
+		assert!(text.contains("`evidence`") && !text.contains(SLOT_PLACEHOLDER));
+	}
+
 	let request = plan_request_question();
 	assert_eq!(request.keys().cloned().collect::<Vec<_>>(), [PLAN_QUESTION_ID]);
 	let phase = plan_phase_question("cargo test exits 0");

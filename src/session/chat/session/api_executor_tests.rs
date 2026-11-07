@@ -761,13 +761,8 @@ fn progressing_response(text: &str) -> serde_json::Value {
 #[tokio::test]
 async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budget() {
 	let _guard = ENV_LOCK.lock().await;
-	for (enabled, threshold, settled, expected_calls) in [
-		(true, 0.8, false, 2),
-		(false, 0.8, false, 1),
-		(true, 0.9, false, 1),
-		(true, 0.8, true, 1),
-	] {
-		let sid = format!("unsettled-advisory-{enabled}-{threshold}-{settled}");
+	for (enabled, settled, expected_calls) in [(true, false, 2), (false, false, 1), (true, true, 1)] {
+		let sid = format!("unsettled-advisory-{enabled}-{settled}");
 		crate::session::context::with_session_id(sid.clone(), async {
 			crate::session::context::init_session_services("assistant");
 			let answer = "The protocol preserves the original request.";
@@ -775,7 +770,7 @@ async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budg
 				format!(r#"<condition n="1" status="matched">"{answer}"</condition>"#)
 			} else {
 				String::from(
-					r#"<condition n="1" status="unknown" confidence="0.8">The requested observation is unavailable.</condition>"#,
+					r#"<condition n="1" status="unknown">The requested observation is unavailable.</condition>"#,
 				)
 			};
 			let verifier = final_response(&format!("{CLEAN_SHAPES}{condition}<verdict>PASS</verdict>"));
@@ -789,7 +784,6 @@ async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budg
 			config.supervisor.plan.enabled = false;
 			config.decision.supervisor = false;
 			config.supervisor.gate.unsettled_advisory = enabled;
-			config.supervisor.gate.unsettled_confidence_threshold = threshold;
 			let task = "Explain how the protocol preserves the original request.";
 			let mut session = fake_session(task);
 			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
@@ -1613,7 +1607,7 @@ async fn strict_json_uncertainty_preserves_the_answer_without_an_agent_rerun() {
 			let (agent_url, agent_requests) = spawn_recording_stub(vec![done_response(answer)]).await;
 			std::env::set_var("OLLAMA_API_URL", agent_url);
 			let report = serde_json::json!({
-				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources,"confidence":0.9}],
+				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources}],
 				"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]
 			});
 			let (supervisor_url, supervisor_requests) = crate::session::chat::test_support::spawn_recording_stub(vec![

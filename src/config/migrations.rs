@@ -184,9 +184,29 @@ fn plan() -> MigrationPlan {
 				to: 28,
 				apply: add_v28_idle_compaction,
 			},
+			VersionMigration {
+				from: 28,
+				to: 29,
+				apply: remove_v29_unsettled_confidence_threshold,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+fn remove_v29_unsettled_confidence_threshold(
+	document: &mut toml_edit::DocumentMut,
+	_template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	if let Some(supervisor) = document.get_mut("supervisor") {
+		let supervisor = supervisor.as_table_mut().context("supervisor must be a table")?;
+		if let Some(gate) = supervisor.get_mut("gate") {
+			gate.as_table_mut()
+				.context("supervisor.gate must be a table")?
+				.remove("unsettled_confidence_threshold");
+		}
+	}
+	Ok(())
 }
 
 /// Add the required `compression.idle` switch (on); an existing value is kept.
@@ -213,7 +233,7 @@ fn add_v26_model_timeouts_and_transport(
 	Ok(())
 }
 
-/// Add the required unsettled-evidence advisory switch and threshold to
+/// Add the required unsettled-evidence advisory switch to
 /// `supervisor.gate`; existing values are kept.
 fn add_v25_unsettled_advisory(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
 	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
@@ -225,8 +245,7 @@ fn add_v25_unsettled_advisory(document: &mut toml_edit::DocumentMut, template: &
 		"user config",
 	)?;
 	let gate = ensure_table(supervisor, template_supervisor, "gate", "user config")?;
-	merge_missing(gate, template_gate, "unsettled_advisory")?;
-	merge_missing(gate, template_gate, "unsettled_confidence_threshold")
+	merge_missing(gate, template_gate, "unsettled_advisory")
 }
 
 /// Add the required `supervisor.max_identical_rounds` loop hard stop; an existing

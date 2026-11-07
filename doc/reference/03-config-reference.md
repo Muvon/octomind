@@ -751,11 +751,13 @@ only if those pass.
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
 | `unsettled_advisory` | bool | `true` | Offer one nonblocking evidence advisory per genuine user turn, then re-gate normally |
-| `unsettled_confidence_threshold` | float | `0.8` | Inclusive threshold (0..1) for confidence that a condition is not demonstrated; not confidence the work is wrong |
 
-The advisory names only unsettled conditions meeting the threshold. Repeated uncertainty does not send another advisory
-within the same turn, and it never certifies success or becomes a blocking failure. Matched findings missing a verbatim
-citation receive one bounded protocol repair before any advisory decision; this shares the existing format-repair budget.
+The advisory names every remaining unsettled condition. With gate evaluation enabled, a calibrated check removes
+conditions whose specific case a recorded action exercised (probability at least 0.5 in any evidence slice). Refused
+answers, unavailable evaluation, or disabled evaluation keep the conditions. Repeated uncertainty does not send
+another advisory within the same turn, and it never certifies success or becomes a blocking failure. Matched findings
+missing a verbatim citation receive one bounded protocol repair before any advisory decision; this shares the existing
+format-repair budget.
 
 With `[decision] supervisor = true`, a working-tree diff larger than the gate's size cut is not cut by size: the evaluation
 model scores every hunk in batched windows, as the condense seam scores tool-output chunks, and the verifier reads in full

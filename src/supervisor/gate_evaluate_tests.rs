@@ -24,7 +24,9 @@ use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls, spawn_recording_stub,
 	FakeEvaluationStep,
 };
-use crate::supervisor::evaluate::{gate_question_id, Seam, GATE_FACTORS};
+use crate::supervisor::evaluate::{
+	gate_exercised_question_id, gate_question_id, Seam, GATE_EXERCISED_AT, GATE_FACTORS,
+};
 use octolib::evaluation::Question;
 
 static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
@@ -102,6 +104,98 @@ fn gate_chat_calls() -> u64 {
 	crate::supervisor::stats::snapshot()
 		.and_then(|s| s.get("gate_calls")?.as_u64())
 		.unwrap_or(0)
+}
+
+#[tokio::test]
+async fn unsettled_evaluation_drops_only_exercised_conditions_and_preserves_unavailable_ones() {
+	let low = nouls(&[("c0", 0.1), ("c1", 0.49)]);
+	let exercised = nouls(&[("c0", GATE_EXERCISED_AT), ("c1", 0.49)]);
+	let mut refused = low.clone();
+	refused.insert(gate_exercised_question_id(0), octolib::evaluation::Answer::Refusal);
+	let mut slices = vec![FakeEvaluationStep::Answers(low)];
+	slices.extend((0..9).map(|_| FakeEvaluationStep::Answers(exercised.clone())));
+	let huge = "#1 [read] shell cargo test cli_format_flag → ok, the requested flag was exercised\n".repeat(3_000);
+	let conditions = vec![
+		"the CLI accepts --format".to_string(),
+		"the README documents --format".to_string(),
+	];
+	let answer = format!(
+		r#"{CLEAN_SHAPES}<condition n="1" status="unknown">verifier-only observation one</condition><condition n="2" status="unknown">verifier-only observation two</condition><verdict>PASS</verdict>"#
+	);
+	crate::supervisor::accounting::isolated(async {
+		for (enabled, actions, steps, expected) in [
+			(true, huge.as_str(), slices, vec![2]),
+			(
+				true,
+				ACTIONS,
+				vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")],
+				vec![1, 2],
+			),
+			(true, ACTIONS, vec![FakeEvaluationStep::Answers(refused)], vec![1, 2]),
+			(false, ACTIONS, vec![], vec![1, 2]),
+		] {
+			let fake = install_fake_evaluation(steps).await;
+			let (url, captured) = spawn_recording_stub(vec![final_response(&answer)]).await;
+			std::env::set_var("OLLAMA_API_URL", &url);
+			let mut gate_input = input(actions, &[]);
+			gate_input.evidence_conditions = &conditions;
+			let evidence = format!(
+				"{}{}",
+				render_gate_input(&gate_input),
+				output_visibility(&gate_input, &RenderedEvidence::default()).render()
+			);
+			let (_tx, rx) = tokio::sync::watch::channel(false);
+			let verdict = crate::session::context::with_session_id("unsettled-evaluation".into(), async {
+				verify(&config(enabled), gate_input, rx).await
+			})
+			.await;
+			std::env::remove_var("OLLAMA_API_URL");
+			assert_eq!(
+				captured.lock().unwrap().len(),
+				1,
+				"no confidence repair or extra chat pass"
+			);
+			let GateVerdict::Unsettled(remaining) = verdict else {
+				panic!("{verdict:?}");
+			};
+			assert_eq!(
+				remaining.iter().map(|condition| condition.number).collect::<Vec<_>>(),
+				expected
+			);
+			let usage = crate::supervisor::accounting::take_for("unsettled-evaluation");
+			let reported = &usage.kinds[&crate::supervisor::stats::CallKind::Gate].reported_findings;
+			assert_eq!(
+				reported
+					.iter()
+					.any(|line| line == "condition 1 exercised per evaluation"),
+				expected == [2]
+			);
+			let requests = fake.requests();
+			if !enabled {
+				assert!(requests.is_empty());
+				continue;
+			}
+			if expected == [2] {
+				assert!(requests.len() >= 2, "a later evidence slice exercises the condition");
+				assert_eq!(usage.seams[&Seam::Gate].calls, requests.len() as u64);
+			}
+			let mut recorded = String::new();
+			for request in requests {
+				assert_eq!(request.state["conditions"], serde_json::json!(conditions));
+				assert!(!request.state.to_string().contains("verifier-only observation"));
+				assert_eq!(request.questions.len(), conditions.len());
+				for slot in 0..conditions.len() {
+					assert!(matches!(
+						request.questions[&gate_exercised_question_id(slot)],
+						Question::Noul { .. }
+					));
+				}
+				recorded.push_str(request.state["evidence"].as_str().expect("evidence"));
+			}
+			assert_eq!(recorded, evidence, "the evaluation reads exactly the gate user block");
+		}
+	})
+	.await;
 }
 
 async fn run(config: &Config, actions: &str, grounds: &[(u64, String)], stub: Vec<serde_json::Value>) -> GateVerdict {

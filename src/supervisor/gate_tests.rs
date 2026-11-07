@@ -20,34 +20,28 @@
 use super::*;
 
 #[test]
-fn unsettled_advisory_is_scored_bounded_and_switchable() {
+fn unsettled_advisory_includes_every_condition_once_and_is_switchable() {
 	let template: crate::config::Config =
 		toml::from_str(include_str!("../../config-templates/default.toml")).expect("template");
 	let mut config = template.supervisor.gate;
-	assert_eq!(
-		config.unsettled_confidence_threshold,
-		super::super::DEFAULT_UNSETTLED_CONFIDENCE_THRESHOLD
+	let verdict = GateVerdict::Unsettled(
+		(1..=2)
+			.map(|number| UnsettledCondition {
+				number,
+				requirement: format!("requirement {number}"),
+				observation: "No direct observation available".to_string(),
+			})
+			.collect(),
 	);
-	let condition = |number, confidence| UnsettledCondition {
-		number,
-		requirement: format!("requirement {number}"),
-		observation: "No direct observation available".to_string(),
-		confidence,
-	};
-	let verdict = GateVerdict::Unsettled(vec![condition(1, 0.79), condition(2, 0.8), condition(3, 0.95)]);
 	let mut sent = false;
 	config.unsettled_advisory = false;
 	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
 	assert!(!sent);
 	config.unsettled_advisory = true;
-	config.unsettled_confidence_threshold = 0.96;
-	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
-	assert!(!sent);
-	config.unsettled_confidence_threshold = 0.8;
-	let note = take_unsettled_advisory(&verdict, &config, &mut sent).expect("advisory at inclusive threshold");
-	assert!(!note.contains("requirement 1"));
-	assert!(note.contains("requirement 2") && note.contains("requirement 3"));
+	let note = take_unsettled_advisory(&verdict, &config, &mut sent).expect("unsettled advisory");
+	assert!(note.contains("requirement 1") && note.contains("requirement 2"));
 	assert!(note.contains("not a failure or a block"));
+	assert!(!note.contains("confidence"));
 	assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
 	assert!(sent);
 	for verdict in [
@@ -60,41 +54,26 @@ fn unsettled_advisory_is_scored_bounded_and_switchable() {
 		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
 		assert!(!sent);
 	}
-	for invalid in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
-		let mut sent = false;
-		assert!(
-			take_unsettled_advisory(&GateVerdict::Unsettled(vec![condition(1, invalid)]), &config, &mut sent).is_none()
-		);
-		config.unsettled_confidence_threshold = invalid;
-		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
-		config.unsettled_confidence_threshold = 0.8;
-	}
 }
 
 #[test]
-fn condition_confidence_and_citations_have_the_same_contract_in_both_encodings() {
+fn conditions_without_confidence_have_the_same_citation_contract_in_both_encodings() {
 	let evidence = CitationEvidence {
 		corpus: "The independent check passed".into(),
 		request: String::new(),
 	};
-	for (status, observation, score, valid) in [
-		("unknown", "Output unavailable", Some(0.9), true),
-		("unknown", "Output unavailable", None, false),
-		("unknown", "Output unavailable", Some(1.1), false),
-		("matched", "The independent check passed", Some(0.0), false),
-		("matched", "\"The independent check passed\"", None, true),
-		("matched", "\"The independent check passed\"", Some(0.0), false),
-		("unmatched", "observed failure", Some(0.7), false),
+	for (status, observation, valid) in [
+		("unknown", "Output unavailable", true),
+		("matched", "The independent check passed", false),
+		("matched", "\"The independent check passed\"", true),
+		("unmatched", "observed failure", true),
 	] {
-		let confidence = score.map(|n| format!(" confidence=\"{n}\"")).unwrap_or_default();
 		let text = text_report(&format!(
-			"<condition n=\"1\" status=\"{status}\"{confidence}>{observation}</condition>"
+			"<condition n=\"1\" status=\"{status}\">{observation}</condition>"
 		));
-		let json = json_report(
-			&serde_json::json!({"conditions":[{"n":1,"status":status,"observation":observation,"confidence":score}]}),
-		);
+		let json = json_report(&serde_json::json!({"conditions":[{"n":1,"status":status,"observation":observation}]}));
 		for report in [text, json] {
-			assert_eq!(report.evidence_format_issue(&evidence).is_none(), valid, "{report:?}");
+			assert_eq!(report.citation_issue(&evidence).is_none(), valid, "{report:?}");
 		}
 	}
 }
@@ -1129,10 +1108,7 @@ fn the_condition_schema_enforces_status_fields_and_number_bounds() {
 		let properties = &branch["properties"];
 		assert_eq!(properties["n"]["enum"], serde_json::json!([1, 2]));
 		assert_eq!(properties["status"]["enum"], serde_json::json!([status]));
-		assert_eq!(
-			properties["confidence"]["type"],
-			if status == "unknown" { "number" } else { "null" }
-		);
+		assert!(properties.get("confidence").is_none());
 		assert_eq!(
 			properties["basis"]["type"],
 			if status == "unmatched" { "string" } else { "null" }
@@ -1143,8 +1119,6 @@ fn the_condition_schema_enforces_status_fields_and_number_bounds() {
 		);
 		assert_eq!(branch["additionalProperties"], false);
 	}
-	assert_eq!(branches[1]["properties"]["confidence"]["minimum"], 0);
-	assert_eq!(branches[1]["properties"]["confidence"]["maximum"], 1);
 	assert_eq!(
 		branches[2]["properties"]["basis"]["enum"],
 		serde_json::json!(["recorded_output", "ground_truth", "absent_action", "inference"])
@@ -1523,10 +1497,10 @@ mod verify_round_trip {
 	async fn unknown_ruling_reads_retained_evidence_then_preserves_specific_advisory() {
 		let _guard = ENV_LOCK.lock().await;
 		let first = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="1" sources="omitted:0">The boundary check output is not visible</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" sources="omitted:0">The boundary check output is not visible</condition><verdict>PASS</verdict>"#
 		);
 		let second = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="0.9">The ordinary case passed; the terminal boundary remains unobserved</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">The ordinary case passed; the terminal boundary remains unobserved</condition><verdict>PASS</verdict>"#
 		);
 		let (url, calls) = crate::session::chat::test_support::spawn_recording_stub(vec![
 			final_response(&first),
@@ -1547,10 +1521,8 @@ mod verify_round_trip {
 			panic!("{verdict:?}");
 		};
 		assert_eq!(unsettled.len(), 1);
-		assert_eq!(unsettled[0].confidence, 0.9);
 		let mut config = gate_config().supervisor.gate;
 		config.unsettled_advisory = true;
-		config.unsettled_confidence_threshold = 0.8;
 		let mut sent = false;
 		assert!(take_unsettled_advisory(&verdict, &config, &mut sent)
 			.unwrap()
@@ -1596,7 +1568,7 @@ mod verify_round_trip {
 	async fn uncitable_match_gets_one_format_repair_without_weakening_evidence() {
 		let _guard = ENV_LOCK.lock().await;
 		let original = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="matched" confidence="0">The feature is shipped and tested</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched">The feature is shipped and tested</condition><verdict>PASS</verdict>"#
 		);
 		let repaired = format!(
 			r#"{CLEAN_SHAPES}<condition n="1" status="matched">"the feature is shipped and tested"</condition><verdict>PASS</verdict>"#
@@ -1609,19 +1581,19 @@ mod verify_round_trip {
 			let verdict = verify(&gate_config(), input(&[], &conditions), receiver).await;
 			assert_eq!(matches!(verdict, GateVerdict::Pass), passes, "{verdict:?}");
 			if !passes {
-				assert!(matches!(verdict, GateVerdict::Indeterminate(_)));
+				assert!(matches!(verdict, GateVerdict::Unsettled(_)));
 			}
 			std::env::remove_var("OLLAMA_API_URL");
 		}
 	}
 
 	/// One weak citation must not void a valid report: the uncited match is
-	/// unsettled and the scored unknown beside it still reaches the advisory.
+	/// unsettled and both conditions reach the advisory.
 	#[tokio::test]
 	async fn an_uncited_match_after_repair_leaves_the_report_unsettled() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="matched">recorded run shows "5888 passed"</condition><condition n="2" status="unknown" confidence="0.9">The bounded-length message for a known-length input is not observed</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="matched">recorded run shows "5888 passed"</condition><condition n="2" status="unknown">The bounded-length message for a known-length input is not observed</condition><verdict>PASS</verdict>"#
 		);
 		let url = spawn_stub(vec![final_response(&answer), final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", url);
@@ -1632,8 +1604,8 @@ mod verify_round_trip {
 		let GateVerdict::Unsettled(unsettled) = &verdict else {
 			panic!("{verdict:?}");
 		};
-		assert_eq!(unsettled.len(), 1);
-		assert_eq!((unsettled[0].number, unsettled[0].confidence), (2, 0.9));
+		assert_eq!(unsettled.len(), 2);
+		assert_eq!((unsettled[0].number, unsettled[1].number), (1, 2));
 	}
 
 	#[tokio::test]
@@ -1868,7 +1840,7 @@ mod verify_round_trip {
 	async fn an_unknown_condition_stays_unverified_on_every_pass() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" confidence="0.9">the log is not retained</condition><verdict>PASS</verdict>"#
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">the log is not retained</condition><verdict>PASS</verdict>"#
 		);
 		// Distinguish protocol parsing from provider-fixture isolation. A valid
 		// answer must pass before transport as well as after the round trip.
@@ -1876,7 +1848,7 @@ mod verify_round_trip {
 		assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
 		assert_eq!(
 			report.reported_findings(&HashSet::new()),
-			vec!["condition 1 unsettled: the log is not retained (confidence not demonstrated: 0.90)"]
+			vec!["condition 1 unsettled: the log is not retained"]
 		);
 		let url = spawn_stub(vec![final_response(&answer), final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -2025,7 +1997,7 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 	}
 }
 
-/// Runtime grounding is independent of the verifier's confidence and wire format.
+/// Runtime grounding is independent of the verifier's wire format.
 mod grounding {
 	use super::*;
 
@@ -2339,8 +2311,8 @@ fn unknown_conditions_pull_only_retained_unseen_sources_once() {
 	let visibility = output_visibility(&input, &RenderedEvidence::default());
 	let sources = "omitted:0,omitted:0,omitted:1,omitted:2,omitted:3,omitted:999";
 	for report in [
-		text_report(&format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unknown\" confidence=\"0.9\" sources=\"{sources}\">Need the recorded boundary observation</condition><verdict>PASS</verdict>")),
-		json_report(&serde_json::json!({"conditions":[{"n":1,"status":"unknown","confidence":0.9,"sources":sources,"observation":"Need the recorded boundary observation"}],"shapes":clean_json_shapes(),"gaps":[],"readback":[],"verdict":"PASS"})),
+		text_report(&format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unknown\" sources=\"{sources}\">Need the recorded boundary observation</condition><verdict>PASS</verdict>")),
+		json_report(&serde_json::json!({"conditions":[{"n":1,"status":"unknown","sources":sources,"observation":"Need the recorded boundary observation"}],"shapes":clean_json_shapes(),"gaps":[],"readback":[],"verdict":"PASS"})),
 	] {
 		let wanted = report.needed_readback(&input, &visibility);
 		assert_eq!(wanted, vec![0, 1, 2]);

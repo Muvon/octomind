@@ -85,6 +85,9 @@ impl ChatSession {
 			}
 		}
 		self.last_sent_messages = self.session.messages.clone();
+		// A real request re-warms the cache with exactly this prefix, so a past
+		// ping miss no longer describes it: let keepalive pings resume.
+		self.wait_history.ping_missed = false;
 		originals
 	}
 

@@ -564,6 +564,29 @@ async fn one_missed_ping_ends_pinging_for_the_session() {
 	next.finish(&mut chat, true).await;
 }
 
+#[tokio::test]
+async fn a_real_request_clears_the_ping_missed_latch() {
+	let config = keepalive_config();
+	let mut chat = session("anthropic:claude-sonnet-5-5", vec![user_message(true)]);
+
+	let mut handle = KeepaliveHandle::spawn(&chat, &config, WaitKind::Reply).expect("cached Anthropic session spawns");
+	handle.task.abort();
+	handle.task = tokio::spawn(async {
+		let mut missed = ping_exchange(Some(0.3));
+		missed.usage.as_mut().expect("usage").cache_write_tokens = 58_000;
+		vec![missed]
+	});
+	handle.finish(&mut chat, true).await;
+
+	// A real request refreshes last_sent_messages and re-warms the cache:
+	// the latch from the missed ping must not outlive it.
+	chat.prepare_request_messages();
+
+	let next = KeepaliveHandle::spawn(&chat, &config, WaitKind::Reply).expect("the wait is still measured");
+	assert_eq!(next.budget.basis, BudgetBasis::ColdStart);
+	next.finish(&mut chat, true).await;
+}
+
 /// A summary whose folded units exceed its budget, so real requests send a
 /// shorter view than the session stores.
 fn oversized_summary() -> Message {

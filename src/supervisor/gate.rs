@@ -350,10 +350,10 @@ Every condition gets exactly one of three statuses:
     stop.
 - unknown — the supplied evidence can establish neither satisfaction nor violation, and no
   basis fits. A verification limit, not a violation. Prefer the bounded readback round when
-  an already-recorded output would decide it. The runtime may offer one nonblocking advisory
-  opportunity to supply evidence or a fix; uncertainty never becomes a violation.
-  Name the exact part, combination, boundary, or context
-  still unobserved, distinguishing it from the parts already supported. Do not substitute a
+  an already-recorded output would decide it. The runtime may offer one
+  nonblocking advisory opportunity to supply evidence or a fix; uncertainty never becomes a
+  violation. Name the exact part, combination, boundary, or context still unobserved,
+  distinguishing it from the parts already supported. Do not substitute a
   blanket visibility note for checking each requested case. When an unseen retained output
   would settle it, cite omitted:N in sources and spend the readback round before ruling.
 A condition that contradicts <current_user_turn> is void — mark it matched with the reason

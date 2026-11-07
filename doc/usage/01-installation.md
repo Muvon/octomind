@@ -46,6 +46,9 @@ octomind
 
 Running `octomind` without a subcommand starts the same interactive session as `octomind run`. The default configuration
 uses `octohub:auto` for its main, supervisor, and compression model purposes.
+When no config exists and stdin and stdout are terminals, startup opens model setup before creating it. Choose the hub,
+use your own provider, or skip to keep the defaults. Run `octomind configure` to repeat setup later; see the
+[CLI reference](../reference/01-cli-reference.md#octomind-configure). Non-interactive runs create defaults without prompts.
 
 ## Installer Requirements and Targets
 

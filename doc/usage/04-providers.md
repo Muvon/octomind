@@ -5,7 +5,8 @@ local endpoints, or a CLI-backed model.
 
 ## Start with OctoHub
 
-OctoHub is the default provider in the shipped configuration. The shortest setup is:
+OctoHub is the default provider in the shipped configuration. The shortest setup is to run `octomind` in a terminal
+and choose the hub on the first-run screen, or to sign in directly:
 
 ```bash
 octomind login
@@ -65,7 +66,18 @@ availability; Octomind does not implement its routing policy.
 
 ## Bring Your Own Keys
 
-You can skip `octomind login`. For example, export your OpenAI credential:
+You can skip the hub. The shortest path is the interactive setup:
+
+```bash
+octomind configure
+```
+
+Pick your provider, enter the key when asked (hidden input), and pick the main model. Setup then asks whether the
+supervisor and compression should use the same model; answer `n` to choose a cheaper one for each. The key is saved to
+the user-scope `<data-dir>/config/.env` (owner-only permissions on Unix), never to `config.toml`. The same screen
+appears on the first interactive `octomind` launch when no config exists yet.
+
+To set it up by hand instead, export your credential. For example, for OpenAI:
 
 ```bash
 export OPENAI_API_KEY="your_key"
@@ -98,7 +110,7 @@ Use a model your provider account can access. An explicit role model can overrid
 ### Environment File Precedence
 
 Provider clients read credentials from the environment. `octomind config --api-key` refuses to save a key; put
-credentials in the environment or a `.env` file.
+credentials in the environment or a `.env` file, or let `octomind configure` write the user `.env` for you.
 
 Octomind loads credentials from three sources, with later sources overriding earlier ones:
 

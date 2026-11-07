@@ -20,6 +20,7 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 |---------|---------|
 | `run` | Start an interactive or non-interactive AI session (the main command). |
 | `login` | Sign in to an Octomind account or a ChatGPT subscription. |
+| `configure` | Choose a provider, credentials, and the main, supervisor, and compression models interactively. |
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
@@ -39,7 +40,7 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 Use `-c/--config KEY=VALUE` to override an existing config value for one invocation. `KEY` is a dotted path, and the
 option can be repeated. Values are parsed as TOML values when possible; otherwise they are treated as strings. Unknown
 keys and paths through arrays are errors. Array indexes are not supported. Overrides are not saved to the config file,
-and they cannot be combined with the `config` subcommand.
+and they cannot be combined with the `config` or `configure` subcommands.
 
 ```bash
 octomind -c supervisor.enabled=false run
@@ -64,6 +65,32 @@ main `[model]`.
 
 Only `run` and `workflow` accept `--format`. Both accept only `plain` or `jsonl`; clap rejects any
 other value.
+
+## `octomind configure`
+
+One screen lists the Octomind hub (recommended) first, then every supported provider, then "Skip for now". Type to
+filter, Enter to choose, Esc to cancel without writing anything. Hub setup reuses `octomind login` and sets all three
+models to `octohub:auto`. Providers whose key is already present are listed first. For a direct provider, setup prompts
+with hidden input for its key and any other required variable that is missing (empty input asks again), then offers a
+filterable model list with an "other" row for typing a model ID. OpenRouter's and Ollama Cloud's lists are fetched from
+their public model catalogs; if that fails, you type the ID. After the main model, setup asks `Use <model> for the supervisor and
+compression too? [Y/n]`; Enter keeps it for both, `n` opens a picker for each.
+
+```bash
+octomind configure
+```
+
+Only `[model].name`, `[supervisor.model].name`, and `[compression.model].name` change in the selected config file;
+comments and other settings are preserved. New configs use the embedded template. Credentials go into the user-scope
+`<data-dir>/config/.env`, with owner-only permissions on Unix, and never into `config.toml`.
+Skip leaves an existing config unchanged; on first run it writes the default template. The final summary shows each
+model, provider, and whether its key is present.
+Use `octomind configure` again, `/model provider:model` for one session, or edit the displayed config path.
+
+The screen also runs before creating a missing config on the first interactive `octomind` or `octomind run` launch.
+Both stdin and stdout must be terminals, with neither `--format` nor `--daemon` set. Other commands and non-interactive
+runs keep the existing default-config behavior without prompting. Explicit `configure` requires both terminals;
+for automation, use `octomind config --model provider:model` and edit `config.toml`.
 
 ## `octomind login`
 

@@ -359,7 +359,7 @@ pub async fn poll_login(device_code: &str, interval: Duration) -> Result<LoginCl
 /// into `auth.json`, and this process's env so later work in the same run picks
 /// it up without a restart. Returns the `.env` path that was written.
 pub fn finish_login(claim: &LoginClaim) -> Result<PathBuf> {
-	let env_path = write_hub_key(&claim.api_key)?;
+	let env_path = write_env_var(HUB_KEY_ENV, &claim.api_key)?;
 	save_session(&Session {
 		jwt: claim.jwt.clone(),
 		refresh_token: claim.refresh_token.clone(),
@@ -386,33 +386,69 @@ fn repoint(url: &str, panel: &str) -> String {
 	}
 }
 
-/// Upsert `OCTOHUB_API_KEY` in the user-scope `.env` — the one every octomind
-/// process loads at startup. Other variables in that file are left alone; a new
-/// login replaces the previous key rather than appending a second line.
-fn write_hub_key(key: &str) -> Result<PathBuf> {
+/// Upsert a variable in the user-scope `.env` loaded by every octomind process.
+pub fn write_env_var(name: &str, value: &str) -> Result<PathBuf> {
 	let path = get_config_dir()?.join(".env");
-	let existing = std::fs::read_to_string(&path).unwrap_or_default();
-	std::fs::write(&path, upsert(&existing, key)).with_context(|| format!("could not write {}", path.display()))?;
+	let existing = match std::fs::read_to_string(&path) {
+		Ok(content) => content,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+		Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
+	};
+	let content = upsert(&existing, name, value)?;
+	let mut options = std::fs::OpenOptions::new();
+	options.write(true).create(true).truncate(false);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::OpenOptionsExt;
+		options.mode(0o600);
+	}
+	let mut file = options
+		.open(&path)
+		.with_context(|| format!("could not open {}", path.display()))?;
 
 	// It holds a live credential: keep it owner-only.
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+		file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
 	}
+	use std::io::Write;
+	file.set_len(0)?;
+	file.write_all(content.as_bytes())
+		.with_context(|| format!("could not write {}", path.display()))?;
 	Ok(path)
 }
 
-/// Replace any existing `OCTOHUB_API_KEY` line, keep every other line as-is.
-fn upsert(existing: &str, key: &str) -> String {
-	let prefix = format!("{}=", HUB_KEY_ENV);
-	let mut out: Vec<&str> = existing
-		.lines()
-		.filter(|l| !l.trim_start().trim_start_matches("export ").starts_with(&prefix))
-		.collect();
-	let line = format!("{prefix}{key}");
-	out.push(&line);
-	out.join("\n") + "\n"
+fn upsert(existing: &str, name: &str, value: &str) -> Result<String> {
+	if name.is_empty()
+		|| !name
+			.bytes()
+			.enumerate()
+			.all(|(i, c)| c == b'_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
+	{
+		bail!("invalid environment variable name: {name}");
+	}
+	if value.trim().is_empty() || value.contains(['\r', '\n', '\0']) {
+		bail!("{name}: a non-empty, single-line value is required");
+	}
+	// Quoting prevents dotenv from treating credential characters as expansion or comments.
+	let quoted = value.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$");
+	let mut out = String::new();
+	for line in existing.split_inclusive('\n') {
+		let assignment = line.trim_start().strip_prefix("export ").unwrap_or(line.trim_start());
+		if assignment
+			.split_once('=')
+			.is_some_and(|(key, _)| key.trim_end() == name)
+		{
+			continue;
+		}
+		out.push_str(line);
+	}
+	if !out.is_empty() && !out.ends_with('\n') {
+		out.push('\n');
+	}
+	out.push_str(&format!("{name}=\"{quoted}\"\n"));
+	Ok(out)
 }
 
 /// The one control-plane read a bare hub key opens: GET /hub/usage. `None`

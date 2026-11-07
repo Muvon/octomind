@@ -79,17 +79,19 @@ On macOS, you can also install with Homebrew:
 brew install muvon/tap/octomind
 ```
 
-**2. Get model access.** The fastest path is Octomind Cloud, which includes models and needs no configuration:
+**2. Choose where models come from.** Start octomind once in a terminal:
 
 ```bash
-octomind login
+octomind
 ```
 
-Prefer your own provider key? Skip login and export one (also `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`), then follow [Model access](#model-access) to point the config at it:
+Before it writes a config, the first interactive run asks where to get models:
 
-```bash
-export OPENROUTER_API_KEY="your_key"
-```
+- **Octomind hub** (recommended): one browser sign-in, `auto` picks a model for each job, paid with credits you buy.
+- **Your own provider**: OpenRouter, OpenAI, Anthropic, DeepSeek, Ollama, and every other provider octomind supports. Octomind asks for the key with hidden input, saves it to its own `.env` (readable only by you), and lists the provider's models to pick from. One model can serve the main agent, the supervisor, and compression, or you can pick each.
+- **Skip**: keep the shipped defaults (`octohub:auto`).
+
+Run `octomind configure` to change this later. Scripts, piped input, and `--format` runs never see the screen; they use the default config.
 
 **3. Run a specialist** in your project:
 
@@ -229,9 +231,11 @@ Shell completions: `octomind completion <bash|zsh|fish|elvish|powershell>`.
 
 ### Model access
 
-**Octomind Cloud** — `octomind login` (device-code sign-in, like `gh auth login`) stores a gateway key locally. The default config already uses `octohub:auto`. [Learn more](https://octomind.run/cloud).
+Run `octomind configure` any time to switch between the hub and your own provider. It changes only the three model names (main, supervisor, compression) and keeps the rest of your config and its comments.
 
-**Bring your own key** — set the provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …) and point the model tables at it. The supervisor and compression profiles also default to `octohub:auto`, so update all three:
+**Octomind Cloud** — choose the hub in `octomind configure`, or run `octomind login` (device-code sign-in, like `gh auth login`). Either stores a gateway key locally. The default config already uses `octohub:auto`. [Learn more](https://octomind.run/cloud).
+
+**Bring your own key** — choose your provider in `octomind configure`. To set it up by hand instead, set the provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …) and point the model tables at it. The supervisor and compression profiles also default to `octohub:auto`, so update all three:
 
 ```toml
 [model]

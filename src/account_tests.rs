@@ -617,12 +617,57 @@ fn finish_login_writes_the_env_file_and_the_session() {
 	let env_path = finish_login(&claim).expect("finish login");
 	assert_eq!(env_path, dir.join("config").join(".env"));
 	let env_body = std::fs::read_to_string(&env_path).expect(".env written");
-	assert!(env_body.contains("OCTOHUB_API_KEY=hk-final"), "{env_body}");
+	assert!(env_body.contains("OCTOHUB_API_KEY=\"hk-final\""), "{env_body}");
 	assert_eq!(std::env::var(HUB_KEY_ENV).as_deref(), Ok("hk-final"));
 
 	let s = session().expect("session stored");
 	assert_eq!(s.jwt, "jwt-final");
 	assert_eq!(s.refresh_token, "r-final");
+}
+
+#[test]
+#[serial]
+fn configure_env_writer_appends_replaces_and_keeps_owner_only_permissions() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = tempfile::tempdir().expect("temporary data directory");
+	std::env::set_var(DATA_DIR_KEY, dir.path());
+	let path = write_env_var("SETUP_KEY", "first").expect("create env file");
+	assert_eq!(std::fs::read_to_string(&path).unwrap(), "SETUP_KEY=\"first\"\n");
+	std::fs::write(&path, "# keep\nOTHER=value\nexport SETUP_KEY=old\n").unwrap();
+	// POSIX permission bits have no Windows equivalent.
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+	}
+	assert_eq!(write_env_var("SETUP_KEY", "replacement").unwrap(), path);
+	assert_eq!(
+		std::fs::read_to_string(&path).unwrap(),
+		"# keep\nOTHER=value\nSETUP_KEY=\"replacement\"\n"
+	);
+	write_env_var("EXTRA_VAR", "region-1").expect("append another variable");
+	assert_eq!(
+		std::fs::read_to_string(&path).unwrap(),
+		"# keep\nOTHER=value\nSETUP_KEY=\"replacement\"\nEXTRA_VAR=\"region-1\"\n"
+	);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+	}
+}
+
+#[test]
+#[serial]
+fn configure_env_writer_surfaces_read_errors() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = tempfile::tempdir().expect("temporary data directory");
+	std::env::set_var(DATA_DIR_KEY, dir.path());
+	let path = get_config_dir().unwrap().join(".env");
+	std::fs::create_dir(&path).expect("unreadable as a file");
+	let err = write_env_var("SETUP_KEY", "value").expect_err("must not overwrite an unreadable env file");
+	assert!(err.to_string().contains("could not read"), "{err}");
 }
 
 #[test]

@@ -15,6 +15,86 @@
 use super::*;
 
 #[test]
+fn configure_first_run_requires_missing_config_and_both_ttys() {
+	let run = Commands::Run(commands::RunArgs::default());
+	for missing in [false, true] {
+		for stdin_tty in [false, true] {
+			for stdout_tty in [false, true] {
+				assert_eq!(
+					should_configure_first_run(&run, missing, stdin_tty, stdout_tty),
+					missing && stdin_tty && stdout_tty
+				);
+			}
+		}
+	}
+}
+
+#[test]
+fn configure_first_run_excludes_noninteractive_modes_and_other_commands() {
+	for argv in [
+		vec!["octomind", "run", "--format", "plain"],
+		vec!["octomind", "run", "--format", "jsonl"],
+		vec!["octomind", "run", "--daemon"],
+		vec!["octomind", "acp"],
+		vec!["octomind", "server"],
+		vec!["octomind", "workflow"],
+		vec!["octomind", "evaluate"],
+		vec!["octomind", "send", "--name", "session", "hello"],
+		vec!["octomind", "config"],
+		vec!["octomind", "configure"],
+		vec!["octomind", "login"],
+		vec!["octomind", "tap"],
+		vec!["octomind", "untap", "user/repo"],
+		vec!["octomind", "vars"],
+		vec!["octomind", "completion", "bash"],
+		vec!["octomind", "complete", "run"],
+		vec![
+			"octomind",
+			"distill",
+			"--messages",
+			"messages.json",
+			"--role",
+			"assistant",
+		],
+		vec![
+			"octomind",
+			"compact",
+			"--fold",
+			"fold.json",
+			"--session-file",
+			"session.json",
+		],
+		vec!["octomind", "hindsight-worker", "--model", "local:test"],
+	] {
+		let parsed = CliArgs::try_parse_from(&argv).expect("valid command");
+		assert!(
+			!should_configure_first_run(&parsed.command.unwrap(), true, true, true),
+			"{argv:?}"
+		);
+	}
+	for argv in [vec!["octomind"], vec!["octomind", "run"]] {
+		let parsed = CliArgs::try_parse_from(argv).expect("interactive command");
+		let command = parsed
+			.command
+			.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
+		assert!(should_configure_first_run(&command, true, true, true));
+	}
+}
+
+#[test]
+fn configure_is_a_visible_subcommand() {
+	let app = CliArgs::command();
+	let sub = app.find_subcommand("configure").expect("configure registered");
+	assert!(!sub.is_hide_set());
+	assert_eq!(
+		sub.get_about().unwrap().to_string(),
+		"Choose your model provider, key and models — the Octomind hub or your own keys"
+	);
+	let args = CliArgs::try_parse_from(["octomind", "configure"]).expect("configure parses");
+	assert_eq!(command_name(&args.command.unwrap()), "configure");
+}
+
+#[test]
 fn compact_is_hidden_and_requires_fold_and_session_file() {
 	let app = CliArgs::command();
 	assert!(app.find_subcommand("compact").unwrap().is_hide_set());

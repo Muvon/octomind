@@ -13,7 +13,12 @@ octomind config             # create config.toml when absent
 octomind config --show      # display key effective settings
 octomind config --validate  # validate the merged configuration
 octomind config --upgrade   # run the current migration explicitly
+octomind configure          # interactive provider, credentials, and model setup
 ```
+
+On the first interactive `octomind` or `octomind run` launch with a missing config, setup offers the hub, your own
+provider, or skip before writing the template. `octomind configure` edits only the main, supervisor, and compression
+model names while preserving comments and other settings; credentials are stored separately in the user `.env`.
 
 The default template is embedded in the binary from `config-templates/default.toml`. Older configurations are upgraded
 automatically during load; a migration writes a versioned backup beside the original before replacing it.

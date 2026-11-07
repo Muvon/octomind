@@ -19,7 +19,7 @@
 use anyhow::Result;
 use crossterm::{
 	cursor,
-	event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+	event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
 	execute, terminal,
 };
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -97,73 +97,94 @@ pub fn pick_session() -> Result<Option<String>> {
 		return Ok(None);
 	}
 
-	run_picker_loop(entries)
+	let labels: Vec<String> = entries.iter().map(PickerEntry::label).collect();
+	let selected = pick_index(
+		"Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)",
+		&labels,
+		0,
+	)?;
+	Ok(selected.map(|i| entries[i].name.clone()))
 }
 
-fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
+/// Pick a label with fuzzy filtering. Escape or Enter with no matches cancels.
+pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result<Option<usize>> {
+	const EXTRA_ROWS: usize = 4;
 	let matcher = SkimMatcherV2::default();
 	let mut query: Vec<char> = Vec::new();
 	let mut cursor_pos: usize = 0; // char index into query, 0..=len
-	let mut selected: usize = 0;
 	let mut stdout = std::io::stdout();
 
 	terminal::enable_raw_mode()?;
-	let result = (|| -> Result<Option<String>> {
+	let result = (|| -> Result<Option<usize>> {
 		execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 		loop {
 			let query_str: String = query.iter().collect();
-			// Rank entries against the current query; empty query keeps the
-			// natural order (already newest-first from list_available_sessions).
-			let filtered: Vec<&PickerEntry> = if query.is_empty() {
-				entries.iter().collect()
+			// An empty query preserves caller ordering and its initial selection.
+			let filtered: Vec<(usize, &String)> = if query.is_empty() {
+				labels.iter().enumerate().collect()
 			} else {
-				let mut scored: Vec<(i64, &PickerEntry)> = entries
+				let mut scored: Vec<(i64, usize, &String)> = labels
 					.iter()
-					.filter_map(|e| matcher.fuzzy_match(&e.label(), &query_str).map(|s| (s, e)))
+					.enumerate()
+					.filter_map(|(i, label)| matcher.fuzzy_match(label, &query_str).map(|s| (s, i, label)))
 					.collect();
 				scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-				scored.into_iter().map(|(_, e)| e).collect()
+				scored.into_iter().map(|(_, i, label)| (i, label)).collect()
 			};
 			if selected >= filtered.len() {
 				selected = filtered.len().saturating_sub(1);
 			}
 
+			let (columns, rows) = terminal::size()?;
+			anyhow::ensure!(columns > 0, "terminal width must be positive");
+			let title_rows: usize = title
+				.lines()
+				.map(|line| line.chars().count().max(1).div_ceil(usize::from(columns)))
+				.sum();
 			execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
-			write!(
-				stdout,
-				"Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)\r\n"
-			)?;
+			for line in title.lines() {
+				write!(stdout, "{line}\r\n")?;
+			}
 			write!(stdout, "> {}\r\n\r\n", query_str)?;
 
-			let rows = terminal::size().map(|(_, h)| h as usize).unwrap_or(24);
-			let max_visible = rows.saturating_sub(5);
+			let max_visible = usize::from(rows).saturating_sub(title_rows + EXTRA_ROWS).max(1);
 			// Keep the selection inside the visible window.
 			let offset = if selected >= max_visible {
 				selected + 1 - max_visible
 			} else {
 				0
 			};
-			for (i, entry) in filtered.iter().skip(offset).take(max_visible).enumerate() {
+			for (i, (_, label)) in filtered.iter().skip(offset).take(max_visible).enumerate() {
 				let idx = offset + i;
 				if idx == selected {
-					write!(stdout, "\x1b[7m> {}\x1b[0m\r\n", entry.label())?;
+					write!(stdout, "\x1b[7m> {}\x1b[0m\r\n", label)?;
 				} else {
-					write!(stdout, "  {}\r\n", entry.label())?;
+					write!(stdout, "  {}\r\n", label)?;
 				}
 			}
 			if filtered.is_empty() {
-				write!(stdout, "  (no matches — Enter starts a new session)\r\n")?;
+				write!(stdout, "  (no matches — Enter cancels)\r\n")?;
 			}
 			// Place the cursor in the query line at its edit position.
-			execute!(stdout, cursor::Show, cursor::MoveTo(2 + cursor_pos as u16, 1))?;
+			execute!(
+				stdout,
+				cursor::Show,
+				cursor::MoveTo(2 + cursor_pos as u16, title_rows as u16)
+			)?;
 			stdout.flush()?;
 
-			if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
+			if let Event::Key(KeyEvent {
+				code, modifiers, kind, ..
+			}) = event::read()?
+			{
+				if kind == KeyEventKind::Release {
+					continue;
+				}
 				let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 				match code {
 					KeyCode::Esc => return Ok(None),
 					KeyCode::Enter => {
-						return Ok(filtered.get(selected).map(|e| e.name.clone()));
+						return Ok(filtered.get(selected).map(|(i, _)| *i));
 					}
 					KeyCode::Up => selected = selected.saturating_sub(1),
 					KeyCode::Down => {
@@ -231,8 +252,10 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 			}
 		}
 	})();
-	execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen)?;
-	terminal::disable_raw_mode()?;
+	let restore_screen = execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen);
+	let restore_input = terminal::disable_raw_mode();
+	restore_screen?;
+	restore_input?;
 	result
 }
 

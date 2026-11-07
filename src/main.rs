@@ -18,6 +18,7 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
+use std::io::IsTerminal;
 
 use octomind::config::Config;
 use octomind::session::chat::session::{SpendingStop, EXIT_SPENDING_STOP};
@@ -48,6 +49,9 @@ enum Commands {
 
 	/// Generate a default configuration file
 	Config(commands::ConfigArgs),
+
+	/// Choose your model provider, key and models — the Octomind hub or your own keys
+	Configure,
 
 	/// Run an agent or start an interactive session.
 	/// TAG can be a registry agent (e.g. `developer:general`) or a role name (e.g. `assistant`).
@@ -152,8 +156,31 @@ async fn main() -> Result<(), anyhow::Error> {
 	let command = args
 		.command
 		.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
-	if !config_overrides.is_empty() && matches!(&command, Commands::Config(_)) {
-		anyhow::bail!("--config overrides cannot be used with the config subcommand");
+	if !config_overrides.is_empty() && matches!(&command, Commands::Config(_) | Commands::Configure) {
+		anyhow::bail!("--config overrides cannot be used with the config or configure subcommands");
+	}
+
+	// Prompt before load_with_overrides reaches the missing-config save paths in loading.rs.
+	// Configure also bypasses migrations so only the chosen model names are edited.
+	let interactive_run = matches!(&command, Commands::Run(_))
+		&& should_configure_first_run(
+			&command,
+			true,
+			std::io::stdin().is_terminal(),
+			std::io::stdout().is_terminal(),
+		);
+	if matches!(&command, Commands::Configure) || interactive_run {
+		let config_path = match std::env::var("OCTOMIND_CONFIG_PATH") {
+			Ok(path) => std::path::PathBuf::from(path),
+			Err(std::env::VarError::NotPresent) => octomind::directories::get_config_file_path()?,
+			Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("OCTOMIND_CONFIG_PATH must be valid Unicode"),
+		};
+		if matches!(&command, Commands::Configure) {
+			return commands::configure::execute(&config_path, false).await;
+		}
+		if !config_path.try_exists()? {
+			commands::configure::execute(&config_path, true).await?;
+		}
 	}
 
 	// Set process/terminal title for long-running subcommands so they're
@@ -225,11 +252,19 @@ async fn main() -> Result<(), anyhow::Error> {
 	result
 }
 
+fn should_configure_first_run(command: &Commands, config_missing: bool, stdin_tty: bool, stdout_tty: bool) -> bool {
+	config_missing
+		&& stdin_tty
+		&& stdout_tty
+		&& matches!(command, Commands::Run(args) if args.format.is_none() && !args.daemon)
+}
+
 /// Stable slug for the subcommand that ran. Derived from the enum rather than
 /// argv so a shell alias or abbreviation still reports the same name.
 fn command_name(command: &Commands) -> &'static str {
 	match command {
 		Commands::Config(_) => "config",
+		Commands::Configure => "configure",
 		Commands::Run(_) => "run",
 		Commands::Login(_) => "login",
 		Commands::Server(_) => "server",
@@ -294,6 +329,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 
 	match command {
 		Commands::Config(config_args) => commands::config::execute(&config_args, config)?,
+		Commands::Configure => unreachable!("configure runs before configuration loading"),
 		Commands::Run(run_args) => commands::run::execute(&run_args, &config).await?,
 		Commands::Login(login_args) => commands::login::execute(&login_args).await?,
 		Commands::Server(server_args) => commands::server::execute(&server_args, &config).await?,

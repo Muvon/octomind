@@ -1575,6 +1575,95 @@ async fn cancel_during_a_prompt_returns_a_cancelled_stop_reason() {
 	drop(environment);
 }
 
+/// A cancel that lands while the idle compaction is folding ends the turn as
+/// cancelled, like a cancel during the main call, and the new message is never
+/// appended. The appended-message check tells the two apart: a cancel during
+/// the main call happens after the append.
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn cancel_during_idle_compaction_returns_a_cancelled_stop_reason() {
+	const SESSION_MODEL: &str = "ollama:kimi-k3";
+	const CHEAP_FOLDER_MODEL: &str = "ollama:mimo-v2.6-flash";
+	const CACHE_LIFETIME_SECS: u64 = 300;
+	const NEW_REQUEST: &str = "now please ship the release";
+
+	let _data = TestDataDirGuard::new();
+	let environment = StubEnv {
+		_guard: ENV_LOCK.lock().await,
+	};
+	let url = spawn_slow_stub(400).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	// Long enough to fold, priced on both sides, cache expired ten lifetimes ago.
+	let filler = "frobnicator widget compile status report. ".repeat(100);
+	let mut messages = vec![msg("system", "You are a helpful assistant.")];
+	for turn in 0..4 {
+		messages.push(msg("user", &format!("request {turn}: {filler}")));
+		messages.push(msg("assistant", &format!("answer {turn}: {filler}")));
+	}
+	messages.push(msg("user", "wrap up"));
+	messages.push(msg("assistant", "wrapped up"));
+	let mut session = ChatSession::for_tests(messages);
+	session.model = SESSION_MODEL.to_string();
+	session.session.info.model = SESSION_MODEL.to_string();
+	session.cached_tools = Some(Vec::new());
+	session.session.info.total_api_calls = 50;
+	session.session.info.api_calls_at_turn_start = 50;
+	session.session.info.last_cache_touch = Some(crate::utils::time::now_secs() - 10 * CACHE_LIFETIME_SECS);
+	session.session.info.cache_lifetime_secs = Some(CACHE_LIFETIME_SECS);
+	session.session.info.cache_model = Some(SESSION_MODEL.to_string());
+	let transcript_len = session.session.messages.len();
+
+	let mut config = acp_fake_config();
+	config.model = SESSION_MODEL.to_string();
+	config.compression.idle = true;
+	config.compression.model.model = Some(CHEAP_FOLDER_MODEL.to_string());
+	let live = session.get_full_context_tokens(&config).await;
+	config.compression.threshold = (live * 2 / 3).max(1);
+	let agent = Rc::new(OctomindAgent::new(config, "assistant".to_string(), Default::default()));
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "idle-cancel", session).await;
+			let prompt_agent = agent.clone();
+			let task = tokio::task::spawn_local(async move {
+				prompt_agent
+					.prompt(PromptRequest::new("idle-cancel", vec![NEW_REQUEST.into()]))
+					.await
+			});
+			// Let the prompt reach the in-flight fold call.
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			agent
+				.cancel(CancelNotification::new("idle-cancel".to_string()))
+				.await
+				.expect("cancel acknowledged");
+
+			let response = tokio::time::timeout(Duration::from_secs(15), task)
+				.await
+				.expect("prompt must finish after cancel")
+				.expect("prompt task must not panic")
+				.expect("a cancelled idle compaction is not an error");
+			assert!(
+				matches!(response.stop_reason, StopReason::Cancelled),
+				"got: {:?}",
+				response.stop_reason
+			);
+
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions.get("idle-cancel").expect("session returned to the map");
+			assert_eq!(session.session.messages.len(), transcript_len, "transcript untouched");
+			assert!(
+				!session.session.messages.iter().any(|m| m.content == NEW_REQUEST),
+				"the cancel landed before the append, so this was the idle fold"
+			);
+			drop(sessions);
+			context::cleanup_session(&"idle-cancel".to_string());
+		})
+		.await;
+	drop(environment);
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
 async fn prompt_api_failure_maps_to_an_internal_error() {

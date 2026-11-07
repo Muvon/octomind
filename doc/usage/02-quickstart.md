@@ -1,31 +1,41 @@
 # Quickstart: Getting Started with the Octomind CLI Agent
 
-Start an interactive Octomind session through OctoHub, then learn the commands you need day-to-day.
+Install Octomind, choose where its models come from, and start an interactive session. Then learn the commands you need
+day-to-day.
 
-## Start in Three Commands
+## Start in Two Commands
 
 ```bash
 # Install
 curl -fsSL https://octomind.run/install.sh | bash
 
-# Authorize the CLI in your browser; no provider API keys are needed
-octomind login
-
 # Start an interactive session in the current directory
 octomind
 ```
 
-The first command installs the binary. Login stores an OctoHub gateway credential in Octomind's user configuration
-directory. The final command is equivalent to `octomind run`: it creates the default configuration if none exists,
-resolves the default `assistant:concierge` tap agent, and uses the shipped `octohub:auto` model profile.
+The first command installs the binary. The second is equivalent to `octomind run`. On the first interactive launch,
+before any config exists, it asks where to get models:
+
+| Choice | What happens |
+|--------|--------------|
+| Octomind hub (recommended) | Runs the browser sign-in from `octomind login` and keeps `octohub:auto` for all three models. |
+| A provider from the list | Asks for any missing key with hidden input, saves it to the user `.env`, and lets you pick models. |
+| Skip for now | Writes the default config unchanged (`octohub:auto`). |
+
+Providers whose key is already in your environment are listed first. After you pick the main model, setup asks whether
+the supervisor and compression should use it too; answer `n` to choose a cheaper model for each. Esc cancels without
+writing a config, so the next launch asks again.
+
+Startup then resolves the default `assistant:concierge` tap agent. Run `octomind configure` to change providers or models
+later. Non-interactive runs (piped input, `--format`, `--daemon`) create the default config without prompting.
 
 The first use of a tap agent fetches its manifest and dependencies, so it requires network access. Once the prompt
 appears, ask Octomind to inspect, explain, change, or verify the project in the directory where you started it.
 
-## Bring Your Own Key Instead
+## Bring Your Own Key
 
-Login is optional. Follow [AI Providers](04-providers.md#bring-your-own-keys) to configure a direct provider, including
-the separate supervisor and compression profiles.
+The hub is optional. Run `octomind configure`, pick your provider, enter the key, and pick the models. See
+[AI Providers](04-providers.md#bring-your-own-keys) to set the key and models by hand.
 
 ## Try a First Task
 

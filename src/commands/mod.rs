@@ -17,6 +17,7 @@ pub mod common;
 pub mod compact;
 pub mod complete;
 pub mod config;
+pub mod configure;
 pub mod distill;
 pub mod evaluate;
 pub mod login;

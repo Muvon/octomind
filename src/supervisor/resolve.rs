@@ -115,12 +115,15 @@ request, and "yes, implement it" or "why are you waiting instead of doing it?" c
 continuation. Judge the requested deliverable in context, not the presence of a question
 mark. When intent remains uncertain, do not invent an implementation requirement.
 
-Field "conditions": decompose the request into the concrete observations that would
-demonstrate it is fulfilled — one short line per explicitly stated requirement, example,
-and prohibition. NEVER omit a stated requirement: an incomplete checklist makes incomplete
-work look complete, and the requirements late in a request are exactly the ones work tends
-to miss. Merge only true restatements; an empty list when the turn is a question, a
-conversation, or a trivial ask. Each condition must be:
+Field "conditions": list the request's stated requirements as the observations that would
+demonstrate it is fulfilled, one line per requirement unit. When the request numbers or
+bullets its requirements, each item is exactly one line, however many sentences or nested
+bullets it has; in unnumbered prose, each paragraph is one line. Keep every clause of the
+unit in its line: its cases, examples, names, error kinds, exceptions, and prohibitions.
+Never split a unit into several lines, and merge only true restatements. NEVER omit or
+shorten a stated requirement: an incomplete checklist makes incomplete work look complete,
+and the requirements late in a request are exactly the ones work tends to miss. An empty list
+when the turn is a question, a conversation, or a trivial ask. Each condition must be:
 - stated in the request's own terms (its nouns, names, examples), never in terms of any
   particular way of doing the work;
 - checkable against a log of performed actions and observed outputs ("X was produced and
@@ -630,11 +633,9 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 				.into_iter()
 				.map(|c| c.trim().to_string())
 				.filter(|c| !c.is_empty())
-				// Generous runaway bound only — truncation here silently drops the
-				// tail requirements, which are exactly the ones work tends to miss
-				// (proven: a 7-cap cut a request's trusted-output exemption and the
-				// wrong work matched the remaining checklist perfectly).
-				.take(24)
+				// No count cap: truncation silently drops the tail requirements, which
+				// are exactly the ones work tends to miss (proven: a 24-cap cut a
+				// request's hydration paragraph and the run failed exactly those tests).
 				.collect()
 		},
 		operational_constraints: parsed

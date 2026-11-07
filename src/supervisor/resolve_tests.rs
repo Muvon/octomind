@@ -134,7 +134,7 @@ fn capture_requires_a_real_user_turn() {
 }
 
 #[test]
-fn classifier_trims_filters_and_caps_conditions() {
+fn classifier_trims_filters_and_keeps_every_condition() {
 	let parsed = parse_classifier(r#"{"scope":"self_contained","conditions":["  run tests  ","","   ","build"]}"#);
 	assert_eq!(parsed.conditions, vec!["run tests", "build"]);
 	let many: Vec<String> = (0..30).map(|i| format!("c{i}")).collect();
@@ -142,9 +142,7 @@ fn classifier_trims_filters_and_caps_conditions() {
 		r#"{{"scope":"self_contained","conditions":{}}}"#,
 		serde_json::to_string(&many).expect("serializes")
 	);
-	let capped = parse_classifier(&wire);
-	assert_eq!(capped.conditions.len(), 24);
-	assert_eq!(capped.conditions[0], "c0");
+	assert_eq!(parse_classifier(&wire).conditions, many);
 }
 
 #[test]

@@ -809,16 +809,13 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 	assert!(!compressed && session.fold_job.is_some(), "the trigger call spawns");
 
 	// A fold that never finishes: turn end leaves it parked and returns at once.
-	let FoldJob { handle, ctx, cancel } = session.fold_job.take().expect("parked");
-	handle.abort();
+	let mut job = session.fold_job.take().expect("parked");
+	job.handle.abort();
 	let never = tokio::spawn(async {
 		std::future::pending::<Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>>().await
 	});
-	session.fold_job = Some(FoldJob {
-		handle: never,
-		ctx,
-		cancel,
-	});
+	job.handle = never;
+	session.fold_job = Some(job);
 	let settled = tokio::time::timeout(
 		std::time::Duration::from_secs(2),
 		settle_pending_fold(&mut session, &config),
@@ -903,85 +900,41 @@ async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-/// A one-shot run ending with a fold in flight waits for it — bounded by the
-/// fold request's own budget — and applies it; a fold that never returns is
-/// abandoned at the budget with the failure cooldown, never held past it.
+/// A completed fold still applies at one-shot exit without another provider call.
 #[serial_test::serial]
 #[tokio::test]
-async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
+async fn verify_exit_applies_an_already_finished_fold() {
 	let _data = crate::session::chat::test_support::DataDirGuard::new();
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![final_response(&xml_summary_body())]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
 	config.compression.model.model = Some("ollama:fake-model".to_string());
-	config.compression.model.request_timeout_seconds = Some(1);
-	config.compression.model.max_retries = Some(0);
 
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
-	let before = session.session.messages.len();
-
-	// Nothing parked: a no-op.
-	assert!(!collect_fold_before_exit(&mut session, &config).await.expect("no fold"));
-
-	// A fold that never finishes is abandoned once the request budget is spent.
+	assert!(
+		!detach_fold_before_exit(&mut session, &config, detached::spawn_compact_process)
+			.await
+			.expect("no fold")
+	);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
 		.await
 		.expect("compression pipeline");
 	assert!(!compressed && session.fold_job.is_some(), "spawned");
-	let FoldJob { handle, ctx, cancel } = session.fold_job.take().expect("parked");
-	handle.abort();
-	let never = tokio::spawn(async {
-		std::future::pending::<Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>>().await
-	});
-	session.fold_job = Some(FoldJob {
-		handle: never,
-		ctx,
-		cancel,
-	});
-	let started = std::time::Instant::now();
-	let applied = tokio::time::timeout(
-		std::time::Duration::from_secs(5),
-		collect_fold_before_exit(&mut session, &config),
-	)
-	.await
-	.expect("the exit wait is bounded by the request budget")
-	.expect("collect");
-	assert!(!applied, "a hung fold is abandoned");
+	wait_until_finished(&session).await;
 	assert!(
-		started.elapsed() >= std::time::Duration::from_secs(1),
-		"the wait honours the request budget before giving up"
-	);
-	assert!(session.fold_job.is_none(), "abandoned, not re-parked");
-	assert!(
-		session.fold_cooldown_until_call > session.session.info.total_api_calls,
-		"abandoning starts the failure cooldown"
-	);
-	assert_eq!(session.session.messages.len(), before, "transcript untouched");
-
-	// A fold that does finish is applied before exit.
-	session.fold_cooldown_until_call = 0;
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-		.await
-		.expect("compression pipeline");
-	assert!(!compressed && session.fold_job.is_some(), "spawned again");
-	assert!(
-		collect_fold_before_exit(&mut session, &config).await.expect("collect"),
-		"a finishing fold is applied before exit"
+		detach_fold_before_exit(&mut session, &config, detached::spawn_compact_process)
+			.await
+			.expect("collect")
 	);
 	assert!(session.fold_job.is_none(), "collected");
-	assert!(
-		session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
-		"the summary is what gets persisted"
-	);
-
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")));
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
@@ -1242,6 +1195,215 @@ async fn verify_veto_is_not_offered_without_a_plan_step_to_check_it_against() {
 			.iter()
 			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
 		"the fold must be applied"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+// ===== Idle compaction: `compact_if_cache_expired` through the real pipeline =====
+//
+// Both models must resolve to real prices (`FoldEconomics::priced` refuses to
+// fold otherwise), and the folder call must still reach the stub, which only
+// `OLLAMA_API_URL` can serve. So every id here is an ollama model that the
+// ollama pricing table or the reference table prices.
+
+/// Expensive session next to a cheap folder: the fold pays.
+const IDLE_SESSION_MODEL: &str = "ollama:kimi-k3";
+const IDLE_CHEAP_FOLDER_MODEL: &str = "ollama:mimo-v2.6-flash";
+const IDLE_NOW: u64 = 10_000;
+const IDLE_CACHE_LIFETIME_SECS: u64 = 300;
+const IDLE_NEW_REQUEST: &str = "now please ship the release";
+
+/// A long, compressible history that ends on a short assistant reply, with the
+/// session's cache expired long before `IDLE_NOW`. The threshold sits under the
+/// live context so a fold depth is feasible, and the turn counters make the
+/// next turn expect a single call, so the fold has to pay on the write alone.
+async fn idle_expired_session(session_model: &str, config: &mut crate::config::Config) -> ChatSession {
+	let filler = "frobnicator widget compile status report. ".repeat(100);
+	let mut messages = vec![msg("system", "You are a helpful assistant.")];
+	for turn in 0..4 {
+		messages.push(msg("user", &format!("request {turn}: {filler}")));
+		messages.push(msg("assistant", &format!("answer {turn}: {filler}")));
+	}
+	messages.push(msg("user", "wrap up"));
+	messages.push(msg("assistant", "wrapped up"));
+
+	let mut session = ChatSession::for_tests(messages);
+	session.model = session_model.to_string();
+	session.session.info.model = session_model.to_string();
+	session.cached_tools = Some(Vec::new());
+	session.session.info.total_api_calls = 50;
+	session.session.info.api_calls_at_turn_start = 50;
+	session.session.info.last_cache_touch = Some(IDLE_NOW - 10 * IDLE_CACHE_LIFETIME_SECS);
+	session.session.info.cache_lifetime_secs = Some(IDLE_CACHE_LIFETIME_SECS);
+	session.session.info.cache_model = Some(session_model.to_string());
+
+	let live = session.get_full_context_tokens(config).await;
+	config.compression.threshold = (live * 2 / 3).max(1);
+	session
+}
+
+fn idle_config(folder_model: &str) -> crate::config::Config {
+	let mut config = fake_provider_config();
+	config.compression.idle = true;
+	config.compression.model.model = Some(folder_model.to_string());
+	config
+}
+
+fn transcript(session: &ChatSession) -> Vec<String> {
+	session.session.messages.iter().map(|m| m.content.clone()).collect()
+}
+
+/// The summary must be in the transcript, and a user message appended the way
+/// the call sites do must land after it, outside it, as the newest message.
+fn assert_new_message_follows_the_summary(session: &mut ChatSession) {
+	let summary_idx = session
+		.session
+		.messages
+		.iter()
+		.position(|m| m.content.contains("COMPRESS-E2E-CONTEXT"))
+		.expect("the compression summary must be in the transcript");
+	assert!(
+		!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("request 0:")),
+		"the folded history must be gone"
+	);
+
+	session.add_user_message(IDLE_NEW_REQUEST).expect("append user message");
+
+	let new_idx = session
+		.session
+		.messages
+		.iter()
+		.position(|m| m.content == IDLE_NEW_REQUEST)
+		.expect("the new user message must be in the transcript");
+	assert!(new_idx > summary_idx, "the new message must come after the summary");
+	assert_eq!(
+		new_idx,
+		session.session.messages.len() - 1,
+		"the new message must be the newest"
+	);
+	assert_eq!(session.session.messages[new_idx].role, "user");
+	assert!(
+		!session.session.messages[summary_idx].content.contains(IDLE_NEW_REQUEST),
+		"the new message must not be folded into the summary"
+	);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn idle_compaction_folds_before_the_user_message_when_the_cache_expired() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = idle_config(IDLE_CHEAP_FOLDER_MODEL);
+	let mut session = idle_expired_session(IDLE_SESSION_MODEL, &mut config).await;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let folded = compact_if_cache_expired(&mut session, &config, IDLE_NOW, rx)
+		.await
+		.expect("idle compaction");
+	assert!(folded, "an expired cache with a paying fold must compact");
+	assert_new_message_follows_the_summary(&mut session);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn idle_compaction_folds_when_the_cache_belongs_to_another_model() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = idle_config(IDLE_CHEAP_FOLDER_MODEL);
+	let mut session = idle_expired_session(IDLE_SESSION_MODEL, &mut config).await;
+	// Touched one second ago, so the lifetime alone would call it warm; the
+	// touch was under the model the user switched away from.
+	session.session.info.last_cache_touch = Some(IDLE_NOW - 1);
+	session.session.info.cache_model = Some(IDLE_CHEAP_FOLDER_MODEL.to_string());
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let folded = compact_if_cache_expired(&mut session, &config, IDLE_NOW, rx)
+		.await
+		.expect("idle compaction");
+	assert!(folded, "the new model's cache is cold, so the fold must run");
+	assert_new_message_follows_the_summary(&mut session);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn idle_compaction_surfaces_cancellation_and_leaves_the_transcript() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let _guard = ENV_LOCK.lock().await;
+	// Cancellation is checked before the folder call: park the URL harmlessly.
+	std::env::set_var("OLLAMA_API_URL", "http://127.0.0.1:1/unreachable");
+
+	let mut config = idle_config(IDLE_CHEAP_FOLDER_MODEL);
+	let mut session = idle_expired_session(IDLE_SESSION_MODEL, &mut config).await;
+	let before = transcript(&session);
+	let (tx, rx) = tokio::sync::watch::channel(false);
+	tx.send(true).expect("signal cancellation");
+
+	let error = compact_if_cache_expired(&mut session, &config, IDLE_NOW, rx)
+		.await
+		.expect_err("a cancelled idle compaction must stop the turn");
+	assert!(
+		crate::session::cancellation::is_cancelled(&error),
+		"expected cancellation, got: {error}"
+	);
+	assert_eq!(
+		transcript(&session),
+		before,
+		"a cancelled compaction must not touch messages"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn idle_compaction_skips_a_fold_that_costs_more_than_it_saves() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	// Cheap session, folder priced at 20x its input rate: the folder call costs
+	// more than the freed prefix can win back.
+	let mut config = idle_config(IDLE_SESSION_MODEL);
+	let mut session = idle_expired_session(IDLE_CHEAP_FOLDER_MODEL, &mut config).await;
+	let before = transcript(&session);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let folded = compact_if_cache_expired(&mut session, &config, IDLE_NOW, rx)
+		.await
+		.expect("idle compaction");
+	assert!(!folded, "a fold that does not pay must be skipped");
+	assert_eq!(transcript(&session), before, "a skipped fold must not touch messages");
+	assert!(
+		requests.lock().expect("captured requests").is_empty(),
+		"no folder call may be paid for"
 	);
 
 	std::env::remove_var("OLLAMA_API_URL");

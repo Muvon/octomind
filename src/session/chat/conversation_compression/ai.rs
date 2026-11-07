@@ -197,6 +197,7 @@ pub(super) async fn run_decision_call(
 /// The prompt/schema bundle a decision call needs — built in the foreground
 /// (it reads the live session), then runnable anywhere, including a spawned
 /// background task that holds no session reference.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedDecision {
 	pub system_content: String,
 	pub user_content: String,

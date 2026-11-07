@@ -55,7 +55,8 @@ use serde::{Deserialize, Serialize};
 ///   fake-precise number.
 ///
 /// A refusal is therefore a claim the runtime checks, never an order it obeys.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeferReason {
 	/// No deferral recorded, or a token the runtime does not recognise.
 	#[default]
@@ -127,7 +128,7 @@ where
 /// in practice every field is always present, but we never want a stray
 /// deserialization error to abort compression. A near-empty summary is caught
 /// downstream by the substantive-length check in `is_summary_substantive`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CompressionSummary {
 	pub should_compress: bool,
@@ -164,7 +165,7 @@ pub struct FoldedUnit {
 	pub refs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct KeyEntities {
 	pub files: Vec<String>,
@@ -172,7 +173,7 @@ pub struct KeyEntities {
 	pub decisions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FileContextEntry {
 	pub filepath: String,
 	pub start_line: usize,

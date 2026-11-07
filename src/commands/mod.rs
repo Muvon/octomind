@@ -14,6 +14,7 @@
 
 pub mod acp;
 pub mod common;
+pub mod compact;
 pub mod complete;
 pub mod config;
 pub mod distill;
@@ -30,6 +31,7 @@ pub mod vars;
 pub mod workflow;
 
 pub use acp::AcpArgs;
+pub use compact::CompactArgs;
 pub use complete::CompleteArgs;
 pub use config::ConfigArgs;
 pub use distill::DistillArgs;

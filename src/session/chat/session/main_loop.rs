@@ -2014,18 +2014,17 @@ pub async fn run_interactive_session_with_input(
 			);
 		}
 
-		// A background fold still in flight when a one-shot run ends is a paid
-		// summary the next `-r` turn (a new process) could never collect: wait for
-		// it, bounded, so the persisted session is the compacted one. Daemons keep
-		// running and collect it at the next round like the interactive loop does.
+		// A detached child finishes one-shot folds for the next resume. Daemons
+		// retain their job and collect it at the next round boundary.
 		if !daemon {
-			if let Err(error) = crate::session::chat::conversation_compression::collect_fold_before_exit(
+			if let Err(error) = crate::session::chat::conversation_compression::detach_fold_before_exit(
 				&mut chat_session,
 				&current_config,
+				crate::session::chat::conversation_compression::detached::spawn_compact_process,
 			)
 			.await
 			{
-				crate::log_error!("Collecting the background fold before exit failed: {:#}", error);
+				crate::log_error!("Detaching the background fold before exit failed: {:#}", error);
 			}
 		}
 

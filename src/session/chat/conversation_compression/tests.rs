@@ -2774,11 +2774,19 @@ fn fold_message(role: &str, content: &str) -> Message {
 	}
 }
 
-fn fold_config() -> crate::config::Config {
+pub(super) fn fold_config() -> crate::config::Config {
 	crate::session::chat::test_support::fake_provider_config()
 }
 
-fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldContext {
+pub(super) fn prepared_decision() -> super::ai::PreparedDecision {
+	super::ai::PreparedDecision {
+		system_content: "summarize the transcript".to_string(),
+		user_content: "user: write the briefing\nassistant: drafted two sections".to_string(),
+		schema: Some(super::schema::build_compression_schema(false, true)),
+	}
+}
+
+pub(super) fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldContext {
 	super::FoldContext {
 		start_idx,
 		end_idx,
@@ -2796,6 +2804,7 @@ fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldCo
 		pact: None,
 		preserve_recent_user_bridge: false,
 		started: std::time::Instant::now(),
+		detached: false,
 		step: None,
 		no_veto: false,
 	}
@@ -2981,6 +2990,7 @@ async fn collect_fold_job_join_error_discards_and_sets_cooldown() {
 		&config,
 		super::FoldJob {
 			cancel: tokio::sync::watch::channel(false).0,
+			prepared: prepared_decision(),
 			handle,
 			ctx: fold_ctx(0, 2, 0),
 		},
@@ -3009,6 +3019,7 @@ async fn collect_fold_job_cancelled_fold_sets_cooldown_without_applying() {
 		&config,
 		super::FoldJob {
 			cancel: tokio::sync::watch::channel(false).0,
+			prepared: prepared_decision(),
 			handle,
 			ctx: fold_ctx(0, 2, 0),
 		},
@@ -3044,6 +3055,7 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 		&config,
 		super::FoldJob {
 			cancel: tokio::sync::watch::channel(false).0,
+			prepared: prepared_decision(),
 			handle,
 			ctx: fold_ctx(0, 2, 42),
 		},
@@ -3060,7 +3072,9 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 /// A governance-pinned background fold over `write the briefing`, parked the
 /// way production parks it: fold point at the transcript end, the request as
 /// its last user message, the recent-user bridge preserved.
-async fn parked_briefing_fold(session_name: &str) -> (crate::session::chat::session::ChatSession, super::FoldContext) {
+pub(super) async fn parked_briefing_fold(
+	session_name: &str,
+) -> (crate::session::chat::session::ChatSession, super::FoldContext) {
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "system prompt"),
 		fold_message("user", "write the briefing"),
@@ -3099,6 +3113,7 @@ fn briefing_fold_job(ctx: super::FoldContext) -> super::FoldJob {
 	};
 	super::FoldJob {
 		cancel: tokio::sync::watch::channel(false).0,
+		prepared: prepared_decision(),
 		handle: tokio::spawn(async move { Ok((summary, None)) }),
 		ctx,
 	}
@@ -3578,6 +3593,7 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 	let ctx = fold_ctx(0, 3, super::fold_fingerprint(&session.session.messages, 0, 3));
 	let job = super::FoldJob {
 		cancel: tokio::sync::watch::channel(false).0,
+		prepared: prepared_decision(),
 		handle: tokio::spawn(async { Err(anyhow::anyhow!("scripted compression transport failure")) }),
 		ctx,
 	};

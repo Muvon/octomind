@@ -45,6 +45,8 @@ pub enum CallKind {
 	Retention,
 	Evolution,
 	Hindsight,
+	/// Detached conversation compression.
+	Compression,
 	/// Model-written observation on a loop or recovery alarm.
 	Advise,
 }
@@ -168,7 +170,7 @@ pub fn record_call(
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Authorize => s.authorize_calls += 1,
 			CallKind::Advise => s.advise_calls += 1,
-			CallKind::Retention | CallKind::Evolution | CallKind::Hindsight => {}
+			CallKind::Retention | CallKind::Evolution | CallKind::Hindsight | CallKind::Compression => {}
 			CallKind::Evaluate => {
 				s.evaluate_calls += 1;
 				s.evaluate_input_tokens += input_tokens;

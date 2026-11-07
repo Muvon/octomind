@@ -58,7 +58,7 @@ pub(crate) struct ArchiveBundle {
 	pub entries: Vec<ArchiveBlockEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ArchivedBlockRef {
 	pub provenance: super::attention::Provenance,
 	pub archive_path: PathBuf,

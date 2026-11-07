@@ -1985,7 +1985,7 @@ fn prompt_view_renders_descriptor_lines_and_grounded_hints() {
 	archive_packet.descriptor = "prior observation".to_string();
 	let mut pact = pact_with(archive_packet);
 	pact.grounded_hints = vec![GroundedHint {
-		kind: "focus",
+		kind: "focus".to_string(),
 		refs: vec!["b:x".to_string()],
 	}];
 	let view = pact.prompt_view();

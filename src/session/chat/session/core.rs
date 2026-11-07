@@ -680,7 +680,9 @@ impl ChatSession {
 						was_resumed: true,          // This session was resumed from file
 						initial_status_shown: true, // Don't show status for resumed sessions
 						cached_tools: None,         // Initialize tool cache (populated on first use)
-						fold_job: None,
+						fold_job: crate::session::chat::conversation_compression::detached::restore_fold(
+							&session_file,
+						)?,
 						prompt_calibration: None,
 						wait_history: Default::default(),
 						fold_cooldown_until_call: 0,

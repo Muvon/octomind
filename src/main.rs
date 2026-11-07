@@ -105,6 +105,10 @@ enum Commands {
 	/// session so learning never blocks the exit; not meant to be run by hand.
 	#[command(hide = true)]
 	Distill(commands::DistillArgs),
+
+	/// Spawned detached by an exiting one-shot run; not meant to be run by hand.
+	#[command(hide = true)]
+	Compact(commands::CompactArgs),
 }
 
 #[tokio::main]
@@ -189,10 +193,10 @@ async fn main() -> Result<(), anyhow::Error> {
 	// `complete` is excluded: the shell runs it on every TAB press, which would
 	// both flood the ingest endpoint and risk printing the first-run notice into
 	// the middle of a completion. Everything downstream no-ops when uninitialised.
-	// `distill` is excluded too: it is spawned by an exiting `run`, so recording
-	// it would double-count that one session.
+	// `distill` and `compact` belong to the exiting `run`; recording them would
+	// double-count that session.
 	let slug = command_name(&command);
-	if slug != "complete" && slug != "distill" {
+	if slug != "complete" && slug != "distill" && slug != "compact" {
 		octomind::telemetry::init(&config);
 		octomind::telemetry::record_start(slug, used_flags(slug));
 	}
@@ -239,6 +243,7 @@ fn command_name(command: &Commands) -> &'static str {
 		Commands::Completion { .. } => "completion",
 		Commands::Complete(_) => "complete",
 		Commands::Distill(_) => "distill",
+		Commands::Compact(_) => "compact",
 		Commands::HindsightWorker { .. } => "hindsight-worker",
 	}
 }
@@ -310,6 +315,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 		}
 		Commands::Complete(complete_args) => commands::complete::execute(&complete_args, &config)?,
 		Commands::Distill(distill_args) => commands::distill::execute(&distill_args, &config).await?,
+		Commands::Compact(compact_args) => commands::compact::execute(&compact_args, &config).await?,
 		Commands::HindsightWorker { model } => octomind::supervisor::hindsight::shared::serve(&model).await?,
 	}
 

@@ -48,6 +48,7 @@ pub use commands::{
 	Reach, BUILTIN_COMMANDS, CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND,
 	QUIT_COMMAND, RUN_COMMAND,
 };
+pub use conversation_compression::detached::run_detached_fold;
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;
 pub use formatting::format_duration;

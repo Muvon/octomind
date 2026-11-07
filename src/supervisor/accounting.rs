@@ -226,7 +226,7 @@ pub async fn run_background<T>(
 
 /// Called at the shared provider-response boundaries, after both aggregate and
 /// seam usage are recorded, before cancellation can interrupt another call.
-pub(super) fn checkpoint() -> anyhow::Result<()> {
+pub(crate) fn checkpoint() -> anyhow::Result<()> {
 	match DETACHED_USAGE.try_with(Arc::clone) {
 		Ok(bank) => bank.lock().expect("detached supervisor bank poisoned").publish(),
 		Err(_) => Ok(()),

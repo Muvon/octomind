@@ -101,13 +101,13 @@ pub(crate) struct EvidencePacket {
 	pub descriptor: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PinnedItem {
 	pub text: String,
 	pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PinnedState {
 	pub task: PinnedItem,
 	pub constraints: Vec<PinnedItem>,
@@ -115,13 +115,13 @@ pub(crate) struct PinnedState {
 	pub governance_hash: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroundedHint {
-	kind: &'static str,
+	kind: String,
 	refs: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PactContext {
 	enabled: bool,
 	pub packets: Vec<EvidencePacket>,
@@ -141,7 +141,7 @@ pub(crate) struct PactContext {
 	metrics: PactMetrics,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct PactMetrics {
 	pub controller_and_model_latency_ms: u64,
 	pub compression_api_time_ms: u64,
@@ -623,7 +623,10 @@ fn ground_handoff(
 			.map(|(_, id, _)| id.clone())
 			.collect();
 		if !refs.is_empty() {
-			grounded.push(GroundedHint { kind, refs });
+			grounded.push(GroundedHint {
+				kind: kind.to_string(),
+				refs,
+			});
 		}
 	}
 	grounded

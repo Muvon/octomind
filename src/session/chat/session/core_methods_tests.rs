@@ -405,7 +405,8 @@ fn test_insert_compressed_knowledge_evicts_oldest_and_marks_preserved_tail() {
 #[test]
 fn test_insert_compressed_knowledge_skips_markers_for_non_caching_model() {
 	let mut session = ChatSession::for_tests(vec![message("system", "anchor"), message("user", "q")]);
-	session.session.info.model = "ollama:fake-model".to_string();
+	// Cerebras reports no prompt caching (`supports_caching` is false).
+	session.session.info.model = "cerebras:fake-model".to_string();
 
 	session
 		.insert_compressed_knowledge(0, "summary".to_string())

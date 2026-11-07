@@ -73,6 +73,7 @@ impl Mechanic {
 			CallKind::Evolution => Self::Evolution,
 			CallKind::Hindsight => Self::Hindsight,
 			CallKind::Advise => Self::Advise,
+			CallKind::Compression => Self::Compression,
 			CallKind::Evaluate => return None,
 		})
 	}

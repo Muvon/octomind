@@ -15,6 +15,26 @@
 use super::*;
 
 #[test]
+fn compact_is_hidden_and_requires_fold_and_session_file() {
+	let app = CliArgs::command();
+	assert!(app.find_subcommand("compact").unwrap().is_hide_set());
+	assert!(CliArgs::try_parse_from(["octomind", "compact", "--fold", "request.fold.json"]).is_err());
+	assert!(CliArgs::try_parse_from(["octomind", "compact", "--session-file", "session.jsonl.zst"]).is_err());
+	let parsed = CliArgs::try_parse_from([
+		"octomind",
+		"compact",
+		"--fold",
+		"request.fold.json",
+		"--session-file",
+		"session.jsonl.zst",
+	])
+	.unwrap();
+	let command = parsed.command.unwrap();
+	assert_eq!(command_name(&command), "compact");
+	assert!(matches!(command, Commands::Compact(_)));
+}
+
+#[test]
 fn run_collects_repeated_config_overrides_in_order() {
 	let args = CliArgs::try_parse_from(["octomind", "run", "-c", "a=b", "-c", "c=d"]).expect("config overrides parse");
 	assert_eq!(args.config_overrides, ["a=b", "c=d"]);

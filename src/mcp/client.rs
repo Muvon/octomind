@@ -791,7 +791,9 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 
 	let auth_token = match http_auth_source(server) {
 		HttpAuthSource::StaticHeader => None,
-		HttpAuthSource::OAuthDiscovery => fetch_http_token(&url, &server_name).await,
+		// Without anyone to sign in, a tokenless connect would only end in a 401;
+		// stop here so the interactive session signs in when it connects.
+		HttpAuthSource::OAuthDiscovery => fetch_http_token(&url, &server_name).await?,
 	};
 
 	let make_transport = || {
@@ -855,24 +857,26 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 }
 
 /// Resolve the current OAuth access token for an HTTP server via MCP
-/// Authorization Discovery (RFC 9728). Returns None when the server needs no
-/// auth or no token is obtainable non-interactively.
-async fn fetch_http_token(url: &str, server_name: &str) -> Option<String> {
+/// Authorization Discovery (RFC 9728). `Ok(None)` when the server needs no
+/// auth or the sign-in did not produce a token; a [`oauth::SignInUnavailable`]
+/// error when only a person could sign in and nobody in this context can.
+async fn fetch_http_token(url: &str, server_name: &str) -> Result<Option<String>> {
 	match oauth::discover_oauth_from_mcp_server(url, server_name).await {
 		Ok(discovered) => match oauth::get_access_token(&discovered, server_name, false).await {
-			Ok(Some(token)) => Some(token),
+			Ok(Some(token)) => Ok(Some(token)),
 			Ok(None) => {
 				crate::log_error!("OAuth authentication was cancelled for server '{}'", server_name);
-				None
+				Ok(None)
 			}
+			Err(e) if oauth::is_sign_in_unavailable(&e) => Err(e),
 			Err(e) => {
 				crate::log_error!("Failed to get OAuth access token for server '{}': {}", server_name, e);
-				None
+				Ok(None)
 			}
 		},
 		Err(e) => {
 			crate::log_debug!("MCP Authorization discovery failed for server '{}': {}", server_name, e);
-			None
+			Ok(None)
 		}
 	}
 }
@@ -916,7 +920,14 @@ async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
 	let McpServerConfig::Http { url, .. } = server else {
 		return true;
 	};
-	let current = fetch_http_token(url, server.name()).await;
+	let current = match fetch_http_token(url, server.name()).await {
+		Ok(token) => token,
+		// No token can be had here, so the stored one cannot be confirmed current.
+		Err(e) => {
+			crate::log_debug!("OAuth token check for server '{}' skipped: {}", server.name(), e);
+			None
+		}
+	};
 	let stored = HTTP_AUTH_TOKENS
 		.read()
 		.unwrap()

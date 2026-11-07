@@ -186,6 +186,11 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 				crate::log_debug!("Server '{}' returned {} tools", server_id, functions.len());
 				Ok(functions)
 			}
+			Err(e) if crate::mcp::oauth::is_sign_in_unavailable(&e) => {
+				// Expected before the interactive session exists; it signs in when it connects.
+				crate::log_debug!("Server '{}' waits for an interactive OAuth sign-in: {}", server_id, e);
+				Ok(Vec::new())
+			}
 			Err(e) => {
 				// Server failed - log error and return empty
 				crate::log_error!(

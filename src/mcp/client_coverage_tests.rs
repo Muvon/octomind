@@ -536,6 +536,33 @@ async fn connect_http_uses_stored_oauth_token_as_bearer() {
 	let _ = crate::mcp::oauth::token_store::clear_token(&name, false, None, None, None).await;
 }
 
+/// Outside an interactive session nobody can sign in, so an OAuth server with
+/// no stored token fails with the typed `SignInUnavailable` before any tokenless
+/// connect, and the startup paths can stay quiet until the session signs in.
+#[serial]
+#[tokio::test]
+async fn connect_http_without_token_outside_session_reports_sign_in_unavailable() {
+	let name = unique_server("http-oauth-nosession");
+	let (url, mut child) = spawn_fake_http_server("http-oauth-nosession", "oauth").await;
+	let server = McpServerConfig::http(&name, &url, 15, vec![]);
+
+	let error = match tokio::time::timeout(WAIT, connect_http(&server))
+		.await
+		.expect("connect must not hang")
+	{
+		Ok(_service) => panic!("a tokenless OAuth server must not connect outside a session"),
+		Err(e) => e,
+	};
+	assert!(
+		crate::mcp::oauth::is_sign_in_unavailable(&error),
+		"unexpected error: {error:#}"
+	);
+	assert!(!is_connected(&name));
+
+	let _ = child.kill().await;
+	crate::mcp::oauth::discovery::clear_discovered_oauth_cache(&name);
+}
+
 /// with no stored token is also true (None == None); a static Authorization
 /// header short-circuits to current without any discovery.
 #[serial]

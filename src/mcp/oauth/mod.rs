@@ -177,16 +177,25 @@ pub async fn start_oauth_flow(config: &OAuthConfig, server_name: &str) -> Result
 	Ok(result)
 }
 
+/// No one in the calling session can complete a browser sign-in. Callers match
+/// it to wait for an interactive session instead of reporting a failure.
+#[derive(Debug, thiserror::Error)]
+#[error(
+	"MCP server '{server_name}' needs an OAuth sign-in, but nobody in this session can complete it — sign in once from an interactive octomind session"
+)]
+pub struct SignInUnavailable {
+	pub server_name: String,
+}
+
 /// A browser sign-in needs a person, so it goes to whoever answers the calling
 /// session's elicitations. With nobody there (piped runs, sessionless startup or
 /// health checks, clients without elicitation) it fails fast instead of opening
 /// a browser no one watches and blocking on the callback.
 fn sign_in_channel(server_name: &str) -> Result<SignInChannel, anyhow::Error> {
 	let nobody = || {
-		anyhow::anyhow!(
-			"MCP server '{}' needs an OAuth sign-in, but nobody in this session can complete it — sign in once from an interactive octomind session",
-			server_name
-		)
+		anyhow::Error::new(SignInUnavailable {
+			server_name: server_name.to_string(),
+		})
 	};
 	let session_id = match crate::session::context::current_session_id() {
 		Some(session_id) if !crate::agent::inputs::in_non_interactive_scope() => session_id,
@@ -197,6 +206,11 @@ fn sign_in_channel(server_name: &str) -> Result<SignInChannel, anyhow::Error> {
 		Some(crate::mcp::elicitation::Answerer::Client) => Ok(SignInChannel::Client { session_id }),
 		None => Err(nobody()),
 	}
+}
+
+/// True when `error` (or its cause chain) is a [`SignInUnavailable`].
+pub fn is_sign_in_unavailable(error: &anyhow::Error) -> bool {
+	error.chain().any(|cause| cause.is::<SignInUnavailable>())
 }
 
 /// Gets an access token for the given OAuth configuration and server name.

@@ -442,6 +442,11 @@ async fn perform_http_health_check(server: &McpServerConfig) -> Result<HttpHealt
 			crate::log_debug!("HTTP health check for '{}': ✅ Healthy (reconnected)", server.name());
 			Ok(HttpHealthResult::Healthy)
 		}
+		Err(e) if crate::mcp::oauth::is_sign_in_unavailable(&e) => {
+			// Reachable but not signed in yet; only an interactive session can fix that.
+			crate::log_debug!("HTTP health check for '{}': waiting for OAuth sign-in", server.name());
+			Ok(HttpHealthResult::Unreachable)
+		}
 		Err(e) => {
 			let msg = e.to_string();
 			// 401/403 means reachable but auth/config failed — don't treat as dead.

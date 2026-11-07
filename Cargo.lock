@@ -3136,9 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9bd838ffe57cbfae8b2c7f221944975d6dc2336e69603e0b8028eb159ac48aa"
+version = "0.51.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3230,6 +3228,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "url",

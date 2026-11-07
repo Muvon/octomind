@@ -54,11 +54,8 @@ overflow-checks = false # Disable overflow checks in release mode
 # `onnx` backs the internal embedding model (src/embeddings/mod.rs): the tap
 # publishes an int8 `onnx/` export that ORT runs ~2-4x faster than candle.
 # `huggingface` stays enabled so EMBED_BACKEND can fall back to safetensors.
-# NOTE: path dep until octolib 0.40.0 (`ReasoningEffort::None`,
-# `AiProvider::replays_thinking`) is published to crates.io; swap back to the
-# version line after release.
-# octolib = { path = "../octolib", default-features = false, features = ["llm", "websockets", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
-octolib = { version = "0.51.0", default-features = false, features = ["llm", "websockets", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
+# Return to a version dependency once octolib releases provider_setup_info.
+octolib = { path = "../octolib", default-features = false, features = ["llm", "websockets", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
 rmcp = { version = "3.8.0", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process
@@ -85,6 +82,7 @@ serde_ignored = "0.1"
 clap = { version = "4.6.7", features = ["derive"] }
 clap_complete = "4.6.11"
 toml = "1.1"
+toml_edit = "0.25.19"
 lazy_static = "1.5.1"
 fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }

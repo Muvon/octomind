@@ -17,6 +17,7 @@ use crossterm::{
 	event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
 	terminal,
 };
+use octolib::llm::providers::chatgpt;
 use octolib::llm::{ProviderFactory, ProviderSetupInfo};
 use octomind::account;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
@@ -60,11 +61,15 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 		 Octomind hub: one sign-in, `auto` picks a model for each job, billed from credits you buy.\n\
 		 Your own provider: use a key you already have.\n\
 		 {KEYS_HINT}\n\n\
-		 Type to filter, ↑/↓ to move, Enter to choose, Esc to cancel."
+		 Type to filter, ↑/↓ to move, Enter to choose, Esc to skip."
 	);
-	let index = pick_index(&title, &labels, 0)?.context("setup cancelled; run `octomind configure` to try again")?;
+	// Esc is the same as Skip: on first run the defaults still get written, so startup is never blocked.
+	let choice = match pick_index(&title, &labels, 0)? {
+		Some(index) => setup_choice(index, providers.len()),
+		None => SetupChoice::Skip,
+	};
 
-	let models = match setup_choice(index, providers.len()) {
+	let models = match choice {
 		SetupChoice::Hub => {
 			login::execute(&LoginArgs {
 				target: LoginTarget::Octomind,
@@ -130,7 +135,14 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	}
 
 	block_open("configure", None);
-	let kw = key_width(["main", "supervisor", "compression", "provider", "key present"]);
+	let kw = key_width([
+		"main",
+		"supervisor",
+		"compression",
+		"provider",
+		"key present",
+		"signed in",
+	]);
 	for (path, slot) in MODEL_SLOTS.iter().zip(SLOT_NAMES) {
 		let mut item = document.as_item();
 		for key in *path {
@@ -148,12 +160,17 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 			.into_iter()
 			.find(|info| info.name.eq_ignore_ascii_case(&provider_name))
 			.with_context(|| format!("unknown provider: {provider_name}"))?;
-		let has_key = match info.api_key_env {
-			Some(name) => env_present(name)?,
-			None => false,
-		};
 		block_row("provider", &provider_name, kw);
-		block_row("key present", if has_key { "yes" } else { "no" }, kw);
+		match info.api_key_env {
+			Some(name) => block_row("key present", if env_present(name)? { "yes" } else { "no" }, kw),
+			// chatgpt bills the user's ChatGPT plan through a sign-in, not a key.
+			None if info.name == "chatgpt" => {
+				let signed_in = chatgpt::current_account()?.is_some();
+				block_row("signed in", if signed_in { "yes" } else { "no" }, kw);
+			}
+			// Local servers (ollama, local) need no credential.
+			None => {}
+		}
 	}
 	block_line("change later: `octomind configure`, `/model` for one session,");
 	block_line(&format!("or edit {}", config_path.display()));

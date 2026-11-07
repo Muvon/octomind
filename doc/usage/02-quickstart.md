@@ -23,8 +23,8 @@ before any config exists, it asks where to get models:
 | Skip for now | Writes the default config unchanged (`octohub:auto`). |
 
 Providers whose key is already in your environment are listed first. After you pick the main model, setup asks whether
-the supervisor and compression should use it too; answer `n` to choose a cheaper model for each. Esc cancels without
-writing a config, so the next launch asks again.
+the supervisor and compression should use it too; answer `n` to choose a cheaper model for each. Esc on the first
+screen works like Skip.
 
 Startup then resolves the default `assistant:concierge` tap agent. Run `octomind configure` to change providers or models
 later. Non-interactive runs (piped input, `--format`, `--daemon`) create the default config without prompting.

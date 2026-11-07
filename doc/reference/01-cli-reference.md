@@ -69,7 +69,7 @@ other value.
 ## `octomind configure`
 
 One screen lists the Octomind hub (recommended) first, then every supported provider, then "Skip for now". Type to
-filter, Enter to choose, Esc to cancel without writing anything. Hub setup reuses `octomind login` and sets all three
+filter, Enter to choose, Esc works like Skip. Hub setup reuses `octomind login` and sets all three
 models to `octohub:auto`. Providers whose key is already present are listed first. For a direct provider, setup prompts
 with hidden input for its key and any other required variable that is missing (empty input asks again), then offers a
 filterable model list with an "other" row for typing a model ID. OpenRouter's and Ollama Cloud's lists are fetched from

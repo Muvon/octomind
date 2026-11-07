@@ -138,7 +138,7 @@ pub fn get_monitor_function() -> McpFunction {
 
 Actions:
 - start: launch one inline monitoring command. Required: command. Optional: description, working_directory, flush_interval_seconds, max_batch_bytes, timeout_ms, persistent.
-- list: show running monitors and background MCP tasks, with their IDs.
+- list: show what is running, to get an ID for stop. Not a way to wait: background task results arrive on their own.
 - stop: cancel one monitor, or one background MCP task (id `mcp-task:...`), by id.
 
 The command runs through `sh -c` in the session working directory. It should remain running, write event text to stdout as events arrive, and use stderr for diagnostics. Empty intervals produce no turn. Output is capped per batch; excess bytes are reported as omitted rather than growing memory. A pending delivery from the same monitor is coalesced and bounded. Non-zero exit, I/O failure, or an unexpected clean exit is injected once as terminal status; monitors are never auto-restarted, preventing broken-command failure loops.
@@ -321,6 +321,9 @@ fn handle_list(call: &McpToolCall) -> McpToolResult {
 	McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), listing)
 }
 
+/// Constant on purpose: the loop detector needs repeated listings to look identical.
+const BACKGROUND_TASKS_NOTE: &str = "Results arrive by themselves as your next user message. Listing again shows no progress and does not bring them sooner. An unchanged listing does not mean a job is stuck: do not stop it for that. If no other work is left, reply with a short status and no tool call.";
+
 /// The session's pending MCP tasks with the latest status their pollers saw.
 /// No elapsed time here or in monitor lines: a listing must read the same while
 /// nothing changed, or every repeated `list` looks novel to the loop detector
@@ -332,12 +335,13 @@ fn render_background_tasks(session_id: &SessionId) -> Option<String> {
 		.map(|job| {
 			let status = job
 				.status
+				.filter(|status| *status != job.label)
 				.map(|status| format!("\n  Status: {status}"))
 				.unwrap_or_default();
 			format!("[{}] {}{status}", job.uri, job.label)
 		})
 		.collect();
-	(!lines.is_empty()).then(|| format!("Background tasks:\n{}", lines.join("\n")))
+	(!lines.is_empty()).then(|| format!("Background tasks:\n{}\n{BACKGROUND_TASKS_NOTE}", lines.join("\n")))
 }
 
 /// Render every running monitor owned by a session in the same format

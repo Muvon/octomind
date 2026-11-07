@@ -576,7 +576,7 @@ fn recurring_polling_never_becomes_a_required_strategy_change() {
 			assert_eq!(signal, DetectorSignal::Loop);
 			let note = steer_note(signal);
 			assert!(note.contains("arrives on its own as your next user message"));
-			assert!(note.contains("end your turn with a brief status"));
+			assert!(note.contains("reply with a short status and no tool call"));
 			assert!(note.contains("If the tool registered automatic background-result delivery"));
 			assert!(note.contains("polling may be necessary when no automatic delivery was registered"));
 			assert!(note.contains("Repeated receipts alone do not prove that state is unchanged"));

@@ -380,6 +380,16 @@ async fn monitor_lists_and_stops_a_background_task() {
 			)),
 			"{listing}"
 		);
+		assert!(listing.ends_with(BACKGROUND_TASKS_NOTE), "{listing}");
+
+		// A status that only repeats the label says nothing new.
+		crate::session::shell_jobs::set_task_status_for_session(&sid, &key, "shell: cargo test");
+		let listing = text_of(
+			&execute_monitor_tool(&monitor_call(serde_json::json!({"action": "list"})))
+				.await
+				.expect("dispatch"),
+		);
+		assert!(!listing.contains("Status:"), "{listing}");
 
 		let result = execute_monitor_tool(&monitor_call(serde_json::json!({"action": "stop", "id": key})))
 			.await

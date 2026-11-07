@@ -85,7 +85,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 
 	prompt.push_str(
 		"\n<use_parallel_tool_calls>\n\
-		Batch tool calls in one response: calls run in the given order, with consecutive read-only calls running together. Never guess or use placeholders for missing parameters.\n\
+		Batch tool calls in one response: calls run in the given order, with consecutive read-only calls running together. An edit and the command that checks it go in the same response: the command runs on the edited files. Never guess or use placeholders for missing parameters.\n\
 		</use_parallel_tool_calls>",
 	);
 

@@ -437,11 +437,16 @@ async fn ensure_unique_tool_names(config: &crate::config::Config) -> Result<()> 
 	)
 }
 
-// Collect filtered functions for a single server. Returns an empty Vec for unknown/unavailable servers.
-async fn server_functions_for(
-	server: &crate::config::McpServerConfig,
-	config: &crate::config::Config,
-) -> Vec<McpFunction> {
+/// Tool a server must expose for the session to run commands through it. Sent
+/// to servers as `experimental.session.shell` so they can refuse features
+/// (e.g. an edit tool's `check` command) that would otherwise run a shell
+/// command the role was never granted.
+const SHELL_TOOL: &str = "shell";
+
+/// Tool patterns the session may call on `server`; empty = every tool. Single
+/// source for the exposed tool list and the `shell` grant, so they cannot
+/// disagree.
+fn allowed_tools_for(server: &crate::config::McpServerConfig) -> Vec<String> {
 	// When the static filter is restrictive, also include tools unlocked at
 	// runtime by capability activation (e.g. `capability enable shell`) —
 	// builtin servers included, or a grant on `orchestration` never surfaces.
@@ -453,6 +458,25 @@ async fn server_functions_for(
 			}
 		}
 	}
+	allowed
+}
+
+/// Whether the calling session may call `shell` on `server` right now.
+pub fn shell_granted(server: &crate::config::McpServerConfig) -> bool {
+	// An enabled dynamic server exposes exactly its stored (already filtered)
+	// tools; its capability filter is not kept on the server config.
+	if let Some(exposed) = runtime::dynamic::get_functions(server.name()) {
+		return exposed.iter().any(|function| function.name == SHELL_TOOL);
+	}
+	is_tool_allowed_by_patterns(SHELL_TOOL, &allowed_tools_for(server))
+}
+
+// Collect filtered functions for a single server. Returns an empty Vec for unknown/unavailable servers.
+async fn server_functions_for(
+	server: &crate::config::McpServerConfig,
+	config: &crate::config::Config,
+) -> Vec<McpFunction> {
+	let allowed = allowed_tools_for(server);
 	match server.connection_type() {
 		McpConnectionType::Builtin => match server.name() {
 			// Uncached (like `agent`): the core list depends on config — the

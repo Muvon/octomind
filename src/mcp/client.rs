@@ -173,15 +173,19 @@ pub struct OctoClientHandler {
 	/// Advertise the legacy protocol version in the initialize handshake
 	/// (set for the explicit legacy retry on Streamable HTTP).
 	legacy: bool,
+	/// `shell` grant at connect time. A legacy handshake speaks for the shared
+	/// connection and pins this value, same limit as `context_epoch`.
+	shell: bool,
 }
 
 impl OctoClientHandler {
-	fn new(server_name: &str) -> Self {
+	fn new(server: &McpServerConfig) -> Self {
 		let (_, _, _, session_id, _) = super::process::get_session_context();
 		Self {
-			server_name: server_name.to_string(),
+			server_name: server.name().to_string(),
 			session_id: (!session_id.is_empty()).then_some(session_id),
 			legacy: false,
+			shell: super::shell_granted(server),
 		}
 	}
 
@@ -202,11 +206,14 @@ impl OctoClientHandler {
 
 impl ClientHandler for OctoClientHandler {
 	fn get_info(&self) -> ClientConfig {
-		build_client_info(if self.legacy {
-			ProtocolVersion::V_2025_11_25
-		} else {
-			ProtocolVersion::V_2026_07_28
-		})
+		build_client_info(
+			if self.legacy {
+				ProtocolVersion::V_2025_11_25
+			} else {
+				ProtocolVersion::V_2026_07_28
+			},
+			self.shell,
+		)
 	}
 
 	async fn on_progress(
@@ -414,7 +421,7 @@ const WATCH_RESOURCE_LINKS_EXTENSION: &str = "io.muvon/watch-resource-links";
 /// Client identity + capabilities sent on every request (modern) or during
 /// the initialize handshake (legacy). The octomind session context rides in
 /// the experimental capabilities, same as before.
-fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
+fn build_client_info(protocol_version: ProtocolVersion, shell: bool) -> ClientConfig {
 	let (role, spec, project, session_id, workdir) = super::process::get_session_context();
 	let git = octolib::utils::is_git_repo(std::path::Path::new(&workdir));
 	let mut session = serde_json::json!({
@@ -424,6 +431,7 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 		"session_id": session_id,
 		"workdir": workdir,
 		"git": git,
+		"shell": shell,
 	});
 	// Only per-request capabilities can track the epoch: a legacy handshake
 	// would pin the value it had at connect time.
@@ -741,7 +749,7 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 
 	let handler = OctoClientHandler {
 		legacy,
-		..OctoClientHandler::new(&server_name)
+		..OctoClientHandler::new(server)
 	};
 	let mode = if legacy {
 		ClientLifecycleMode::Initialize
@@ -795,7 +803,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 		rmcp::transport::StreamableHttpClientTransport::with_client(http_client.clone(), config)
 	};
 
-	let handler = OctoClientHandler::new(&server_name);
+	let handler = OctoClientHandler::new(server);
 	let connect_timeout = Duration::from_secs(server.timeout_seconds());
 	let service = match tokio::time::timeout(
 		connect_timeout,
@@ -927,9 +935,11 @@ async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
 
 /// Request metadata naming the calling session. A connection is shared by every
 /// session, but its connect-time capabilities belong to one of them.
-fn session_request_meta() -> RequestMetaObject {
+fn session_request_meta(server: &McpServerConfig) -> RequestMetaObject {
 	let mut meta = RequestMetaObject::default();
-	meta.set_client_capabilities(build_client_info(ProtocolVersion::V_2026_07_28).capabilities);
+	meta.set_client_capabilities(
+		build_client_info(ProtocolVersion::V_2026_07_28, super::shell_granted(server)).capabilities,
+	);
 	meta
 }
 
@@ -961,7 +971,7 @@ pub async fn list_tools(server: &McpServerConfig) -> Result<ToolList> {
 			let response = peer
 				.send_request_with_option(
 					ClientRequest::ListToolsRequest(request),
-					PeerRequestOptions::default().with_meta(session_request_meta()),
+					PeerRequestOptions::default().with_meta(session_request_meta(server)),
 				)
 				.await?
 				.await_response()
@@ -1028,7 +1038,7 @@ async fn call_tool_round(
 	// The idle timeout is enforced here, not by rmcp: only server progress can
 	// restart rmcp's timer, but a call waiting on the user to answer an
 	// elicitation is not idle.
-	let options = PeerRequestOptions::no_options().with_meta(session_request_meta());
+	let options = PeerRequestOptions::no_options().with_meta(session_request_meta(server));
 	// Progress keeps a call alive but must not extend it forever: a runaway
 	// command that streams output resets the idle timeout on every line, so
 	// without a ceiling one spinning tool stalls the whole session until an

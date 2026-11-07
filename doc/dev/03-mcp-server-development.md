@@ -479,6 +479,7 @@ Tool lists are cached per server (`FUNCTION_CACHE` in `src/mcp/server.rs`) until
 | `session_id` | Octomind session id; empty outside a session |
 | `workdir` | The session's anchor directory (absolute), not the current `workdir` override |
 | `git` | Whether `workdir` itself is a git repository root (not a parent repo) |
+| `shell` | Whether the session may call this server's `shell` tool right now (boolean). `false` when the role's tool filter for this server leaves `shell` out. Offer features that run commands (octofs's `check` parameter on edit tools) only when it is `true`. A legacy connection sends the value it had at connect time |
 | `context_epoch` | Generation of the session's model context (unsigned integer, modern connections only). It changes whenever the model loses tool results it was served: compaction, in-place trims, `/run` history rewrites, results discarded by a cancel, session (re)initialization. Values never repeat |
 
 Rules for server authors:

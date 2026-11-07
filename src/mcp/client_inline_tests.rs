@@ -14,9 +14,13 @@
 
 use super::*;
 
+fn server_with_tools(name: &str, tools: &[&str]) -> McpServerConfig {
+	McpServerConfig::builtin(name, 30, tools.iter().map(|tool| tool.to_string()).collect())
+}
+
 #[test]
 fn advertised_mcp3_capabilities_have_handlers() {
-	let info = build_client_info(ProtocolVersion::V_2026_07_28);
+	let info = build_client_info(ProtocolVersion::V_2026_07_28, true);
 	assert!(info.capabilities.supports_tasks());
 	assert!(info
 		.capabilities
@@ -29,7 +33,7 @@ fn advertised_mcp3_capabilities_have_handlers() {
 
 #[test]
 fn legacy_handshake_does_not_claim_mcp3_features() {
-	let info = build_client_info(ProtocolVersion::V_2025_11_25);
+	let info = build_client_info(ProtocolVersion::V_2025_11_25, true);
 	assert!(!info.capabilities.supports_tasks());
 	assert!(info.capabilities.sampling.is_none());
 	assert!(info.capabilities.roots.is_none());
@@ -43,7 +47,7 @@ async fn per_request_elicitation_follows_the_sessions_answerer() {
 	let session = "client-elicitation-capability";
 	crate::session::context::with_session_id(session.to_string(), async {
 		let offered = || {
-			build_client_info(ProtocolVersion::V_2026_07_28)
+			build_client_info(ProtocolVersion::V_2026_07_28, true)
 				.capabilities
 				.elicitation
 		};
@@ -67,7 +71,7 @@ async fn per_request_elicitation_follows_the_sessions_answerer() {
 /// offered exactly when this process attaches answerers to its sessions.
 #[test]
 fn legacy_handshake_elicitation_follows_the_process() {
-	let offered = build_client_info(ProtocolVersion::V_2025_11_25)
+	let offered = build_client_info(ProtocolVersion::V_2025_11_25, true)
 		.capabilities
 		.elicitation;
 	assert_eq!(offered.is_some(), crate::mcp::elicitation::accepts_elicitations());
@@ -176,7 +180,7 @@ fn bound_tool_id(server: &str, token: &ProgressToken) -> Option<String> {
 
 #[test]
 fn client_handler_identifies_octomind_with_modern_protocol() {
-	let handler = OctoClientHandler::new("test-server");
+	let handler = OctoClientHandler::new(&server_with_tools("test-server", &[]));
 	let info = handler.get_info();
 	assert_eq!(info.client_info.name, "octomind");
 	assert!(!info.client_info.version.is_empty());
@@ -192,7 +196,7 @@ fn client_handler_identifies_octomind_with_modern_protocol() {
 fn client_handler_legacy_retry_advertises_legacy_protocol() {
 	let handler = OctoClientHandler {
 		legacy: true,
-		..OctoClientHandler::new("legacy-server")
+		..OctoClientHandler::new(&server_with_tools("legacy-server", &[]))
 	};
 	assert_eq!(handler.get_info().protocol_version, ProtocolVersion::V_2025_11_25);
 }
@@ -204,7 +208,7 @@ async fn context_epoch_rides_only_in_modern_session_context() {
 	let sid = "client-context-epoch-test".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
 		let session = |version| {
-			build_client_info(version)
+			build_client_info(version, true)
 				.capabilities
 				.experimental
 				.expect("session context")
@@ -220,6 +224,40 @@ async fn context_epoch_rides_only_in_modern_session_context() {
 	})
 	.await;
 	crate::session::context::clear_context_epoch(&sid);
+}
+
+/// The `shell` grant rides in the session context of both handshakes.
+#[test]
+fn shell_grant_rides_in_the_session_context() {
+	for version in [ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25] {
+		for granted in [true, false] {
+			let session = build_client_info(version.clone(), granted)
+				.capabilities
+				.experimental
+				.expect("session context")
+				.remove("session")
+				.expect("session object");
+			assert_eq!(session["shell"].as_bool(), Some(granted));
+		}
+	}
+}
+
+/// A legacy handshake pins the grant the connection had at connect time.
+#[test]
+fn handler_advertises_the_shell_grant_of_its_server() {
+	let shell_in_session = |tools: &[&str]| {
+		OctoClientHandler::new(&server_with_tools("shell-grant", tools))
+			.get_info()
+			.capabilities
+			.experimental
+			.expect("session context")
+			.remove("session")
+			.expect("session object")["shell"]
+			.as_bool()
+	};
+	assert_eq!(shell_in_session(&[]), Some(true));
+	assert_eq!(shell_in_session(&["shell"]), Some(true));
+	assert_eq!(shell_in_session(&["view", "text_editor"]), Some(false));
 }
 
 #[test]

@@ -53,7 +53,11 @@ struct InMemoryPeer {
 fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
-	let service = rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
+	let service = rmcp::service::serve_directly(
+		OctoClientHandler::new(&stdin_config(server_name, "unused-in-memory", Vec::new(), 5)),
+		(out_tx, in_rx),
+		None,
+	);
 	InMemoryPeer {
 		service,
 		incoming: in_tx,
@@ -365,6 +369,66 @@ async fn list_tools_sends_the_calling_session_and_reports_private_lists() {
 	.await;
 	assert!(list.session_scoped);
 	assert_eq!(*sessions.lock().unwrap(), vec![serde_json::json!("list-session-a")]);
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// The calling session's `shell` grant rides in every `tools/list` request: a
+/// server whose filter lacks `shell` is told `false`, an open filter, an exact
+/// or prefix match, or a runtime overlay extra is told `true`.
+#[serial]
+#[tokio::test]
+async fn list_tools_tells_the_server_whether_shell_is_granted() {
+	let name = unique_server("list-shell");
+	let InMemoryPeer {
+		service,
+		incoming,
+		outgoing,
+	} = serve_in_memory(&name);
+	register(&name, service);
+	let granted = StdArc::new(std::sync::Mutex::new(Vec::new()));
+	let seen = granted.clone();
+	let responder = spawn_responder(outgoing, incoming, move |request| match request {
+		ClientRequest::ListToolsRequest(list) => {
+			let wire = serde_json::to_value(&list).expect("serialize tools/list");
+			seen.lock().unwrap().push(
+				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["experimental"]["session"]
+					["shell"]
+					.clone(),
+			);
+			Some(ServerResult::ListToolsResult(ListToolsResult::with_all_items(
+				Vec::new(),
+			)))
+		}
+		_ => None,
+	});
+
+	let server_with_tools = |tools: &[&str]| {
+		let mut server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
+		if let McpServerConfig::Stdin { tools: filter, .. } = &mut server {
+			*filter = tools.iter().map(|tool| tool.to_string()).collect();
+		}
+		server
+	};
+	for tools in [&[][..], &["view"], &["shell"], &["sh*"], &["view", "*"]] {
+		list_tools(&server_with_tools(tools))
+			.await
+			.expect("tools/list must succeed");
+	}
+
+	let overlay_cap = "list-shell-overlay";
+	crate::config::runtime_overlay::set_capability_extras(
+		overlay_cap,
+		HashMap::from([(name.clone(), vec!["shell".to_string()])]),
+	);
+	list_tools(&server_with_tools(&["view"]))
+		.await
+		.expect("tools/list must succeed");
+	crate::config::runtime_overlay::clear_capability_extras(overlay_cap);
+
+	let expected = [true, false, true, true, true, true].map(serde_json::Value::from);
+	assert_eq!(*granted.lock().unwrap(), expected);
 
 	responder.abort();
 	disconnect(&name);

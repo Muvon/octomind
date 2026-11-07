@@ -75,7 +75,11 @@ struct InMemoryPeer {
 fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
-	let service = rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
+	let service = rmcp::service::serve_directly(
+		OctoClientHandler::new(&stdin_config(server_name, "unused-in-memory", Vec::new(), 5)),
+		(out_tx, in_rx),
+		None,
+	);
 	InMemoryPeer {
 		service,
 		incoming: in_tx,

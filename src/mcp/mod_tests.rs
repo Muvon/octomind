@@ -1110,3 +1110,58 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 		.extract_images()
 		.is_empty());
 }
+
+fn server_allowing(name: &str, tools: &[&str]) -> McpServerConfig {
+	McpServerConfig::builtin(name, 30, tools.iter().map(|tool| tool.to_string()).collect())
+}
+
+#[test]
+fn shell_granted_follows_the_server_tool_filter() {
+	let granted = |tools: &[&str]| shell_granted(&server_allowing("shell-grant-filter", tools));
+	assert!(granted(&[]), "an empty filter allows every tool");
+	assert!(granted(&["shell"]));
+	assert!(granted(&["view", "shell"]));
+	assert!(granted(&["sh*"]), "prefix pattern covers shell");
+	assert!(granted(&["*"]));
+	assert!(!granted(&["view", "text_editor"]));
+	assert!(!granted(&["shell_jobs"]), "a longer name is not shell");
+}
+
+#[serial]
+#[test]
+fn shell_granted_includes_runtime_overlay_extras() {
+	const NAME: &str = "shell-grant-overlay";
+	let restricted = server_allowing(NAME, &["view"]);
+	assert!(!shell_granted(&restricted));
+
+	crate::config::runtime_overlay::set_capability_extras(
+		"shell-grant-overlay-cap",
+		std::collections::HashMap::from([(NAME.to_string(), vec!["shell".to_string()])]),
+	);
+	assert!(shell_granted(&restricted));
+
+	crate::config::runtime_overlay::clear_capability_extras("shell-grant-overlay-cap");
+	assert!(!shell_granted(&restricted));
+}
+
+/// An enabled dynamic server exposes its stored tool list, so that list (not
+/// the config's empty filter) decides the grant.
+#[serial]
+#[tokio::test]
+async fn shell_granted_reads_the_enabled_dynamic_servers_tools() {
+	const NAME: &str = "shell-grant-dynamic";
+	let sid = "shell-grant-dynamic-session".to_string();
+	let server = server_allowing(NAME, &[]);
+	crate::session::context::with_session_id(sid.clone(), async {
+		assert!(shell_granted(&server), "not enabled yet: the config filter decides");
+
+		crate::session::context::register_dynamic_server_for_session(&sid, server.clone());
+		crate::session::context::enable_dynamic_server_for_session(&sid, NAME, vec![fn_def("view")]);
+		assert!(!shell_granted(&server), "dynamic filter dropped shell");
+
+		crate::session::context::enable_dynamic_server_for_session(&sid, NAME, vec![fn_def("shell")]);
+		assert!(shell_granted(&server));
+	})
+	.await;
+	crate::session::context::clear_dynamic_servers_for_session(&sid);
+}

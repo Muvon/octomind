@@ -58,6 +58,38 @@ fn learning_stats_persist_and_default_for_old_sessions() {
 }
 
 #[test]
+fn cache_touch_fields_round_trip_and_default_for_old_sessions() {
+	let old: SessionInfo = serde_json::from_value(json!({
+		"name": "old",
+		"created_at": 1,
+		"model": "test",
+		"role": "assistant",
+		"input_tokens": 0,
+		"output_tokens": 0,
+		"cache_read_tokens": 0,
+		"cache_write_tokens": 0,
+		"total_cost": 0.0,
+		"duration_seconds": 0,
+		"layer_stats": []
+	}))
+	.unwrap();
+	assert_eq!(old.last_cache_touch, None);
+	assert_eq!(old.cache_lifetime_secs, None);
+	assert_eq!(old.cache_model, None);
+
+	let current = SessionInfo {
+		last_cache_touch: Some(1_700_000_000),
+		cache_lifetime_secs: Some(300),
+		cache_model: Some("anthropic:claude-sonnet-5-5".to_string()),
+		..Default::default()
+	};
+	let restored: SessionInfo = serde_json::from_str(&serde_json::to_string(&current).unwrap()).unwrap();
+	assert_eq!(restored.last_cache_touch, Some(1_700_000_000));
+	assert_eq!(restored.cache_lifetime_secs, Some(300));
+	assert_eq!(restored.cache_model.as_deref(), Some("anthropic:claude-sonnet-5-5"));
+}
+
+#[test]
 fn latest_task_timestamp_is_the_live_request_message_timestamp() {
 	let user = |content: &str, timestamp: u64| Message {
 		role: "user".into(),

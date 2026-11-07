@@ -97,6 +97,7 @@ impl MessageHandler {
 
 			// CACHE-AWARE COMPRESSION: Track API calls for amortized cost analysis
 			chat_session.session.info.total_api_calls += 1;
+			crate::session::cache_keepalive::record_cache_touch(chat_session, exchange);
 
 			// Update token counts using cache manager with octolib data directly
 			let cache_manager = crate::session::cache::CacheManager::new();

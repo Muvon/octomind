@@ -437,10 +437,10 @@ impl ChatSession {
 		let Some((head, rest)) = batch.split_first() else {
 			return Ok(());
 		};
-		if head.source.is_system_managed() {
-			self.add_system_managed_turn_message(&head.content)?;
-		} else {
+		if crate::session::inbox::batch_starts_user_turn(&batch) {
 			self.add_user_message(&head.content)?;
+		} else {
+			self.add_system_managed_turn_message(&head.content)?;
 		}
 		for msg in rest {
 			self.add_system_managed_user_message(&msg.content)?;
@@ -563,6 +563,7 @@ impl ChatSession {
 				// CACHE-AWARE COMPRESSION: Track API calls for amortized cost analysis
 				// Each API call = potential cache write/read, critical for compression economics
 				self.session.info.total_api_calls += 1;
+				crate::session::cache_keepalive::record_cache_touch(self, ex);
 
 				// Update session token counts using octolib data directly
 				let cache_manager = crate::session::cache::CacheManager::new();

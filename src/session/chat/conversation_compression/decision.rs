@@ -81,6 +81,26 @@ impl FoldEconomics {
 		}
 		Self::from_pricing(session_pricing.as_ref(), folder_pricing.as_ref())
 	}
+
+	/// The economics from real prices only: `None` unless both the session
+	/// model and the folder are priced. For decisions that must not rest on the
+	/// [`Self::DEFAULT`] stand-ins.
+	pub(super) fn from_known_pricing(
+		session: Option<&crate::providers::ModelPricing>,
+		folder: Option<&crate::providers::ModelPricing>,
+	) -> Option<Self> {
+		let session = session.filter(|p| p.input_price_per_1m > 0.0)?;
+		let folder = folder?;
+		Some(Self::from_pricing(Some(session), Some(folder)))
+	}
+
+	pub(super) fn priced(session: &ChatSession, config: &crate::config::Config) -> Option<Self> {
+		let folder_model = config.get_compression_model_profile().model;
+		Self::from_known_pricing(
+			get_model_pricing(&session.model, config).as_ref(),
+			get_model_pricing(&folder_model, config).as_ref(),
+		)
+	}
 }
 
 /// Fraction of the drained range the fold prompt actually sends: recent bodies
@@ -134,10 +154,55 @@ pub(super) fn fold_decision(
 	}
 	let freed = (current_tokens - target_after).max(0.0);
 	let gain = freed * econ.cache_read * expected_calls;
-	let cost = compressible_tokens * FOLD_SENT_FRACTION * econ.folder_input
-		+ summary_tokens * econ.folder_output
-		+ target_after * econ.cache_write;
+	let cost = fold_call_cost(compressible_tokens, summary_tokens, econ) + target_after * econ.cache_write;
 	gain >= cost
+}
+
+/// What the folder call itself costs: it is sent the share of the drained
+/// range the fold prompt carries and writes the summary.
+pub(super) fn fold_call_cost(compressible_tokens: f64, summary_tokens: f64, econ: FoldEconomics) -> f64 {
+	compressible_tokens * FOLD_SENT_FRACTION * econ.folder_input + summary_tokens * econ.folder_output
+}
+
+/// Whether the session model's prompt cache is known gone at `now` (unix
+/// seconds): it was last touched under another model, so this one never
+/// wrote it, or it sat idle for at least its known lifetime. `false` when
+/// nothing is known about it.
+pub(super) fn cache_known_expired(info: &crate::session::SessionInfo, model: &str, now: u64) -> bool {
+	let (Some(touched), Some(cache_model)) = (info.last_cache_touch, info.cache_model.as_deref()) else {
+		return false;
+	};
+	if cache_model != model {
+		return true;
+	}
+	info.cache_lifetime_secs
+		.is_some_and(|lifetime| now.saturating_sub(touched) >= lifetime)
+}
+
+/// Whether folding BEFORE a user message pays once the session model's prompt
+/// cache is gone. Either way the next request writes its whole prefix again;
+/// the fold makes that prefix `H - S` tokens shorter, for that write and for
+/// every later call that reads it, at the price of the folder call. In
+/// session input-price units:
+///
+///   fold iff (w + (n - 1)·r)·(H - S) > folder call
+///
+/// `info` is the session state as at the new user turn and `n` the calls it
+/// expects (`expected_remaining_calls`); the first of them writes the prefix,
+/// the rest read it. `w` is the input price where the provider bills no
+/// separate cache write.
+pub(super) fn idle_fold_pays(
+	info: &crate::session::SessionInfo,
+	history_tokens: f64,
+	target_after: f64,
+	compressible_tokens: f64,
+	summary_tokens: f64,
+	econ: FoldEconomics,
+) -> bool {
+	let write = if econ.cache_write > 0.0 { econ.cache_write } else { 1.0 };
+	let reads = (expected_remaining_calls(info) - 1.0).max(0.0);
+	let saved = (history_tokens - target_after).max(0.0);
+	(write + reads * econ.cache_read) * saved > fold_call_cost(compressible_tokens, summary_tokens, econ)
 }
 
 pub(super) fn get_model_pricing(

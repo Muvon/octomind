@@ -148,6 +148,12 @@ impl InboxSource {
 	}
 }
 
+/// Whether appending the batch adds a real user message: its head carries the
+/// turn, and only a head that is not system-managed becomes a user message.
+pub fn batch_starts_user_turn(batch: &[InboxMessage]) -> bool {
+	batch.first().is_some_and(|head| !head.source.is_system_managed())
+}
+
 /// Render an injected inbox message to stdout so the user sees what the AI
 /// is about to respond to. Mirrors the format of a user-typed prompt line
 /// (source-tagged) with the message content below if multi-line.

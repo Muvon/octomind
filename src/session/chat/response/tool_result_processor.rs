@@ -471,6 +471,7 @@ fn handle_follow_up_cost_tracking(
 		}
 		// Every follow-up exchange = one completed API call (mirrors CostTracker::track_exchange_cost)
 		chat_session.session.info.total_api_calls += 1;
+		crate::session::cache_keepalive::record_cache_touch(chat_session, exchange);
 
 		// Update session token counts using cache manager with octolib data directly
 		let cache_manager = crate::session::cache::CacheManager::new();

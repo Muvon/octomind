@@ -57,9 +57,9 @@ pub(crate) fn summary_projection(message: &crate::session::Message) -> Option<St
 pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills, collect_recent_recall_context};
 use decision::{
-	adaptive_fire_line, at_turn_boundary, autonomous_runway, ceiling_reached, compression_depth, context_ceiling,
-	expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics, MAX_COMPRESSION_RATIO,
-	MIN_COMPRESSION_RATIO,
+	adaptive_fire_line, at_turn_boundary, autonomous_runway, cache_known_expired, ceiling_reached, compression_depth,
+	context_ceiling, expected_remaining_calls, fold_decision, idle_fold_pays, measured_growth_rate, FoldEconomics,
+	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 // The model's deferral crosses module boundaries: recorded on the session,
@@ -259,9 +259,60 @@ fn fold_ratio(
 	growth: f64,
 	runway: f64,
 ) -> Option<f64> {
-	// ADAPTIVE DEPTH: pick the post-compression target from measured dynamics.
-	// Pure math over the drain range — no API cost, so it runs before the cost
-	// gate and its derived ratio feeds the pricing analysis.
+	let (adjusted_ratio, compressible) = fold_depth(session, current_tokens, fire_line, growth, runway)?;
+
+	// The fold behind the fire line: free at a genuine turn boundary, otherwise
+	// amortized over the calls this session's own pace predicts.
+	let target_after = current_tokens as f64 - compressible + compressible / adjusted_ratio;
+	let summary_tokens = expected_summary_tokens(compressible, config);
+	let econ = FoldEconomics::resolve(session, config);
+	let fold = fold_decision(
+		info,
+		current_tokens as f64,
+		target_after,
+		compressible,
+		summary_tokens,
+		runway,
+		econ,
+	);
+	log_debug!(
+		"Fold decision: {} (boundary={}, expected_calls={:.0}, runway={:.0}, current={}, target_after={:.0}, ratio={:.1}x, econ={:?})",
+		if fold { "COMPRESS" } else { "WAIT" },
+		at_turn_boundary(info),
+		expected_remaining_calls(info),
+		runway,
+		current_tokens,
+		target_after,
+		adjusted_ratio,
+		econ
+	);
+	fold.then_some(adjusted_ratio)
+}
+
+/// Expected folder output: observed summaries run near the deepest ratio of
+/// the drained range (4-10k tokens for 80-180k folds), NOT the configured
+/// output cap — costing the fold at the cap overstated it ~3-5x and pinned
+/// the mid-turn decision at "wait".
+fn expected_summary_tokens(compressible: f64, config: &Config) -> f64 {
+	let summary_cap = config.get_compression_model_profile().max_tokens;
+	if summary_cap > 0 {
+		(compressible / MAX_COMPRESSION_RATIO).min(summary_cap as f64)
+	} else {
+		compressible / MAX_COMPRESSION_RATIO
+	}
+}
+
+/// ADAPTIVE DEPTH: pick the post-compression target from measured dynamics.
+/// Pure math over the drain range — no API cost, so it runs before the cost
+/// gate and its derived ratio feeds the pricing analysis. Returns the ratio
+/// and the compressible tokens it applies to.
+fn fold_depth(
+	session: &ChatSession,
+	current_tokens: usize,
+	fire_line: usize,
+	growth: f64,
+	runway: f64,
+) -> Option<(f64, f64)> {
 	let (start_idx, end_idx) = match find_compression_range_preserving_turn(&session.session.messages, false, true) {
 		Ok(range) => range,
 		Err(e) => {
@@ -300,42 +351,119 @@ fn fold_ratio(
 		return None;
 	};
 
-	// The fold behind the fire line: free at a genuine turn boundary, otherwise
-	// amortized over the calls this session's own pace predicts.
-	let compressible = compressible_tokens as f64;
-	let target_after = current_tokens as f64 - compressible + compressible / adjusted_ratio;
-	// Expected folder output: observed summaries run near the deepest ratio of
-	// the drained range (4-10k tokens for 80-180k folds), NOT the configured
-	// output cap — costing the fold at the cap overstated it ~3-5x and pinned
-	// the mid-turn decision at "wait".
-	let summary_cap = config.get_compression_model_profile().max_tokens;
-	let summary_tokens = if summary_cap > 0 {
-		(compressible / MAX_COMPRESSION_RATIO).min(summary_cap as f64)
-	} else {
-		compressible / MAX_COMPRESSION_RATIO
-	};
-	let econ = FoldEconomics::resolve(session, config);
-	let fold = fold_decision(
+	Some((adjusted_ratio, compressible_tokens as f64))
+}
+
+/// The fold the next user message would trigger, decided under the state a new
+/// user turn starts from (see [`replaces_prefix_on_next_request`]): the runway
+/// and cooldown reset and the turn counters restart. `target_after` is the
+/// context the fold leaves, derived with the same depth controller as a normal
+/// fold. `None` when compression is off or no depth is feasible.
+struct UserTurnFold {
+	info: crate::session::SessionInfo,
+	history_tokens: f64,
+	compressible_tokens: f64,
+	ratio: f64,
+	target_after: f64,
+}
+
+fn user_turn_fold(session: &ChatSession, config: &Config) -> Option<UserTurnFold> {
+	if config.compression.threshold == 0 {
+		return None;
+	}
+	let current_tokens = session.calibrated(session.raw_context_estimate()?);
+	let mut info = session.session.info.clone();
+	info.consecutive_compressions = 0;
+	info.note_turn_start();
+	let growth = measured_growth_rate(&info, current_tokens);
+	let runway = autonomous_runway(info.consecutive_compressions);
+	let fire_line = adaptive_fire_line(
+		config.compression.threshold,
+		context_ceiling(session, config),
+		info.context_tokens_after_last_compression,
+		growth,
+		info.consecutive_compressions,
+	);
+	let (ratio, compressible) = fold_depth(session, current_tokens, fire_line, growth, runway)?;
+	let history_tokens = current_tokens as f64;
+	Some(UserTurnFold {
 		info,
-		current_tokens as f64,
-		target_after,
-		compressible,
+		history_tokens,
+		compressible_tokens: compressible,
+		ratio,
+		target_after: history_tokens - compressible + compressible / ratio,
+	})
+}
+
+/// Idle compaction: called right before a user message is appended. When the
+/// session model's prompt cache is known gone (see [`cache_known_expired`])
+/// and the cost math says a fold now saves money, compact inline with the
+/// [`CompressionTrigger::Idle`] trigger. `now` is unix seconds. Returns true
+/// when a compaction was applied.
+///
+/// The fold runs on the compression model, so it does not warm the session
+/// model's cache: the next main request writes it and records the touch.
+/// A failed compaction only costs the saving, so it is logged and the message
+/// goes through uncompacted. Cancellation is the exception: it is returned as
+/// an error so the caller stops the turn instead of appending the message.
+pub async fn compact_if_cache_expired(
+	session: &mut ChatSession,
+	config: &Config,
+	now: u64,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<bool> {
+	if !config.compression.idle
+		|| session.fold_job.is_some()
+		|| !crate::session::model_supports_caching(&session.model)
+		|| !cache_known_expired(&session.session.info, &session.model, now)
+	{
+		return Ok(false);
+	}
+	let Some(fold) = user_turn_fold(session, config) else {
+		return Ok(false);
+	};
+	let Some(econ) = FoldEconomics::priced(session, config) else {
+		return Ok(false);
+	};
+	let summary_tokens = expected_summary_tokens(fold.compressible_tokens, config);
+	if !idle_fold_pays(
+		&fold.info,
+		fold.history_tokens,
+		fold.target_after,
+		fold.compressible_tokens,
 		summary_tokens,
-		runway,
 		econ,
+	) {
+		return Ok(false);
+	}
+	log_info!(
+		"Prompt cache of {} is gone — compacting {:.0} tokens to about {:.0} before the new message",
+		session.model,
+		fold.history_tokens,
+		fold.target_after
 	);
-	log_debug!(
-		"Fold decision: {} (boundary={}, expected_calls={:.0}, runway={:.0}, current={}, target_after={:.0}, ratio={:.1}x, econ={:?})",
-		if fold { "COMPRESS" } else { "WAIT" },
-		at_turn_boundary(info),
-		expected_remaining_calls(info),
-		runway,
-		current_tokens,
-		target_after,
-		adjusted_ratio,
-		econ
-	);
-	fold.then_some(adjusted_ratio)
+	match check_and_compress_conversation(session, config, operation_rx, CompressionTrigger::Idle).await {
+		Ok(applied) => Ok(applied),
+		Err(error) if crate::session::cancellation::is_cancelled(&error) => Err(error),
+		Err(error) => {
+			log_debug!("Idle compaction skipped: {:#}", error);
+			Ok(false)
+		}
+	}
+}
+
+/// Idle compaction ahead of `ChatSession::add_inbox_batch`: only a batch that
+/// becomes a real user message follows a user-visible gap worth folding for.
+pub async fn compact_before_inbox_batch(
+	session: &mut ChatSession,
+	config: &Config,
+	batch: &[crate::session::inbox::InboxMessage],
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<bool> {
+	if !crate::session::inbox::batch_starts_user_turn(batch) {
+		return Ok(false);
+	}
+	compact_if_cache_expired(session, config, crate::utils::time::now_secs(), operation_rx).await
 }
 
 /// Cut every stored tool result back to the configured response cap; returns
@@ -448,10 +576,13 @@ pub enum CompressionTrigger {
 	Automatic,
 	/// `/done` command — bypasses thresholds and starts the next task without injected skills.
 	Done,
+	/// A user message arrived after the prompt cache expired — folds inline,
+	/// bypassing the token thresholds, and keeps active skills like `Automatic`.
+	Idle,
 }
 
 fn preserves_active_skills(trigger: CompressionTrigger) -> bool {
-	matches!(trigger, CompressionTrigger::Automatic)
+	matches!(trigger, CompressionTrigger::Automatic | CompressionTrigger::Idle)
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES
@@ -918,6 +1049,7 @@ async fn check_and_compress_conversation_inner(
 	trigger: CompressionTrigger,
 ) -> Result<bool> {
 	let force_done = matches!(trigger, CompressionTrigger::Done);
+	let idle = matches!(trigger, CompressionTrigger::Idle);
 
 	// A background fold in flight: collect it when finished (or when a forced
 	// trigger cannot wait), otherwise leave it running and skip fresh checks —
@@ -940,7 +1072,13 @@ async fn check_and_compress_conversation_inner(
 		}
 	}
 
-	let (should_check, computed_ratio) = should_check_compression(session, config).await;
+	// Idle bypasses the fire line like `/done`: `compact_if_cache_expired`
+	// already ran the cost math, so only the fold depth is needed here.
+	let (should_check, computed_ratio) = if idle {
+		user_turn_fold(session, config).map_or((false, MIN_COMPRESSION_RATIO), |fold| (true, fold.ratio))
+	} else {
+		should_check_compression(session, config).await
+	};
 
 	if !force_done && !should_check {
 		return Ok(false);
@@ -962,7 +1100,7 @@ async fn check_and_compress_conversation_inner(
 	let current_step = crate::mcp::core::plan::active_step_index();
 	let agent_blocked = session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
 	let overruled = match session.fold_deferral {
-		Some(deferral) if !force && deferral.stands_against(current_step, agent_blocked) => {
+		Some(deferral) if !force && !idle && deferral.stands_against(current_step, agent_blocked) => {
 			// Corroborated: hold without paying for a fold call. The deferral
 			// stays recorded — the next eligible round re-judges it against
 			// fresh state, and a genuine user turn clears it.
@@ -988,9 +1126,9 @@ async fn check_and_compress_conversation_inner(
 	// with nothing to check against buys a paid decline the next round must
 	// overrule anyway — the shape that used to hold a session unfolded until
 	// the ceiling.
-	let no_veto = force || overruled || !decision::veto_checkable(current_step, agent_blocked);
+	let no_veto = force || overruled || idle || !decision::veto_checkable(current_step, agent_blocked);
 
-	if !force && session.session.info.total_api_calls < session.fold_cooldown_until_call {
+	if !force && !idle && session.session.info.total_api_calls < session.fold_cooldown_until_call {
 		log_debug!(
 			"Fold cooldown after a failed background attempt: {} calls remaining",
 			session.fold_cooldown_until_call - session.session.info.total_api_calls
@@ -1291,7 +1429,7 @@ async fn check_and_compress_conversation_inner(
 	// the live session once the prompt is built. The agent keeps working; the
 	// summary is applied at the next round boundary. Forced folds (ceiling,
 	// /done) cannot proceed without the result and stay inline.
-	if !force {
+	if !force && !idle {
 		let config_for_task = config.clone();
 		let (cancel, task_rx) = tokio::sync::watch::channel(false);
 		let handle = tokio::spawn(async move {

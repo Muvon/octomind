@@ -214,6 +214,8 @@ pub struct KeepaliveHandle {
 	kind: WaitKind,
 	budget: BudgetDecision,
 	started: Instant,
+	/// The model the pings replay against: only its cache do they renew.
+	model: String,
 }
 
 impl KeepaliveHandle {
@@ -233,7 +235,7 @@ impl KeepaliveHandle {
 		let snapshot = ping_prefix(chat_session)?;
 		let profile = chat_session.model_profile(config);
 		let (provider, actual_model) = ProviderFactory::get_provider_for_model(&profile.model).ok()?;
-		let long_ttl = snapshot.last()?.cache_ttl.as_deref() == Some(LONG_CACHE_TTL);
+		let long_ttl = ends_in_long_cache(&snapshot);
 		let policy = provider.keepalive_policy(&actual_model, long_ttl)?;
 		let pricing = provider.get_model_pricing(&actual_model)?;
 
@@ -273,6 +275,7 @@ impl KeepaliveHandle {
 		};
 
 		let (cancel_tx, cancel_rx) = watch::channel(false);
+		let model = profile.model.clone();
 		let ping_loop = run(
 			snapshot,
 			profile,
@@ -308,6 +311,7 @@ impl KeepaliveHandle {
 			kind,
 			budget,
 			started: Instant::now(),
+			model,
 		})
 	}
 
@@ -335,6 +339,13 @@ impl KeepaliveHandle {
 		history.last_budget = Some(self.budget);
 		history.ping_missed |= exchanges.iter().any(ping_missed_cache);
 		bill_pings(&mut chat_session.session.info, &exchanges);
+		// A ping reads the prefix, which renews its lifetime like a real request.
+		let info = &mut chat_session.session.info;
+		if info.cache_model.as_deref() == Some(self.model.as_str()) {
+			if let Some(last_ping) = exchanges.iter().map(|exchange| exchange.timestamp).max() {
+				info.last_cache_touch = info.last_cache_touch.max(Some(last_ping));
+			}
+		}
 		chat_session.estimated_cost = chat_session.session.info.total_cost;
 		crate::log_debug!(
 			"Cache keepalive finished: kind={:?}, waited={}s, answered={}, {} ping(s), session_total=${:.5}",
@@ -348,15 +359,46 @@ impl KeepaliveHandle {
 	}
 }
 
+/// Whether the newest cache marker of a replayed prefix is the 1h entry. The
+/// provider's idle lifetime depends on it.
+fn ends_in_long_cache(snapshot: &[Message]) -> bool {
+	snapshot
+		.last()
+		.is_some_and(|m| m.cache_ttl.as_deref() == Some(LONG_CACHE_TTL))
+}
+
+/// Record that a main request just touched the session model's prompt cache
+/// and how long the provider keeps an idle entry afterwards. Idle compaction
+/// reads both.
+pub fn record_cache_touch(chat_session: &mut ChatSession, exchange: &ProviderExchange) {
+	let use_long_cache =
+		ping_prefix_end(chat_session).is_some_and(|end| ends_in_long_cache(&chat_session.last_sent_messages[..=end]));
+	let lifetime = ProviderFactory::get_provider_for_model(&chat_session.model)
+		.ok()
+		.and_then(|(provider, actual_model)| provider.cache_lifetime(&actual_model, use_long_cache));
+	let model = chat_session.model.clone();
+	let info = &mut chat_session.session.info;
+	info.last_cache_touch = Some(exchange.timestamp);
+	info.cache_lifetime_secs = lifetime.map(|lifetime| lifetime.as_secs());
+	info.cache_model = Some(model);
+}
+
 /// The messages a ping replays: what the latest request sent, up to its newest
 /// cache marker. Anything after the marker was never cached and would only add
 /// input. `None` when nothing was sent yet, or when a fold, rollback or clear
 /// replaced that marker since: the next request can't reuse that prefix.
 fn ping_prefix(chat_session: &ChatSession) -> Option<Vec<Message>> {
+	let end = ping_prefix_end(chat_session)?;
+	Some(chat_session.last_sent_messages[..=end].to_vec())
+}
+
+/// Index of the newest cache marker `ping_prefix` replays up to, without
+/// copying the messages.
+fn ping_prefix_end(chat_session: &ChatSession) -> Option<usize> {
 	let sent = &chat_session.last_sent_messages;
 	let last_cached = sent.iter().rposition(|m| m.cached)?;
 	let live = chat_session.session.messages.get(last_cached)?;
-	(live.content == sent[last_cached].content).then(|| sent[..=last_cached].to_vec())
+	(live.content == sent[last_cached].content).then_some(last_cached)
 }
 
 /// A ping replays a prefix the last request already cached, so a hit writes

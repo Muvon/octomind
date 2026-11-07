@@ -179,9 +179,26 @@ fn plan() -> MigrationPlan {
 				to: 27,
 				apply: add_v27_advise,
 			},
+			VersionMigration {
+				from: 27,
+				to: 28,
+				apply: add_v28_idle_compaction,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required `compression.idle` switch (on); an existing value is kept.
+fn add_v28_idle_compaction(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_compression = required_table(template.as_table(), "compression", "embedded config")?;
+	let compression = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"compression",
+		"user config",
+	)?;
+	merge_missing(compression, template_compression, "idle")
 }
 
 fn add_v26_model_timeouts_and_transport(

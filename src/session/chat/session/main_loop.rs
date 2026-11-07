@@ -1150,6 +1150,22 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					// between adding the message and starting the API call
 					*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
 
+					// Idle compaction folds before the index below is captured, so the
+					// rollback index stays aligned with the compacted layout.
+					if !system_managed_input {
+						// The only error is cancellation: drop the turn like a cancelled preparation below.
+						if crate::session::chat::conversation_compression::compact_if_cache_expired(
+							&mut chat_session,
+							&current_config,
+							crate::utils::time::now_secs(),
+							operation_rx.clone(),
+						)
+						.await
+						.is_err()
+						{
+							continue;
+						}
+					}
 					// CRITICAL: Capture user message insertion index AFTER compression mutations.
 					// This keeps error rollback truncation aligned with current session layout.
 
@@ -1608,6 +1624,15 @@ pub async fn run_interactive_session_with_input(
 			// Inject @file mentions as rendered file content - same as interactive.
 			input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
 
+			// Idle compaction folds before the index below is captured.
+			crate::session::chat::conversation_compression::compact_if_cache_expired(
+				&mut chat_session,
+				&current_config,
+				crate::utils::time::now_secs(),
+				operation_rx.clone(),
+			)
+			.await?;
+
 			// Add user message - same as interactive.
 			let user_message_index = chat_session.session.messages.len();
 			chat_session.add_user_message(&input)?;
@@ -1806,6 +1831,13 @@ pub async fn run_interactive_session_with_input(
 				// session log's cost ordering correct.
 				drain_keepalive_into_session(&mut keepalive, &mut chat_session, true).await;
 
+				crate::session::chat::conversation_compression::compact_before_inbox_batch(
+					&mut chat_session,
+					&current_config,
+					&batch,
+					operation_rx.clone(),
+				)
+				.await?;
 				chat_session
 					.add_inbox_batch(batch, &current_config, operation_rx.clone())
 					.await?;

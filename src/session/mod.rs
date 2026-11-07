@@ -396,6 +396,19 @@ pub struct SessionInfo {
 	pub current_total_tokens: u64,
 	#[serde(default = "current_timestamp")]
 	pub last_cache_checkpoint_time: u64,
+	/// Unix seconds of the last request or keepalive ping that read or wrote
+	/// the provider's prompt cache. `None` until one is known.
+	#[serde(default)]
+	pub last_cache_touch: Option<u64>,
+	/// Lower bound, in seconds, on how long an idle cache survives after
+	/// `last_cache_touch`. `None` when the provider cannot say.
+	#[serde(default)]
+	pub cache_lifetime_secs: Option<u64>,
+	/// The model whose prompt cache `last_cache_touch` and `cache_lifetime_secs`
+	/// describe. Once the session runs another model, that model's cache was
+	/// never written, whatever the timings say.
+	#[serde(default)]
+	pub cache_model: Option<String>,
 	// Runtime state tracking (Phase 2: ChatSession runtime state for proper resume)
 	#[serde(default)]
 	pub spending_threshold_checkpoint: f64,

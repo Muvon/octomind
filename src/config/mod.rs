@@ -74,7 +74,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 27;
+pub const CURRENT_CONFIG_VERSION: u32 = 28;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -206,6 +206,9 @@ pub struct CompressionConfig {
 	/// Hard token budget for analysis findings retained across compressions.
 	/// Zero disables analysis-finding retention.
 	pub analysis_findings_max_tokens: usize,
+	/// Compact the conversation when a user message arrives after the provider's
+	/// prompt cache has expired and the cost math says the fold saves money.
+	pub idle: bool,
 	/// Evidence-grounded causal attention around conversation compression.
 	/// Defaulted defensively for development configs already stamped with the
 	/// current unreleased schema version; released older configs are migrated.

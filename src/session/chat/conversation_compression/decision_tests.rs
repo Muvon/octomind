@@ -118,3 +118,186 @@ fn veto_is_offered_only_when_the_runtime_could_check_it() {
 	assert!(!veto_checkable(Some(0), true));
 	assert!(!veto_checkable(None, true));
 }
+
+/// Sonnet-shaped prices: write 1.25x and read 0.1x the input, output 5x.
+fn cache_priced() -> crate::providers::ModelPricing {
+	crate::providers::ModelPricing::new(3.0, 15.0, 3.75, 0.30)
+}
+
+/// Session and folder both on `pricing`.
+fn econ(pricing: &crate::providers::ModelPricing) -> FoldEconomics {
+	FoldEconomics::from_known_pricing(Some(pricing), Some(pricing)).expect("priced")
+}
+
+/// A session whose completed turns each made `calls` API calls, so a new turn
+/// expects `2 * calls` more.
+fn paced_session(calls: u32) -> SessionInfo {
+	SessionInfo {
+		turn_call_counts: vec![calls],
+		..Default::default()
+	}
+}
+
+// The fold under test: 100k of history, 90k of it compressible, leaving 20k
+// with a 9k summary. The folder call costs 90k · 0.45 · 1 + 9k · 5 = 85.5k
+// input-token units on a same-priced folder.
+const HISTORY: f64 = 100_000.0;
+const AFTER: f64 = 20_000.0;
+const COMPRESSIBLE: f64 = 90_000.0;
+const SUMMARY: f64 = 9_000.0;
+
+#[test]
+fn fold_call_cost_is_the_folder_input_and_output() {
+	let cost = fold_call_cost(COMPRESSIBLE, SUMMARY, econ(&cache_priced()));
+	assert!((cost - 85_500.0).abs() < 1e-6, "folder call cost: {cost}");
+}
+
+#[test]
+fn idle_fold_pays_on_the_write_premium_alone() {
+	// One expected call writes the prefix and nothing reads it after:
+	// 1.25 · 80k = 100k saved against the 85.5k folder call.
+	let info = SessionInfo::default();
+	assert!(idle_fold_pays(
+		&info,
+		HISTORY,
+		AFTER,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ(&cache_priced())
+	));
+}
+
+#[test]
+fn idle_fold_without_a_write_premium_needs_later_reads() {
+	// Write billed as input: 1 · 80k = 80k < 85.5k with no later reads.
+	let at_input = crate::providers::ModelPricing::new(3.0, 15.0, 3.0, 0.30);
+	assert!(!idle_fold_pays(
+		&SessionInfo::default(),
+		HISTORY,
+		AFTER,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ(&at_input)
+	));
+	// Two completed one-call turns expect 3 calls: 2 later reads add
+	// 2 · 0.1 · 80k = 16k, so 96k > 85.5k.
+	let info = SessionInfo {
+		turn_call_counts: vec![1, 1],
+		..Default::default()
+	};
+	assert_eq!(expected_remaining_calls(&info), 3.0);
+	assert!(idle_fold_pays(
+		&info,
+		HISTORY,
+		AFTER,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ(&at_input)
+	));
+}
+
+#[test]
+fn idle_fold_treats_a_zero_write_price_as_the_input_price() {
+	let info = paced_session(1);
+	let unbilled = crate::providers::ModelPricing::new(3.0, 15.0, 0.0, 0.30);
+	let at_input = crate::providers::ModelPricing::new(3.0, 15.0, 3.0, 0.30);
+	for after in [10_000.0, AFTER, 40_000.0] {
+		assert_eq!(
+			idle_fold_pays(&info, HISTORY, after, COMPRESSIBLE, SUMMARY, econ(&unbilled)),
+			idle_fold_pays(&info, HISTORY, after, COMPRESSIBLE, SUMMARY, econ(&at_input)),
+		);
+	}
+}
+
+#[test]
+fn idle_fold_skips_when_the_folder_costs_more_than_it_saves() {
+	// A folder at 10x the session price: 90k · 0.45 · 10 + 9k · 50 = 855k
+	// against 100k saved on the rewrite.
+	let expensive = crate::providers::ModelPricing::new(30.0, 150.0, 37.5, 3.0);
+	let econ = FoldEconomics::from_known_pricing(Some(&cache_priced()), Some(&expensive)).expect("priced");
+	assert!(!idle_fold_pays(
+		&SessionInfo::default(),
+		HISTORY,
+		AFTER,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ
+	));
+	// Enough later reads still repay it: 219 reads · 0.1 · 80k = 1.75M.
+	assert!(idle_fold_pays(
+		&paced_session(110),
+		HISTORY,
+		AFTER,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ
+	));
+}
+
+#[test]
+fn idle_fold_saves_nothing_when_the_fold_frees_nothing() {
+	assert!(!idle_fold_pays(
+		&paced_session(110),
+		HISTORY,
+		HISTORY,
+		COMPRESSIBLE,
+		SUMMARY,
+		econ(&cache_priced())
+	));
+}
+
+#[test]
+fn idle_economics_need_both_prices() {
+	let priced = cache_priced();
+	let free = crate::providers::ModelPricing::new(0.0, 0.0, 0.0, 0.0);
+	assert!(FoldEconomics::from_known_pricing(None, Some(&priced)).is_none());
+	assert!(FoldEconomics::from_known_pricing(Some(&priced), None).is_none());
+	assert!(FoldEconomics::from_known_pricing(Some(&free), Some(&priced)).is_none());
+	assert_eq!(
+		FoldEconomics::from_known_pricing(Some(&priced), Some(&priced)),
+		Some(FoldEconomics::from_pricing(Some(&priced), Some(&priced)))
+	);
+}
+
+fn touched(at: u64, lifetime: Option<u64>, model: Option<&str>) -> SessionInfo {
+	SessionInfo {
+		last_cache_touch: Some(at),
+		cache_lifetime_secs: lifetime,
+		cache_model: model.map(str::to_string),
+		..Default::default()
+	}
+}
+
+#[test]
+fn cache_expires_once_the_idle_gap_reaches_the_lifetime() {
+	let info = touched(1_000, Some(300), Some("anthropic:a"));
+	assert!(!cache_known_expired(&info, "anthropic:a", 1_299));
+	assert!(cache_known_expired(&info, "anthropic:a", 1_300));
+}
+
+#[test]
+fn another_models_cache_is_gone_for_the_current_model() {
+	// Touched a second ago, but under the model the session ran before.
+	let info = touched(1_000, Some(3_600), Some("anthropic:a"));
+	assert!(cache_known_expired(&info, "openai:b", 1_001));
+	// No lifetime needed: the new model never wrote a cache.
+	let info = touched(1_000, None, Some("anthropic:a"));
+	assert!(cache_known_expired(&info, "openai:b", 1_001));
+}
+
+#[test]
+fn nothing_known_means_not_expired() {
+	assert!(!cache_known_expired(&SessionInfo::default(), "anthropic:a", 1_000_000));
+	// Same model, no known lifetime.
+	assert!(!cache_known_expired(
+		&touched(1_000, None, Some("anthropic:a")),
+		"anthropic:a",
+		1_000_000
+	));
+	// A touch whose model is unknown proves nothing.
+	assert!(!cache_known_expired(
+		&touched(1_000, Some(300), None),
+		"anthropic:a",
+		1_000_000
+	));
+}

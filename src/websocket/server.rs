@@ -1343,9 +1343,19 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 						}));
 					}
 
-					if let Err(e) = chat_session
-						.add_inbox_batch(batch, &config_for_role, op_rx.clone())
-						.await
+					if let Err(e) = async {
+						crate::session::chat::conversation_compression::compact_before_inbox_batch(
+							&mut chat_session,
+							&config_for_role,
+							&batch,
+							op_rx.clone(),
+						)
+						.await?;
+						chat_session
+							.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+							.await
+					}
+					.await
 					{
 						log_error!("WS monitor: failed to add inbox message: {}", e);
 						server.sessions.lock().await.insert(session_id.clone(), chat_session);
@@ -2276,9 +2286,19 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 				}))?;
 			}
 			let op_rx = cancellation.new_operation();
-			if let Err(e) = chat_session
-				.add_inbox_batch(batch, &config_for_role, op_rx.clone())
-				.await
+			if let Err(e) = async {
+				crate::session::chat::conversation_compression::compact_before_inbox_batch(
+					&mut chat_session,
+					&config_for_role,
+					&batch,
+					op_rx.clone(),
+				)
+				.await?;
+				chat_session
+					.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+					.await
+			}
+			.await
 			{
 				log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
 				stream.emit(&ServerMessage::error(format!(
@@ -2360,6 +2380,20 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 			return Ok(());
 		}
 	};
+
+	// Idle compaction runs before the new message is appended.
+	if let Err(e) = crate::session::chat::conversation_compression::compact_if_cache_expired(
+		&mut chat_session,
+		&config_for_role,
+		crate::utils::time::now_secs(),
+		operation_rx.clone(),
+	)
+	.await
+	{
+		server.sessions.lock().await.insert(session_id.clone(), chat_session);
+		stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
+		return Ok(());
+	}
 
 	// Add user message
 	if let Err(e) = chat_session.add_user_message_with_attachments(

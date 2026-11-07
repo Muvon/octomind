@@ -2133,6 +2133,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -3136,8 +3137,6 @@ dependencies = [
 [[package]]
 name = "octolib"
 version = "0.50.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c990ba5e93b8c4d73a6a6e1c4e64c71b2d373f233d2011596beab9fbcb13191"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3920,6 +3919,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",

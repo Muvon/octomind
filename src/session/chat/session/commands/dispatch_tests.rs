@@ -218,6 +218,25 @@ async fn test_model_accepts_provider_qualified_value() {
 }
 
 #[tokio::test]
+async fn test_model_switch_keeps_the_cache_record_of_the_model_that_wrote_it() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let previous = session.model.clone();
+	session.session.info.last_cache_touch = Some(1_000);
+	session.session.info.cache_lifetime_secs = Some(300);
+	session.session.info.cache_model = Some(previous.clone());
+
+	dispatch(&mut session, &mut config, "/model ollama:other-model")
+		.await
+		.expect("model set dispatches");
+
+	// The record still names the old model, so the new one reads as cold.
+	assert_eq!(session.model, "ollama:other-model");
+	assert_eq!(session.session.info.cache_model.as_deref(), Some(previous.as_str()));
+	assert_eq!(session.session.info.last_cache_touch, Some(1_000));
+}
+
+#[tokio::test]
 async fn test_effort_set() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();

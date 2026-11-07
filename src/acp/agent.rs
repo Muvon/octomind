@@ -821,9 +821,19 @@ impl OctomindAgent {
 							}
 						}
 
-						if let Err(e) = chat_session
-							.add_inbox_batch(batch, &config_for_role, op_rx.clone())
-							.await
+						if let Err(e) = async {
+							crate::session::chat::conversation_compression::compact_before_inbox_batch(
+								&mut chat_session,
+								&config_for_role,
+								&batch,
+								op_rx.clone(),
+							)
+							.await?;
+							chat_session
+								.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+								.await
+						}
+						.await
 						{
 							log_error!("ACP monitor: failed to add inbox message: {}", e);
 							sessions
@@ -1418,9 +1428,19 @@ impl OctomindAgent {
 						.entry(session_id.to_string())
 						.or_default()
 						.new_operation();
-					if let Err(e) = chat_session
-						.add_inbox_batch(batch, &config_for_role, op_rx.clone())
-						.await
+					if let Err(e) = async {
+						crate::session::chat::conversation_compression::compact_before_inbox_batch(
+							&mut chat_session,
+							&config_for_role,
+							&batch,
+							op_rx.clone(),
+						)
+						.await?;
+						chat_session
+							.add_inbox_batch(batch, &config_for_role, op_rx.clone())
+							.await
+					}
+					.await
 					{
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
@@ -1514,6 +1534,19 @@ impl OctomindAgent {
 			let mut videos = videos;
 			images.extend(chat_session.take_pending_image());
 			videos.extend(chat_session.take_pending_video());
+			if let Err(e) = crate::session::chat::conversation_compression::compact_if_cache_expired(
+				&mut chat_session,
+				&config_for_role,
+				crate::utils::time::now_secs(),
+				operation_rx.clone(),
+			)
+			.await
+			{
+				self.sessions
+					.borrow_mut()
+					.insert(session_id.clone(), (chat_session, session_cwd));
+				return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
+			}
 			if let Err(e) = chat_session.add_user_message_with_attachments(&processed_input, images, videos) {
 				self.sessions
 					.borrow_mut()

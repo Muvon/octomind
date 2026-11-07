@@ -56,6 +56,7 @@ impl CostTracker {
 			// (api_executor → CostTracker). Follow-up calls go through messages.rs which
 			// also increments here via add_assistant_message, so both paths are covered.
 			chat_session.session.info.total_api_calls += 1;
+			crate::session::cache_keepalive::record_cache_touch(chat_session, exchange);
 
 			// Update session token counts using cache manager
 			let cache_manager = crate::session::cache::CacheManager::new();

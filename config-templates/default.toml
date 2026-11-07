@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 27
+version = 28
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -662,6 +662,10 @@ analysis_findings_max_tokens = 6000
 # max_session_tokens_threshold and the model's usable window), so hot sessions
 # compress deeply and winding-down sessions compress gently.
 threshold = 105000
+
+# Idle compaction (on by default): when you send a message after the provider's
+# prompt cache has expired, compact first if the cost math says it saves money.
+idle = true
 
 # Evidence-grounded causal compaction (PACT): runtime-owned task/constraint
 # pins, causal tool packets, an exact active frontier, attributed folds, and a

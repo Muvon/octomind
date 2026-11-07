@@ -228,6 +228,11 @@ fn config_effective_model_and_tokens_come_from_root() {
 }
 
 #[test]
+fn idle_compaction_is_on_in_the_default_config() {
+	assert!(base_config().compression.idle);
+}
+
+#[test]
 fn config_server_and_hook_lookups() {
 	let config = base_config();
 	let core = config.get_server_config("core").expect("core server in template");

@@ -955,6 +955,26 @@ enabled = true
 }
 
 #[test]
+fn v27_gains_idle_compaction_on_and_keeps_an_explicit_choice() {
+	let migrate = |existing: &str| -> toml::Value {
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v27 must migrate");
+		assert_eq!(migration.from_version, 27);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+		toml::from_str(&migration.content).unwrap()
+	};
+
+	let gained = migrate("version = 27\n\n[compression]\nthreshold = 90000\n");
+	assert_eq!(gained["compression"]["idle"].as_bool(), Some(true));
+	assert_eq!(gained["compression"]["threshold"].as_integer(), Some(90000));
+
+	let kept = migrate("version = 27\n\n[compression]\nthreshold = 90000\nidle = false\n");
+	assert_eq!(kept["compression"]["idle"].as_bool(), Some(false));
+}
+
+#[test]
 fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 	for enabled in ["authorizer", "condense", "distill", "plan", "gate", "evolution"] {
 		let flags = ["authorizer", "condense", "distill", "plan", "gate", "evolution"]

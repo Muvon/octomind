@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.70.0] - 2026-11-08
+
+### 📋 Release Summary
+
+Provider setup now has an interactive wizard with back navigation, Escape-to-skip, API key source and sign-in displays; model filtering and loading-status handling were corrected. Compression adds detached folds, compaction after prompt-cache expiry, bounded live context, and exact artifact-evidence preservation; MCP metadata exposes shell grants, learning preserves verified user-rule authority, and the mascot logo animates. Supervisor conditions are evaluated against evidence.
+
+### 🚨 Breaking Changes
+
+- **supervisor**: evaluate unsettled conditions against evidence `10f4c8d5`
+
+### ✨ New Features & Enhancements
+
+- **configure**: support back navigation in provider setup `67bc2579`
+- **configure**: show API key sources during provider setup `ee817910`
+- **configure**: treat escape as skip and show sign-in status `0f14d9bc`
+- **configure**: add interactive provider setup wizard `f6b8626a`
+- **conversation-compression**: run folds in detached processes `5a9bedcd`
+- **compression**: compact after prompt-cache expiry `e5ace598`
+- **mcp**: expose shell grants in session metadata `139fe069`
+- **learning**: preserve verified user rules across learning `e99fbaa4`
+- **learning**: preserve verified user-rule authority `134be08e`
+- **mcp**: refactor server status handling and add tests for consistency `5d8d3763`
+- **conversation-compression**: render bounded live compression context `4e7e3a7d`
+- **compression**: preserve exact artifact evidence during folds `2d5c1683`
+- **branding**: animate the mascot logo `d448ed98`
+
+### 🔧 Improvements & Optimizations
+
+- **login**: expect quoted API keys in config test `e162bc3c`
+- **supervisor**: wrap gate guidance lines `b5dc39d4`
+- **dependencies**: use published octolib 0.51.0 `35067eaf`
+- **compression**: check surviving requests by prefix `72083fd4`
+- **websocket**: align session model with outbound role `d9cbd50a`
+- **websocket**: verify keepalive restart across role switches `b1918675`
+- **tests**: serialize tests that share global state `124ada22`
+- **learning**: fix rustfmt formatting in invalid-token test `f36567d0`
+- **config**: compare threshold values with templates `d65b2024`
+- **config**: raise session token thresholds `4cc56004`
+- **supervisor**: test readback truncation beyond the bound `e1268d73`
+- **session**: refine output format guidance `a0a5f053`
+
+### 🐛 Bug Fixes & Stability
+
+- **configure**: clear model-loading status after fetch `238d40ec`
+- **learning**: enforce ID requirement for evolution command actions `dbb20db7`
+- **configure**: filter models without tool support `30eff3d7`
+- preserve cancellation and idle-fold state `de83c5be`
+- **mcp**: handle unavailable OAuth sign-ins gracefully `37240752`
+- **mcp/runtime**: refresh tool schemas after grant changes `d156dba8`
+- **chat**: settle resolution jobs at turn boundaries `dbf55510`
+- clarify background-task guidance `cf242f29`
+- **supervisor**: preserve complete condition checklists `b3e20610`
+- **learning**: retain unmatched scoped rules in packs `25f16009`
+- **learning**: bound recall and preserve learning records `6a01d007`
+- **background-jobs**: clarify background-job wait instructions `15b85899`
+- **keepalive**: stop keepalive pings after cache misses `6461def5`
+- **learning**: reject invalid /learning list arguments `1528e606`
+- **agent**: write manifest cache atomically to prevent concurrent read of half-written TOML `82f29e77`
+- **config**: preserve runtime_output_mode across merge_agent_toml `56df289a`
+- **workflow**: reject max_iterations = 0 in loop steps `e2d12063`
+- **supervisor**: treat uncited matches as unsettled `238f0520`
+- **attention**: prevent live token cap overflow `00830dd6`
+- **attention**: separate frontier budget from pinned context `d616b3a5`
+- **attention**: preserve fold evidence and deduplicate persistence `b14661ee`
+- preserve full summaries and project request views `9fc162fc`
+- **process**: set priorities for spawned workloads `21f2f9ed`
+- **supervisor**: track readback scope and outcomes distinctly `ade66808`
+- refine gate rulings and preserve task timestamps `0b0c4ad3`
+- **acp**: run ACP polling on a dedicated thread `5e8fa233`
+- **session**: preserve output mode and tailor prompt guidance `92ea3613`
+- **supervisor**: let a clean verify-gate run replace stale findings `8a810f04`
+- **websocket**: restart the keepalive on command early-return paths `9b0bb27b`
+
+### 📚 Documentation & Examples
+
+- **docs**: clarify Octomind documentation guides `7257f083`
+- **architecture**: document system workflows with architecture diagrams `ad9f84eb`
+- **readme**: document the agent turn workflow `3158e506`
+- **readme**: reframe the Octomind overview `267957c3`
+- **readme**: split overview copy into shorter lines `a6b1fcd7`
+- **readme**: clarify Octomind surfaces and guardrails `1668d28d`
+- **readme**: describe the harness and session learning `1609ee1b`
+
+### 🔄 Other Changes
+
+8 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.69.0] - 2026-11-03
 
 ### 📋 Release Summary

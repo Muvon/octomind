@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.70.1] - 2026-11-08
+
+### 🔧 Improvements & Optimizations
+
+- **configure-tests**: derive skip index from provider count `4421fab8`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.70.0] - 2026-11-08
 
 ### 📋 Release Summary

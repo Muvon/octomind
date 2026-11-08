@@ -1,6 +1,7 @@
 # Keep private code in local model sessions with Ollama
 
-Configure local model sessions that keep private code on your machine and make any cloud switch explicit.
+Configure local model sessions with Ollama that keep private code on your machine and make any switch to a cloud model
+explicit.
 
 ## The problem
 

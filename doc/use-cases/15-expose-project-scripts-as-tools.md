@@ -1,6 +1,7 @@
 # Let the agent run your project checks correctly
 
-Expose project scripts as typed tools so agents run the right builds, tests, and release commands.
+Expose project scripts as typed local tools so AI coding agents run the right builds, tests, and release commands in
+your repository.
 
 ## The problem
 

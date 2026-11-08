@@ -1,7 +1,7 @@
 # Local Tools: Turn Project Scripts into MCP Tools
 
-Use local tools to expose project scripts as MCP actions without adding server configuration. This guide covers the
-script header, inputs and outputs, discovery, and failure handling.
+Use local tools to expose project scripts as MCP actions without adding MCP server configuration, covering script
+headers, inputs, and outputs. This guide also covers discovery and failure handling.
 
 ## Quickstart
 

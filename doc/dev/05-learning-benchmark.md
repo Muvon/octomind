@@ -1,7 +1,8 @@
-# Learning Benchmark
+# Learning Benchmark: Retrieval and Consolidation Contracts
 
-Use these live contract benchmarks when changing learning retrieval or consolidation. They compare ranking and merge
-decisions on compact fixtures; they do not measure full LongMemEval answer accuracy.
+Use these live contract benchmarks when changing learning retrieval or consolidation in Octomind's cross-session memory
+feature. They compare ranking and merge decisions on compact fixtures; they do not measure full LongMemEval answer
+accuracy.
 
 ## Benchmark Layers
 

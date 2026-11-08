@@ -1,7 +1,7 @@
 # Long-Running Development: Resume Named AI Agent Sessions
 
-Use named sessions and resume to continue development across multiple sittings. This guide covers saving work,
-controlling context growth, and understanding what a resumed session can reconstruct.
+Use named sessions and resume to continue development across multiple sittings, with saved work and controlled context
+growth. This guide also covers understanding what a resumed session can reconstruct.
 
 ## Start and Resume a Task
 

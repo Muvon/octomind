@@ -1,7 +1,7 @@
 # Dynamic MCP Servers: Add MCP Servers at Runtime
 
-Use the built-in `mcp` tool to connect and manage tool servers during a live session. This guide is for users who need
-additional tools mid-task and want to decide which connections to keep for future sessions.
+Use the built-in `mcp` tool to connect and manage MCP tool servers during a live session when you need additional tools
+mid-task. This guide is for users who want to decide which connections to keep for future sessions.
 
 ## Get Started
 

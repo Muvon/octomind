@@ -1,7 +1,7 @@
 # Building Octomind from Source (Rust)
 
-Build Octomind from source and prepare the local checks used when contributing Rust changes. This guide is for
-contributors who need a development binary or platform-specific build.
+Build Octomind from source in Rust and prepare the local checks used when contributing changes, including
+platform-specific builds. This guide is for contributors who need a development binary.
 
 ## Prerequisites
 

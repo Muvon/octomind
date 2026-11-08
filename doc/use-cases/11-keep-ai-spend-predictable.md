@@ -1,6 +1,7 @@
 # Put spending checkpoints around each task
 
-Set request and session spending checkpoints so every agent task has a visible, predictable cost.
+Set request and session spending checkpoints around each task so every agent task has a visible, predictable cost in
+Octomind.
 
 ## The problem
 

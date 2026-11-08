@@ -1,7 +1,7 @@
 # Context Compression and Context Window Management
 
-Use this guide to configure and inspect context compression, which manages the context window of long-running
-sessions. It explains automatic folds, manual task boundaries, retained context, and archive recovery.
+Configure and inspect context compression, which manages the context window of long-running Octomind sessions with
+automatic folds and task boundaries. This guide also explains retained context and archive recovery.
 
 ## Get Started
 

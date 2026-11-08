@@ -1,7 +1,7 @@
 # Roles and Tool Permissions for AI Agents
 
-Configure roles to select system prompts, model settings, and tool grants. This guide is for users creating local roles
-or inspecting the effective permissions of a tap agent.
+Configure roles to select system prompts, model settings, and tool grants for an AI agent, and to check effective tool
+permissions. This guide is for users creating local roles or inspecting the effective permissions of a tap agent.
 
 ## How Roles Work
 

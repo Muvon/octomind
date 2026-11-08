@@ -1,7 +1,8 @@
 # Custom Hooks: Webhook Scripts for an AI Agent
 
-Use script-backed HTTP listeners to turn external events into messages for a running Octomind session. This guide is for
-users building custom integrations and covers setup, executable scripts, request metadata, and troubleshooting.
+Use script-backed HTTP listeners to turn external events into messages for a running Octomind session through custom
+webhook hooks. This guide is for users building custom integrations and covers setup, executable scripts, request
+metadata, and troubleshooting.
 
 > **`[[hooks]]` vs `[[hook]]` — two different systems.** This doc covers **HTTP webhook hooks** (`[[hooks]]`, plural, in
 > the main config): an external POST request runs your script, and on **exit 0 with non-empty stdout** the output is

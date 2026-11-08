@@ -1,7 +1,8 @@
 # Tap System: Share and Install Reusable AI Agents
 
-Use taps to install and author reusable Octomind agents, skills, capabilities, workflows, and plugins. This guide covers
-tap management, manifest configuration, and the cache behavior you need when developing a tap.
+Install and author reusable Octomind agents, skills, capabilities, workflows, and plugins with taps, the shareable agent
+package system. This guide covers tap management, manifest configuration, and the cache behavior you need when
+developing a tap.
 
 ## Managing Taps
 

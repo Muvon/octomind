@@ -1,7 +1,7 @@
 # Daemon Mode and Webhook Hooks: Run a Background AI Agent
 
-Run Octomind as a persistent session that reacts to external events. This guide is for automation authors using
-`octomind send` or HTTP hooks to enqueue work.
+Run Octomind as a persistent daemon session that reacts to external events, using `octomind send` or HTTP webhook hooks
+to enqueue work. This guide is for automation authors.
 
 ## Daemon Mode
 

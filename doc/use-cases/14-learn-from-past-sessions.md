@@ -1,6 +1,7 @@
 # Carry project corrections into the next session
 
-Store project corrections as durable memories that automatically guide related work in future sessions.
+Store project corrections as durable memories that automatically guide related work in future Octomind coding agent
+sessions.
 
 ## The problem
 

@@ -1,6 +1,7 @@
 # Get a second opinion before accepting a risky change
 
-Run independent model reviews in parallel and combine them into a comparison that keeps disagreements visible.
+Run independent model reviews in parallel and combine them into one comparison that keeps disagreements visible before a
+risky change.
 
 ## The problem
 

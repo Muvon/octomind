@@ -1,7 +1,7 @@
 # Supervisor: Agent Completion Verification and Planning
 
-The supervisor checks progress and completion, manages plans, and narrows large tool results around your session. Use
-this guide to configure it and understand its notices, retries, and verification limits.
+The supervisor checks progress and completion, manages plans, and narrows large tool results around your Octomind agent
+session. Use this guide to configure it and understand its notices, retries, and verification limits.
 
 ## Get started
 

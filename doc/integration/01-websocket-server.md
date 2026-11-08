@@ -1,7 +1,7 @@
 # WebSocket Server for Remote AI Agent Sessions
 
-Use Octomind's WebSocket server to create remote AI sessions from web clients, bots, and automation tools. This guide
-covers server setup, JSON frames, client examples, and troubleshooting.
+Use Octomind's WebSocket server to run remote AI agent sessions from web clients, bots, and automation tools over JSON
+frames. This guide covers server setup, client examples, and troubleshooting.
 
 ## Quick Start
 

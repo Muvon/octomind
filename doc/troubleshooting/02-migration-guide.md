@@ -1,7 +1,7 @@
 # Migration Guide: Upgrade Octomind and Its Config
 
-Use this guide when upgrading an existing Octomind installation or porting a hand-written config.
-It covers schema `12`, changes to model and tool configuration, and recovery when an upgrade cannot load.
+Use this guide when upgrading an existing Octomind installation or porting a hand-written config to the current config
+schema, version 12. It covers changes to model and tool configuration, and recovery when an upgrade cannot load.
 
 ## Back Up and Upgrade
 

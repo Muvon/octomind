@@ -1,7 +1,7 @@
 # Token Efficiency: Reduce LLM Token Usage and Cost
 
-Use this guide to keep tool schemas focused with on-demand capabilities and to inspect the context your session sends.
-It covers runtime activation, tool eviction, and the limits of those mechanisms.
+Use this guide to reduce LLM token usage by keeping tool schemas focused with on-demand capabilities and by inspecting
+the context your session sends. It covers runtime activation, tool eviction, and the limits of those mechanisms.
 
 ## Get started
 

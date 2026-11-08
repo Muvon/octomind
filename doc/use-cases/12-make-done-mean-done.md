@@ -1,6 +1,7 @@
 # Check the result before accepting “done”
 
-Set up completion review and executable checks so done means the requested change actually works.
+Set up completion review and executable checks so done means the requested change actually works before you accept the
+agent's result.
 
 ## The problem
 

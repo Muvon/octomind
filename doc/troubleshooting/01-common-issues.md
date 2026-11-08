@@ -1,7 +1,7 @@
 # Common Issues and Troubleshooting
 
-Use these checks when installation, authentication, configuration, MCP tools, or sessions fail.
-This guide also covers sandbox restrictions and ACP/WebSocket startup problems.
+Use these troubleshooting checks when Octomind installation, authentication, configuration, MCP tools, or sessions fail
+to work as expected. This guide also covers sandbox restrictions and ACP/WebSocket startup problems.
 
 ## Installation
 

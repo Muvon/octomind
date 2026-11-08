@@ -1,6 +1,7 @@
 # Give your team a reusable release-review specialist
 
-Package a release-review specialist your whole team can install and use consistently across projects.
+Package a release-review specialist agent as a tap that your whole team can install and use consistently across
+projects.
 
 ## The problem
 

@@ -1,7 +1,7 @@
 # Custom AI Development Workflow
 
-Use this guide to build a development pipeline that refines a request, researches the checkout, and implements a fix. It
-covers sequential steps and a bounded review loop for users writing local workflow TOML.
+Use this guide to build a custom development workflow that refines a request, researches the checkout, and implements a
+fix. It covers sequential steps and a bounded review loop for users writing local workflow TOML.
 
 ## Get started
 

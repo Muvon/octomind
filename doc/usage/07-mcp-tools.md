@@ -1,7 +1,7 @@
 # MCP Tools Reference: Add MCP Servers to Your CLI Agent
 
-Use this reference to add MCP servers to Octomind, an MCP client, and to inspect the tools available to your session.
-It covers built-in controls, tap capabilities, external MCP servers, and project-local tools.
+Use this reference to add MCP servers to Octomind, an MCP client, and to inspect the tools available to your CLI agent
+session. It covers built-in controls, tap capabilities, external MCP servers, and project-local tools.
 
 ## Get Started
 

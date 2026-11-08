@@ -1,6 +1,7 @@
 # Keep fixing a change until it passes review
 
-Build a finite implementation, independent review, and correction loop that keeps working until the change passes.
+Build a finite implementation, independent review, and correction loop that keeps working until the change passes
+review.
 
 ## The problem
 

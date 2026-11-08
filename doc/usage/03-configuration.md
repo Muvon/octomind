@@ -1,7 +1,7 @@
 # Configuration: Models, Roles, and MCP Config in TOML
 
-Configure Octomind's models, tools, and runtime limits. This guide covers file locations, merge order, and overrides for
-users maintaining their own TOML configuration.
+Configure Octomind's models, roles, tools, and runtime limits in TOML, including file locations, merge order, and
+overrides. This guide is for users maintaining their own TOML configuration.
 
 ## Create and Inspect the Configuration
 

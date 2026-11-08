@@ -1,7 +1,7 @@
 # Web Dashboard Integration: Embed an AI Agent over WebSocket
 
-Use this guide to connect a browser dashboard to Octomind's WebSocket server. It covers session setup, request
-completion, media references, and deployment boundaries for frontend developers.
+Use this guide to connect a browser dashboard to Octomind's WebSocket server and embed an AI agent in your web frontend.
+It covers session setup, request completion, media references, and deployment boundaries for frontend developers.
 
 ## Start the server
 

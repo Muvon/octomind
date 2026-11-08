@@ -1,7 +1,7 @@
 # Multi-Agent Task Delegation with Sub-Agents
 
-Use this guide to delegate development tasks to local, tap-provided, or runtime-created specialists. It covers working
-role/tool configuration, asynchronous results, and troubleshooting for the coordinating session.
+Use this guide to delegate development tasks to local, tap-provided, or runtime-created sub-agents from a coordinating
+Octomind session. It covers working role/tool configuration, asynchronous results, and troubleshooting.
 
 ## Choose a delegation mechanism
 

@@ -1,7 +1,7 @@
 # Cross-Session Learning: Agent Memory Across Sessions
 
-Use cross-session learning to carry your rules and grounded project knowledge into later sessions. This guide covers
-configuration, inspection, retrieval, and retention for session users.
+Use cross-session learning to carry your rules and grounded project knowledge into later Octomind agent sessions and to
+inspect what it retrieves. This guide covers configuration, inspection, retrieval, and retention for session users.
 
 ## Get started
 

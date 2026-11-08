@@ -1,7 +1,7 @@
 # Event-Driven Webhooks: Run an AI Agent on GitHub Events
 
-Use this guide to connect external HTTP events to a persistent Octomind session. It covers webhook scripts, daemon
-startup, manual messages, and delivery troubleshooting.
+Use this guide to connect external HTTP events, such as GitHub webhooks, to a persistent Octomind session that runs an
+AI agent. It covers webhook scripts, daemon startup, manual messages, and delivery troubleshooting.
 
 ## Get started
 

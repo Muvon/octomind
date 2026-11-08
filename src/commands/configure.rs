@@ -24,7 +24,7 @@ use octomind::account;
 use octomind::branding::{icon_beside, name_and_version};
 use octomind::directories::get_config_dir;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
-use octomind::session::picker::pick_index;
+use octomind::session::picker::{pick_index, Picked};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -81,62 +81,37 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	let hub_signed_in = env_present(account::HUB_KEY_ENV)?;
 	let labels = setup_labels(&providers, hub_signed_in);
 	let title = setup_title();
-	// Esc is the same as Skip: on first run the defaults still get written, so startup is never blocked.
-	let choice = match pick_index(&title, &labels, 0)? {
-		Some(index) => setup_choice(index, providers.len()),
-		None => SetupChoice::Skip,
-	};
-
-	let models = match choice {
-		SetupChoice::Hub => {
-			login::execute(&LoginArgs {
-				target: LoginTarget::Octomind,
-				force: !hub_signed_in,
-				no_browser: false,
-			})
-			.await?;
-			Some([HUB_MODEL.to_string(), HUB_MODEL.to_string(), HUB_MODEL.to_string()])
-		}
-		SetupChoice::Provider(i) => {
-			let provider = &providers[i].0;
-			if provider.name == "chatgpt" {
+	// Esc on a later screen returns here with the same row highlighted.
+	let mut row = 0;
+	let models = loop {
+		// Esc is the same as Skip: on first run the defaults still get written, so startup is never blocked.
+		let choice = match pick_index(&title, &labels, row)? {
+			Picked::Index(index) => {
+				row = index;
+				setup_choice(index, providers.len())
+			}
+			Picked::Back => SetupChoice::Skip,
+			Picked::Quit => bail!("setup cancelled"),
+		};
+		match choice {
+			SetupChoice::Hub => {
 				login::execute(&LoginArgs {
-					target: LoginTarget::Chatgpt,
-					force: false,
+					target: LoginTarget::Octomind,
+					force: !hub_signed_in,
 					no_browser: false,
 				})
 				.await?;
+				break Some([HUB_MODEL.to_string(), HUB_MODEL.to_string(), HUB_MODEL.to_string()]);
 			}
-			for name in provider
-				.api_key_env
-				.into_iter()
-				.chain(provider.extra_env.iter().copied())
-			{
-				if !env_present(name)? {
-					eprintln!("{} needs {name}. {KEYS_HINT}", provider.name);
-					let value = read_secret(name)?;
-					account::write_env_var(name, &value)?;
-					std::env::set_var(name, value);
+			SetupChoice::Provider(i) => {
+				if let Some(models) = configure_provider(&providers[i].0).await? {
+					break Some(models);
 				}
 			}
-			let catalog = provider_models(provider).await?;
-			let main = choose_model(provider.name, "main", &catalog, None)?;
-			let (supervisor, compression) = if confirm(&format!(
-				"Use {main} for the supervisor and compression too? They check work and shorten long \
-				 conversations; a cheaper model often fits. [Y/n] "
-			))? {
-				(main.clone(), main.clone())
-			} else {
-				(
-					choose_model(provider.name, "supervisor", &catalog, Some(&main))?,
-					choose_model(provider.name, "compression", &catalog, Some(&main))?,
-				)
-			};
-			Some([main, supervisor, compression].map(|model| format!("{}:{model}", provider.name)))
-		}
-		SetupChoice::Skip => {
-			eprintln!("Skipped. Run `octomind configure` when you're ready.");
-			None
+			SetupChoice::Skip => {
+				eprintln!("Skipped. Run `octomind configure` when you're ready.");
+				break None;
+			}
 		}
 	};
 	if let Some(models) = &models {
@@ -397,7 +372,60 @@ async fn public_models(url: &str) -> Result<Vec<String>> {
 		.collect())
 }
 
-fn choose_model(provider: &str, slot: &str, models: &[String], default: Option<&str>) -> Result<String> {
+/// Collect any missing keys, then the three models. `None` means the user went back to the provider list.
+async fn configure_provider(provider: &ProviderSetupInfo) -> Result<Option<[String; 3]>> {
+	if provider.name == "chatgpt" {
+		login::execute(&LoginArgs {
+			target: LoginTarget::Chatgpt,
+			force: false,
+			no_browser: false,
+		})
+		.await?;
+	}
+	for name in provider
+		.api_key_env
+		.into_iter()
+		.chain(provider.extra_env.iter().copied())
+	{
+		if !env_present(name)? {
+			eprintln!("{} needs {name}. {KEYS_HINT}", provider.name);
+			let Some(value) = read_secret(name)? else {
+				return Ok(None);
+			};
+			account::write_env_var(name, &value)?;
+			std::env::set_var(name, value);
+		}
+	}
+	let catalog = provider_models(provider).await?;
+	let models = choose_models(provider.name, &catalog)?;
+	Ok(models.map(|models| models.map(|model| format!("{}:{model}", provider.name))))
+}
+
+/// Main, supervisor and compression models; Esc on each list steps back to the previous one.
+fn choose_models(provider: &str, catalog: &[String]) -> Result<Option<[String; 3]>> {
+	'main: loop {
+		let Some(main) = choose_model(provider, "main", catalog, None)? else {
+			return Ok(None);
+		};
+		if confirm(&format!(
+			"Use {main} for the supervisor and compression too? They check work and shorten long \
+			 conversations; a cheaper model often fits. [Y/n] "
+		))? {
+			return Ok(Some([main.clone(), main.clone(), main]));
+		}
+		loop {
+			let Some(supervisor) = choose_model(provider, "supervisor", catalog, Some(&main))? else {
+				continue 'main;
+			};
+			if let Some(compression) = choose_model(provider, "compression", catalog, Some(&main))? {
+				return Ok(Some([main, supervisor, compression]));
+			}
+		}
+	}
+}
+
+/// `None` means Esc on the model list. A typed model id has no back step.
+fn choose_model(provider: &str, slot: &str, models: &[String], default: Option<&str>) -> Result<Option<String>> {
 	if !models.is_empty() {
 		let mut labels = models.to_vec();
 		labels.push(OTHER_MODEL_LABEL.to_string());
@@ -405,13 +433,15 @@ fn choose_model(provider: &str, slot: &str, models: &[String], default: Option<&
 			.and_then(|model| models.iter().position(|m| m == model))
 			.unwrap_or(0);
 		let title = format!(
-			"Choose the {slot} model on {provider}.\n\n\
-			 Type to filter, ↑/↓ to move, Enter to choose, Esc to cancel."
+			"{}\n\n{}",
+			format!("Choose the {slot} model on {provider}.").bold(),
+			"Type to filter, ↑/↓ to move, Enter to choose, Esc to go back.".dimmed()
 		);
-		let index =
-			pick_index(&title, &labels, selected)?.with_context(|| format!("{slot} model selection cancelled"))?;
-		if index < models.len() {
-			return Ok(models[index].clone());
+		match pick_index(&title, &labels, selected)? {
+			Picked::Index(index) if index < models.len() => return Ok(Some(models[index].clone())),
+			Picked::Index(_) => {}
+			Picked::Back => return Ok(None),
+			Picked::Quit => bail!("setup cancelled"),
 		}
 	}
 	let mut stderr = io::stderr();
@@ -429,9 +459,9 @@ fn choose_model(provider: &str, slot: &str, models: &[String], default: Option<&
 	}
 	let value = value.trim();
 	match (value.is_empty(), default) {
-		(true, Some(model)) => Ok(model.to_string()),
+		(true, Some(model)) => Ok(Some(model.to_string())),
 		(true, None) => bail!("{slot} model: a non-empty model id is required"),
-		(false, _) => Ok(value.to_string()),
+		(false, _) => Ok(Some(value.to_string())),
 	}
 }
 
@@ -455,7 +485,8 @@ fn parse_yes(answer: &str) -> Result<bool> {
 	}
 }
 
-fn read_secret(name: &str) -> Result<String> {
+/// `None` means Esc: back to the provider list.
+fn read_secret(name: &str) -> Result<Option<String>> {
 	terminal::enable_raw_mode()?;
 	let result = prompt_secret(name, &mut io::stderr(), event::read);
 	terminal::disable_raw_mode()?;
@@ -467,9 +498,9 @@ fn prompt_secret(
 	name: &str,
 	output: &mut impl Write,
 	mut read_event: impl FnMut() -> io::Result<Event>,
-) -> Result<String> {
+) -> Result<Option<String>> {
 	loop {
-		write!(output, "{name} (hidden): ")?;
+		write!(output, "{name} (hidden, Esc to go back): ")?;
 		output.flush()?;
 		let mut value = String::new();
 		loop {
@@ -483,9 +514,9 @@ fn prompt_secret(
 							write!(output, "\r\n{name}: a non-empty value is required\r\n")?;
 							break;
 						}
-						return Ok(value);
+						return Ok(Some(value));
 					}
-					KeyCode::Esc => bail!("{name}: input cancelled"),
+					KeyCode::Esc => return Ok(None),
 					KeyCode::Char('c' | 'd') if key.modifiers.contains(KeyModifiers::CONTROL) => {
 						bail!("{name}: input cancelled");
 					}

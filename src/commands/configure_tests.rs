@@ -159,17 +159,30 @@ fn configure_secret_reprompts_empty_input_without_echoing_values() {
 			)))
 		})
 		.expect("required value entered");
-		assert_eq!(value, "secret");
+		assert_eq!(value.as_deref(), Some("secret"));
 		assert!(events.next().is_none());
 		assert_eq!(
 			String::from_utf8(output).unwrap(),
 			format!(
-				"{name} (hidden): \r\n{name}: a non-empty value is required\r\n\
-			{name} (hidden): \r\n{name}: a non-empty value is required\r\n\
-			{name} (hidden): "
+				"{name} (hidden, Esc to go back): \r\n{name}: a non-empty value is required\r\n\
+			{name} (hidden, Esc to go back): \r\n{name}: a non-empty value is required\r\n\
+			{name} (hidden, Esc to go back): "
 			)
 		);
 	}
+}
+
+#[test]
+fn configure_secret_esc_goes_back() {
+	let mut output = Vec::new();
+	let value = prompt_secret("PROVIDER_API_KEY", &mut output, || {
+		Ok(Event::Key(crossterm::event::KeyEvent::new(
+			KeyCode::Esc,
+			KeyModifiers::NONE,
+		)))
+	})
+	.expect("Esc is not an error");
+	assert_eq!(value, None);
 }
 
 #[test]

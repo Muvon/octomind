@@ -99,18 +99,30 @@ pub fn pick_session() -> Result<Option<String>> {
 	}
 
 	let labels: Vec<String> = entries.iter().map(PickerEntry::label).collect();
-	let selected = pick_index(
+	let picked = pick_index(
 		"Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)",
 		&labels,
 		0,
 	)?;
-	Ok(selected.map(|i| entries[i].name.clone()))
+	Ok(match picked {
+		Picked::Index(i) => Some(entries[i].name.clone()),
+		Picked::Back | Picked::Quit => None,
+	})
 }
 
-/// Pick a label with fuzzy filtering. Escape or Enter with no matches cancels.
+/// What the user did in `pick_index`.
+pub enum Picked {
+	Index(usize),
+	/// Esc, or Enter with nothing matching the filter.
+	Back,
+	/// Ctrl-C or Ctrl-D: raw mode swallows the signal, so the caller decides how to stop.
+	Quit,
+}
+
+/// Pick a label with fuzzy filtering.
 /// Title and labels may carry ANSI colors: matching and row widths use the plain text,
 /// and the highlighted row is drawn plain so its inverse video is not cut by color resets.
-pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result<Option<usize>> {
+pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result<Picked> {
 	const EXTRA_ROWS: usize = 4;
 	let matcher = SkimMatcherV2::default();
 	let plain_labels: Vec<String> = labels.iter().map(|label| strip_ansi(label)).collect();
@@ -119,7 +131,7 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 	let mut stdout = std::io::stdout();
 
 	terminal::enable_raw_mode()?;
-	let result = (|| -> Result<Option<usize>> {
+	let result = (|| -> Result<Picked> {
 		execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 		loop {
 			let query_str: String = query.iter().collect();
@@ -186,9 +198,9 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 				}
 				let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 				match code {
-					KeyCode::Esc => return Ok(None),
+					KeyCode::Esc => return Ok(Picked::Back),
 					KeyCode::Enter => {
-						return Ok(filtered.get(selected).map(|(i, _)| *i));
+						return Ok(filtered.get(selected).map_or(Picked::Back, |(i, _)| Picked::Index(*i)));
 					}
 					KeyCode::Up => selected = selected.saturating_sub(1),
 					KeyCode::Down => {
@@ -197,8 +209,7 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 						}
 					}
 					// ── readline-style editing ─────────────────────────
-					KeyCode::Char('c') if ctrl => return Ok(None),
-					KeyCode::Char('d') if ctrl => return Ok(None), // exit, not resume
+					KeyCode::Char('c' | 'd') if ctrl => return Ok(Picked::Quit),
 					KeyCode::Char('n') if ctrl => {
 						if selected + 1 < filtered.len() {
 							selected += 1;

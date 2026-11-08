@@ -320,12 +320,18 @@ fn setup_choice(index: usize, provider_count: usize) -> SetupChoice {
 	}
 }
 
+/// Carriage return plus ANSI erase-line.
+const CLEAR_LINE: &str = "\r\x1b[2K";
 async fn provider_models(provider: &ProviderSetupInfo) -> Result<Vec<String>> {
 	let Some(url) = provider.models_url else {
 		return Ok(provider.models.clone());
 	};
-	eprintln!("Loading {}'s model list…", provider.name);
-	match public_models(url).await {
+	eprint!("Loading {}'s model list…", provider.name);
+	io::stderr().flush()?;
+	let loaded = public_models(url).await;
+	// Erase the status line: Esc from the list returns here, and a stale line would name the wrong provider.
+	eprint!("{CLEAR_LINE}");
+	match loaded {
 		Ok(models) => Ok(models),
 		// The list is a convenience: typing the id still configures the provider correctly.
 		Err(e) => {

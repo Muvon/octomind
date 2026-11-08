@@ -106,17 +106,17 @@ fn configure_orders_key_found_providers_first_and_excludes_hub() {
 			provider("no-key-needed", None),
 			provider("second-with-key", Some("FOUND_KEY")),
 		],
-		|name| Ok(name == "FOUND_KEY"),
+		|name| Ok((name == "FOUND_KEY").then_some(KeySource::Shell)),
 	)
 	.expect("provider metadata");
 	let labels: Vec<_> = providers.iter().map(|(info, found)| (info.name, *found)).collect();
 	assert_eq!(
 		labels,
 		[
-			("first-with-key", true),
-			("second-with-key", true),
-			("without-key", false),
-			("no-key-needed", false),
+			("first-with-key", Some(KeySource::Shell)),
+			("second-with-key", Some(KeySource::Shell)),
+			("without-key", None),
+			("no-key-needed", None),
 		]
 	);
 }

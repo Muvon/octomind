@@ -122,14 +122,42 @@ pub(crate) async fn spawn_compact_process(sidecar: PathBuf, session_file: PathBu
 	Ok(())
 }
 
+/// Best-effort removal of a sidecar that can no longer be restored; resume must not depend on it.
+fn discard_fold_sidecar(sidecar: &Path) {
+	for path in [
+		sidecar,
+		&sidecar.with_added_extension("lock"),
+		&sidecar.with_added_extension("result.json"),
+	] {
+		if let Err(error) = std::fs::remove_file(path) {
+			if error.kind() != std::io::ErrorKind::NotFound {
+				crate::log_error!("Failed to remove fold sidecar {}: {:#}", path.display(), error);
+			}
+		}
+	}
+}
+
 pub(crate) fn restore_fold(session_file: &Path) -> Result<Option<FoldJob>> {
 	let sidecar = session_file.with_added_extension("fold.json");
 	let raw = match std::fs::read(&sidecar) {
 		Ok(raw) => raw,
 		Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-		Err(error) => return Err(error).with_context(|| format!("failed to read {}", sidecar.display())),
+		Err(error) => {
+			// The sidecar is disposable: a corrupt or unreadable request must never block session resume.
+			crate::log_error!("Unreadable fold sidecar {}, discarding: {:#}", sidecar.display(), error);
+			discard_fold_sidecar(&sidecar);
+			return Ok(None);
+		}
 	};
-	let mut request: FoldRequest = serde_json::from_slice(&raw).context("invalid pending fold request")?;
+	let mut request: FoldRequest = match serde_json::from_slice(&raw) {
+		Ok(request) => request,
+		Err(error) => {
+			// Version skew across upgrades changes FoldRequest's shape; resume continues without the fold.
+			crate::log_error!("Invalid fold sidecar {}, discarding: {:#}", sidecar.display(), error);
+			discard_fold_sidecar(&sidecar);
+			return Ok(None);
+		}
+	};
 	request.ctx.detached = true;
 	let lock_path = sidecar.with_added_extension("lock");
 	let result_path = sidecar.with_added_extension("result.json");

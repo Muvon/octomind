@@ -149,6 +149,21 @@ async fn unfinished_exit_writes_request_before_spawn_and_cancels_without_waiting
 }
 
 #[tokio::test]
+async fn corrupt_fold_sidecar_is_discarded_and_does_not_fail_restore() {
+	let dir = tempfile::tempdir().unwrap();
+	let journal = dir.path().join("session.jsonl.zst");
+	let sidecar = journal.with_added_extension("fold.json");
+	std::fs::write(&sidecar, b"{ not json").unwrap();
+	std::fs::write(sidecar.with_added_extension("lock"), b"").unwrap();
+	std::fs::write(sidecar.with_added_extension("result.json"), b"{}").unwrap();
+	// A corrupt sidecar must not abort the session load: resume continues with no fold job.
+	assert!(restore_fold(&journal).unwrap().is_none());
+	assert!(!sidecar.exists());
+	assert!(!sidecar.with_added_extension("lock").exists());
+	assert!(!sidecar.with_added_extension("result.json").exists());
+}
+
+#[tokio::test]
 async fn restored_fold_waits_for_lock_then_yields_summary_and_usage() {
 	let dir = tempfile::tempdir().unwrap();
 	let journal = dir.path().join("session.jsonl.zst");

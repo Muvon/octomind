@@ -66,15 +66,8 @@ fn icon_lines() -> Vec<String> {
 /// trio so callers can attach the tip + shortcuts hint inline with the icon
 /// instead of dumping them on separate rows below.
 pub fn print_startup_banner(role: &str, model: &str, cwd: &Path, extra: &[String]) {
-	let icon = icon_lines();
-	let pad = "  ";
-
 	let mut info: Vec<String> = vec![
-		format!(
-			"{} {}",
-			"Octomind".bright_white().bold(),
-			format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-		),
+		name_and_version(),
 		format!(
 			"{} {} {} {} {}",
 			"Role:".dimmed(),
@@ -86,14 +79,33 @@ pub fn print_startup_banner(role: &str, model: &str, cwd: &Path, extra: &[String
 		format!("{}", cwd.display().to_string().dimmed()),
 	];
 	info.extend(extra.iter().cloned());
+	for line in icon_beside(&info) {
+		println!("{line}");
+	}
+}
 
+/// Bold product name followed by the dimmed version, the first line next to the icon.
+pub fn name_and_version() -> String {
+	format!(
+		"{} {}",
+		"Octomind".bright_white().bold(),
+		format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
+	)
+}
+
+/// Lay out the pixel icon on the left and the given (already styled) lines on its right.
+pub fn icon_beside(info: &[String]) -> Vec<String> {
+	let icon = icon_lines();
+	let pad = "  ";
 	let total = icon.len().max(info.len());
 	let blank_icon = " ".repeat(ICON_WIDTH);
-	for i in 0..total {
-		let icon_line = icon.get(i).map(String::as_str).unwrap_or(&blank_icon);
-		let info_line = info.get(i).map(String::as_str).unwrap_or("");
-		println!("{icon_line}{pad}{info_line}");
-	}
+	(0..total)
+		.map(|i| {
+			let icon_line = icon.get(i).map(String::as_str).unwrap_or(&blank_icon);
+			let info_line = info.get(i).map(String::as_str).unwrap_or("");
+			format!("{icon_line}{pad}{info_line}")
+		})
+		.collect()
 }
 
 #[cfg(test)]

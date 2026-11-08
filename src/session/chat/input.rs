@@ -155,7 +155,7 @@ fn display_shortcuts_help() {
 }
 
 /// Strip ANSI CSI escape sequences from a string.
-fn strip_ansi(s: &str) -> String {
+pub fn strip_ansi(s: &str) -> String {
 	let mut out = String::with_capacity(s.len());
 	let mut in_esc = false;
 	for c in s.chars() {

@@ -52,7 +52,7 @@ pub use conversation_compression::detached::run_detached_fold;
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;
 pub use formatting::format_duration;
-pub use input::{read_user_input, InputResult};
+pub use input::{read_user_input, strip_ansi, InputResult};
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
 pub use message_handler::MessageHandler;
 pub use prompt::ChatPrompt;

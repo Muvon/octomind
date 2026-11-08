@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use anyhow::{bail, Context, Result};
+use colored::Colorize;
 use crossterm::{
 	event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
 	terminal,
@@ -20,8 +21,11 @@ use crossterm::{
 use octolib::llm::providers::chatgpt;
 use octolib::llm::{ProviderFactory, ProviderSetupInfo};
 use octomind::account;
+use octomind::branding::{icon_beside, name_and_version};
+use octomind::directories::get_config_dir;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
 use octomind::session::picker::pick_index;
+use std::collections::HashSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use toml_edit::{Document, Item, Value};
@@ -34,6 +38,26 @@ const HUB_MODEL: &str = "octohub:auto";
 const MODELS_URL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const OTHER_MODEL_LABEL: &str = "other — type a model id that is not in this list";
 const KEYS_HINT: &str = "Keys you enter are saved to octomind's own .env file, readable only by you.";
+const KEY_SOURCES_HINT: &str = "Keys are read from your shell environment, ./.env, and octomind's own .env.";
+const ENV_FILE_NAME: &str = ".env";
+
+/// Where a provider key was found. Startup loads octomind's .env, then ./.env, each overriding the shell.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum KeySource {
+	Shell,
+	OctomindEnvFile,
+	ProjectEnvFile,
+}
+
+impl KeySource {
+	fn label(self) -> &'static str {
+		match self {
+			KeySource::Shell => "shell environment",
+			KeySource::OctomindEnvFile => "octomind's .env",
+			KeySource::ProjectEnvFile => "./.env",
+		}
+	}
+}
 
 enum SetupChoice {
 	Hub,
@@ -53,16 +77,10 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 		Err(e) => return Err(e).with_context(|| format!("could not read {}", config_path.display())),
 	};
 	let mut document = Document::parse(source).context("could not parse config.toml")?;
-	let providers = providers_for_setup(ProviderFactory::provider_setup_info(), env_present)?;
+	let providers = providers_for_setup(ProviderFactory::provider_setup_info(), key_source)?;
 	let hub_signed_in = env_present(account::HUB_KEY_ENV)?;
 	let labels = setup_labels(&providers, hub_signed_in);
-	let title = format!(
-		"Where should octomind get its models?\n\n\
-		 Octomind hub: one sign-in, `auto` picks a model for each job, billed from credits you buy.\n\
-		 Your own provider: use a key you already have.\n\
-		 {KEYS_HINT}\n\n\
-		 Type to filter, ↑/↓ to move, Enter to choose, Esc to skip."
-	);
+	let title = setup_title();
 	// Esc is the same as Skip: on first run the defaults still get written, so startup is never blocked.
 	let choice = match pick_index(&title, &labels, 0)? {
 		Some(index) => setup_choice(index, providers.len()),
@@ -135,14 +153,7 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	}
 
 	block_open("configure", None);
-	let kw = key_width([
-		"main",
-		"supervisor",
-		"compression",
-		"provider",
-		"key present",
-		"signed in",
-	]);
+	let kw = key_width(["main", "supervisor", "compression", "provider", "key", "signed in"]);
 	for (path, slot) in MODEL_SLOTS.iter().zip(SLOT_NAMES) {
 		let mut item = document.as_item();
 		for key in *path {
@@ -162,7 +173,13 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 			.with_context(|| format!("unknown provider: {provider_name}"))?;
 		block_row("provider", &provider_name, kw);
 		match info.api_key_env {
-			Some(name) => block_row("key present", if env_present(name)? { "yes" } else { "no" }, kw),
+			Some(name) => {
+				let found = match key_source(name)? {
+					Some(source) => format!("in {}", source.label()),
+					None => format!("missing, set {name}"),
+				};
+				block_row("key", &found, kw);
+			}
 			// chatgpt bills the user's ChatGPT plan through a sign-in, not a key.
 			None if info.name == "chatgpt" => {
 				let signed_in = chatgpt::current_account()?.is_some();
@@ -206,22 +223,50 @@ fn set_model_names(document: &Document<String>, models: &[String; 3]) -> Result<
 	Ok(source)
 }
 
+fn setup_title() -> String {
+	let intro = [
+		name_and_version(),
+		"Where should octomind get its models?".bold().to_string(),
+	];
+	// The icon is drawn with color escapes only; without color it would print as bare block glyphs.
+	let mut lines = if colored::control::SHOULD_COLORIZE.should_colorize() {
+		icon_beside(&intro)
+	} else {
+		intro.to_vec()
+	};
+	lines.extend([
+		String::new(),
+		format!(
+			"{} one sign-in, `auto` picks a model for each job, billed from credits you buy.",
+			"Octomind hub:".bold()
+		),
+		format!("{} use a key you already have.", "Your own provider:".bold()),
+		KEY_SOURCES_HINT.dimmed().to_string(),
+		KEYS_HINT.dimmed().to_string(),
+		String::new(),
+		"Type to filter, ↑/↓ to move, Enter to choose, Esc to skip."
+			.dimmed()
+			.to_string(),
+	]);
+	lines.join("\n")
+}
+
 fn providers_for_setup(
 	providers: Vec<ProviderSetupInfo>,
-	has_env: impl Fn(&str) -> Result<bool>,
-) -> Result<Vec<(ProviderSetupInfo, bool)>> {
+	find_key: impl Fn(&str) -> Result<Option<KeySource>>,
+) -> Result<Vec<(ProviderSetupInfo, Option<KeySource>)>> {
 	let mut providers = providers
 		.into_iter()
 		.filter(|provider| provider.name != "octohub")
 		.map(|provider| {
-			let key_found = match provider.api_key_env {
-				Some(name) => has_env(name)?,
-				None => false,
+			let key = match provider.api_key_env {
+				Some(name) => find_key(name)?,
+				None => None,
 			};
-			Ok((provider, key_found))
+			Ok((provider, key))
 		})
 		.collect::<Result<Vec<_>>>()?;
-	providers.sort_by_key(|(_, key_found)| !key_found);
+	providers.sort_by_key(|(_, key)| key.is_none());
 	Ok(providers)
 }
 
@@ -233,24 +278,61 @@ fn env_present(name: &str) -> Result<bool> {
 	}
 }
 
-fn setup_labels(providers: &[(ProviderSetupInfo, bool)], hub_signed_in: bool) -> Vec<String> {
-	let hub = if hub_signed_in {
-		"Octomind hub (recommended) — signed in"
-	} else {
-		"Octomind hub (recommended) — sign in, `auto` models, prepaid credits"
+/// Files are re-read on each call so a key typed during setup is reported from where it was saved.
+fn key_source(name: &str) -> Result<Option<KeySource>> {
+	if !env_present(name)? {
+		return Ok(None);
+	}
+	// The file loaded last wins, so check it first.
+	if env_file_keys(Path::new(ENV_FILE_NAME))?.contains(name) {
+		return Ok(Some(KeySource::ProjectEnvFile));
+	}
+	if env_file_keys(&get_config_dir()?.join(ENV_FILE_NAME))?.contains(name) {
+		return Ok(Some(KeySource::OctomindEnvFile));
+	}
+	Ok(Some(KeySource::Shell))
+}
+
+/// Names a dotenv file sets to a non-empty value; a missing file sets none.
+fn env_file_keys(path: &Path) -> Result<HashSet<String>> {
+	let entries = match dotenvy::from_path_iter(path) {
+		Ok(entries) => entries,
+		Err(dotenvy::Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(HashSet::new()),
+		Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
 	};
-	let mut labels = vec![hub.to_string()];
-	labels.extend(
-		providers
-			.iter()
-			.map(|(provider, key_found)| match (provider.api_key_env, key_found) {
-				(Some(_), true) => format!("{} — key found", provider.name),
-				(Some(env), false) => format!("{} — needs {env}", provider.name),
-				(None, _) if provider.name == "chatgpt" => "chatgpt — sign in with your ChatGPT plan".to_string(),
-				(None, _) => provider.name.to_string(),
-			}),
-	);
-	labels.push("Skip for now — keep the current models".to_string());
+	let mut keys = HashSet::new();
+	for entry in entries {
+		let (name, value) = entry.with_context(|| format!("could not parse {}", path.display()))?;
+		if !value.trim().is_empty() {
+			keys.insert(name);
+		}
+	}
+	Ok(keys)
+}
+
+fn setup_labels(providers: &[(ProviderSetupInfo, Option<KeySource>)], hub_signed_in: bool) -> Vec<String> {
+	let hub_status = if hub_signed_in {
+		"signed in".green()
+	} else {
+		"sign in, `auto` models, prepaid credits".normal()
+	};
+	let mut labels = vec![format!(
+		"{} {} — {hub_status}",
+		"Octomind hub".bold(),
+		"(recommended)".bright_magenta()
+	)];
+	labels.extend(providers.iter().map(|(provider, key)| {
+		let name = provider.name.bold();
+		match (provider.api_key_env, key) {
+			(Some(_), Some(source)) => format!("{name} — {}", format!("key in {}", source.label()).green()),
+			(Some(env), None) => format!("{name} — {}", format!("needs {env}").dimmed()),
+			(None, _) if provider.name == "chatgpt" => {
+				format!("{name} — {}", "sign in with your ChatGPT plan".cyan())
+			}
+			(None, _) => name.to_string(),
+		}
+	}));
+	labels.push("Skip for now — keep the current models".dimmed().to_string());
 	labels
 }
 

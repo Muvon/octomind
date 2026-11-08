@@ -192,23 +192,41 @@ fn configure_lists_hub_first_providers_then_skip() {
 		models_url: None,
 	};
 	let providers = vec![
-		(provider("openrouter", Some("OPENROUTER_API_KEY")), true),
-		(provider("anthropic", Some("ANTHROPIC_API_KEY")), false),
-		(provider("chatgpt", None), false),
+		(
+			provider("openrouter", Some("OPENROUTER_API_KEY")),
+			Some(KeySource::Shell),
+		),
+		(
+			provider("openai", Some("OPENAI_API_KEY")),
+			Some(KeySource::OctomindEnvFile),
+		),
+		(
+			provider("deepseek", Some("DEEPSEEK_API_KEY")),
+			Some(KeySource::ProjectEnvFile),
+		),
+		(provider("anthropic", Some("ANTHROPIC_API_KEY")), None),
+		(provider("chatgpt", None), None),
 	];
-	let labels = setup_labels(&providers, false);
+	let plain = |labels: Vec<String>| -> Vec<String> {
+		labels
+			.iter()
+			.map(|label| octomind::session::chat::strip_ansi(label))
+			.collect()
+	};
 	assert_eq!(
-		labels,
+		plain(setup_labels(&providers, false)),
 		[
 			"Octomind hub (recommended) — sign in, `auto` models, prepaid credits",
-			"openrouter — key found",
+			"openrouter — key in shell environment",
+			"openai — key in octomind's .env",
+			"deepseek — key in ./.env",
 			"anthropic — needs ANTHROPIC_API_KEY",
 			"chatgpt — sign in with your ChatGPT plan",
 			"Skip for now — keep the current models",
 		]
 	);
 	assert_eq!(
-		setup_labels(&providers, true)[0],
+		plain(setup_labels(&providers, true))[0],
 		"Octomind hub (recommended) — signed in"
 	);
 	assert!(matches!(setup_choice(0, providers.len()), SetupChoice::Hub));

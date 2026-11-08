@@ -16,6 +16,7 @@
 // without --resume/--name: a fuzzy-searchable list of recent sessions
 // (newest first). Enter resumes the highlighted session, Esc starts fresh.
 
+use crate::session::chat::strip_ansi;
 use anyhow::Result;
 use crossterm::{
 	cursor,
@@ -107,9 +108,12 @@ pub fn pick_session() -> Result<Option<String>> {
 }
 
 /// Pick a label with fuzzy filtering. Escape or Enter with no matches cancels.
+/// Title and labels may carry ANSI colors: matching and row widths use the plain text,
+/// and the highlighted row is drawn plain so its inverse video is not cut by color resets.
 pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result<Option<usize>> {
 	const EXTRA_ROWS: usize = 4;
 	let matcher = SkimMatcherV2::default();
+	let plain_labels: Vec<String> = labels.iter().map(|label| strip_ansi(label)).collect();
 	let mut query: Vec<char> = Vec::new();
 	let mut cursor_pos: usize = 0; // char index into query, 0..=len
 	let mut stdout = std::io::stdout();
@@ -126,7 +130,7 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 				let mut scored: Vec<(i64, usize, &String)> = labels
 					.iter()
 					.enumerate()
-					.filter_map(|(i, label)| matcher.fuzzy_match(label, &query_str).map(|s| (s, i, label)))
+					.filter_map(|(i, label)| matcher.fuzzy_match(&plain_labels[i], &query_str).map(|s| (s, i, label)))
 					.collect();
 				scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 				scored.into_iter().map(|(_, i, label)| (i, label)).collect()
@@ -139,7 +143,7 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 			anyhow::ensure!(columns > 0, "terminal width must be positive");
 			let title_rows: usize = title
 				.lines()
-				.map(|line| line.chars().count().max(1).div_ceil(usize::from(columns)))
+				.map(|line| strip_ansi(line).chars().count().max(1).div_ceil(usize::from(columns)))
 				.sum();
 			execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
 			for line in title.lines() {
@@ -154,10 +158,10 @@ pub fn pick_index(title: &str, labels: &[String], mut selected: usize) -> Result
 			} else {
 				0
 			};
-			for (i, (_, label)) in filtered.iter().skip(offset).take(max_visible).enumerate() {
+			for (i, (label_index, label)) in filtered.iter().skip(offset).take(max_visible).enumerate() {
 				let idx = offset + i;
 				if idx == selected {
-					write!(stdout, "\x1b[7m> {}\x1b[0m\r\n", label)?;
+					write!(stdout, "\x1b[7m> {}\x1b[0m\r\n", plain_labels[*label_index])?;
 				} else {
 					write!(stdout, "  {}\r\n", label)?;
 				}

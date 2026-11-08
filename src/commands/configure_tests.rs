@@ -245,7 +245,10 @@ fn configure_lists_hub_first_providers_then_skip() {
 	assert!(matches!(setup_choice(0, providers.len()), SetupChoice::Hub));
 	assert!(matches!(setup_choice(1, providers.len()), SetupChoice::Provider(0)));
 	assert!(matches!(setup_choice(3, providers.len()), SetupChoice::Provider(2)));
-	assert!(matches!(setup_choice(4, providers.len()), SetupChoice::Skip));
+	assert!(matches!(
+		setup_choice(providers.len() + 1, providers.len()),
+		SetupChoice::Skip
+	));
 }
 
 #[test]

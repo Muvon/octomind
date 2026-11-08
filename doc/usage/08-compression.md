@@ -5,7 +5,7 @@ automatic folds and task boundaries. This guide also explains retained context a
 
 ## Get Started
 
-Compression is enabled by default at `70000` tokens. Start a session and inspect its context with `/info`; use `/done`
+Compression is enabled by default at `105000` tokens. Start a session and inspect its context with `/info`; use `/done`
 when you finish a task and want to compress its history before the next task:
 
 ```bash
@@ -29,7 +29,7 @@ As sessions grow, token costs increase and context windows fill up. The compress
 
 Two related safety nets sit on top of the adaptive engine:
 
-- **The context ceiling** — the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session
+- **The context ceiling** — the lower of `max_session_tokens_threshold` (root config, default `300000`) and the session
   model's usable window; reaching its safety margin requests a forced fold (see [The Hard Ceiling](#the-hard-ceiling)).
 - **Cache keepalive** — an opt-in subsystem that keeps the prompt cache warm during idle time (see [Cache
   Keepalive](#configure-cache-keepalive)).
@@ -38,7 +38,7 @@ Two related safety nets sit on top of the adaptive engine:
 
 ```toml
 # Root config field — the user half of the hard compression ceiling (0 = model window only)
-max_session_tokens_threshold = 200000
+max_session_tokens_threshold = 300000
 
 [compression]
 knowledge_retention = 25
@@ -47,7 +47,7 @@ analysis_findings_max_tokens = 6000
 # The single compression trigger, in absolute tokens (0 = compression disabled).
 # Depth is NOT configured — it is computed per cycle from the measured session
 # growth rate and the context ceiling.
-threshold = 70000
+threshold = 105000
 
 [compression.model]
 name = "openai:gpt-5.6-luna"
@@ -65,7 +65,7 @@ The example uses an explicit compression model override; the shipped name is `oc
 
 | Field | Shipped default | Purpose |
 |-------|-----------------|---------|
-| `compression.threshold` | `70000` | Soft automatic trigger; `0` disables automatic folding |
+| `compression.threshold` | `105000` | Soft automatic trigger; `0` disables automatic folding |
 | `compression.knowledge_retention` | `25` | Maximum rolling critical-knowledge entries |
 | `compression.analysis_findings_max_tokens` | `6000` | Retained findings budget; `0` disables this channel |
 | `compression.attention.enabled` | `false` | Enable attributed PACT summaries |
@@ -228,7 +228,7 @@ Compression](#forced-vs-automatic-compression).)
 
 ### The Hard Ceiling
 
-The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session
+The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `300000`) and the session
 model's physical window minus the reserved completion budget (`max_tokens`). With automatic compression enabled, a fold
 is **forced** one runway margin early — when the full-context token count plus 5 calls of measured growth reaches the
 ceiling (the margin applies once at least 5 calls have been measured since the last fold; before that only the bare
@@ -270,7 +270,7 @@ fold iff expected_calls ≥ runway
 - `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a
   longer predicted horizon.
 - The fire line itself is a geometric per-turn ladder: the k-th consecutive successful in-turn fold doubles it —
-  `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 70k → 140k → cap of room
+  `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 105k → 210k → cap of room
   instead of re-folding at the same mark. A genuine user turn resets the level.
 - The amortization calculation uses provider accounting when available and conservative internal fallback weights
   otherwise.

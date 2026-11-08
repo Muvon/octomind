@@ -90,12 +90,12 @@ commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.no
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. Also the shared per-prompt budget for ACP embedded text resources and file links. `0` = unlimited. |
-| `max_session_tokens_threshold` | usize | `200000` | Full-context safety limit, capped further by model window minus output reservation. `0` removes this configured limit, not the model ceiling. Maximum `2,000,000`; unrecoverable overflow errors before a provider request. |
+| `max_session_tokens_threshold` | usize | `300000` | Full-context safety limit, capped further by model window minus output reservation. `0` removes this configured limit, not the model ceiling. Maximum `2,000,000`; unrecoverable overflow errors before a provider request. |
 | `cache_keepalive_enabled` | bool | `false` | Keep the prompt cache warm with pings while the session waits for a reply or a long tool run. Interval is 0.9 × the TTL of the newest cache marker (270s for the 5m conversation cache). Each ping is a cache pre-warm (`max_tokens: 0`, cache read only, no output). The ping count per wait is priced from model pricing and the session's own waits (replies, background work and tool runs learned separately), bounded by `(cache_write − cache_read) / cache_read × tail share` pings, by two pings until three waits of a kind are measured, and by the longest wait of that kind seen; a known scheduled wake is bridged when affordable. No ping is sent when the next request compresses or trims the conversation anyway, and a ping that misses the cache or is rate-limited stops the keepalive. `/info` reports the pings sent, their cost and the last budget. Only providers with a keepalive policy are pinged; through `octohub:` (>= 0.16.3) the hub pre-warms only the lane that served the conversation, when its provider has a policy. |
 
 ```toml
 mcp_response_tokens_threshold = 20000
-max_session_tokens_threshold = 200000
+max_session_tokens_threshold = 300000
 cache_keepalive_enabled = false
 ```
 
@@ -536,7 +536,7 @@ Automatic context compression system.
 |-------|------|---------|-------------|
 | `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
 | `analysis_findings_max_tokens` | usize | `6000` | Hard token budget for retained analysis findings; `0` disables retention |
-| `threshold` | usize | `70000` | Baseline automatic compression trigger in tokens; `0` disables automatic checks, while `/done` can still force compression |
+| `threshold` | usize | `105000` | Baseline automatic compression trigger in tokens; `0` disables automatic checks, while `/done` can still force compression |
 
 The automatic trigger adapts within a long turn: successive folds raise the baseline geometrically, capped under the
 usable ceiling; a real user turn resets it. Compression may therefore wait beyond `threshold`.
@@ -596,7 +596,7 @@ Model used for compression decisions and summary generation.
 [compression]
 knowledge_retention = 25
 analysis_findings_max_tokens = 6000
-threshold = 70000
+threshold = 105000
 
 [compression.model]
 name = "octohub:auto"

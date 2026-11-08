@@ -71,7 +71,7 @@ telemetry = true
 commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
 
 mcp_response_tokens_threshold = 20000
-max_session_tokens_threshold = 200000
+max_session_tokens_threshold = 300000
 cache_keepalive_enabled = false
 
 enable_markdown_rendering = true

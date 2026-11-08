@@ -528,7 +528,7 @@ owns it.
 
 **Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a
 capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Activation uses a
-similarity threshold of 0.45 with a 0.08 abstain-on-tie margin and considers the top 3 trigger scores; the active set is
+similarity threshold of 0.65 with a 0.06 abstain-on-tie margin and considers the top 3 trigger scores; the active set is
 bounded by an LRU eviction policy (soft cap of 4). See [Token
 Efficiency](16-token-efficiency.md#deterministic-auto-activation) for the full algorithm.
 

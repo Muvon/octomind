@@ -424,12 +424,12 @@ routing; all five booleans remain required, and unknown decision keys are reject
 Version `4` preserves an existing threshold; otherwise it takes the lowest old pressure-level threshold, or the
 template value when no old threshold exists.
 
-The shipped compression trigger is `70000` tokens. To restore the current compression and optional supervisor
+The shipped compression trigger is `105000` tokens. To restore the current compression and optional supervisor
 settings, update these keys in their existing tables; these are fragments, not a complete config:
 
 ```toml
 [compression]
-threshold = 70000
+threshold = 105000
 
 [supervisor.condense]
 adaptive = false

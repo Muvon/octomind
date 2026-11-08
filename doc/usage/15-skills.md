@@ -182,7 +182,7 @@ rules:
 | `bin` | `bin(name)` | Executable is findable on PATH using the platform lookup rules. Example: `bin(cargo)`, `bin(node)` |
 | `session` | `session(pattern)` | Case-insensitive substring match on current session name. Example: `session(octomind)` matches "260421-octomind-a1b2" |
 | `workdir` | `workdir(pattern)` | Case-insensitive substring match on working directory path. Example: `workdir(rust)` matches "/home/dev/rust-project" |
-| `semantic` | `semantic(phrase)` or `semantic(phrase, threshold)` | Local embedding cosine match of `phrase` against the user message (via `muvon/octomind-embed`). Fires when cosine ≥ threshold (default `0.45`). Example: `semantic(deploying to production)` can match paraphrases when their computed score reaches the threshold. |
+| `semantic` | `semantic(phrase)` or `semantic(phrase, threshold)` | Local embedding cosine match of `phrase` against the user message (via `muvon/octomind-embed`). Fires when cosine ≥ threshold (default `0.65`). Example: `semantic(deploying to production)` can match paraphrases when their computed score reaches the threshold. |
 
 ### Evaluation Context
 
@@ -203,7 +203,7 @@ Auto-activation does not run on every message — it is gated to avoid expensive
   system tags) are removed from the message before any `content`/`match`/`semantic` evaluation, so injected context
   cannot trigger false positives.
 - **Semantic abstain-on-tie** — when every matching rule group contains a `semantic(...)` check, it must win by a margin
-  of **0.08** cosine over the next-best semantic candidate across the activation pool; if two skills are near-tied,
+  of **0.06** cosine over the next-best semantic candidate across the activation pool; if two skills are near-tied,
   **neither** activates. A matching group containing no semantic check bypasses this margin gate; adding `file(...)` to
   a semantic group does not bypass it. `semantic` checks evaluate to `false` when the embedding model isn't ready.
 

@@ -228,8 +228,9 @@ printf '%s' '{"text":"hello"}' | .agents/tools/capitalize
 - **Always-on**: appended to every role's tool list automatically. There is no `[[mcp.servers]]` entry to add and no
   `allowed_tools` filter — local tools are role-agnostic by design (matches the `OCTOMIND_SKILLS` shape, but driven by
   file presence rather than env).
-- **Lowest priority on collision**: if a local tool's name matches a config-defined or dynamic tool, the config/dynamic
-  tool wins. You can't accidentally hijack `shell` by naming a script `shell`.
+- **Name clashes**: if a local tool has the same name as a tool from one of the role's servers, session start fails
+  with `Duplicate tool names` and names both sources; rename the script. If the name matches a tool added during the
+  session, the added tool wins. You can't accidentally hijack `shell` by naming a script `shell`.
 - **Hot reload**: edit and save — execution re-reads the script; the next function-list rebuild advertises the updated
   schema. No session restart needed.
 

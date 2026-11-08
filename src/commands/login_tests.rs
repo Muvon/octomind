@@ -191,7 +191,7 @@ async fn execute_completes_the_device_flow_and_stores_credentials() {
 
 	let config_dir = octomind::directories::get_config_dir().expect("config dir");
 	let env_body = std::fs::read_to_string(config_dir.join(".env")).expect(".env written");
-	assert!(env_body.contains("OCTOHUB_API_KEY=hk-1"), "{env_body}");
+	assert!(env_body.contains("OCTOHUB_API_KEY=\"hk-1\""), "{env_body}");
 	let s = account::session().expect("panel session stored");
 	assert_eq!(s.jwt, "jwt-1");
 	assert_eq!(s.refresh_token, "r-1");

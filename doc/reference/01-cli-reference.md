@@ -302,7 +302,6 @@ Run as Agent Client Protocol agent over stdio (for editor integration).
 | `--resume-recent` | | Resume the most recent session |
 | `--model MODEL` | `-m` | Override model (`provider:model` format) |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
-| `--hook NAME` | | Repeatable; parsed into ACP options, but ACP does not currently start webhook listeners. |
 
 **Examples:**
 

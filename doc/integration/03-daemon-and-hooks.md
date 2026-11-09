@@ -54,7 +54,7 @@ run persistent sessions. But they reach you differently:
   over the WebSocket connection; there is no inject socket and no `--hook` support.
 
 - **`octomind acp`** — the Agent Client Protocol bridge. The ACP client drives the session over stdio; `octomind acp`
-  accepts a `--hook` flag but does not start a webhook listener from it, and it exposes no `octomind send` socket.
+  has no `--hook` flag and exposes no `octomind send` socket.
 
 All entry points share the same internal inbox abstraction, but only `octomind run` binds the external `octomind send`
 and `--hook` webhook listeners described below.

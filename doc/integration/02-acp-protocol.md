@@ -26,7 +26,6 @@ octomind acp --name editor-session
 | `--resume-recent` | Resume the most recent session for the CWD on `new_session` |
 | `--model`, `-m` | Override the model for all sessions |
 | `--sandbox` | Restrict filesystem writes to CWD |
-| `--hook` | Parsed and carried into ACP session options, but the ACP path does not currently start webhook listeners |
 
 The agent reads JSON-RPC messages from stdin and writes responses to stdout. The initialized ACP runtime sends
 diagnostics to files under the data directory:
@@ -220,9 +219,7 @@ how they pick the session:
 - **`session/load`** always resumes the specific session id supplied by the client, read from disk. It does not touch
   the one-shot overrides.
 
-The `--model` value applies to **every** session created or loaded for the agent's lifetime. Although clap accepts
-repeatable `--hook` values and ACP stores them in each session's arguments, ACP does not call the `run`-mode listener
-bootstrap, so those values do not start webhook listeners.
+The `--model` value applies to **every** session created or loaded for the agent's lifetime.
 
 ### Prompt Content
 
@@ -421,7 +418,7 @@ operation; API failures may still return a JSON-RPC error rather than a successf
 |---------|---------------|
 | Command appears in the editor but fails | The advertised `session`, `workflow`, and `agents` entries have no handler. |
 | Host waits forever after `/exit` | `/exit` reports intent; close the subprocess stdin to end ACP. |
-| Hook receives no requests | ACP parses `--hook` but starts no HTTP listener; use the run daemon. |
+| Webhook receives no requests | ACP has no `--hook` flag and starts no HTTP listener; use the run daemon. |
 | Extension method not found | Send `_octomind/command` on the wire and `/info` or another slash-prefixed command. |
 | No usage, verification, or evolution data | Preserve `params._meta` on notifications and `result._meta` on results. |
 | No startup response | Inspect the three log files above and captured bootstrap stderr. |

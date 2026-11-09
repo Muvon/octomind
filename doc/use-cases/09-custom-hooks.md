@@ -101,8 +101,8 @@ Config loading validates non-empty fields, unique hook names and bind strings, a
 all configured hooks. Before each selected hook binds, startup checks that its script exists and is a regular file; Unix
 also requires an execute bit. Unselected hooks do not undergo this filesystem check.
 
-Activate hooks with `octomind run --hook NAME`; repeat `--hook` to select several. The ACP CLI parses the same flag, but
-its session paths do not start webhook listeners. Use `run` for HTTP webhook delivery.
+Activate hooks with `octomind run --hook NAME`; repeat `--hook` to select several. Only `run` has this flag and starts
+HTTP webhook listeners.
 
 ### Keep the Listener Alive
 

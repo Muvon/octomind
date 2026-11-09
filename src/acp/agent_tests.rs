@@ -329,7 +329,6 @@ fn new_session_args_consume_one_shot_overrides_once() {
 		resume: Some("old".to_string()),
 		resume_recent: true,
 		model: Some("openai:gpt-5".to_string()),
-		hooks: vec!["hook-a".to_string()],
 		startup_error: None,
 	});
 
@@ -338,24 +337,21 @@ fn new_session_args_consume_one_shot_overrides_once() {
 	assert_eq!(first.resume.as_deref(), Some("old"));
 	assert!(first.resume_recent);
 	assert_eq!(first.model.as_deref(), Some("openai:gpt-5"));
-	assert_eq!(first.hooks, vec!["hook-a".to_string()]);
 	assert_eq!(first.role, "assistant");
 	assert_eq!(first.mode, "websocket");
 
-	// The one-shot values are consumed; model/hooks persist for every session.
+	// The one-shot values are consumed; model persists for every session.
 	let second = agent.build_new_session_args();
 	assert_eq!(second.name, None);
 	assert_eq!(second.resume, None);
 	assert!(!second.resume_recent);
 	assert_eq!(second.model.as_deref(), Some("openai:gpt-5"));
-	assert_eq!(second.hooks, vec!["hook-a".to_string()]);
 }
 
 #[test]
 fn load_session_args_resume_by_id_and_apply_sticky_overrides() {
 	let agent = agent_with(crate::acp::AcpRunOptions {
 		model: Some("openai:gpt-5".to_string()),
-		hooks: vec!["hook-a".to_string()],
 		..Default::default()
 	});
 
@@ -363,7 +359,6 @@ fn load_session_args_resume_by_id_and_apply_sticky_overrides() {
 	assert_eq!(args.resume.as_deref(), Some("sid-9"));
 	assert_eq!(args.name, None, "load_session never consumes the new-session name");
 	assert_eq!(args.model.as_deref(), Some("openai:gpt-5"));
-	assert_eq!(args.hooks, vec!["hook-a".to_string()]);
 	assert_eq!(args.role, "assistant");
 }
 

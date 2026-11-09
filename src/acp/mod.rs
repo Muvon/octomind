@@ -38,7 +38,7 @@ const ACP_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// Runtime options for the ACP server, mirroring the relevant subset of `octomind run` flags.
 ///
 /// Values like `name`/`resume`/`resume_recent` are consumed once on the first client
-/// `new_session` request, then revert to defaults. `model` and `hooks` apply to every
+/// `new_session` request, then revert to defaults. `model` applies to every
 /// session created or loaded during the agent's lifetime.
 #[derive(Debug, Clone, Default)]
 pub struct AcpRunOptions {
@@ -46,7 +46,6 @@ pub struct AcpRunOptions {
 	pub resume: Option<String>,
 	pub resume_recent: bool,
 	pub model: Option<String>,
-	pub hooks: Vec<String>,
 	/// Why the role could not start (tap resolution, a missing INPUT/ENV value,
 	/// MCP init). When set, the agent still answers `initialize` and fails every
 	/// session request with this text, so the client learns the cause instead

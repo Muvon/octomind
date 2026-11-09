@@ -44,11 +44,6 @@ pub struct AcpArgs {
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
-
-	/// Activate a webhook hook by name (defined in [[hooks]] config).
-	/// Can be specified multiple times for multiple hooks.
-	#[arg(long = "hook", value_name = "NAME")]
-	pub hooks: Vec<String>,
 }
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
@@ -70,7 +65,6 @@ pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), an
 		resume: args.resume.clone(),
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
-		hooks: args.hooks.clone(),
 		startup_error,
 	};
 	octomind::acp::run(resolved_config, role, options).await

@@ -52,7 +52,6 @@ in the editor as user-side message chunks. ACP does not start the `octomind send
 | `--resume-recent` | Resume the most recent session for the current working directory |
 | `--model`, `-m` | Override the model name for sessions started by this agent (runtime > role > tap > main `[model]`) |
 | `--sandbox` | Apply the platform sandbox using the launch working directory; see the configuration reference |
-| `--hook` | Parsed and carried into ACP session options, but ACP does not currently start webhook listeners |
 
 For a named session or a resume target, pass the corresponding flags in your editor's argument list:
 

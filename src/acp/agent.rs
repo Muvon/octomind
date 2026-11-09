@@ -213,8 +213,6 @@ pub struct OctomindAgent {
 	pending_resume_recent: RefCell<bool>,
 	/// Model override applied to every session (new and loaded).
 	model: Option<String>,
-	/// Webhook hooks activated for every session (new and loaded).
-	hooks: Vec<String>,
 	/// Set when the role failed to start; every session request answers with it.
 	startup_error: Option<String>,
 	/// What the client advertised for elicitation in `initialize`; default until then.
@@ -236,7 +234,6 @@ impl OctomindAgent {
 			pending_resume: RefCell::new(options.resume),
 			pending_resume_recent: RefCell::new(options.resume_recent),
 			model: options.model,
-			hooks: options.hooks,
 			startup_error: options.startup_error,
 			elicitation_support: Cell::new(ElicitationSupport::default()),
 		}
@@ -364,7 +361,6 @@ impl OctomindAgent {
 			resume: self.pending_resume.borrow_mut().take(),
 			resume_recent: std::mem::replace(&mut *self.pending_resume_recent.borrow_mut(), false),
 			model: self.model.clone(),
-			hooks: self.hooks.clone(),
 			..Default::default()
 		}
 	}
@@ -376,7 +372,6 @@ impl OctomindAgent {
 			role: self.role.clone(),
 			mode: "websocket".into(),
 			model: self.model.clone(),
-			hooks: self.hooks.clone(),
 			..Default::default()
 		}
 	}

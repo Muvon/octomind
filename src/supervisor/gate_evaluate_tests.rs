@@ -198,6 +198,80 @@ async fn unsettled_evaluation_drops_only_exercised_conditions_and_preserves_unav
 	.await;
 }
 
+#[tokio::test]
+async fn evaluation_clearing_every_condition_yields_pass_not_empty_unsettled() {
+	// Both conditions exercised per the evaluation: an empty Unsettled verdict
+	// would fail the turn downstream like an indeterminate one, so the pass must stand.
+	let exercised = nouls(&[("c0", GATE_EXERCISED_AT), ("c1", GATE_EXERCISED_AT)]);
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(exercised)]).await;
+	let (url, captured) = spawn_recording_stub(vec![final_response(&format!(
+		r#"{CLEAN_SHAPES}<condition n="1" status="unknown">verifier-only observation one</condition><condition n="2" status="unknown">verifier-only observation two</condition><verdict>PASS</verdict>"#
+	))])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let conditions = [
+		"the CLI accepts --format".to_string(),
+		"the README documents --format".to_string(),
+	];
+	let mut gate_input = input(ACTIONS, &[]);
+	gate_input.evidence_conditions = &conditions;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let verdict = crate::session::context::with_session_id("unsettled-all-cleared".into(), async {
+		verify(&config(true), gate_input, rx).await
+	})
+	.await;
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(
+		captured.lock().unwrap().len(),
+		1,
+		"no confidence repair or extra chat pass"
+	);
+	assert!(
+		matches!(verdict, GateVerdict::Pass),
+		"all conditions exercised must not fail the turn: {verdict:?}"
+	);
+	assert!(!fake.requests().is_empty());
+}
+
+#[tokio::test]
+async fn unknown_shape_stays_unsettled_when_no_condition_remains() {
+	// The evaluation answers for conditions only, so clearing them says nothing about a shape.
+	let unknown_shape = CLEAN_SHAPES.replace(
+		r#"name="unenumerated-category" found="no""#,
+		r#"name="unenumerated-category" found="unknown""#,
+	);
+	let conditions = [
+		"the CLI accepts --format".to_string(),
+		"the README documents --format".to_string(),
+	];
+	let condition_lines = r#"<condition n="1" status="unknown">verifier-only observation one</condition><condition n="2" status="unknown">verifier-only observation two</condition>"#;
+	let exercised = nouls(&[("c0", GATE_EXERCISED_AT), ("c1", GATE_EXERCISED_AT)]);
+	for (evidence_conditions, reported_conditions, steps) in [
+		(&[][..], "", vec![]),
+		(
+			&conditions[..],
+			condition_lines,
+			vec![FakeEvaluationStep::Answers(exercised)],
+		),
+	] {
+		let _fake = install_fake_evaluation(steps).await;
+		let (url, _captured) = spawn_recording_stub(vec![final_response(&format!(
+			"{unknown_shape}{reported_conditions}<verdict>PASS</verdict>"
+		))])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let mut gate_input = input(ACTIONS, &[]);
+		gate_input.evidence_conditions = evidence_conditions;
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let verdict = crate::session::context::with_session_id("unknown-shape-unsettled".into(), async {
+			verify(&config(true), gate_input, rx).await
+		})
+		.await;
+		std::env::remove_var("OLLAMA_API_URL");
+		assert_eq!(verdict, GateVerdict::Unsettled(vec![]));
+	}
+}
+
 async fn run(config: &Config, actions: &str, grounds: &[(u64, String)], stub: Vec<serde_json::Value>) -> GateVerdict {
 	let expected_calls = stub.len();
 	let (url, captured) = spawn_recording_stub(stub).await;

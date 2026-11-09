@@ -1,6 +1,6 @@
 # Custom Commands, Agents, and Prompt Templates
 
-Add custom commands, ACP sub-agents, and prompt templates to Octomind sessions.
+Add custom commands, ACP sub-agents, and prompt templates to Octomind: define them in a TOML file in your config directory, then start a new session.
 
 ## Get Started
 

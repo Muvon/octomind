@@ -1550,9 +1550,8 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 			));
 		}
 	}
-	if matches!(verdict, GateVerdict::Pass)
-		&& (!unsettled.is_empty() || report.shapes.iter().any(|shape| shape.found == "unknown"))
-	{
+	let shape_unknown = report.shapes.iter().any(|shape| shape.found == "unknown");
+	if matches!(verdict, GateVerdict::Pass) && (!unsettled.is_empty() || shape_unknown) {
 		use crate::supervisor::evaluate::{self, Seam};
 		let mut unsettled: Vec<_> = unsettled
 			.into_iter()
@@ -1565,7 +1564,8 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 				})
 			})
 			.collect();
-		if !unsettled.is_empty() && evaluate::enabled(config, Seam::Gate) {
+		let had_conditions = !unsettled.is_empty();
+		if had_conditions && evaluate::enabled(config, Seam::Gate) {
 			let header = serde_json::json!({
 				"evidence": "",
 				"conditions": unsettled.iter().map(|condition| &condition.requirement).collect::<Vec<_>>(),
@@ -1592,7 +1592,13 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 					.collect();
 			}
 		}
-		verdict = GateVerdict::Unsettled(unsettled);
+		// The pass stands only when the evaluation emptied the list. The evaluation never
+		// reads shapes, so an unknown shape stays unsettled even with no condition left.
+		verdict = if had_conditions && unsettled.is_empty() && !shape_unknown {
+			GateVerdict::Pass
+		} else {
+			GateVerdict::Unsettled(unsettled)
+		};
 	}
 	if let GateVerdict::Indeterminate(reason) = &verdict {
 		reported.push(gate_diagnostic(diagnostic_class, reason));

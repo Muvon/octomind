@@ -248,7 +248,7 @@ pub async fn calculate_minimum_session_tokens(
 	current_dir: &std::path::Path,
 ) -> anyhow::Result<usize> {
 	// Get system prompt for the role
-	let (_, _, _, _, system_prompt) = config.get_role_config(role);
+	let (_, _, _, system_prompt) = config.get_role_config(role);
 	let system_tokens = estimate_tokens(system_prompt);
 
 	// Get tool definitions tokens
@@ -289,7 +289,7 @@ pub async fn validate_session_token_threshold(
 	let threshold = config.max_session_tokens_threshold;
 
 	// Get system prompt for the role
-	let (_, _, _, _, system_prompt) = config.get_role_config(role);
+	let (_, _, _, system_prompt) = config.get_role_config(role);
 
 	// Get detailed breakdown for error message
 	let system_tokens = estimate_tokens(system_prompt);

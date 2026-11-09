@@ -388,7 +388,7 @@ read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut
 the condenser only ever sees — and only ever selects line ranges over — the body the agent would actually have received.
 Structured/non-text MCP payloads fail open instead of being flattened and corrupted. A failed call or unparseable
 response leaves the round untouched; unusable individual entries preserve only their own result. This runs in the
-main-session tool path, not the layer execution path; a child Octomind session has its own loop.
+main-session tool path, not the `/run` command path; a child Octomind session has its own loop.
 
 Relevance is conditioned on three separate signals: trusted standing context (system prompt, project instructions, and
 currently active skills), the live goal/request/plan, and the assistant text explaining why the current tool batch was

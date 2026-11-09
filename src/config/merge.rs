@@ -33,7 +33,6 @@ impl Config {
 			return (
 				&role_config.config,
 				&role_config.mcp,
-				self.layers.as_ref(),
 				self.commands.as_ref(),
 				&role_config.config.system,
 			);
@@ -62,7 +61,6 @@ impl Config {
 		(
 			&fallback_role.config,
 			&fallback_role.mcp,
-			self.layers.as_ref(),
 			self.commands.as_ref(),
 			&fallback_role.config.system,
 		)
@@ -71,7 +69,7 @@ impl Config {
 	/// Get a merged config for a specific role (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
 	pub fn get_merged_config_for_role(&self, mode: &str) -> Config {
-		let (_role_config, role_mcp_config, _role_layers_config, commands, system_prompt) = self.get_role_config(mode);
+		let (_role_config, role_mcp_config, commands, system_prompt) = self.get_role_config(mode);
 
 		let mut merged = self.clone();
 
@@ -129,10 +127,6 @@ impl Config {
 			role_entry.mcp.server_refs = patched_server_refs;
 			role_entry.mcp.allowed_tools = patched_allowed_tools;
 		}
-
-		// Role-specific layers are now managed by workflows
-		// Keep merged.layers as original registry for agent tools
-		// let enabled_layers = self.get_enabled_layers_for_role(mode);
 
 		merged.commands = commands.cloned();
 		merged.system = Some(system_prompt.clone());

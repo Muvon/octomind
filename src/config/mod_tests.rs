@@ -284,14 +284,14 @@ fn get_role_config_returns_exact_role_and_falls_back() {
 	config.roles = vec![make_role("alpha", vec![], vec![]), make_role("beta", vec![], vec![])];
 	config.build_role_map();
 
-	let (role_config, mcp, _layers, _commands, system) = config.get_role_config("alpha");
+	let (role_config, mcp, _commands, system) = config.get_role_config("alpha");
 	assert_eq!(system, "system prompt for alpha");
 	assert_eq!(role_config.system, "system prompt for alpha");
 	assert!(mcp.server_refs.is_empty());
 	assert_eq!(config.get_role_config_struct("beta").system, "system prompt for beta");
 
 	// Unknown role falls back to some configured role instead of panicking.
-	let (_rc, _m, _l, _c, fallback_system) = config.get_role_config("ghost");
+	let (_rc, _m, _c, fallback_system) = config.get_role_config("ghost");
 	assert!(
 		fallback_system.starts_with("system prompt for "),
 		"unexpected fallback system: {fallback_system}"

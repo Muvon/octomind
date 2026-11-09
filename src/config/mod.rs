@@ -34,8 +34,6 @@ pub mod guardrails;
 
 pub mod hooks;
 
-pub mod layers;
-
 pub mod loading;
 
 pub mod mcp;
@@ -64,7 +62,6 @@ mod merge;
 // Re-export commonly used types
 pub use decision::*;
 pub use hooks::*;
-pub use layers::*;
 pub use mcp::*;
 pub use model::*;
 pub use providers::*;
@@ -80,7 +77,6 @@ pub const CURRENT_CONFIG_VERSION: u32 = 29;
 type RoleConfigResult<'a> = (
 	&'a RoleConfig,
 	&'a RoleMcpConfig,
-	Option<&'a Vec<crate::session::layers::LayerConfig>>,
 	Option<&'a Vec<crate::session::layers::LayerConfig>>,
 	&'a String,
 );
@@ -398,11 +394,8 @@ pub struct Config {
 	#[serde(skip_serializing_if = "McpConfig::is_default_for_serialization")]
 	pub mcp: McpConfig,
 
-	// Global command configurations (fallback for roles) - array format consistent with layers
+	// Global command configurations (fallback for roles)
 	pub commands: Option<Vec<crate::session::layers::LayerConfig>>,
-
-	// Global layer configurations - array of layer definitions
-	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 
 	// Prompt template configurations
 	pub prompts: Vec<PromptConfig>,
@@ -596,7 +589,7 @@ impl Config {
 
 	/// Resolve the selected role's complete model profile against main.
 	pub fn get_model_profile_for_role(&self, role: &str) -> ModelProfile {
-		let (role_config, _, _, _, _) = self.get_role_config(role);
+		let (role_config, _, _, _) = self.get_role_config(role);
 		role_config.model_override().resolve(&self.model_profile)
 	}
 
@@ -680,7 +673,7 @@ impl Config {
 
 	/// Get the role config struct for a specific role
 	pub fn get_role_config_struct(&self, role: &str) -> &RoleConfig {
-		let (role_config, _, _, _, _) = self.get_role_config(role);
+		let (role_config, _, _, _) = self.get_role_config(role);
 		role_config
 	}
 

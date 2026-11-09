@@ -757,7 +757,7 @@ Pre-flight checks (all hard-fail before any step runs):
 
 ## See also
 
-- [Commands and layers](10-commands-and-layers.md)
+- [Commands and agents](10-commands-and-layers.md)
 - [Structured output](11-structured-output.md)
 - [Guardrails](18-guardrails.md)
 - [Tap system](../integration/04-tap-system.md)

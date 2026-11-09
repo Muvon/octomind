@@ -492,7 +492,7 @@ Any other subcommand returns `Invalid MCP subcommand`.
 
 Execute a custom command defined in the `[[commands]]` config section. Without argument, lists commands available to the
 current role. Optional trailing text is the input; otherwise it uses the most recent real user task message. Returns the
-command name, execution status, and layer result.
+command name, execution status, and command result.
 
 Before executing, `/run` runs the session and request spending checks. An interactive session-limit check can ask
 whether to continue; a declined check, exceeded request limit, or check error prevents execution.

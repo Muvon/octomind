@@ -426,17 +426,6 @@ tools = []
 # timeout = 30  # seconds (default: 30)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LAYERS (ACP-BASED COMMAND BUILDING BLOCKS)
-# Layers are reusable ACP-invocable units. Each layer references a role (or
-# external ACP client) via the command field. Model, system prompt, temperature,
-# and MCP config live in the role — not here.
-#
-# NOTE: Multi-step workflow orchestration moved out of the session config.
-# Use the external `octomind workflow <file.toml>` CLI instead — see
-# doc/usage/09-workflows.md.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # CUSTOM COMMANDS
 # Define custom commands that can be triggered with /run <command_name>
 # NOTE: 'description' field is now REQUIRED for all commands (shown in help text)
@@ -455,15 +444,6 @@ output_role = "assistant"
 # These sections are for advanced users and custom setups
 # Most users won't need to modify these
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Example custom layer (requires matching role in [[roles]]):
-# [[layers]]
-# name = "analysis"
-# description = "Performs detailed analysis of code, systems, or requirements"
-# command = "octomind acp analysis"
-# input_mode = "last"
-# output_mode = "append"
-# output_role = "assistant"
 
 # Example custom command (requires matching role in [[roles]]):
 # [[commands]]

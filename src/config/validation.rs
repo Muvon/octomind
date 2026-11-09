@@ -26,11 +26,6 @@ impl Config {
 		// Validate MCP configuration - STRICT
 		self.validate_mcp_config()?;
 
-		// Validate layer configuration if present - STRICT
-		if let Some(layers) = &self.layers {
-			self.validate_layers(layers)?;
-		}
-
 		// Validate webhook hooks - STRICT
 		self.validate_hooks()?;
 
@@ -185,37 +180,6 @@ impl Config {
 					));
 				}
 			}
-		}
-
-		Ok(())
-	}
-
-	fn validate_layers(&self, layers: &[crate::session::layers::LayerConfig]) -> Result<()> {
-		for (index, layer) in layers.iter().enumerate() {
-			// Validate layer name
-			if layer.name.is_empty() {
-				return Err(anyhow!("Layer at index {} has empty name", index));
-			}
-
-			// Validate layer description
-			if layer.description.is_empty() {
-				return Err(anyhow!(
-					"Layer '{}' at index {} has empty description",
-					layer.name,
-					index
-				));
-			}
-
-			// Validate layer command (required for ACP execution)
-			if layer.command.is_empty() {
-				return Err(anyhow!(
-					"Layer '{}' at index {} has empty command. Layers now execute via ACP protocol — add a 'command' field (e.g., command = 'octomind acp <role>')",
-					layer.name,
-					index
-				));
-			}
-
-			// Additional layer-specific validation can be added here
 		}
 
 		Ok(())

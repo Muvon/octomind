@@ -79,7 +79,7 @@ runs.
 | [MCP Tools](usage/07-mcp-tools.md) | Built-in tools and runtime tool management |
 | [Compression](usage/08-compression.md) | Automatic context compression |
 | [Workflows](usage/09-workflows.md) | Multi-step AI processing workflows |
-| [Commands & Layers](usage/10-commands-and-layers.md) | Custom commands, layers, agents, and prompts |
+| [Commands & Agents](usage/10-commands-and-layers.md) | Custom commands, agents, and prompts |
 | [Structured Output](usage/11-structured-output.md) | JSON Schema output for automation |
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, and JetBrains setup |
 | [Learning](usage/13-learning.md) | Cross-session adaptive learning |

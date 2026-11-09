@@ -137,7 +137,7 @@ The trailing text does not steer the compression summary. Bare `/done` returns a
 session. The ACP prompt path also supports trailing instructions; WebSocket command messages and ACP command extension
 calls use the generic handler and should send the next prompt separately.
 
-The configured `reduce` command is a separate ACP layer transformation, independent of automatic compression:
+The configured `reduce` command is a separate ACP transformation, independent of automatic compression:
 
 ```text
 /run reduce

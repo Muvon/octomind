@@ -18,7 +18,7 @@ use std::path::Path;
 
 pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
 	// Get mode-specific configuration
-	let (_, _, _, _, system_prompt) = config.get_role_config(mode);
+	let (_, _, _, system_prompt) = config.get_role_config(mode);
 
 	// For developer role, process placeholders to add project context
 	let mut prompt = crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir).await;

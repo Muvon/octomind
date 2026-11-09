@@ -263,9 +263,9 @@ Auto-bound servers also receive a wildcard grant when the role's allowlist is no
 The TOML server type is `"stdio"`, never `"stdin"`. The upgrade chain does not rewrite server types or replace
 builtin filesystem declarations. See [Common Issues](01-common-issues.md#tool-not-found) for static role wiring.
 
-## Command and Layer Configuration
+## Command Configuration
 
-Put user-invoked command layers in `[[commands]]`. This is the shipped `reduce` entry; replace a stale entry
+Put user-invoked commands in `[[commands]]`. This is the shipped `reduce` entry; replace a stale entry
 rather than appending another with the same name:
 
 ```toml
@@ -278,7 +278,7 @@ output_mode = "replace"
 output_role = "assistant"
 ```
 
-`[[layers]]` and `[[commands]]` deserialize to the same `LayerConfig`, but `/run` only looks up `[[commands]]`.
+`[[layers]]` no longer exists. Delete old entries: `octomind config --validate` reports them as unknown keys and exits 1.
 The `command` selects an ACP process and role; model, system prompt, and MCP settings belong to that role.
 The template includes the `reduce` role used above.
 
@@ -288,7 +288,7 @@ The template includes the `reduce` role used above.
 | `input_mode`, `output_mode`, `output_role` | Required; here, all history is replaced with assistant output |
 | `workdir` | Optional; defaults to `"."` |
 
-Remove layer-only legacy `builtin`, `enabled`, `enable_tools`, `model`, and `max_tokens` fields. Run the command
+Remove legacy `builtin`, `enabled`, `enable_tools`, `model`, and `max_tokens` fields. Run the command
 inside a session with:
 
 ```text

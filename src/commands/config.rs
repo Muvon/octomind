@@ -694,8 +694,8 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	render_local_api_key_row();
 
 	// ── roles ─────────────────────────────────────────────────────────
-	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) = config.get_role_config("developer");
-	let (_ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) = config.get_role_config("assistant");
+	let (_dev_config, dev_mcp, _dev_commands, dev_system) = config.get_role_config("developer");
+	let (_ass_config, ass_mcp, _ass_commands, ass_system) = config.get_role_config("assistant");
 
 	block_section("roles");
 	let role_kw = key_width(["developer", "assistant"]);

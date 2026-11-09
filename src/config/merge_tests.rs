@@ -79,7 +79,7 @@ fn server_names(config: &Config) -> Vec<&str> {
 #[test]
 fn test_get_role_config_known_role() {
 	let config = test_config();
-	let (_, mcp, _, _, system) = config.get_role_config("restricted");
+	let (_, mcp, _, system) = config.get_role_config("restricted");
 	assert_eq!(system, "Restricted role.");
 	assert_eq!(mcp.server_refs, vec!["testsrv"]);
 }
@@ -87,7 +87,7 @@ fn test_get_role_config_known_role() {
 #[test]
 fn test_get_role_config_unknown_falls_back_without_panic() {
 	let config = test_config();
-	let (_, _, _, _, system) = config.get_role_config("no-such-role");
+	let (_, _, _, system) = config.get_role_config("no-such-role");
 	// Falls back to SOME defined role instead of tearing the session down
 	assert!(config.roles.iter().any(|role| role.config.system == *system));
 }

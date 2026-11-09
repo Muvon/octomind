@@ -465,7 +465,7 @@ distinct from the full interactive CLI command set:
 | `context` | `[all\|assistant\|user\|tool\|large]` | Display session context |
 | `list` | `[page]` | List all available sessions |
 | `session` | `[session_name]` | Advertised for client compatibility, but not implemented by the session command dispatcher |
-| `run` | `<command_name>` | Execute a command layer |
+| `run` | `<command_name>` | Execute a command |
 | `workflow` | `<workflow_name> [input]` | Advertised for client compatibility, but not implemented; run workflows via `octomind workflow <name-or-file>` instead |
 | `mcp` | `[info\|list\|full\|health\|dump\|validate]` | MCP server management |
 | `plan` | — | Display the current supervisor-owned plan |

@@ -141,7 +141,7 @@ allowed_tools = ["core:*", "runtime:*", "orchestration:*"]
 
 The role's `name` is **always force-injected from the tag** — `category:variant` is written into the first `[[roles]]`
 entry's `name`, overwriting any value you declare there. Declare `name` for readability, while treating the filename tag
-as authoritative. Manifests can include any config sections: roles, layers, MCP servers, etc.
+as authoritative. Manifests can include any config sections: roles, commands, MCP servers, etc.
 
 If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
 `server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is supervisor-internal, and

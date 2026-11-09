@@ -18,22 +18,9 @@
 
 use super::*;
 use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
-use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
-}
-
-fn valid_layer() -> LayerConfig {
-	LayerConfig {
-		name: "test_layer".to_string(),
-		description: "A test layer".to_string(),
-		command: "octomind acp test_role".to_string(),
-		workdir: ".".to_string(),
-		input_mode: InputMode::Last,
-		output_mode: OutputMode::None,
-		output_role: OutputRole::Assistant,
-	}
 }
 
 fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
@@ -92,7 +79,6 @@ fn full_validate_catches_an_out_of_range_role_knob() {
 #[test]
 fn full_validate_accepts_every_optional_section_at_once() {
 	let mut config = template_config();
-	config.layers = Some(vec![valid_layer()]);
 	config.hooks = vec![hook("deploy", "127.0.0.1:9876", "./hooks/deploy.sh", 30)];
 	config.mcp.servers = vec![
 		McpServerConfig::builtin("core", 30, vec![]),
@@ -119,18 +105,6 @@ fn an_empty_roles_collection_passes_the_required_field_checks() {
 	config
 		.validate_required_fields()
 		.expect("no roles means no per-role checks");
-}
-
-#[test]
-fn layer_errors_report_the_offending_index() {
-	let mut config = template_config();
-	let mut second = valid_layer();
-	second.name = "second".to_string();
-	second.description = String::new();
-	config.layers = Some(vec![valid_layer(), second]);
-	let error = config.validate().unwrap_err().to_string();
-	assert!(error.contains("index 1"), "got: {error}");
-	assert!(error.contains("second"), "got: {error}");
 }
 
 #[test]

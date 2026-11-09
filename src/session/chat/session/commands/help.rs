@@ -30,7 +30,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 		.collect();
 
 	// Add custom commands from config
-	let (_, _, _, commands_config, _) = config.get_role_config(role);
+	let (_, _, commands_config, _) = config.get_role_config(role);
 	if let Some(cmds) = commands_config {
 		for cmd in cmds {
 			commands.push(format!("/run {}", cmd.name));

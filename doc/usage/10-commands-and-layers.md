@@ -1,7 +1,6 @@
-# Custom Commands, Layers, and Prompt Templates
+# Custom Commands, Agents, and Prompt Templates
 
-Add custom commands, ACP sub-agents, and prompt templates to Octomind sessions, and configure the layers that commands
-and programmatic processing share.
+Add custom commands, ACP sub-agents, and prompt templates to Octomind sessions.
 
 ## Get Started
 
@@ -22,28 +21,27 @@ See [Configuration reference](../reference/03-config-reference.md) for config lo
 
 ## Extension Types
 
-- **Layers** — orchestration stages invoked programmatically (`[[layers]]`).
-- **Commands** — the same thing as layers, but triggered interactively with `/run <name>` (`[[commands]]`).
+- **Commands** — ACP-backed steps triggered interactively with `/run <name>` (`[[commands]]`).
 - **Agents** — specialized AI instances exposed as MCP tools (`[[agents]]`, plus runtime dynamic agents).
 - **Prompts** — reusable prompt templates queued with `/prompt <name>` (`[[prompts]]`).
 
-All of these are user-defined (or provided by a tap). Octomind does not ship any built-in `[[layers]]`; the default
-config ships one command (`reduce`) and one agent (`context_gatherer`).
+All of these are user-defined (or provided by a tap). The default config ships one command (`reduce`) and one agent
+(`context_gatherer`).
 
-## Layers
+## Custom Commands
 
-Layers execute via ACP (Agent Client Protocol). Model, system prompt, and MCP tool access live in `[[roles]]` config —
-layers reference roles via the `command` field. Layers back the `[[commands]]` slash-command system (`/run <name>`).
+Commands run with `/run <name> [input]` and execute via ACP (Agent Client Protocol). Model, system prompt, and MCP tool
+access live in `[[roles]]` config — commands reference roles via the `command` field.
 
 ### Configuration
 
-The example below is an illustrative custom layer — it is not shipped by default and requires a matching `analysis` role
-in `[[roles]]` (see the role example below):
+The example below is an illustrative custom command — it is not shipped by default and requires a matching `analysis`
+role in `[[roles]]` (see the role example below):
 
 ```toml
-[[layers]]
+[[commands]]
 name = "analysis"
-description = "Performs detailed analysis of code, systems, or requirements"
+description = "Analyze the previous response and current request"
 command = "octomind acp analysis"
 input_mode = "last"
 output_mode = "append"
@@ -55,7 +53,7 @@ them is a TOML parse error. Only `workdir` defaults (to `"."`).
 
 ### Input Modes
 
-How the layer receives conversation input:
+How the command receives conversation input:
 
 | Mode | Description |
 |------|-------------|
@@ -65,21 +63,21 @@ How the layer receives conversation input:
 
 ### Output Modes
 
-How the layer's output affects the session:
+How the command's output affects the session:
 
 | Mode | Description |
 |------|-------------|
 | `"none"` | Intermediate processing, doesn't modify session |
 | `"append"` | Adds output as a new message to the session |
-| `"replace"` | Keeps the first system message, rebuilds welcome/instructions, and inserts all layer outputs |
+| `"replace"` | Keeps the first system message, rebuilds welcome/instructions, and inserts all command outputs |
 | `"last"` | Append only the last response to session (ignore multiple outputs) |
-| `"restart"` | Clears all messages and inserts only the last layer output |
+| `"restart"` | Clears all messages and inserts only the last command output |
 
-### Layer Fields
+### Command Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | yes | Layer identifier |
+| `name` | string | yes | Command name, typed after `/run` |
 | `description` | string | yes | Human-readable purpose (shown in help) |
 | `command` | string | yes | ACP command to execute: `octomind acp <role_name>` |
 | `workdir` | string | no | Working directory (the only field with a default: `"."`). Relative paths resolve against the session's working directory. |
@@ -91,7 +89,7 @@ The `command` field is split on whitespace into an executable and arguments; it 
 embed shell quoting, pipes, or environment assignments. For complex launch logic, point `command` at a wrapper executable that starts the ACP server. Model, system
 prompt, and tool access are resolved by the ACP child role.
 
-Example role definition (in config or from taps) that the `analysis` layer above would target:
+Example role definition (in config or from taps) that the `analysis` command above would target:
 ```toml
 [[roles]]
 name = "analysis"
@@ -107,21 +105,6 @@ server_refs = []
 allowed_tools = []
 ```
 
-## Custom Commands
-
-Commands use the same configuration as layers and are triggered with `/run <name> [input]`. Defining a `[[layers]]`
-entry alone does not create a `/run` command. To invoke the `analysis` role above, add:
-
-```toml
-[[commands]]
-name = "analysis"
-description = "Analyze the previous response and current request"
-command = "octomind acp analysis"
-input_mode = "last"
-output_mode = "append"
-output_role = "assistant"
-```
-
 ### Usage
 
 ```text
@@ -133,18 +116,6 @@ output_role = "assistant"
 set to roles. The parent uses the current role's resolved command set; the `command` executable selects the child role.
 Additional words after the command name become its explicit input. Without them, `/run` supplies the last genuine user
 task. Session and request spending checks can decline execution before the child starts.
-
-### Layers vs Commands
-
-`[[layers]]` and `[[commands]]` deserialize into the **same** Rust struct (`LayerConfig`) with the **same** TOML field
-set — there are no schema differences between them. The only difference is how they are triggered:
-
-| Feature | Layer | Command |
-|---------|-------|---------|
-| Triggered by | Code / orchestration | User via `/run` |
-| Config section | `[[layers]]` | `[[commands]]` |
-| Interactive | No | Yes |
-| Typical use | Pipeline stages | User-initiated actions |
 
 ## Agents
 
@@ -272,11 +243,11 @@ prompt = """Please help create comprehensive tests:
 
 ## Common Questions
 
-**Why is my command missing from `/run`?** Put it in `[[commands]]`, not only `[[layers]]`, and reload by starting a new
-session. `/run` lists the loaded command names.
+**Why is my command missing from `/run`?** Put it in `[[commands]]` and reload by starting a new session. `/run` lists
+the loaded command names.
 
-**Why does a layer fail to start?** Confirm its `command` uses an installed executable and a resolvable role. An
-`[[agents]]` name or `[[layers]]` name does not define a matching `[[roles]]` entry automatically.
+**Why does a command fail to start?** Confirm its `command` uses an installed executable and a resolvable role. An
+`[[agents]]` or `[[commands]]` name does not define a matching `[[roles]]` entry automatically.
 
 ```bash
 octomind acp analysis --help
@@ -290,13 +261,13 @@ command with a small input to check execution:
 ```
 
 **Why did replace remove my conversation?** `output_mode = "replace"` keeps the first system message, rebuilds
-welcome/instructions, and replaces the old conversation with layer outputs. Use `append` when you need to retain the
+welcome/instructions, and replaces the old conversation with command outputs. Use `append` when you need to retain the
 conversation.
 
 ## Source Reference
 
 - [Shipped definitions](../../config-templates/default.toml)
-- [Layer fields and input preparation](../../src/session/layers/layer_trait.rs)
+- [Command fields and input preparation](../../src/session/layers/layer_trait.rs)
 - [Command output modes](../../src/session/chat/command_executor.rs)
 - [Agent execution](../../src/mcp/agent/functions.rs)
 - [Prompt queueing](../../src/session/chat/session/commands/prompt.rs)

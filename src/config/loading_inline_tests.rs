@@ -93,7 +93,7 @@ fn test_role_parsing() {
 	assert_eq!(tester_role.mcp.server_refs, vec!["test_server", "clt"]);
 
 	// Test get_role_config for custom role
-	let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");
+	let (role_config, mcp_config, _, _) = config.get_role_config("tester");
 	// Verify role config structure is valid
 	assert_eq!(role_config.model_override().temperature, Some(0.7));
 	assert_eq!(mcp_config.server_refs, vec!["test_server", "clt"]);
@@ -394,7 +394,7 @@ fn test_max_tokens_inheritance() {
 	assert_eq!(config.get_effective_max_tokens(), 32768);
 
 	// Verify that RoleConfig no longer has max_tokens field by checking the role config struct
-	let (role_config, _, _, _, _) = config.get_role_config("tester");
+	let (role_config, _, _, _) = config.get_role_config("tester");
 	// This test verifies the refactoring where max_tokens was moved from RoleConfig to system-wide
 	// We verify role config is valid by checking its temperature field
 	assert_eq!(role_config.model_override().temperature, Some(0.7));

@@ -13,83 +13,9 @@
 // limitations under the License.
 
 use super::*;
-use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
-}
-
-fn valid_layer() -> LayerConfig {
-	LayerConfig {
-		name: "test_layer".to_string(),
-		description: "A test layer".to_string(),
-		command: "octomind acp test_role".to_string(),
-		workdir: ".".to_string(),
-		input_mode: InputMode::Last,
-		output_mode: OutputMode::None,
-		output_role: OutputRole::Assistant,
-	}
-}
-
-/// validate_layers doesn't use `self` — it only inspects the layers slice.
-/// We replicate the logic here to test it without needing a full Config.
-fn validate_layer_rules(layers: &[LayerConfig]) -> Result<()> {
-	for (index, layer) in layers.iter().enumerate() {
-		if layer.name.is_empty() {
-			return Err(anyhow!("Layer at index {} has empty name", index));
-		}
-		if layer.description.is_empty() {
-			return Err(anyhow!(
-				"Layer '{}' at index {} has empty description",
-				layer.name,
-				index
-			));
-		}
-		if layer.command.is_empty() {
-			return Err(anyhow!(
-					"Layer '{}' at index {} has empty command. Layers now execute via ACP protocol — add a 'command' field (e.g., command = 'octomind acp <role>')",
-					layer.name,
-					index
-				));
-		}
-	}
-	Ok(())
-}
-
-#[test]
-fn validate_layers_empty_command_fails() {
-	let mut layer = valid_layer();
-	layer.command = String::new();
-	let result = validate_layer_rules(&[layer]);
-	assert!(result.is_err(), "empty command should fail validation");
-	let err = result.unwrap_err().to_string();
-	assert!(
-		err.contains("empty command"),
-		"error should mention 'empty command', got: {err}"
-	);
-}
-
-#[test]
-fn validate_layers_valid_command_passes() {
-	let layer = valid_layer();
-	let result = validate_layer_rules(&[layer]);
-	assert!(result.is_ok(), "valid layer should pass validation");
-}
-
-#[test]
-fn validate_layers_empty_name_fails() {
-	let mut layer = valid_layer();
-	layer.name = String::new();
-	let result = validate_layer_rules(&[layer]);
-	assert!(result.is_err(), "empty name should fail validation");
-}
-
-#[test]
-fn validate_layers_empty_description_fails() {
-	let mut layer = valid_layer();
-	layer.description = String::new();
-	let result = validate_layer_rules(&[layer]);
-	assert!(result.is_err(), "empty description should fail validation");
 }
 
 #[test]
@@ -145,21 +71,6 @@ fn validate_rejects_an_empty_model() {
 	config.model.clear();
 	let error = config.validate().unwrap_err().to_string();
 	assert!(error.contains("main.name cannot be empty"), "got: {error}");
-}
-
-#[test]
-fn layers_validation_runs_through_the_real_validate_path() {
-	let mut config = template_config();
-	config.layers = Some(vec![valid_layer()]);
-	config
-		.validate()
-		.expect("a well-formed layer must pass full validation");
-
-	let mut bad = valid_layer();
-	bad.name = String::new();
-	config.layers = Some(vec![bad]);
-	let error = config.validate().unwrap_err().to_string();
-	assert!(error.contains("empty name"), "got: {error}");
 }
 
 #[test]

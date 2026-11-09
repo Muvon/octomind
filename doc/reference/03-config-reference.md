@@ -32,7 +32,7 @@ Octomind supports split-file configuration. All `*.toml` files in the config dir
 4. Array entries with the same `name` are deduplicated (the entire last entry wins; it is not a field patch)
 5. Scalar values are overridden by later files
 
-This allows organizing config by concern (e.g., `mcp-github.toml`, `layers-custom.toml`).
+This allows organizing config by concern (e.g., `mcp-github.toml`, `commands-custom.toml`).
 
 **Special Case: `mcp-*.toml` Override Files**
 
@@ -375,10 +375,9 @@ curl --data 'Summarize the current task status' http://127.0.0.1:9876/
 
 ## `[[commands]]`
 
-Custom session commands triggered with `/run <name>`. **Uses the exact same schema as `[[layers]]`** (same `LayerConfig`
-struct) — see the field table below, including the required `input_mode` / `output_mode` / `output_role` fields. The
-only difference is invocation: `[[commands]]` entries are run manually from a session via `/run <name>`, while
-`[[layers]]` are orchestration units invoked over ACP. For `[[commands]]`, `name` is the token you type after `/run`.
+Custom session commands triggered with `/run <name>`. Each entry delegates to a role over ACP — the actual model, system
+prompt, and MCP configuration live in `[[roles]]`, not here. `name` is the token you type after `/run`. See the field
+table below, including the required `input_mode` / `output_mode` / `output_role` fields.
 
 ```toml
 [[commands]]
@@ -396,17 +395,11 @@ The template ships only the `reduce` command shown above. Run it inside an exist
 /run reduce
 ```
 
-## `[[layers]]`
-
-Optional reusable ACP-invocable units; the template has no active `[[layers]]` entries. `[[commands]]` uses the same
-schema. Layers delegate to roles via the ACP protocol — the actual model, system prompt, and MCP configuration live in
-`[[roles]]`, not here.
-
 > **Multi-step AI workflows** are no longer defined in this config. Use the external CLI: `octomind workflow <file.toml>` — see [doc/usage/09-workflows.md](../usage/09-workflows.md).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | required | Layer identifier |
+| `name` | string | required | Command name, typed after `/run` |
 | `description` | string | required | Human-readable description (used in help, MCP) |
 | `command` | string | required | ACP command to execute: `"octomind acp <role_name>"` |
 | `workdir` | string | `"."` | Working directory (relative to session workdir). The only optional field. |
@@ -415,16 +408,6 @@ schema. Layers delegate to roles via the ACP protocol — the actual model, syst
 | `output_role` | string | **required** | Role for output messages: `"assistant"`, `"user"` |
 
 > `input_mode`, `output_mode`, and `output_role` have **no default** — config loading fails if any is omitted. Only `workdir` is optional.
-
-```toml
-[[layers]]
-name = "task_refiner"
-description = "Refines and clarifies user requests for better processing by subsequent layers"
-command = "octomind acp task_refiner"
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
-```
 
 ## `[[agents]]`
 
@@ -864,7 +847,7 @@ These are accepted configuration surfaces, not additional shipped defaults. Runt
 | `mcp.servers.auto_bind` | optional string array | No automatic binding | Exact-match role/tag activation. |
 | Stdio `mcp.servers.env` | string map | `{}` | Child environment overrides. |
 | Stdio `mcp.servers.cwd` | optional string | Inherit working directory | Child process directory. |
-| `layers.workdir`, `commands.workdir` | string | `"."` | Execution directory relative to session workdir. |
+| `commands.workdir` | string | `"."` | Execution directory relative to session workdir. |
 | Legacy `compression.decision` | partial profile | Used only if `compression.model` is absent | Load normalization maps it to `[compression.model]`; a nested `model` string becomes `name`. |
 | Legacy flat model fields on root/role/supervisor | Same eight parameter types as `[model]` | Fill nested-profile gaps | `reasoning_effort`, `max_tokens`, `temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, `request_timeout_seconds`. |
 | Legacy `supervisor.learning.model` and flat model parameters | Ignored | Removed during normalization | Learning uses the shared supervisor profile. |

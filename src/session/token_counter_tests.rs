@@ -291,7 +291,7 @@ async fn minimum_tokens_cover_system_prompt_and_request_overhead() {
 	let minimum = calculate_minimum_session_tokens(&config, "assistant", dir.path())
 		.await
 		.expect("minimum calculation");
-	let (_, _, _, _, system_prompt) = config.get_role_config("assistant");
+	let (_, _, _, system_prompt) = config.get_role_config("assistant");
 	let system_tokens = estimate_tokens(system_prompt);
 	// request_overhead (50) + at least the welcome message's 20-token
 	// structure cost — the welcome message is always present.

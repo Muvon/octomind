@@ -737,6 +737,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 										}
 									}
 
+									let turn_started_at = std::time::Instant::now();
 									let retry_result = tokio::select! {
 										result = execute_api_call_and_process_response(
 											&mut chat_session,
@@ -766,6 +767,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 											// Successful retry — clear both retry buffers.
 											last_failed_input = None;
 											last_failed_followup = false;
+											print_turn_summary(turn_started_at.elapsed());
 										}
 										Err(e) => {
 											handle_followup_api_error(&chat_session.model, &e, OutputMode::Interactive)
@@ -1192,6 +1194,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						user_message_index
 					);
 
+					let turn_started_at = std::time::Instant::now();
+
 					// Prepare for API call using helper function
 					// Treat cancellation as a soft signal — continue the loop instead of exiting the session
 					match prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await {
@@ -1337,6 +1341,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// Successful turn — clear retry buffer.
 							last_failed_input = None;
 							last_failed_followup = false;
+							print_turn_summary(turn_started_at.elapsed());
 
 							// Start a keepalive ping task against a frozen snapshot of
 							// the conversation. Read-only on session state — pings
@@ -1409,6 +1414,41 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 		Ok(())
 	})
 	.await
+}
+
+const MILLIS_PER_SECOND: u64 = 1000;
+
+/// End-of-turn line at the interactive prompt: how long the turn took, when it
+/// ended, and what is still working, since that work can start a new turn by itself.
+fn print_turn_summary(elapsed: std::time::Duration) {
+	// Whole seconds, because milliseconds are noise at the scale of a turn.
+	let duration = crate::session::chat::formatting::format_duration(elapsed.as_secs().max(1) * MILLIS_PER_SECOND);
+	let mut line = format!(
+		"Worked for {} · done {}",
+		duration,
+		chrono::Local::now().format("%H:%M")
+	);
+
+	let monitors = crate::session::context::current_session_id()
+		.map_or(0, |id| crate::mcp::orchestration::monitor::running_monitor_count(&id));
+	let agents = crate::session::context::get_job_manager_for_session().map_or(0, |manager| manager.active_count());
+	let running: Vec<String> = [
+		(crate::session::shell_jobs::pending_labels().len(), "shell"),
+		(crate::session::tap_runs::pending_labels().len(), "tap run"),
+		(agents, "agent"),
+		(monitors, "monitor"),
+	]
+	.into_iter()
+	.filter(|(count, _)| *count > 0)
+	.map(|(count, noun)| format!("{} {}{}", count, noun, if count == 1 { "" } else { "s" }))
+	.collect();
+	if !running.is_empty() {
+		line.push_str(&format!(" · {} still running", running.join(", ")));
+	}
+
+	if crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) == Some(true) {
+		eprintln!("{} {}", "·".bright_black(), line.dimmed());
+	}
 }
 
 /// The three session facts telemetry needs that live on the args/config rather

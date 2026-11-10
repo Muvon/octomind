@@ -22,7 +22,7 @@
 //! against the given config. A role defined in the local config wins over a
 //! domain of the same name.
 
-use crate::agent::taps::ORCHESTRATOR_SPEC;
+use crate::agent::taps::{ORCHESTRATOR_SPEC, RENAMED_TAGS};
 use crate::agent::{deps, inputs, registry};
 use crate::config::{loading::merge_agent_toml, Config};
 use anyhow::{Context, Result};
@@ -42,9 +42,13 @@ const EMPTY_ROSTER: &str = "(none)";
 /// Expand a bare domain (no `:`) to the tag of its orchestrator, `<domain>:chief`.
 ///
 /// A role defined in `config.roles` wins, so existing plain-role usage never
-/// breaks. A tag with `:` and a name that is not a domain come back unchanged.
+/// breaks. A renamed tag (`developer:cto`) becomes its new tag; every other tag with `:` and a
+/// name that is not a domain come back unchanged.
 pub fn expand_domain_role(role: &str, config: &Config) -> Result<String> {
-	if role.contains(':') || config.roles.iter().any(|r| r.name == role) {
+	if role.contains(':') {
+		return crate::agent::taps::resolve_renamed_tag(role);
+	}
+	if config.roles.iter().any(|r| r.name == role) {
 		return Ok(role.to_string());
 	}
 	Ok(crate::agent::taps::resolve_domain_chief(role)?.unwrap_or_else(|| role.to_string()))
@@ -124,9 +128,20 @@ pub async fn resolve_config_and_role(
 				"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
 			))?;
 
-		// Apply tap model override if configured: exact tag first, then the bare domain
+		// Apply tap model override if configured: exact tag first, then the tag this agent had
+		// before it was renamed (the config upgrade rewrites `config.toml` only, so a key in
+		// another config file still carries the old tag), then the bare domain
 		let domain = tag.split_once(':').map_or(tag, |(domain, _)| domain);
-		if let Some(tap_model) = config.taps.get(tag).or_else(|| config.taps.get(domain)) {
+		let old_tag = RENAMED_TAGS
+			.iter()
+			.find(|(_, new_tag)| *new_tag == tag)
+			.map(|(old_tag, _)| *old_tag);
+		if let Some(tap_model) = config
+			.taps
+			.get(tag)
+			.or_else(|| old_tag.and_then(|old_tag| config.taps.get(old_tag)))
+			.or_else(|| config.taps.get(domain))
+		{
 			merged.model_profile.model = tap_model.clone();
 			crate::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
 		}

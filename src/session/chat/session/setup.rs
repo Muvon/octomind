@@ -75,6 +75,19 @@ fn display_random_tip() -> String {
 	format!("💡 Tip: {}", tips[index])
 }
 
+/// Banner hint for a local role that shadows a tap domain with a lead agent, e.g. a role
+/// `developer` hiding `developer:chief`. Reads installed taps only, never the network.
+fn local_role_hides_domain_hint(role: &str) -> Option<String> {
+	if role.contains(':') {
+		return None;
+	}
+	// A banner must not fail the session: an unreadable tap or a domain without a lead agent means no hint.
+	let chief = crate::agent::taps::resolve_domain_chief(role).ok().flatten()?;
+	Some(format!(
+		"Local role `{role}` is in use. The tap domain `{role}` has a lead agent too: octomind run {chief}"
+	))
+}
+
 // Helper function to setup session parameters and initialize chat session
 pub async fn setup_and_initialize_session(
 	args: &GenericSessionArgs,
@@ -231,10 +244,13 @@ pub async fn setup_and_initialize_session(
 		crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check).should_suppress_cli_output();
 	if is_interactive && !suppress {
 		let cwd = crate::mcp::get_thread_working_directory();
-		let extra = vec![
+		let mut extra = vec![
 			format!("{}", display_random_tip().bright_yellow()),
 			format!("{}", "? for shortcuts • /help for commands".bright_black()),
 		];
+		if let Some(hint) = local_role_hides_domain_hint(&chat_session.role) {
+			extra.push(hint.bright_yellow().to_string());
+		}
 		let print_banner = || {
 			crate::branding::print_startup_banner(&chat_session.role, &chat_session.model, &cwd, &extra);
 		};

@@ -413,6 +413,13 @@ supported older primary config:
 | `21` | Adds the optional hindsight section |
 | `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
 | `27` | Adds the optional advise section |
+| `30` | Renames old lead-agent tags to their `chief` tags in `[taps]` keys and in the root `default` |
+
+Old lead-agent tags keep working: a saved session, `default`, `/role` or `tap` call that names one (for example
+`developer:cto`, now `developer:chief`) is mapped to the new tag with a notice, unless one of your own taps still
+defines the old tag. Version `30` also rewrites those tags in `config.toml`. Where both the old and the new `[taps]`
+key exist, the new key's value is kept. A `[taps]` key with an old tag in another config file is not rewritten and
+keeps applying to the renamed agent.
 
 Version `22` preserves the legacy model, recall, skills, capabilities, and compression values and comments.
 The old authorizer, condense, distill, plan, gate, and evolution switches become one `supervisor` flag: any true

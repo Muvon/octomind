@@ -19,6 +19,7 @@
 //! atomic replace — live in `octolib::utils`; this module only declares
 //! octomind's version steps and the CLI-facing entry points.
 
+use crate::agent::taps::RENAMED_TAGS;
 use anyhow::{Context, Result};
 use octolib::utils::config_file;
 // `toml_edit` comes from octolib's re-export: the migration `apply` signature
@@ -189,9 +190,50 @@ fn plan() -> MigrationPlan {
 				to: 29,
 				apply: remove_v29_unsettled_confidence_threshold,
 			},
+			VersionMigration {
+				from: 29,
+				to: 30,
+				apply: rename_v30_chief_tags,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v30: domain lead agents were renamed to `chief` (see `RENAMED_TAGS`). Rewrite old tags used as
+/// `[taps]` keys and as the root `default`; where the new key already exists it keeps its value
+/// and the old key is dropped.
+fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml_edit::DocumentMut) -> Result<()> {
+	if let Some(taps) = document
+		.as_table_mut()
+		.get_mut("taps")
+		.map(|item| item.as_table_like_mut().context("taps must be a table"))
+		.transpose()?
+	{
+		for (old_tag, new_tag) in RENAMED_TAGS {
+			if let Some(item) = taps.remove(old_tag) {
+				if !taps.contains_key(new_tag) {
+					taps.insert(new_tag, item);
+				}
+			}
+		}
+	}
+	if let Some(default) = document
+		.as_table_mut()
+		.get_mut("default")
+		.and_then(|item| item.as_value_mut())
+	{
+		if let Some((_, new_tag)) = RENAMED_TAGS
+			.iter()
+			.find(|(old_tag, _)| default.as_str() == Some(*old_tag))
+		{
+			// Keep the user's trailing comment on the line.
+			let decor = default.decor().clone();
+			*default = toml_edit::Value::from(*new_tag);
+			*default.decor_mut() = decor;
+		}
+	}
+	Ok(())
 }
 
 fn remove_v29_unsettled_confidence_threshold(

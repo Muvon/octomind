@@ -310,6 +310,25 @@ async fn exact_tag_key_beats_the_domain_key() {
 	assert_eq!(merged.model, "openai:gpt-4o-mini");
 }
 
+#[tokio::test]
+#[serial]
+async fn renamed_tag_resolves_to_the_new_agent_and_keeps_its_old_model_key() {
+	let guard = ResolverDataDir::new();
+	install_default_tap_manifest(guard.path(), "developer", "chief", MANIFEST_HEADER);
+	let mut config = base_config();
+	config.taps.insert("developer".to_string(), "openai:gpt-4o".to_string());
+	config
+		.taps
+		.insert("developer:cto".to_string(), "openai:gpt-4o-mini".to_string());
+
+	let (merged, role) = resolve_config_and_role(Some("developer:cto"), &config, None)
+		.await
+		.expect("resolves");
+
+	assert_eq!(role, "developer:chief");
+	assert_eq!(merged.model, "openai:gpt-4o-mini");
+}
+
 // --- roster placeholders -------------------------------------------------------
 
 fn roster_system(manifest: &str, tag: &str) -> String {

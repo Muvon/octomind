@@ -307,7 +307,8 @@ octomind run docs
 
 The `docs` example requires an OpenAI credential. There is no plain `developer` role in the shipped config; the example
 above creates it, and a local role wins over a tap domain of the same name. Without that role, `octomind run developer`
-starts the tap agent `developer:chief`.
+starts the tap agent `developer:chief`. When a local role hides a tap domain that has a `chief`, the interactive session
+banner says so and names the tag to run instead.
 
 ### Switching Roles Mid-Session
 

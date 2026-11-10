@@ -1147,7 +1147,7 @@ fn v29_removes_unsettled_confidence_threshold_and_preserves_the_switch() {
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 28);
-	assert_eq!(migration.to_version, 29);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 	assert!(value["supervisor"]["gate"]
 		.get("unsettled_confidence_threshold")
 		.is_none());
@@ -1155,6 +1155,45 @@ fn v29_removes_unsettled_confidence_threshold_and_preserves_the_switch() {
 	assert!(!config.supervisor.gate.unsettled_advisory);
 	assert!(ignored.is_empty());
 	config.validate().expect("migrated config validates");
+}
+
+#[test]
+fn v30_renames_old_agent_tags_in_taps_and_default() {
+	let input = "version = 29\ndefault = \"developer:cto\" # lead\nlog_level = \"info\"\n\n[taps]\n\"developer:cto\" = \"openai:gpt-5\"\n\"travel:planner\" = \"openai:gpt-4o\"\n\"developer:general\" = \"openai:o3\"\ndoctor = \"openai:o3-mini\"\n";
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(migration.from_version, 29);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(value["default"].as_str(), Some("developer:chief"));
+	assert!(migration.content.contains("default = \"developer:chief\" # lead"));
+	let taps = value["taps"].as_table().unwrap();
+	assert_eq!(taps.len(), 4);
+	assert_eq!(taps["developer:chief"].as_str(), Some("openai:gpt-5"));
+	assert_eq!(taps["travel:chief"].as_str(), Some("openai:gpt-4o"));
+	assert_eq!(taps["developer:general"].as_str(), Some("openai:o3"));
+	assert_eq!(taps["doctor"].as_str(), Some("openai:o3-mini"));
+	assert_eq!(value["log_level"].as_str(), Some("info"));
+}
+
+#[test]
+fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
+	let input = "version = 29\n[taps]\n\"video:producer\" = \"old-model\"\n\"video:chief\" = \"new-model\"\n";
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	let taps = value["taps"].as_table().unwrap();
+	assert_eq!(taps.len(), 1);
+	assert_eq!(taps["video:chief"].as_str(), Some("new-model"));
+}
+
+#[test]
+fn v30_leaves_a_config_without_old_tags_unchanged_except_the_version() {
+	let input =
+		"version = 29\ndefault = \"assistant:concierge\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	assert_eq!(
+		migration.content,
+		input.replace("version = 29", &format!("version = {CURRENT_CONFIG_VERSION}"))
+	);
 }
 
 #[test]

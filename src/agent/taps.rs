@@ -363,6 +363,41 @@ pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
 /// Spec name of a domain's orchestrator: `agents/<domain>/chief.toml`.
 pub const ORCHESTRATOR_SPEC: &str = "chief";
 
+/// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
+/// `developer:general` and `assistant:general` kept their names and are not listed.
+pub const RENAMED_TAGS: [(&str, &str); 15] = [
+	("developer:cto", "developer:chief"),
+	("video:producer", "video:chief"),
+	("octomind:assistant", "octomind:chief"),
+	("octoweb:assistant", "octoweb:chief"),
+	("browser:general", "browser:chief"),
+	("coach:general", "coach:chief"),
+	("devops:general", "devops:chief"),
+	("doctor:general", "doctor:chief"),
+	("lawyer:general", "lawyer:chief"),
+	("tutor:general", "tutor:chief"),
+	("vet:general", "vet:chief"),
+	("chef:general", "chef:chief"),
+	("device:operator", "device:chief"),
+	("shopping:advisor", "shopping:chief"),
+	("travel:planner", "travel:chief"),
+];
+
+/// Map a renamed tag to its new tag; any other tag comes back unchanged.
+///
+/// A tap that still has a manifest for the old tag keeps it, so a user's own agent is never
+/// redirected. Local tap data only, no network. Logs one notice per mapping.
+pub fn resolve_renamed_tag(tag: &str) -> Result<String> {
+	let Some((_, new_tag)) = RENAMED_TAGS.iter().find(|(old_tag, _)| *old_tag == tag) else {
+		return Ok(tag.to_string());
+	};
+	if list_agent_tags()?.iter().any(|installed| installed == tag) {
+		return Ok(tag.to_string());
+	}
+	crate::log_info!("`{}` was renamed to `{}`; using `{}`", tag, new_tag, new_tag);
+	Ok(new_tag.to_string())
+}
+
 /// Resolve a bare domain (e.g. `developer`) to the tag of its orchestrator, `<domain>:chief`.
 ///
 /// `None` when no tap has the domain. An error when the domain has agents but no `chief`.

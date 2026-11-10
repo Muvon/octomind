@@ -58,7 +58,7 @@ path differences.
 
 - A **role name** (e.g. `assistant`) — matched against `[[roles]]` in your config.
 - A **registry agent tag** in `category:variant` form (e.g. `developer:general`) — resolved through your installed [taps](../integration/04-tap-system.md).
-- A **domain name** with no `:` (e.g. `developer`) — starts the domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins. A domain that has agents but no `chief` is an error that lists its agents. The same applies to `acp`, the `/role` command, and the `role` parameter of the `tap` tool. Workflows still require full `category:variant` tags.
+- A **domain name** with no `:` (e.g. `developer`) — starts the domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins; an interactive session then shows one banner line naming `<domain>:chief`. A domain that has agents but no `chief` is an error that lists its agents. The same applies to `acp`, the `/role` command, and the `role` parameter of the `tap` tool. Workflows still require full `category:variant` tags.
 - Omitted — uses the `default` tag from config.
 
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required

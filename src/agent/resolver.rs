@@ -51,6 +51,11 @@ pub fn expand_domain_role(role: &str, config: &Config) -> Result<String> {
 	if config.roles.iter().any(|r| r.name == role) {
 		return Ok(role.to_string());
 	}
+	// A bare domain can be the first thing a new user runs, so the built-in tap
+	// has to exist before the lookup reads it. A local config role never needs
+	// the tap, which keeps local roles usable offline. Idempotent: only the
+	// first clone blocks, later calls just refresh in the background.
+	crate::agent::taps::ensure_default_tap()?;
 	Ok(crate::agent::taps::resolve_domain_chief(role)?.unwrap_or_else(|| role.to_string()))
 }
 
@@ -74,12 +79,6 @@ pub async fn resolve_config_and_role(
 	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<(Config, String)> {
 	let requested = tag.unwrap_or(config.default.as_str());
-	// A bare domain can be the first thing a new user runs, so the built-in tap
-	// has to exist before the lookup reads it. A local config role never needs
-	// the tap, which keeps local roles usable offline.
-	if !requested.contains(':') && !config.roles.iter().any(|r| r.name == requested) {
-		crate::agent::taps::ensure_default_tap()?;
-	}
 	let tag = expand_domain_role(requested, config)?;
 	let tag = tag.as_str();
 

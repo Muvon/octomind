@@ -184,31 +184,45 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		return Ok((cached, tap_root));
 	}
 
-	// No cache — fetch synchronously from taps in order
-	let mut tap_errors: Vec<String> = Vec::new();
-	for tap in &taps {
-		match fetch_from_tap(tap, &category, &variant).await {
-			Ok(content) => {
-				let _ = write_cache_atomic(&cache, &content);
-				let root = tap.local_dir().unwrap_or_default();
-				return Ok((content, root));
-			}
-			Err(e) => {
-				tap_errors.push(format!("  - {}: {}", tap.name, e));
+	// No cache — fetch synchronously from taps in order. A miss is repeated once after the
+	// refreshes this process started have ended: a tag published since the last refresh
+	// (a renamed agent on the first run after an upgrade) is in the clone only then.
+	let mut waited_for_refresh = false;
+	loop {
+		let mut tap_errors: Vec<String> = Vec::new();
+		for tap in &taps {
+			match fetch_from_tap(tap, &category, &variant).await {
+				Ok(content) => {
+					let _ = write_cache_atomic(&cache, &content);
+					let root = tap.local_dir().unwrap_or_default();
+					return Ok((content, root));
+				}
+				Err(e) => {
+					tap_errors.push(format!("  - {}: {}", tap.name, e));
+				}
 			}
 		}
-	}
 
-	let detail = if tap_errors.is_empty() {
-		"No taps configured".to_string()
-	} else {
-		tap_errors.join("\n")
-	};
-	anyhow::bail!(
-		"Failed to fetch agent manifest for '{}' from all taps:\n{}",
-		tag,
-		detail
-	)
+		if !waited_for_refresh
+			&& tokio::task::spawn_blocking(crate::agent::taps::wait_for_started_refreshes)
+				.await
+				.context("Failed to wait for the tap refresh")?
+		{
+			waited_for_refresh = true;
+			continue;
+		}
+
+		let detail = if tap_errors.is_empty() {
+			"No taps configured".to_string()
+		} else {
+			tap_errors.join("\n")
+		};
+		anyhow::bail!(
+			"Failed to fetch agent manifest for '{}' from all taps:\n{}",
+			tag,
+			detail
+		)
+	}
 }
 
 /// Metadata header for a tap agent manifest.

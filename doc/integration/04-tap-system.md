@@ -583,6 +583,9 @@ taps/
 GitHub taps clone from `github.com/<user>/octomind-<repo>` (note the `octomind-` prefix on the repo name) and are pulled
 during full tap loading. Hot-path discovery uses already-local tap data without a pull. Local taps are live symlinks,
 but agent resolution still uses the separate manifest cache below. The default `muvon/tap` is auto-cloned on first use.
+The pull runs in the background. A tag or bare domain that the clone does not have yet waits for the pull that run
+started, up to 30 seconds, and is then looked up once more, so an agent published since the last pull resolves on the
+first try.
 
 ### Manifest Caching
 

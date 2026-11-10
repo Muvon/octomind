@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, SystemTime};
+use std::sync::{mpsc, Mutex, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The built-in default tap — always present as the last fallback.
 pub const DEFAULT_TAP: &str = "muvon/tap";
@@ -56,6 +57,14 @@ const REFRESH_STAMP: &str = "octomind-refresh";
 /// Age past which a `.git/*.lock` has no live owner. A refresh that took 4.5
 /// minutes on a degraded network mount is the slowest seen; an hour is far past it.
 const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Longest a lookup that found nothing waits for the refreshes this process started.
+/// A pull takes a second or two on a local disk; past this limit the lookup reports
+/// its miss instead of hanging on a stalled network.
+const REFRESH_WAIT_LIMIT: Duration = Duration::from_secs(30);
+
+/// One receiver per refresh this process started; it yields once that pull has ended.
+static STARTED_REFRESHES: Mutex<Vec<mpsc::Receiver<()>>> = Mutex::new(Vec::new());
 
 /// A tap entry: either a GitHub repo or a local path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +263,23 @@ pub fn ensure_default_tap() -> Result<()> {
 		spawn_refresh(&tap_dir);
 	}
 	Ok(())
+}
+
+/// Wait for the tap refreshes this process started. `true` when at least one ended within
+/// [`REFRESH_WAIT_LIMIT`], so a lookup that found nothing is worth repeating.
+///
+/// A refresh runs in the background and a lookup reads the clone as it is. An agent published
+/// after the last refresh (a renamed one on the first run after an upgrade) is on disk only
+/// once the pull has ended. Only a lookup that found nothing pays this wait.
+pub fn wait_for_started_refreshes() -> bool {
+	let started = std::mem::take(&mut *STARTED_REFRESHES.lock().unwrap_or_else(PoisonError::into_inner));
+	let deadline = Instant::now() + REFRESH_WAIT_LIMIT;
+	let mut any_ended = false;
+	for refresh in started {
+		let time_left = deadline.saturating_duration_since(Instant::now());
+		any_ended |= refresh.recv_timeout(time_left).is_ok();
+	}
+	any_ended
 }
 
 /// Returns only user-added taps (excludes the built-in default).
@@ -625,7 +651,8 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 ///
 /// The pull is never awaited on the caller's path: on a slow network mount it
 /// takes minutes, and a delegated specialist must answer its parent's ACP
-/// handshake first. It runs in its own process group so that the parent
+/// handshake first. Only a lookup that found nothing waits for it, through
+/// [`wait_for_started_refreshes`]. It runs in its own process group so that the parent
 /// killing a timed-out child's group cannot stop git mid-merge and leave a
 /// stale `.git/*.lock` that fails every later pull. `--ff-only` never creates
 /// a merge commit or leaves a half-merge in a clone shared between processes.
@@ -673,6 +700,13 @@ fn spawn_refresh(tap_dir: &Path) {
 		}
 	};
 	let tap_dir = tap_dir.to_path_buf();
+	let (ended_sender, ended_receiver) = mpsc::channel();
+	{
+		let mut started = STARTED_REFRESHES.lock().unwrap_or_else(PoisonError::into_inner);
+		// A long-lived server starts a refresh every interval: keep only the running ones.
+		started.retain(|refresh| matches!(refresh.try_recv(), Err(mpsc::TryRecvError::Empty)));
+		started.push(ended_receiver);
+	}
 	// Reaps the child (no zombie in a long-lived server) and lets that server
 	// pick up the new files once the pull lands.
 	std::thread::spawn(move || {
@@ -686,6 +720,8 @@ fn spawn_refresh(tap_dir: &Path) {
 			}
 		}
 		crate::agent::registry::invalidate_capability_catalog();
+		// Nobody is waiting when the receiver is gone.
+		let _ = ended_sender.send(());
 	});
 }
 

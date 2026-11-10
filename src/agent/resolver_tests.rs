@@ -303,6 +303,66 @@ fn bare_domain_expands_when_the_default_tap_is_not_cloned_yet() {
 	assert_eq!(role, "ztest:chief");
 }
 
+/// A default tap clone that is due for its refresh and has `zlate:zz` only, plus a `git` first
+/// on PATH whose "pull" adds `zlate:chief`: a clone on the first run after an upgrade that
+/// renamed an agent. The returned guards must live as long as the test.
+#[cfg(unix)]
+fn stale_default_tap_whose_refresh_adds_a_chief(data_dir: &std::path::Path) -> (tempfile::TempDir, EnvVarGuard) {
+	use std::os::unix::fs::PermissionsExt;
+
+	install_default_tap_manifest(data_dir, "zlate", "zz", MANIFEST_HEADER);
+	let tap_dir = data_dir.join("taps").join("muvon").join("octomind-tap");
+	std::fs::create_dir_all(tap_dir.join(".git")).expect("create .git");
+
+	let fake_git_dir = tempfile::tempdir().expect("fake git dir");
+	let chief = fake_git_dir.path().join("chief.toml");
+	std::fs::write(&chief, format!("{MANIFEST_HEADER}{MANIFEST_BODY}")).expect("write late manifest");
+	let git = fake_git_dir.path().join("git");
+	// The pause lets the first lookup read the clone before the pull lands.
+	std::fs::write(
+		&git,
+		format!(
+			"#!/bin/sh\nsleep 0.3\ncp '{}' agents/zlate/chief.toml\n",
+			chief.display()
+		),
+	)
+	.expect("write fake git");
+	std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).expect("make fake git executable");
+	let search_path = format!(
+		"{}:{}",
+		fake_git_dir.path().display(),
+		std::env::var("PATH").unwrap_or_default()
+	);
+	(fake_git_dir, EnvVarGuard::set("PATH", search_path))
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn bare_domain_waits_for_the_refresh_that_brings_its_chief() {
+	let guard = ResolverDataDir::new();
+	let _fake_git = stale_default_tap_whose_refresh_adds_a_chief(guard.path());
+
+	let role = expand_domain_role("zlate", &base_config()).expect("domain expands once the refresh has ended");
+
+	assert_eq!(role, "zlate:chief");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn tag_missing_from_a_stale_clone_is_fetched_after_the_refresh() {
+	let guard = ResolverDataDir::new();
+	let _fake_git = stale_default_tap_whose_refresh_adds_a_chief(guard.path());
+
+	let (merged, role) = resolve_config_and_role(Some("zlate:chief"), &base_config(), None)
+		.await
+		.expect("tag resolves once the refresh has ended");
+
+	assert_eq!(role, "zlate:chief");
+	assert!(merged.roles.iter().any(|r| r.name == "zlate:chief"));
+}
+
 #[tokio::test]
 #[serial]
 async fn local_config_role_wins_over_a_domain_of_the_same_name() {

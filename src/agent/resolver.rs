@@ -56,7 +56,14 @@ pub fn expand_domain_role(role: &str, config: &Config) -> Result<String> {
 	// the tap, which keeps local roles usable offline. Idempotent: only the
 	// first clone blocks, later calls just refresh in the background.
 	crate::agent::taps::ensure_default_tap()?;
-	Ok(crate::agent::taps::resolve_domain_chief(role)?.unwrap_or_else(|| role.to_string()))
+	let chief = match crate::agent::taps::resolve_domain_chief(role) {
+		Ok(Some(chief)) => Some(chief),
+		// The clone can predate the domain or its `chief` (first run after an upgrade):
+		// look once more when the refresh this process started has ended.
+		_ if crate::agent::taps::wait_for_started_refreshes() => crate::agent::taps::resolve_domain_chief(role)?,
+		missing => missing?,
+	};
+	Ok(chief.unwrap_or_else(|| role.to_string()))
 }
 
 /// Resolve config and role from a TAG argument.

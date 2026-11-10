@@ -40,6 +40,9 @@ fn test_effort_levels_start_with_none() {
 fn test_fmt_tokens_scales() {
 	assert_eq!(fmt_tokens(850), "850");
 	assert_eq!(fmt_tokens(12_400), "12.4k");
+	assert_eq!(fmt_tokens(999_949), "999.9k");
+	assert_eq!(fmt_tokens(999_950), "1.0M");
+	assert_eq!(fmt_tokens(999_999), "1.0M");
 	assert_eq!(fmt_tokens(3_000_000), "3.0M");
 }
 

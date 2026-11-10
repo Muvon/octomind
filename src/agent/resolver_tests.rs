@@ -228,6 +228,19 @@ async fn bare_domain_resolves_to_its_chief() {
 	assert!(merged.roles.iter().any(|r| r.name == "ztest:chief"));
 }
 
+#[test]
+#[serial]
+fn expand_domain_role_expands_bare_domain_from_default_tap() {
+	let guard = ResolverDataDir::new();
+	install_default_tap_manifest(guard.path(), "ztest", "chief", MANIFEST_HEADER);
+
+	// Direct call, as `/role` and `tap run` make it: the default tap must be
+	// ensured inside the expansion, not only by `resolve_config_and_role`.
+	let role = expand_domain_role("ztest", &base_config()).expect("domain expands");
+
+	assert_eq!(role, "ztest:chief");
+}
+
 #[tokio::test]
 #[serial]
 async fn local_config_role_wins_over_a_domain_of_the_same_name() {

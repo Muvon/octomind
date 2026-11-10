@@ -28,6 +28,10 @@ fn display_random_tip() -> String {
 	use std::time::{SystemTime, UNIX_EPOCH};
 
 	let tips = [
+		"octomind run developer starts the developer domain's lead agent, which hands larger work to the domain's specialists",
+		"Go straight to one specialist with its full tag: octomind run developer:general or octomind run doctor:blood",
+		"octomind run with no agent starts the global assistant, which picks the right domain for your request",
+		"Use /role developer to switch to a domain's lead agent, or /role doctor:blood for one specialist",
 		"Use ↑/↓ arrows or Ctrl+R for command history search",
 		"Press Ctrl+G to add a message to context without sending to AI",
 		"After an API error, press Ctrl+G with empty input to retry the last failed request",
@@ -39,15 +43,26 @@ fn display_random_tip() -> String {
 		"Press Ctrl+E to accept a hint when available",
 		"Use /context [filter] to view session messages",
 		"Use /model <name> to switch AI model mid-session",
-		"Use /role <name> to switch role configuration",
+		"Use /effort <level> to set reasoning effort for this session",
 		"Use /mcp list to see available MCP tools",
-		"Use /run [command] to run a command",
-		"Use /prompt [text] to send some predefined prompt",
+		"Use /skill to list skills and switch one on or off",
+		"Use /workflow to list tap workflows, or /workflow <name> <input> to run one",
+		"Use /run <command> to run a custom command from [[commands]] in your config",
+		"Use /prompt <name> to insert a prompt template from [[prompts]] in your config",
+		"Use /schedule to send yourself a message later or on repeat",
+		"Use /reply to quote an earlier assistant reply and answer it point by point",
+		"Use /copy to copy the last response, or /copy all for the whole conversation",
+		"Use /done to compress the context and save lessons for later sessions",
+		"Use /learning to manage the lessons kept between sessions",
+		"Use /plan to see the current plan",
+		"Use /status to see what is running now: agents, monitors and background jobs",
 		"Use /info to see current session costs and token usage",
+		"Use /usage to see your Octomind account usage, quotas and balance",
+		"Use /new to start a fresh session and /list to see saved ones",
 		"Use /share to publish this session to octomind.run and get a permanent link",
 		"Use /analyze to open the current session in your browser without uploading anything",
-		"Share a transcript with a teammate: type /share, then copy the URL it prints",
-		"Want to inspect a long-running session visually? /analyze opens it in the web viewer",
+		"Start with octomind run --resume to pick a recent session and continue it",
+		"Add --sandbox to limit writes to the working directory",
 	];
 
 	// Generate deterministic but randomized tip based on session start time

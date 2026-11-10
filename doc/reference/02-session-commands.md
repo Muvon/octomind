@@ -121,7 +121,7 @@ On success the session is saved; on failure the previous role and complete resol
 
 ```text
 /role developer:general
-/role assistant:concierge
+/role assistant:chief
 /role assistant
 ```
 

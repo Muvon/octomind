@@ -348,6 +348,29 @@ fn list_agent_tags_first_tap_wins_on_duplicates() {
 	assert_eq!(tags, vec!["shared:x"], "duplicate tag must appear once");
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
+#[serial]
+#[test]
+fn symlinked_manifest_is_an_alias_and_is_not_listed() {
+	let _data = DataDirGuard::new();
+	let src = tempfile::tempdir().unwrap();
+	write_agent(src.path(), "assistant", "chief", PLAIN_HEADER);
+	let dir = src.path().join("agents").join("assistant");
+	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
+	// The tap itself is a symlink here (a local tap): its real manifests must still list.
+	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
+
+	assert_eq!(list_agent_tags().unwrap(), vec!["assistant:chief"]);
+	let headers = list_agent_headers().unwrap();
+	assert_eq!(headers.len(), 1);
+	assert_eq!(headers[0].tag, "assistant:chief");
+	assert!(
+		dir.join("old.toml").exists(),
+		"the alias still reads through to the chief"
+	);
+}
+
 // --- load_taps / fetch_workflow ------------------------------------------------
 
 #[serial]

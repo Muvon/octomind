@@ -412,41 +412,22 @@ fn roster_system(manifest: &str, tag: &str) -> String {
 	value["roles"][0]["system"].as_str().expect("system string").to_string()
 }
 
-const ROSTER_MANIFEST: &str = "[[roles]]\nsystem = \"Team:\\n{{SPECIALISTS}}\\nOthers:\\n{{DOMAINS}}\"\n";
+const ROSTER_MANIFEST: &str = "[[roles]]\nsystem = \"Team:\\n{{SPECIALISTS}}\"\n";
 
 #[test]
 #[serial]
-fn roster_lists_other_agents_and_domains_sorted() {
+fn roster_lists_other_agents_of_the_domain_sorted() {
 	let guard = ResolverDataDir::new();
 	// Written out of order on purpose; the roster must come out sorted.
 	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
 	install_default_tap_manifest(guard.path(), "ztest", "mm", "# Description: He said \"hi\" \\ there\n");
 	install_default_tap_manifest(guard.path(), "ztest", "aa", "# Title: Only a title\n");
+	// Agents of other domains never appear in `{{SPECIALISTS}}`.
 	install_default_tap_manifest(guard.path(), "yother", "chief", "# Description: Runs yother\n");
-	install_default_tap_manifest(guard.path(), "another", "chief", "# Description: Runs another\n");
-	install_default_tap_manifest(guard.path(), "nochief", "x", "# Description: Has no chief\n");
 
 	let system = roster_system(ROSTER_MANIFEST, "ztest:zz");
 
-	assert_eq!(
-		system,
-		"Team:\n- ztest:aa\n- ztest:mm — He said \"hi\" \\ there\nOthers:\n- another — Runs another\n- yother — Runs yother"
-	);
-}
-
-#[test]
-#[serial]
-fn roster_domains_sort_by_domain_not_tag() {
-	let guard = ResolverDataDir::new();
-	// `x-y:chief` sorts before `x:chief` as a tag, but `x` is first as a domain.
-	install_default_tap_manifest(guard.path(), "x-y", "chief", "# Description: Runs x-y\n");
-	install_default_tap_manifest(guard.path(), "x", "chief", "# Description: Runs x\n");
-
-	let system = roster_system(ROSTER_MANIFEST, "ztest:zz");
-
-	let x = system.find("- x — Runs x").expect("x listed");
-	let x_y = system.find("- x-y — Runs x-y").expect("x-y listed");
-	assert!(x < x_y);
+	assert_eq!(system, "Team:\n- ztest:aa\n- ztest:mm — He said \"hi\" \\ there");
 }
 
 #[test]
@@ -455,10 +436,7 @@ fn roster_with_nothing_to_list_says_none() {
 	let guard = ResolverDataDir::new();
 	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
 
-	assert_eq!(
-		roster_system(ROSTER_MANIFEST, "ztest:zz"),
-		"Team:\n(none)\nOthers:\n(none)"
-	);
+	assert_eq!(roster_system(ROSTER_MANIFEST, "ztest:zz"), "Team:\n(none)");
 }
 
 #[test]
@@ -494,6 +472,51 @@ fn uses_lists_domain_chief_and_tag_entries_sorted() {
 		roster_system(USES_MANIFEST, "mkt:chief"),
 		"Can call:\n- content — Runs content\n- seo:audit — Audits pages"
 	);
+}
+
+#[test]
+#[serial]
+fn uses_star_lists_every_other_domain_with_a_chief() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: *\n");
+	// Written out of order on purpose; `x` sorts before `x-y` as a domain, not as a tag.
+	install_default_tap_manifest(guard.path(), "x-y", "chief", "# Description: Runs x-y\n");
+	install_default_tap_manifest(guard.path(), "x", "chief", "# Description: Runs x\n");
+	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
+	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Not listed\n");
+	// A domain without a chief is skipped, not an error.
+	install_default_tap_manifest(guard.path(), "nochief", "x", "# Description: Has no chief\n");
+
+	// The agent's own domain (`mkt`) is left out.
+	assert_eq!(
+		roster_system(USES_MANIFEST, "mkt:chief"),
+		"Can call:\n- content — Runs content\n- x — Runs x\n- x-y — Runs x-y"
+	);
+}
+
+#[test]
+#[serial]
+fn uses_star_combined_with_exact_entries_has_no_duplicates() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: *, content, seo:audit\n");
+	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
+	install_default_tap_manifest(guard.path(), "seo", "chief", "# Description: Runs seo\n");
+	install_default_tap_manifest(guard.path(), "seo", "audit", "# Description: Audits pages\n");
+
+	assert_eq!(
+		roster_system(USES_MANIFEST, "mkt:chief"),
+		"Can call:\n- content — Runs content\n- seo — Runs seo\n- seo:audit — Audits pages"
+	);
+}
+
+#[test]
+#[serial]
+fn uses_star_with_no_other_domain_chief_says_none() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: *\n");
+	install_default_tap_manifest(guard.path(), "nochief", "x", MANIFEST_HEADER);
+
+	assert_eq!(roster_system(USES_MANIFEST, "mkt:chief"), "Can call:\n(none)");
 }
 
 #[test]

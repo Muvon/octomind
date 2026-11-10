@@ -7,7 +7,7 @@ clients.
 ## Starting Sessions
 
 ```bash
-# Default tag (assistant:concierge)
+# Default tag (assistant:chief)
 octomind run
 
 # A domain from the registry: starts its orchestrator (developer:chief)
@@ -23,7 +23,7 @@ octomind run --name feature-auth
 octomind run -m anthropic:claude-sonnet-4-6
 ```
 
-With no argument, `octomind run` uses the configured default tag, `assistant:concierge`. Bare names such as `assistant`
+With no argument, `octomind run` uses the configured default tag, `assistant:chief`. Bare names such as `assistant`
 refer to roles in the shipped config. A bare name with no matching config role is a tap domain and starts its `chief`:
 `developer` starts `developer:chief`. `category:variant` names such as `developer:general` are tap agents resolved from
 the registry.

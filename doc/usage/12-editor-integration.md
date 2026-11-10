@@ -23,7 +23,7 @@ subdirectory. Keep stdout reserved for JSON-RPC; check the process exit status a
 logging initializes.
 
 The positional role/tag is optional. When omitted, the agent uses the default role from your config (the shipped default
-is `assistant:concierge`). `TAG` can be:
+is `assistant:chief`). `TAG` can be:
 
 - A **local role name** from your config (e.g. `assistant`), or
 - A **tap agent** addressed as `category:variant` (e.g. `developer:general`).
@@ -34,7 +34,7 @@ For a tap role, launch:
 octomind acp developer
 ```
 
-Omitting the tag uses `assistant:concierge` in the shipped config; it does not select the local `assistant` role. Tap
+Omitting the tag uses `assistant:chief` in the shipped config; it does not select the local `assistant` role. Tap
 tags must resolve from installed/fetched manifests. The built-in default tap is `muvon/tap`.
 
 Each ACP session also spawns a background inbox monitor. It processes internally queued schedules, monitors, tap runs,
@@ -100,7 +100,7 @@ require("codecompanion").setup({
 ```
 
 To select a tap agent instead of the explicit local `[[roles]]` entry, replace `assistant` with a tag such as
-`developer:general`; `{ "acp" }` uses the `assistant:concierge` tap default.
+`developer:general`; `{ "acp" }` uses the `assistant:chief` tap default.
 
 ### avante.nvim
 

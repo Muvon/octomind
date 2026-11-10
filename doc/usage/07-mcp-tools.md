@@ -127,7 +127,7 @@ type = "http"
 url = "http://localhost:3000/mcp"
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general", "assistant:concierge"]
+auto_bind = ["developer:general", "assistant:chief"]
 ```
 
 ### Tool Filtering

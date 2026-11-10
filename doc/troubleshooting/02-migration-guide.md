@@ -169,7 +169,7 @@ Start the local role above with:
 octomind run developer
 ```
 
-The root `default` is `assistant:concierge` in the template and applies when `run`, `acp`, or `server` receives no tag.
+The root `default` is `assistant:chief` in the template and applies when `run`, `acp`, or `server` receives no tag.
 To make your newly defined local role the default, set this before any table header:
 
 ```toml
@@ -416,7 +416,8 @@ supported older primary config:
 | `30` | Renames old lead-agent tags to their `chief` tags in `[taps]` keys and in the root `default` |
 
 Old lead-agent tags keep working: a saved session, `default`, `/role` or `tap` call that names one (for example
-`developer:cto`, now `developer:chief`) is mapped to the new tag with a notice, unless one of your own taps still
+`developer:cto`, now `developer:chief`, or `assistant:concierge`, the global assistant, now `assistant:chief`) is mapped to
+the new tag with a notice, unless one of your own taps still
 defines the old tag. Version `30` also rewrites those tags in `config.toml`. Where both the old and the new `[taps]`
 key exist, the new key's value is kept. A `[taps]` key with an old tag in another config file is not rewritten and
 keeps applying to the renamed agent.

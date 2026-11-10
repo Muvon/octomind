@@ -102,7 +102,7 @@ octomind run developer
 
 You're now in a session with the developer domain's lead agent. It reads your code and runs commands itself, and hands code changes to the domain's specialists. The interface is a plain line prompt with markdown rendering — no TUI to learn, so it works over SSH, in `tmux`, and in CI logs. The first time you run a specialist, it may install its tools and ask for credentials.
 
-> `developer:chief` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:concierge`. A name without a `:`, such as `octomind run developer`, starts that domain's orchestrator (`developer:chief`), unless your config defines a role with that name; the local role wins.
+> `developer:chief` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:chief`, the global assistant. A name without a `:`, such as `octomind run developer`, starts that domain's orchestrator (`developer:chief`), unless your config defines a role with that name; the local role wins.
 
 Try the [recorded bug-fix demo](examples/fix-a-bug): two failing tests, an agent fix, and an independent test rerun.
 

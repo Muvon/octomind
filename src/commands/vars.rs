@@ -48,7 +48,9 @@ fn placeholder_description(placeholder: &str) -> &'static str {
 		"{{README}}" => "Project README content",
 		"{{ROLE}}" => "Active session role, resolved separately for each session",
 		"{{SPECIALISTS}}" => "Other agents of the active agent's domain (tap agents only)",
-		"{{DOMAINS}}" => "Orchestrator (`chief`) of every other domain (tap agents only)",
+		"{{USES}}" => {
+			"Domains and agents from the agent's `# Uses:` header; `*` is every other domain (tap agents only)"
+		}
 		_ => "Project context variable",
 	}
 }

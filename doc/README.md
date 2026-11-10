@@ -16,7 +16,7 @@ octomind
 
 `octomind login` asks you to confirm a code in the browser and CLI, then stores the hub key in the user-scope
 `config/.env` and account credentials in `config/auth.json`. It does not change your model selection. New configs use
-`assistant:concierge` as the default tag and `octohub:auto` as the model name. See
+`assistant:chief` as the default tag and `octohub:auto` as the model name. See
 [Installation](usage/01-installation.md) and [Quickstart](usage/02-quickstart.md) for the complete setup.
 
 ## Configure

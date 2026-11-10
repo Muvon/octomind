@@ -12,7 +12,7 @@ octomind server --host 127.0.0.1 --port 8080
 ```
 
 `--host` defaults to `127.0.0.1` and `--port` (short `-p`) defaults to `8080`, so a bare `octomind server` binds to
-`ws://127.0.0.1:8080`. The optional `TAG` positional selects a tap agent such as `assistant:concierge` or
+`ws://127.0.0.1:8080`. The optional `TAG` positional selects a tap agent such as `assistant:chief` or
 `developer:general`; omit it to use the root `default`. A plain name resolves only when explicitly defined under local
 `[[roles]]`; unknown local roles and missing tap tags fail resolution or session initialization.
 

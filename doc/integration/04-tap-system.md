@@ -227,11 +227,9 @@ the braces (`{{{{INPUT:KEY}}}}`).
 
 - **`{{SPECIALISTS}}`** — the other agents of the same domain, one `- <tag> — <Description>` line each, sorted by tag. `(none)` when there are no others.
 
-- **`{{DOMAINS}}`** — every other domain that has an orchestrator (a `chief` agent), one `- <domain> — <Description>` line each (the description of that domain's `chief`), sorted by domain. `(none)` when there are none.
+- **`{{USES}}`** — the domains and agents the manifest declares in its `# Uses:` header, one `- <entry> — <Description>` line each, sorted by entry, without duplicates. A domain entry shows the description of that domain's `chief`; a tag entry shows that agent's description. The entry `*` stands for every other domain that has a `chief`. `(none)` when the manifest has no `# Uses:` header, or when `*` is its only entry and no other domain has a `chief`.
 
-- **`{{USES}}`** — the domains and agents the manifest declares in its `# Uses:` header, one `- <entry> — <Description>` line each, sorted by entry. A domain entry shows the description of that domain's `chief`; a tag entry shows that agent's description. `(none)` when the manifest has no `# Uses:` header.
-
-`{{SPECIALISTS}}`, `{{DOMAINS}}` and `{{USES}}` are expanded in the role's `system` prompt when the manifest loads, from the taps installed on your machine. They are allowed in `system` because their output changes only when a tap changes, so the prompt stays the same between runs and can be cached. Use them to let an agent name its teammates without a hard-coded list.
+`{{SPECIALISTS}}` and `{{USES}}` are expanded in the role's `system` prompt when the manifest loads, from the taps installed on your machine. They are allowed in `system` because their output changes only when a tap changes, so the prompt stays the same between runs and can be cached. Use them to let an agent name its teammates without a hard-coded list.
 
 A domain's lead can call only agents of its own domain. A lead that also needs other domains or single agents declares them in a header comment, as a comma-separated list of bare domains and full tags:
 
@@ -240,7 +238,16 @@ A domain's lead can call only agents of its own domain. A lead that also needs o
 # Uses: content, seo:audit
 ```
 
-A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. Anything not declared stays outside the lead's reach. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain (use `{{SPECIALISTS}}` for that). Which agents may carry `# Uses:` is enforced by the registry's lint, not at runtime.
+The global assistant, `assistant:chief`, uses the entry `*`:
+
+```toml
+# agents/assistant/chief.toml
+# Uses: *
+```
+
+A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. `*` lists every other domain that has a `chief`; it can stand next to other entries, and a domain named both ways appears once. Anything not declared stays outside the lead's reach. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain (use `{{SPECIALISTS}}` for that). Which agents may carry `# Uses:`, and which may use `*`, is enforced by the registry's lint, not at runtime.
+
+A manifest file that is a symbolic link is an alias: an old agent name kept so that older releases still find the agent. Asking for the alias by name (`octomind run <alias tag>`) loads the agent behind the link. Tag completion, `tap` discovery and the `{{SPECIALISTS}}` and `{{USES}}` lists leave the alias out, so each agent appears once under its current name.
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 

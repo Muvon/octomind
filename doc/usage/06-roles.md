@@ -29,7 +29,7 @@ It helps to know what actually exists out of the box. The default config ships f
 | Config role | `task_refiner` | Query refinement with no explicit server references |
 | Config role | `task_researcher` | Research helper explicitly granting `view` when `filesystem` resolves |
 | Config role | `reduce` | Summarization/reduction with no explicit server references |
-| Tap agent | `assistant:concierge` | Default tag; prompt and tools come from its resolved manifest |
+| Tap agent | `assistant:chief` | Default tag; prompt and tools come from its resolved manifest |
 | Tap agent | `developer:general` | Example development tag; prompt and tools come from its resolved manifest |
 
 ```bash

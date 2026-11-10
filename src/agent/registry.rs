@@ -337,6 +337,10 @@ pub fn list_all_tap_agents() -> Result<Vec<TapAgent>> {
 				Err(_) => continue,
 			};
 			for var_entry in var_entries.flatten() {
+				// A symlinked manifest is an alias (see `taps::walk_agent_manifests`): never listed.
+				if var_entry.file_type().is_ok_and(|file_type| file_type.is_symlink()) {
+					continue;
+				}
 				let path = var_entry.path();
 				if path.extension().and_then(|s| s.to_str()) != Some("toml") {
 					continue;

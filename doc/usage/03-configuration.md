@@ -65,7 +65,7 @@ them beneath `[model]`. Leave `version` to the migration system.
 ```toml
 version = 25
 log_level = "info"
-default = "assistant:concierge"
+default = "assistant:chief"
 sandbox = false
 telemetry = true
 commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
@@ -81,7 +81,7 @@ max_request_spending_threshold = 0.0
 auto_capabilities = true
 ```
 
-The `default` value is the tag used when `octomind run` receives no tag. `assistant:concierge` comes from the built-in
+The `default` value is the tag used when `octomind run` receives no tag. `assistant:chief` comes from the built-in
 `muvon/tap`; it is distinct from the local `assistant` role in `[[roles]]`.
 
 List themes and select one with:

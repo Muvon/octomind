@@ -26,7 +26,7 @@ Providers whose key is already in your environment are listed first. After you p
 the supervisor and compression should use it too; answer `n` to choose a cheaper model for each. Esc on the first
 screen works like Skip.
 
-Startup then resolves the default `assistant:concierge` tap agent. Run `octomind configure` to change providers or models
+Startup then resolves the default `assistant:chief` tap agent. Run `octomind configure` to change providers or models
 later. Non-interactive runs (piped input, `--format`, `--daemon`) create the default config without prompting.
 
 The first use of a tap agent fetches its manifest and dependencies, so it requires network access. Once the prompt

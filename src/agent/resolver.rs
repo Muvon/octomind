@@ -30,11 +30,11 @@ use anyhow::{Context, Result};
 /// Placeholder in a tap manifest's `system` prompt, replaced by the other agents of the same domain.
 const SPECIALISTS_PLACEHOLDER: &str = "{{SPECIALISTS}}";
 
-/// Placeholder in a tap manifest's `system` prompt, replaced by the orchestrator (`chief`) of every other domain.
-const DOMAINS_PLACEHOLDER: &str = "{{DOMAINS}}";
-
 /// Placeholder in a tap manifest's `system` prompt, replaced by the agents and domains its `# Uses:` header declares.
 const USES_PLACEHOLDER: &str = "{{USES}}";
+
+/// `# Uses:` entry standing for every other domain that has a `chief`.
+const ALL_DOMAINS_ENTRY: &str = "*";
 
 /// Roster text when a placeholder has nothing to list.
 const EMPTY_ROSTER: &str = "(none)";
@@ -178,16 +178,15 @@ fn prepare_role_manifest(toml_str: &str, tag: &str) -> Result<String> {
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }
 
-/// Replace `{{SPECIALISTS}}`, `{{DOMAINS}}` and `{{USES}}` in a system prompt.
+/// Replace `{{SPECIALISTS}}` and `{{USES}}` in a system prompt.
 /// Skips the tap scan when none is present. Output depends only on the taps'
 /// content, never on run order, so the prompt stays cacheable.
 fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
 	// An escaped `{{{{USES}}}}` contains `{{USES}}`; hide it from the replacements.
 	*system = inputs::protect_escaped_braces(system);
 	let wants_specialists = system.contains(SPECIALISTS_PLACEHOLDER);
-	let wants_domains = system.contains(DOMAINS_PLACEHOLDER);
 	let wants_uses = system.contains(USES_PLACEHOLDER);
-	if !wants_specialists && !wants_domains && !wants_uses {
+	if !wants_specialists && !wants_uses {
 		*system = inputs::restore_escaped_braces(system);
 		return Ok(());
 	}
@@ -214,19 +213,6 @@ fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
 			.collect();
 		*system = system.replace(SPECIALISTS_PLACEHOLDER, &join_lines(lines));
 	}
-	if wants_domains {
-		// `agents` is sorted by tag, where `x-y:chief` precedes `x:chief`; sort by domain instead.
-		let mut chiefs: Vec<_> = agents
-			.iter()
-			.filter(|a| a.category != own_domain && a.tag == format!("{}:{ORCHESTRATOR_SPEC}", a.category))
-			.collect();
-		chiefs.sort_by(|a, b| a.category.cmp(&b.category));
-		let lines = chiefs
-			.into_iter()
-			.map(|a| describe(&a.category, a.header.description.as_deref()))
-			.collect();
-		*system = system.replace(DOMAINS_PLACEHOLDER, &join_lines(lines));
-	}
 	if wants_uses {
 		let mut entries = agents
 			.iter()
@@ -238,7 +224,19 @@ fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
 				entries.join(", ")
 			);
 		}
+		if entries.iter().any(|entry| entry == ALL_DOMAINS_ENTRY) {
+			entries.retain(|entry| entry != ALL_DOMAINS_ENTRY);
+			entries.extend(
+				agents
+					.iter()
+					.filter(|a| a.category != own_domain && a.tag == format!("{}:{ORCHESTRATOR_SPEC}", a.category))
+					.map(|a| a.category.clone()),
+			);
+		}
+		// Sorted by entry, not by tag (where `x-y:chief` precedes `x:chief`); dedup drops a domain
+		// named both explicitly and through `*`.
 		entries.sort();
+		entries.dedup();
 		let lines = entries
 			.iter()
 			.map(|entry| {

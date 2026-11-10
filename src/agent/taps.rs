@@ -268,7 +268,8 @@ struct AgentManifestFile {
 	path: PathBuf,
 }
 
-/// Walk every active tap's `agents/<category>/<variant>.toml` files.
+/// Walk every active tap's `agents/<category>/<variant>.toml` files, leaving out aliases
+/// (symlinked manifests).
 ///
 /// Uses only locally cached tap data — no network calls. First tap wins on duplicates
 /// (same priority as `fetch_manifest`). Result is sorted by tag.
@@ -300,6 +301,13 @@ fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 				Err(_) => continue,
 			};
 			for variant_entry in variant_entries.flatten() {
+				// A symlinked manifest is an alias for another agent (an old name kept for older
+				// releases): fetching by name reads through it, but listings never show it.
+				// `DirEntry::file_type` does not follow links, so a tap directory that is itself
+				// a symlink (a local tap) still lists its real manifests.
+				if variant_entry.file_type().is_ok_and(|file_type| file_type.is_symlink()) {
+					continue;
+				}
 				let variant_path = variant_entry.path();
 				if variant_path.extension().and_then(|e| e.to_str()) != Some("toml") {
 					continue;
@@ -365,7 +373,8 @@ pub const ORCHESTRATOR_SPEC: &str = "chief";
 
 /// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
 /// `developer:general` and `assistant:general` kept their names and are not listed.
-pub const RENAMED_TAGS: [(&str, &str); 15] = [
+pub const RENAMED_TAGS: [(&str, &str); 16] = [
+	("assistant:concierge", "assistant:chief"),
 	("developer:cto", "developer:chief"),
 	("video:producer", "video:chief"),
 	("octomind:assistant", "octomind:chief"),

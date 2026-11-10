@@ -21,9 +21,10 @@ version = 30
 log_level = "info"
 
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
-# Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:chief").
-# The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:chief.
-default = "assistant:concierge"
+# Can be a role name (e.g. "developer"), a domain ("developer" starts developer:chief)
+# or a tap agent (e.g. "octomind:chief"). The default, assistant:chief, is the global
+# assistant from the built-in tap muvon/octomind-tap; it hands work to the domain agents.
+default = "assistant:chief"
 
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot

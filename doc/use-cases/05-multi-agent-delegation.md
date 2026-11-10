@@ -147,7 +147,7 @@ octomind run coordinator
 /mcp list
 ```
 
-The shipped default tag remains `assistant:concierge`; this example selects the local role explicitly so the required
+The shipped default tag remains `assistant:chief`; this example selects the local role explicitly so the required
 tool grants are visible in the configuration.
 
 The main AI can now use these agents as tools (illustrative transcript):

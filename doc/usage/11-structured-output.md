@@ -22,7 +22,7 @@ session as JSONL.
 echo "Summarize recent changes" | octomind run --format jsonl
 ```
 
-Omitting the tag uses the configured default (shipped as `assistant:concierge`):
+Omitting the tag uses the configured default (shipped as `assistant:chief`):
 
 ```bash
 echo "Summarize recent changes" | octomind run --format jsonl
@@ -35,7 +35,7 @@ Notes:
 - For ordinary one-shot runs, `--format` requires piped stdin. Without `--format`, redirected stdin also starts a
   non-interactive run, using plain output. An empty pipe is rejected. `--format jsonl --daemon` can start with no
   initial prompt when stdin is a terminal.
-- The default tag is `assistant:concierge` (a tap agent from the built-in default tap `muvon/tap`); the stock config
+- The default tag is `assistant:chief` (a tap agent from the built-in default tap `muvon/tap`); the stock config
   also ships the local roles `assistant`, `task_refiner`, `task_researcher`, and `reduce`. (See [CLI
   Reference](../reference/01-cli-reference.md) for the full flag set and [Roles](06-roles.md) for tags.)
 

@@ -20,7 +20,7 @@ octomind acp --name editor-session
 
 | Flag | Description |
 |------|-------------|
-| `TAG` | Agent tag or role name. Omit for `default` (shipped value `assistant:concierge`). |
+| `TAG` | Agent tag or role name. Omit for `default` (shipped value `assistant:chief`). |
 | `--name`, `-n` | Preferred session name for the next `new_session` |
 | `--resume`, `-r` | Resume a specific session by name on `new_session` |
 | `--resume-recent` | Resume the most recent session for the CWD on `new_session` |

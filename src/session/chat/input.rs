@@ -612,7 +612,7 @@ pub fn read_user_input(
 					Ok(InputResult::Text(line, clipboard_items))
 				};
 			}
-			Ok(Signal::CtrlC) => {
+			Ok(Signal::CtrlC(_)) => {
 				// Ctrl+C - Return cancellation result
 				return Ok(InputResult::Cancelled);
 			}

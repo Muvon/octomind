@@ -288,7 +288,7 @@ process):
 | `type` | string | yes | `"builtin"`, `"http"`, or `"stdio"` |
 | `timeout_seconds` | u64 | yes | Per-operation timeout; tool-call progress resets this idle deadline, and it holds while the user answers an MCP elicitation (template: 30) |
 | `tools` | string[] | yes | Tool filter. Empty = all tools. Supports wildcards such as `"github_*"`. |
-| `auto_bind` | string[] | no; absent | Exact role/tag strings to auto-include this server for; `developer` does not match `developer:general`. |
+| `auto_bind` | string[] | no; absent | Exact role/tag strings to auto-include this server for; `developer` does not match `developer:general`. A session started by domain name (`octomind run developer`) runs as `developer:chief`. |
 
 ### HTTP server fields
 

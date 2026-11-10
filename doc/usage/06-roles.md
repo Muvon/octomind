@@ -206,7 +206,9 @@ tools = []
 auto_bind = ["developer:general"]
 ```
 
-`auto_bind` matches the role tag by **exact** string (`"developer"` ≠ `"developer:general"`).
+`auto_bind` matches the role tag by **exact** string (`"developer"` ≠ `"developer:general"`). A session started with
+`octomind run developer` runs as `developer:chief`: bind `"developer:chief"` to reach the domain's lead agent, or keep
+`"developer:general"` and start that agent with `octomind run developer:general`.
 
 The bound server is automatically added to the role's `server_refs` even if not explicitly listed. There is a second,
 easy-to-miss half:

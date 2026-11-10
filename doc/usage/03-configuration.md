@@ -184,7 +184,9 @@ octomind run developer:general
 /mcp
 ```
 
-`auto_bind` matches exact role strings: `developer` does not match `developer:general`. For a newly added reference, it
+`auto_bind` matches exact role strings: `developer` does not match `developer:general`. `octomind run developer` runs
+`developer:chief`, so bind that name to reach the domain's lead agent, or bind a specialist and start it with its full
+tag. For a newly added reference, it
 also adds a `project_tools:*` grant when the role has a nonempty allowlist. Registration alone does not enable a server;
 use `auto_bind` or a role's `server_refs`. HTTP header values support `{{ENV:KEY}}`; without an explicit `Authorization`
 header, the HTTP client can

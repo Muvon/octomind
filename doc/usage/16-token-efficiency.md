@@ -8,7 +8,7 @@ the context your session sends. It covers runtime activation, tool eviction, and
 Start with a role that has the runtime tools, inspect its current surface, then ask for the capability you need:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 ```text
@@ -83,7 +83,7 @@ the tap directory containing those files, then start a new session:
 
 ```bash
 octomind tap myorg/project-tools ./project-tools
-octomind run developer:general
+octomind run developer
 ```
 
 Named references may be bare (`project-read`), pinned to the baseline tap (`octomind/memory-read`), or pinned to a
@@ -262,7 +262,7 @@ The capability tool applies domain filtering on these paths; skill-declared serv
 - Auto-activation filters out-of-domain caps *before* embedding their triggers — so a `developer:general` message can
   never accidentally flip on a `medical`-domain capability.
 - `capability(action="enable")` **hard-fails** for an out-of-domain cap with an error like `Capability 'X' is bound to
-  domains ["medical"]; current domain is 'developer'. Run the matching role (e.g. octomind run medical:general) to
+  domains ["medical"]; current domain is 'developer'. Run the matching role (e.g. octomind run doctor) to
   access it.`
 - `OCTOMIND_CAPABILITIES` boot-loading (below) goes through the same `enable` path, so it is gated too.
 
@@ -344,7 +344,7 @@ the same eviction step. Disabling tools does not uninstall dependency packages.
   no keyword fallback, so it errors if the embedding model is still downloading.
 - **Skills can pull capabilities.** Skill-declared capabilities load servers through their own refcount path, outside
   the runtime LRU. See [Skills](15-skills.md#capabilities-auto-loading).
-- **Force-loading at boot.** `OCTOMIND_CAPABILITIES=project-read octomind run developer:general` force-activates the
+- **Force-loading at boot.** `OCTOMIND_CAPABILITIES=project-read octomind run developer` force-activates the
   listed capabilities at session start. Each comma-delimited item must be an installed capability name or a supported
   tap-qualified reference; there is no fuzzy, tool-name, or provider-name resolution. Activation still passes through
   environment/domain checks and the LRU; failures are logged and skipped.
@@ -388,7 +388,7 @@ Read the project source files using the project-read capability.
 **How do I preload the example capability?** After registering the tap above:
 
 ```bash
-OCTOMIND_CAPABILITIES=project-read octomind run developer:general
+OCTOMIND_CAPABILITIES=project-read octomind run developer
 ```
 
 An env-loaded capability counts toward the runtime LRU. Agent-manifest capabilities become static role servers.

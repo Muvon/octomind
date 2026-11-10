@@ -17,14 +17,14 @@ octomind server --host 127.0.0.1 --port 8080
 `[[roles]]`; unknown local roles and missing tap tags fail resolution or session initialization.
 
 ```bash
-octomind server assistant:concierge -p 8080
+octomind server -p 8080
 ```
 
 Because the dashboard connects from a browser, you must allowlist the page's origin — the server refuses any handshake
 carrying an unlisted `Origin` header:
 
 ```bash
-octomind server assistant:concierge -p 8080 --allow-origin http://localhost:3000
+octomind server -p 8080 --allow-origin http://localhost:3000
 ```
 
 Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-websocket-server.md#browser-origins) for
@@ -33,7 +33,7 @@ why this is not optional.
 For a same-host production proxy serving `https://ai.yourcompany.com`, keep the backend on loopback:
 
 ```bash
-octomind server assistant:concierge --host 127.0.0.1 --port 8080 --allow-origin https://ai.yourcompany.com
+octomind server --host 127.0.0.1 --port 8080 --allow-origin https://ai.yourcompany.com
 ```
 
 > The server enforces the exact browser-origin allowlist, but it does not provide user authentication, authorization, or

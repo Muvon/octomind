@@ -168,8 +168,8 @@ request_transport = "websocket"
 #   https://github.com/muvon/octomind-tap
 #
 # To use a tap agent directly, just run:
-#   octomind run octomind:chief
-#   octomind run developer
+#   octomind run developer        # a domain: starts its lead agent
+#   octomind run doctor:blood     # one exact agent
 #
 # Define a custom role below only when you need project-specific behaviour.
 # Roles inherit the complete [model] profile. Add [roles.model] only for fields

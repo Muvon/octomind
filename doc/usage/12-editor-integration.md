@@ -31,7 +31,7 @@ is `assistant:concierge`). `TAG` can be:
 For a tap role, launch:
 
 ```bash
-octomind acp developer:general
+octomind acp developer
 ```
 
 Omitting the tag uses `assistant:concierge` in the shipped config; it does not select the local `assistant` role. Tap

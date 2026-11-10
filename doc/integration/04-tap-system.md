@@ -379,7 +379,7 @@ For runtime activation, list the available capabilities first and choose an exac
 To request it at startup for a developer-domain role:
 
 ```bash
-OCTOMIND_CAPABILITIES=myorg/git-tools octomind run developer:general
+OCTOMIND_CAPABILITIES=myorg/git-tools octomind run developer
 ```
 
 ### Provider Overrides

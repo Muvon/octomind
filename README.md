@@ -41,7 +41,7 @@ Built for the work that keeps going after you leave:
 
 - **Policy as code, not approval popups.** Deterministic [guardrails](doc/usage/18-guardrails.md) — pre-call guards, post-result hooks, post-turn validators — live in TOML and scripts, so they work in CI, daemons, and scheduled runs.
 - **Measured, not claimed.** All four agents ran stock on the same tasks with the same judge. Per-case table, artifacts, and a reproduction guide are in the [benchmarks](#benchmarks).
-- **Ready-made specialists.** `octomind run developer:general` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). `octomind run developer` starts `developer:chief`, the orchestrator of the `developer` domain (a domain is the part of a tag before the `:`; its orchestrator is the agent named `chief`). Publish your own with one repo.
+- **Ready-made specialists.** `octomind run developer` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). It starts `developer:chief`, the orchestrator of the `developer` domain (a domain is the part of a tag before the `:`; its orchestrator is the agent named `chief`). `octomind run developer:general` starts one exact agent, the generalist that does the work itself. Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving without forgetting the task or your last few messages.
 - **Learns the project as you work.** Corrections and rules you state become lessons, quoted from your own words and scoped to the project and role, and come back in later sessions. Turn on [evolution](doc/usage/13-learning.md) and recurring lessons compile into skill and guardrail candidates, trialled against a control and kept only when they help.
 - **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
@@ -49,10 +49,10 @@ Built for the work that keeps going after you leave:
 
 ```bash
 # Interactive
-octomind run developer:general
+octomind run developer
 
 # Non-interactive — CI, scripts, automation
-echo "Explain the auth module" | octomind run developer:general --format plain
+echo "Explain the auth module" | octomind run developer --format plain
 
 # Daemon — keep it alive, talk to it from another terminal
 echo "watch the build" | octomind run --name watcher --daemon --format jsonl
@@ -97,12 +97,12 @@ Run `octomind configure` to change this later. Scripts, piped input, and `--form
 
 ```bash
 cd ~/your/project
-octomind run developer:general
+octomind run developer
 ```
 
-You're now in a session with an agent that can read your code, run commands, and edit files. The interface is a plain line prompt with markdown rendering — no TUI to learn, so it works over SSH, in `tmux`, and in CI logs. The first time you run a specialist, it may install its tools and ask for credentials.
+You're now in a session with the developer domain's lead agent. It reads your code and runs commands itself, and hands code changes to the domain's specialists. The interface is a plain line prompt with markdown rendering — no TUI to learn, so it works over SSH, in `tmux`, and in CI logs. The first time you run a specialist, it may install its tools and ask for credentials.
 
-> `developer:general` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:concierge`. A name without a `:`, such as `octomind run developer`, starts that domain's orchestrator (`developer:chief`), unless your config defines a role with that name; the local role wins.
+> `developer:chief` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:concierge`. A name without a `:`, such as `octomind run developer`, starts that domain's orchestrator (`developer:chief`), unless your config defines a role with that name; the local role wins.
 
 Try the [recorded bug-fix demo](examples/fix-a-bug): two failing tests, an agent fix, and an independent test rerun.
 
@@ -180,9 +180,10 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 ### Specialists
 
 ```bash
-octomind run developer:general    # general dev, language skills auto-activate
-octomind run doctor:blood         # blood-test interpretation specialist
-octomind run lawyer:sg            # legal specialist
+octomind run developer            # developer domain: its lead agent hands larger work to the specialists
+octomind run doctor               # doctor domain: health questions, routed to the right specialist
+octomind run lawyer               # lawyer domain: legal questions, by jurisdiction
+octomind run doctor:blood         # one exact specialist: blood-test interpretation
 ```
 
 Running a specialist fetches its manifest from the tap registry, installs any required binaries, resolves credentials, starts the right MCP servers, and then opens the session.

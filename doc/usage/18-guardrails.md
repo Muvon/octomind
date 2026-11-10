@@ -34,7 +34,7 @@ roles = ["developer"]
 Start a new session to load it:
 
 ```bash
-printf '%s\n' 'Explain the project rule added to this request.' | octomind run developer:general --format jsonl
+printf '%s\n' 'Explain the project rule added to this request.' | octomind run developer --format jsonl
 ```
 
 The pipe prepends the rule to input. The examples below are alternatives or additions to that file; do not combine
@@ -253,7 +253,7 @@ printf '%s\n' "$input"
 With this pipe replacing the quickstart pipe, try:
 
 ```bash
-printf '%s\n' 'Task: Explain the project layout.' | octomind run developer:general --format jsonl
+printf '%s\n' 'Task: Explain the project layout.' | octomind run developer --format jsonl
 ```
 
 Known slash commands are dispatched separately; a pipe is not a way to forbid `/exit` or `/done`.
@@ -621,7 +621,7 @@ Server](../integration/01-websocket-server.md) for the full structured-output sc
   example, with the validation-statement validator installed:
 
 ```bash
-printf '%s\n' 'Reply with the single word Hello.' | octomind run developer:general --format jsonl \
+printf '%s\n' 'Reply with the single word Hello.' | octomind run developer --format jsonl \
   | jq 'select(.type == "injected") | select(.source_kind == "guardrail_validator")'
 ```
 
@@ -651,7 +651,7 @@ signed `when` entries, and unique pipe/validator names. Start a new session and 
 
 ```bash
 octomind config --log-level debug
-octomind run developer:general
+octomind run developer
 ```
 
 **Why does a deny rule not match?** Its target is a resolved capability name, not a tool name. Use the ownership hook

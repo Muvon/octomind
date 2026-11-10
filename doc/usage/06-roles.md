@@ -33,12 +33,12 @@ It helps to know what actually exists out of the box. The default config ships f
 | Tap agent | `developer:general` | Example development tag; prompt and tools come from its resolved manifest |
 
 ```bash
-octomind run assistant:concierge   # Tap agent (default tag in shipped config)
-octomind run developer:general     # Development tap agent
+octomind run                       # Tap agent (default tag in shipped config)
+octomind run developer             # Development domain's orchestrator, developer:chief
 octomind run assistant             # Plain config role
 ```
 
-Tap variants are not wildcard selectors: pass an exact tag. After startup, inspect the tools actually exposed:
+Tap variants are not wildcard selectors: pass an exact tag or a domain name. After startup, inspect the tools actually exposed:
 
 ```text
 /role
@@ -304,7 +304,8 @@ octomind run docs
 ```
 
 The `docs` example requires an OpenAI credential. There is no plain `developer` role in the shipped config; the example
-above creates it. Use `developer:general` to resolve a tap agent instead.
+above creates it, and a local role wins over a tap domain of the same name. Without that role, `octomind run developer`
+starts the tap agent `developer:chief`.
 
 ### Switching Roles Mid-Session
 

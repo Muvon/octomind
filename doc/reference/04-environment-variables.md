@@ -227,7 +227,7 @@ For preloading, select actual installed names from session `/skill` and capabili
 `code-review` and `filesystem` are installed and eligible:
 
 ```bash
-OCTOMIND_SKILLS=code-review OCTOMIND_CAPABILITIES=filesystem octomind run developer:general
+OCTOMIND_SKILLS=code-review OCTOMIND_CAPABILITIES=filesystem octomind run developer
 ```
 
 ## Telemetry

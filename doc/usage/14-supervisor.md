@@ -8,7 +8,7 @@ session. Use this guide to configure it and understand its notices, retries, and
 The shipped configuration enables the supervisor. Start a session and inspect its plan and local statistics:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 ```text

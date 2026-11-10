@@ -22,10 +22,10 @@ session as JSONL.
 echo "Summarize recent changes" | octomind run --format jsonl
 ```
 
-Omitting the tag uses the configured default (shipped as `assistant:concierge`). You can also select it explicitly:
+Omitting the tag uses the configured default (shipped as `assistant:concierge`):
 
 ```bash
-echo "Summarize recent changes" | octomind run assistant:concierge --format jsonl
+echo "Summarize recent changes" | octomind run --format jsonl
 ```
 
 Notes:

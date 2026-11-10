@@ -20,7 +20,7 @@ rules:
 Report each finding with its file path, the observed behavior, and the smallest correction.
 Separate source inspection from checks you actually ran. Do not claim a test passed without its result.
 EOF
-octomind run developer:general
+octomind run developer
 ```
 
 Activate it manually, or send a fresh request such as `Review the current changes and report concrete findings.`:
@@ -72,7 +72,7 @@ max_retries = 3              # per-skill failure cap; 0 disables the cap
 
 **1. Environment variable** — preload skills at session start:
 ```bash
-OCTOMIND_SKILLS=project-review octomind run developer:general
+OCTOMIND_SKILLS=project-review octomind run developer
 ```
 
 **2. Auto-activation** — skills with declarative `rules:` in frontmatter activate based on project context (e.g.,
@@ -226,7 +226,7 @@ Preload skills at session start. Values are comma-delimited exact skill names:
 
 ```bash
 export OCTOMIND_SKILLS=project-review
-octomind run developer:general
+octomind run developer
 ```
 
 - Skills are loaded at startup and marked as env-loaded; successful `/done` compression omits their injected blocks,
@@ -283,7 +283,7 @@ auto_validation = true
 ```
 
 ```bash
-OCTOMIND_SKILLS=project-review octomind run developer:general
+OCTOMIND_SKILLS=project-review octomind run developer
 ```
 
 The model gets another turn to fix the issue. Retries are capped by `max_retries` in `[skills]` config.

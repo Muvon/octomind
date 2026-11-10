@@ -10,8 +10,8 @@ clients.
 # Default tag (assistant:concierge)
 octomind run
 
-# A tap agent from the registry, addressed as category:variant
-octomind run developer:general
+# A domain from the registry: starts its orchestrator (developer:chief)
+octomind run developer
 
 # An explicit local [[roles]] entry from the shipped config
 octomind run assistant
@@ -24,7 +24,8 @@ octomind run -m anthropic:claude-sonnet-4-6
 ```
 
 With no argument, `octomind run` uses the configured default tag, `assistant:concierge`. Bare names such as `assistant`
-refer to roles in the shipped config; `category:variant` names such as `developer:general` are tap agents resolved from
+refer to roles in the shipped config. A bare name with no matching config role is a tap domain and starts its `chief`:
+`developer` starts `developer:chief`. `category:variant` names such as `developer:general` are tap agents resolved from
 the registry.
 
 ## Resuming Sessions
@@ -77,7 +78,7 @@ used by `--resume` or `send`, use `/rename`; no argument clears the title:
 Pipe a nonempty prompt, rather than passing it as a positional argument:
 
 ```bash
-printf '%s\n' 'Explain the authentication module.' | octomind run developer:general --format plain
+printf '%s\n' 'Explain the authentication module.' | octomind run developer --format plain
 printf '%s\n' 'List the project entry points.' | octomind run --format jsonl > session-events.jsonl
 ```
 
@@ -436,14 +437,14 @@ project-instruction example.
 Configure an ACP client to launch this command over stdio:
 
 ```bash
-octomind acp developer:general --name editor-session
+octomind acp developer --name editor-session
 ```
 
 ACP creates sessions when the client requests them. See [ACP Protocol](../integration/02-acp-protocol.md) for the client
 lifecycle. To start a WebSocket server for a client:
 
 ```bash
-octomind server developer:general --host 127.0.0.1 --port 8080
+octomind server developer --host 127.0.0.1 --port 8080
 ```
 
 Browser clients must have their exact origin allowed, for example:

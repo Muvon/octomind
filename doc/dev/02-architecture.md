@@ -24,9 +24,9 @@ Start a session or select a transport with these entry points (run each separate
 
 ```bash
 octomind login
-octomind run assistant:concierge --name architecture-notes
+octomind run --name architecture-notes
 printf '%s\n' 'Explain the session initialization contract.' | octomind run --format jsonl
-octomind acp assistant:concierge
+octomind acp
 octomind server --host 127.0.0.1 --port 8080
 ```
 

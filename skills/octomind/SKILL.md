@@ -37,19 +37,19 @@ context compaction, out-of-band planning and loop detection).
 input runs non-interactively and exits when the work is done:
 
 ```
-terminal(command="echo 'Add retry logic to API calls and update tests' | octomind run developer:general --format plain", workdir="~/project")
+terminal(command="echo 'Add retry logic to API calls and update tests' | octomind run developer --format plain", workdir="~/project")
 ```
 
 Machine-readable events instead of text:
 
 ```
-terminal(command="echo 'List the TODO items in src/' | octomind run developer:general --format jsonl", workdir="~/project")
+terminal(command="echo 'List the TODO items in src/' | octomind run developer --format jsonl", workdir="~/project")
 ```
 
 Force a specific model:
 
 ```
-terminal(command="echo 'Refactor the auth module' | octomind run developer:general --format plain --model openrouter:anthropic/claude-sonnet-4", workdir="~/project")
+terminal(command="echo 'Refactor the auth module' | octomind run developer --format plain --model openrouter:anthropic/claude-sonnet-4", workdir="~/project")
 ```
 
 Restrict file writes to the working directory with `--sandbox`.
@@ -67,7 +67,7 @@ note as a control. Records land in `advise.jsonl` in the data directory.
 For multi-step work, keep one named session alive and inject follow-ups from separate commands:
 
 ```
-terminal(command="echo 'Implement the OAuth refresh flow' | octomind run developer:general --name oauth --daemon --format jsonl", workdir="~/project", background=true)
+terminal(command="echo 'Implement the OAuth refresh flow' | octomind run developer --name oauth --daemon --format jsonl", workdir="~/project", background=true)
 # Returns session_id
 
 # Monitor progress
@@ -87,14 +87,14 @@ Sessions persist on disk. `--name <name>` resumes an existing session of that na
 recent session for the working directory:
 
 ```
-terminal(command="echo 'Continue with the remaining tests' | octomind run developer:general --name oauth --format plain", workdir="~/project")
+terminal(command="echo 'Continue with the remaining tests' | octomind run developer --name oauth --format plain", workdir="~/project")
 ```
 
 ## Common Flags
 
 | Flag | Use |
 |------|-----|
-| `run <tag>` | Start a specialist: `developer:general` for coding; other `domain:spec` tags come from Octomind's tap registry |
+| `run <tag>` | Start an agent: `developer` for coding; other `domain:spec` tags come from Octomind's tap registry |
 | `--format plain` / `--format jsonl` | Non-interactive output for piped input |
 | `--name <name>` / `-n` | Create or resume a named session |
 | `--resume-recent` | Resume the latest session in this directory |
@@ -104,12 +104,12 @@ terminal(command="echo 'Continue with the remaining tests' | octomind run develo
 | `--schema <file>` | Constrain output to a JSON Schema (model must support structured output) |
 
 Hosts that speak the Agent Client Protocol (ACP) can run the same specialist as a sub-agent over stdio:
-`octomind acp developer:general`.
+`octomind acp developer`.
 
 ## Procedure
 
 1. Verify readiness: `terminal(command="octomind --version")`.
-2. For bounded tasks, pipe the task into `octomind run developer:general --format plain`.
+2. For bounded tasks, pipe the task into `octomind run developer --format plain`.
 3. For iterative tasks, start a named `--daemon` session in the background and use `octomind send`.
 4. Monitor long tasks with `process(action="poll"|"log")`.
 5. Summarize file changes, test results, and remaining risks back to the user.
@@ -119,8 +119,8 @@ Hosts that speak the Agent Client Protocol (ACP) can run the same specialist as 
 Use separate workdirs/worktrees to avoid collisions:
 
 ```
-terminal(command="echo 'Fix issue #101 and commit' | octomind run developer:general --format plain", workdir="~/.hermes/cache/scratch/issue-101", background=true)
-terminal(command="echo 'Add parser regression tests and commit' | octomind run developer:general --format plain", workdir="~/.hermes/cache/scratch/issue-102", background=true)
+terminal(command="echo 'Fix issue #101 and commit' | octomind run developer --format plain", workdir="~/.hermes/cache/scratch/issue-101", background=true)
+terminal(command="echo 'Add parser regression tests and commit' | octomind run developer --format plain", workdir="~/.hermes/cache/scratch/issue-102", background=true)
 process(action="list")
 ```
 
@@ -139,7 +139,7 @@ process(action="list")
 Smoke test:
 
 ```
-terminal(command="echo 'Respond with exactly: OCTOMIND_SMOKE_OK' | octomind run developer:general --format plain")
+terminal(command="echo 'Respond with exactly: OCTOMIND_SMOKE_OK' | octomind run developer --format plain")
 ```
 
 Success criteria:

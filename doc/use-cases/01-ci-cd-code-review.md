@@ -31,7 +31,7 @@ Two facts shape everything below, so get them straight up front:
 > schema-constrained output. `--format jsonl` still controls the transport: the model response appears in `assistant`
 > events within the JSONL stream. Strict schema enforcement is requested from the provider.
 
-> **Note on agents:** the commands below use the `developer:general` tap agent. It ships via the built-in default tap
+> **Note on agents:** the commands below use the `developer` domain, which starts the `developer:chief` tap agent. It ships via the built-in default tap
 > `muvon/tap`, which auto-clones on first use and attempts updates on subsequent resolution. See [Tap
 > System](../integration/04-tap-system.md).
 
@@ -45,7 +45,7 @@ included, and pipe it once:
 # Feed the prompt + diff to Octomind and print a human-readable review
 diff=$(git diff main..HEAD)
 printf 'Review this diff for bugs and security issues. Cite files and lines.\n\n%s' "$diff" \
-  | octomind run developer:general --format plain
+  | octomind run developer --format plain
 ```
 
 The `--format plain` output is framed and may be terminal-styled, which is fine for a human reading the log. Use JSONL
@@ -93,7 +93,7 @@ diff=$(git diff main..HEAD)
 
 # Run non-interactively. jsonl is a stream of type-tagged objects, one per line.
 stream=$(printf 'Review this diff for issues. Return the requested structured review.\n\n%s' "$diff" \
-  | octomind run developer:general --schema review-schema.json --format jsonl)
+  | octomind run developer --schema review-schema.json --format jsonl)
 
 # Assistant events contain complete responses. Select the last one and fail on missing/invalid JSON.
 review=$(printf '%s\n' "$stream" | jq -esc '
@@ -142,7 +142,7 @@ To keep CI output tidy:
 ```bash
 octomind config --log-level none
 printf 'Review the current checkout for bugs. Do not edit files.\n' \
-  | octomind run developer:general --sandbox --format jsonl
+  | octomind run developer --sandbox --format jsonl
 ```
 
 The sandbox restricts writes on supported Linux/macOS systems; it permits state paths as well as the checkout. It does

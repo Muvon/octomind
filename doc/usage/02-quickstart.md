@@ -92,10 +92,10 @@ The optional positional argument to `octomind run` is a tag:
 octomind
 
 # Registry agent
-octomind run developer:general
+octomind run developer
 ```
 
-Plain names require a configured local role. See [Roles](06-roles.md) for a complete local-role example and the [Tap
+Plain names select a configured local role, or else a tap domain's orchestrator. See [Roles](06-roles.md) for a complete local-role example and the [Tap
 System](../integration/04-tap-system.md) for registry resolution.
 
 ## Name and Resume Sessions
@@ -121,10 +121,10 @@ argument is the agent tag, so pipe the prompt through stdin:
 
 ```bash
 echo "Explain the authentication module" | \
-  octomind run developer:general --format plain
+  octomind run developer --format plain
 
 echo "List TODO items" | \
-  octomind run developer:general --format jsonl
+  octomind run developer --format jsonl
 ```
 
 Piped stdin also selects non-interactive operation without `--format`, using plain output. Empty stdin is an error.

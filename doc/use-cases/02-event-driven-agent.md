@@ -113,7 +113,7 @@ be executable on Unix.
 
 ```bash
 printf 'Wait for events and review the local checkout when requested.\n' \
-  | octomind run developer:general --name code-monitor --daemon --format jsonl --hook github-push
+  | octomind run developer --name code-monitor --daemon --format jsonl --hook github-push
 ```
 
 `--daemon` keeps a non-interactive session waiting for inbox work. Use `--format jsonl` for machine-readable output.
@@ -155,7 +155,7 @@ Stop the first daemon before starting this replacement, because both activate th
 
 ```bash
 printf 'Wait for push events.\n' \
-  | octomind run developer:general --name code-monitor --daemon --format jsonl \
+  | octomind run developer --name code-monitor --daemon --format jsonl \
       --hook github-push --hook github-push-secondary
 ```
 

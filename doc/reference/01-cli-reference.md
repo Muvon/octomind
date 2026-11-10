@@ -209,7 +209,7 @@ Start an interactive or non-interactive AI session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name (e.g. `assistant`) or registry agent tag `category:variant` (e.g. `developer:general`). Uses the default tag if omitted. |
+| `TAG` | | Role name (e.g. `assistant`), domain name (e.g. `developer`) or registry agent tag `category:variant` (e.g. `developer:general`). Uses the default tag if omitted. |
 | `--name NAME` | `-n` | Create a named session, or resume it if it already exists. |
 | `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
@@ -244,14 +244,11 @@ resuming. Most useful with `--format jsonl`. A ready-to-use example ships at
 # Interactive session with the default tap agent
 octomind run
 
-# Explicit default tap agent
-octomind run assistant:concierge
-
-# Registry agent (category:variant)
-octomind run developer:general
+# Registry domain: starts its orchestrator (developer:chief)
+octomind run developer
 
 # Non-interactive: pipe message via stdin
-echo "Explain the auth module" | octomind run assistant:concierge --format plain
+echo "Explain the auth module" | octomind run --format plain
 
 # Named session
 octomind run --name feature-auth
@@ -267,7 +264,7 @@ echo "Wait for build events" | octomind run --name ci-watcher --daemon --format 
 octomind run -m anthropic:claude-sonnet-4-6
 
 # Structured output — constrain replies to a JSON Schema (structured-output models only)
-echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --schema config-templates/todos.schema.json
+echo "List the top 3 TODOs" | octomind run developer --format jsonl --schema config-templates/todos.schema.json
 ```
 
 ## `octomind server [TAG]`
@@ -276,7 +273,7 @@ Start a WebSocket server for remote AI sessions.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name or registry agent tag `category:variant` |
+| `TAG` | | Role name, domain name or registry agent tag `category:variant` |
 | `--host HOST` | | Bind address (default: `127.0.0.1`) |
 | `--port PORT` | `-p` | Port (default: `8080`) |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
@@ -287,7 +284,7 @@ Start a WebSocket server for remote AI sessions.
 ```bash
 octomind server
 octomind server --host 0.0.0.0 --port 9090
-octomind server developer:general --sandbox
+octomind server developer --sandbox
 octomind server --allow-origin http://localhost:3000
 ```
 
@@ -297,7 +294,7 @@ Run as Agent Client Protocol agent over stdio (for editor integration).
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name or registry agent tag `category:variant` |
+| `TAG` | | Role name, domain name or registry agent tag `category:variant` |
 | `--name NAME` | `-n` | Session name (used when client creates a session) |
 | `--resume SESSION` | `-r` | Resume a specific session by name |
 | `--resume-recent` | | Resume the most recent session |
@@ -308,8 +305,8 @@ Run as Agent Client Protocol agent over stdio (for editor integration).
 
 ```bash
 octomind acp
-octomind acp developer:general --sandbox
-octomind acp assistant:concierge -m openai:gpt-5.6-luna
+octomind acp developer --sandbox
+octomind acp -m openai:gpt-5.6-luna
 ```
 
 ## `octomind tap [TAP] [PATH]`
@@ -551,7 +548,7 @@ is set, and it applies only to `run`, `server`, and `acp` — all other subcomma
 the sandbox is unsupported.
 
 ```bash
-octomind run developer:general --sandbox
+octomind run developer --sandbox
 ```
 
 ## Exit codes

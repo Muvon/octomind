@@ -9,7 +9,7 @@ With the shipped configuration, learning is enabled. State a durable rule in a s
 task and start background extraction:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 ```text

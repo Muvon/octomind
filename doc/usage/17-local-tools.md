@@ -24,7 +24,7 @@ fi
 EOF
 chmod +x .agents/tools/echo
 
-octomind run developer:general
+octomind run developer
 ```
 
 In the session, the model now sees `echo` under server `local`. Run `/mcp list` (or `/mcp full` for the parameter

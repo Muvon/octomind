@@ -3315,9 +3315,12 @@ fn agent_status_icon(status: &str) -> colored::ColoredString {
 	}
 }
 
+/// Smallest count that one-decimal `k` would round up to `1000.0k`; from here on, show `M`.
+const M_TOKENS_THRESHOLD: u64 = 999_950;
+
 /// Compact token count: `"850"`, `"12.4k"`, `"3.0M"`.
 fn fmt_tokens(n: u64) -> String {
-	if n >= 1_000_000 {
+	if n >= M_TOKENS_THRESHOLD {
 		format!("{:.1}M", n as f64 / 1_000_000.0)
 	} else if n >= 1_000 {
 		format!("{:.1}k", n as f64 / 1_000.0)

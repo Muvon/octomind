@@ -228,14 +228,76 @@ async fn bare_domain_resolves_to_its_chief() {
 	assert!(merged.roles.iter().any(|r| r.name == "ztest:chief"));
 }
 
+/// Set an environment variable for the duration of a test, restoring the previous value on drop.
+struct EnvVarGuard {
+	name: &'static str,
+	previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+	fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+		let previous = std::env::var_os(name);
+		std::env::set_var(name, value);
+		Self { name, previous }
+	}
+}
+
+impl Drop for EnvVarGuard {
+	fn drop(&mut self) {
+		match self.previous.take() {
+			Some(value) => std::env::set_var(self.name, value),
+			None => std::env::remove_var(self.name),
+		}
+	}
+}
+
+/// `/role` and the `tap` tool call `expand_domain_role` directly, so the expansion itself has to
+/// bring in the default tap. The remote is a local repository that git reaches through `insteadOf`.
 #[test]
 #[serial]
-fn expand_domain_role_expands_bare_domain_from_default_tap() {
-	let guard = ResolverDataDir::new();
-	install_default_tap_manifest(guard.path(), "ztest", "chief", MANIFEST_HEADER);
+fn bare_domain_expands_when_the_default_tap_is_not_cloned_yet() {
+	let _guard = ResolverDataDir::new();
+	let remote_root = tempfile::tempdir().expect("remote root");
+	let remote = remote_root.path().join("muvon").join("octomind-tap");
+	let agents_dir = remote.join("agents").join("ztest");
+	std::fs::create_dir_all(&agents_dir).expect("create remote");
+	std::fs::write(
+		agents_dir.join("chief.toml"),
+		format!("{MANIFEST_HEADER}{MANIFEST_BODY}"),
+	)
+	.expect("write manifest");
+	for args in [
+		vec!["init"],
+		vec!["add", "."],
+		vec![
+			"-c",
+			"user.name=test",
+			"-c",
+			"user.email=test@example.com",
+			"-c",
+			"commit.gpgsign=false",
+			"commit",
+			"-m",
+			"init",
+		],
+	] {
+		let status = std::process::Command::new("git")
+			.args(&args)
+			.current_dir(&remote)
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.status()
+			.expect("run git");
+		assert!(status.success(), "git {args:?} failed");
+	}
+	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
+	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");
+	let _key = EnvVarGuard::set(
+		"GIT_CONFIG_KEY_0",
+		format!("url.file://{}/.insteadOf", remote_root.path().display()),
+	);
+	let _value = EnvVarGuard::set("GIT_CONFIG_VALUE_0", "https://github.com/");
 
-	// Direct call, as `/role` and `tap run` make it: the default tap must be
-	// ensured inside the expansion, not only by `resolve_config_and_role`.
 	let role = expand_domain_role("ztest", &base_config()).expect("domain expands");
 
 	assert_eq!(role, "ztest:chief");

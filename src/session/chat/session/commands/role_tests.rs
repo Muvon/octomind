@@ -90,7 +90,18 @@ async fn test_bare_command_shows_current_and_available_roles() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_invalid_plain_role_is_rejected_up_front() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	// A name that is not a local role may be a tap domain, so the lookup reads the default
+	// tap and clones it when it is missing. An empty tap directory keeps the test offline.
+	let _data = TestDataDir::new();
+	let default_tap = crate::directories::get_octomind_data_dir()
+		.expect("data dir")
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap");
+	std::fs::create_dir_all(default_tap).expect("create default tap dir");
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.role = "task_refiner".to_string();
 	let mut config = template_config();

@@ -33,6 +33,9 @@ const SPECIALISTS_PLACEHOLDER: &str = "{{SPECIALISTS}}";
 /// Placeholder in a tap manifest's `system` prompt, replaced by the orchestrator (`chief`) of every other domain.
 const DOMAINS_PLACEHOLDER: &str = "{{DOMAINS}}";
 
+/// Placeholder in a tap manifest's `system` prompt, replaced by the agents and domains its `# Uses:` header declares.
+const USES_PLACEHOLDER: &str = "{{USES}}";
+
 /// Roster text when a placeholder has nothing to list.
 const EMPTY_ROSTER: &str = "(none)";
 
@@ -161,13 +164,17 @@ fn prepare_role_manifest(toml_str: &str, tag: &str) -> Result<String> {
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }
 
-/// Replace `{{SPECIALISTS}}` and `{{DOMAINS}}` in a system prompt. Skips the
-/// tap scan when neither is present. Output depends only on the taps' content,
-/// never on run order, so the prompt stays cacheable.
+/// Replace `{{SPECIALISTS}}`, `{{DOMAINS}}` and `{{USES}}` in a system prompt.
+/// Skips the tap scan when none is present. Output depends only on the taps'
+/// content, never on run order, so the prompt stays cacheable.
 fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
+	// An escaped `{{{{USES}}}}` contains `{{USES}}`; hide it from the replacements.
+	*system = inputs::protect_escaped_braces(system);
 	let wants_specialists = system.contains(SPECIALISTS_PLACEHOLDER);
 	let wants_domains = system.contains(DOMAINS_PLACEHOLDER);
-	if !wants_specialists && !wants_domains {
+	let wants_uses = system.contains(USES_PLACEHOLDER);
+	if !wants_specialists && !wants_domains && !wants_uses {
+		*system = inputs::restore_escaped_braces(system);
 		return Ok(());
 	}
 
@@ -206,6 +213,44 @@ fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
 			.collect();
 		*system = system.replace(DOMAINS_PLACEHOLDER, &join_lines(lines));
 	}
+	if wants_uses {
+		let mut entries = agents
+			.iter()
+			.find(|a| a.tag == tag)
+			.map_or_else(Vec::new, |a| a.header.uses.clone());
+		if entries.iter().any(String::is_empty) {
+			anyhow::bail!(
+				"`{tag}` declares `# Uses: {}`, which has an empty entry",
+				entries.join(", ")
+			);
+		}
+		entries.sort();
+		let lines = entries
+			.iter()
+			.map(|entry| {
+				let declared = format!("`{tag}` declares `# Uses: {entry}`");
+				let callee_tag = if entry.contains(':') {
+					entry.clone()
+				} else if entry == own_domain {
+					anyhow::bail!(
+						"{declared}, but `{entry}` is its own domain: use `{SPECIALISTS_PLACEHOLDER}` for your own domain"
+					);
+				} else {
+					format!("{entry}:{ORCHESTRATOR_SPEC}")
+				};
+				let callee = agents.iter().find(|a| a.tag == callee_tag).with_context(|| {
+					if entry.contains(':') {
+						format!("{declared}, but no such agent exists")
+					} else {
+						format!("{declared}, but domain `{entry}` has no `{ORCHESTRATOR_SPEC}`")
+					}
+				})?;
+				Ok(describe(entry, callee.header.description.as_deref()))
+			})
+			.collect::<Result<Vec<_>>>()?;
+		*system = system.replace(USES_PLACEHOLDER, &join_lines(lines));
+	}
+	*system = inputs::restore_escaped_braces(system);
 	Ok(())
 }
 

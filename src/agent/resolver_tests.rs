@@ -378,3 +378,106 @@ fn manifest_without_placeholders_is_left_alone() {
 		"plain {{CWD}} prompt"
 	);
 }
+
+// --- {{USES}} ------------------------------------------------------------------
+
+const USES_MANIFEST: &str = "[[roles]]\nsystem = \"Can call:\\n{{USES}}\"\n";
+
+fn install_uses_agent(data_dir: &std::path::Path, uses: &str) {
+	install_default_tap_manifest(data_dir, "mkt", "chief", &format!("# Description: Runs mkt\n{uses}"));
+}
+
+#[test]
+#[serial]
+fn uses_lists_domain_chief_and_tag_entries_sorted() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: seo:audit, content\n");
+	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
+	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Not listed\n");
+	install_default_tap_manifest(guard.path(), "seo", "audit", "# Description: Audits pages\n");
+
+	assert_eq!(
+		roster_system(USES_MANIFEST, "mkt:chief"),
+		"Can call:\n- content — Runs content\n- seo:audit — Audits pages"
+	);
+}
+
+#[test]
+#[serial]
+fn uses_without_header_says_none() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "");
+
+	assert_eq!(roster_system(USES_MANIFEST, "mkt:chief"), "Can call:\n(none)");
+}
+
+#[test]
+fn escaped_uses_placeholder_stays_literal() {
+	let manifest = "[[roles]]\nsystem = \"Write {{{{USES}}}} verbatim\"\n";
+
+	assert_eq!(roster_system(manifest, "mkt:chief"), "Write {{USES}} verbatim");
+}
+
+#[test]
+#[serial]
+fn uses_domain_without_chief_is_an_error() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: content\n");
+	install_default_tap_manifest(guard.path(), "content", "writer", MANIFEST_HEADER);
+
+	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
+		.unwrap_err()
+		.to_string();
+	assert_eq!(
+		err,
+		"`mkt:chief` declares `# Uses: content`, but domain `content` has no `chief`"
+	);
+}
+
+#[test]
+#[serial]
+fn uses_missing_tag_is_an_error() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: seo:audit\n");
+
+	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
+		.unwrap_err()
+		.to_string();
+	assert_eq!(
+		err,
+		"`mkt:chief` declares `# Uses: seo:audit`, but no such agent exists"
+	);
+}
+
+#[test]
+#[serial]
+fn uses_empty_entry_is_an_error_only_for_its_declaring_agent() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: content,,seo:audit\n");
+
+	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
+		.unwrap_err()
+		.to_string();
+	assert_eq!(
+		err,
+		"`mkt:chief` declares `# Uses: content, , seo:audit`, which has an empty entry"
+	);
+	// Another agent's roster is unaffected by the malformed header.
+	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
+	assert_eq!(roster_system(USES_MANIFEST, "ztest:zz"), "Can call:\n(none)");
+}
+
+#[test]
+#[serial]
+fn uses_own_domain_is_an_error() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: mkt\n");
+
+	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
+		.unwrap_err()
+		.to_string();
+	assert_eq!(
+		err,
+		"`mkt:chief` declares `# Uses: mkt`, but `mkt` is its own domain: use `{{SPECIALISTS}}` for your own domain"
+	);
+}

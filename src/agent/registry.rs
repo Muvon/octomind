@@ -237,15 +237,20 @@ pub struct TapAgent {
 
 const HEADER_TITLE: &str = "# Title:";
 const HEADER_DESCRIPTION: &str = "# Description:";
+const HEADER_USES: &str = "# Uses:";
+const USES_SEPARATOR: char = ',';
 
 /// Header fields of a manifest as written. Absent or empty fields stay `None`.
 #[derive(Debug, Clone, Default)]
 pub struct AgentHeader {
 	pub title: Option<String>,
 	pub description: Option<String>,
+	/// Entries of `# Uses:` as written, trimmed, empty ones included: a malformed line must
+	/// break only the agent that declares it, so `{{USES}}` expansion rejects them.
+	pub uses: Vec<String>,
 }
 
-/// Read `Title` and `Description` from the manifest's header comment block.
+/// Read `Title`, `Description` and `Uses` from the manifest's header comment block.
 ///
 /// Scans the leading comment block (everything before the first non-comment,
 /// non-blank line) for lines of the form:
@@ -253,6 +258,7 @@ pub struct AgentHeader {
 /// ```text
 /// # Title: <title>
 /// # Description: <description>
+/// # Uses: <entry>[, <entry>…]
 /// ```
 pub fn parse_agent_header(raw_toml: &str) -> AgentHeader {
 	let mut header = AgentHeader::default();
@@ -267,6 +273,11 @@ pub fn parse_agent_header(raw_toml: &str) -> AgentHeader {
 			header.title = non_empty(rest).or(header.title);
 		} else if let Some(rest) = trimmed.strip_prefix(HEADER_DESCRIPTION) {
 			header.description = non_empty(rest).or(header.description);
+		} else if let Some(rest) = trimmed.strip_prefix(HEADER_USES) {
+			header.uses = rest
+				.split(USES_SEPARATOR)
+				.map(|entry| entry.trim().to_string())
+				.collect();
 		}
 	}
 	header

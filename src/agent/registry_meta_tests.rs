@@ -75,3 +75,27 @@ fn header_with_missing_fields_leaves_them_empty() {
 	assert!(empty_title.title.is_none(), "an empty value counts as missing");
 	assert_eq!(empty_title.description.as_deref(), Some("Only this"));
 }
+
+#[test]
+fn header_without_uses_has_no_entries() {
+	assert!(parse_agent_header("# Title: T\n[[roles]]\n").uses.is_empty());
+}
+
+#[test]
+fn header_reads_one_uses_entry() {
+	let header = parse_agent_header("# Uses: content\n[[roles]]\n");
+	assert_eq!(header.uses, vec!["content"]);
+}
+
+#[test]
+fn header_reads_several_uses_entries_and_trims_whitespace() {
+	let header = parse_agent_header("# Uses:   content ,seo:audit,  design \n[[roles]]\n");
+	assert_eq!(header.uses, vec!["content", "seo:audit", "design"]);
+}
+
+#[test]
+fn header_keeps_empty_uses_entries_as_written() {
+	assert_eq!(parse_agent_header("# Uses: a,,b\n").uses, vec!["a", "", "b"]);
+	assert_eq!(parse_agent_header("# Uses: a,\n").uses, vec!["a", ""]);
+	assert_eq!(parse_agent_header("# Uses:   \n").uses, vec![""]);
+}

@@ -240,7 +240,7 @@ A domain's lead can call only agents of its own domain. A lead that also needs o
 # Uses: content, seo:audit
 ```
 
-A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. Anything not declared stays outside the lead's reach. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, or if an entry names the agent's own domain (use `{{SPECIALISTS}}` for that). Which agents may carry `# Uses:` is enforced by the registry's lint, not at runtime.
+A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. Anything not declared stays outside the lead's reach. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain (use `{{SPECIALISTS}}` for that). Which agents may carry `# Uses:` is enforced by the registry's lint, not at runtime.
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 

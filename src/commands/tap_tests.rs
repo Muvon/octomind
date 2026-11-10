@@ -61,7 +61,7 @@ fn tap_args_parse_init_subcommand() {
 		"init",
 		"acme/team",
 		"--agent",
-		"legal:contracts",
+		"legal:chief",
 		"--dir",
 		"./somewhere",
 	])
@@ -69,7 +69,7 @@ fn tap_args_parse_init_subcommand() {
 	match cli.args.command {
 		Some(TapCommand::Init(ref init)) => {
 			assert_eq!(init.tap, "acme/team");
-			assert_eq!(init.agent.as_deref(), Some("legal:contracts"));
+			assert_eq!(init.agent.as_deref(), Some("legal:chief"));
 			assert_eq!(init.dir.as_deref(), Some(std::path::Path::new("./somewhere")));
 		}
 		ref other => panic!("expected init subcommand, got {other:?}"),

@@ -46,9 +46,9 @@ pub struct DynamicAgentConfig {
 	/// Optional model override (e.g., "openai:gpt-4")
 	pub model: Option<String>,
 	/// Optional temperature override
-	pub temperature: Option<f32>,
+	pub temperature: Option<f64>,
 	/// Optional top_p override
-	pub top_p: Option<f32>,
+	pub top_p: Option<f64>,
 	/// Optional top_k override
 	pub top_k: Option<u32>,
 	/// MCP server references (names of dynamic MCP servers)
@@ -561,9 +561,9 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 
 	let model = params.get("model").and_then(|v| v.as_str()).map(String::from);
 
-	let temperature = params.get("temperature").and_then(|v| v.as_f64()).map(|t| t as f32);
+	let temperature = params.get("temperature").and_then(|v| v.as_f64());
 
-	let top_p = params.get("top_p").and_then(|v| v.as_f64()).map(|t| t as f32);
+	let top_p = params.get("top_p").and_then(|v| v.as_f64());
 
 	let top_k = params.get("top_k").and_then(|v| v.as_u64()).map(|t| t as u32);
 

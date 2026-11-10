@@ -55,7 +55,7 @@ pub fn get_tap_function() -> McpFunction {
 		name: "tap".to_string(),
 		// The tapped agent may change anything its own tools can.
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
-		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Use this tool to hand off a focused task, check its status, stop it, or browse the catalog.
+		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`) or a bare domain (`developer`, runs its `chief` orchestrator). Use this tool to hand off a focused task, check its status, stop it, or browse the catalog.
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
@@ -87,7 +87,7 @@ Actions:
 				},
 				"role": {
 					"type": "string",
-					"description": "Specialist role to launch, e.g. 'developer:general'. Required for run when `session` is not given. Use `discover` first if unsure which role fits."
+					"description": "Specialist role to launch: a full tag like 'developer:general' or a bare domain like 'developer' (runs its `chief` orchestrator). Required for run when `session` is not given. Use `discover` first if unsure which role fits."
 				},
 				"prompt": {
 					"type": "string",
@@ -505,7 +505,7 @@ fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
 	))
 }
 
-async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResult> {
+async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
 		_ => {
@@ -557,7 +557,16 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		(sid, claim.role, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
 		let role = match role_param {
-			Some(t) => t,
+			Some(t) => match crate::agent::resolver::expand_domain_role(&t, config) {
+				Ok(role) => role,
+				Err(error) => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						format!("{error:#}"),
+					));
+				}
+			},
 			None => {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),

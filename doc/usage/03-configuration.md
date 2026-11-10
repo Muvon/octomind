@@ -229,12 +229,13 @@ octomind config --validate
 codesearch = "octocode"
 ```
 
-`[taps]` changes only the model name for a tap tag; the rest of the main model profile remains inherited until an active
-role profile overrides it:
+`[taps]` changes only the model name for a tap tag or a whole domain; the rest of the main model profile remains inherited until an active
+role profile overrides it. A key without a `:` is a domain and applies to every agent of that domain; an exact tag key wins:
 
 ```toml
 [taps]
 "developer:general" = "ollama:glm-5.3"
+"developer" = "ollama:glm-5.3"   # every developer agent without its own tag key
 ```
 
 These examples require the selected capability provider file in a tap and the selected model in Ollama. Apply either

@@ -217,7 +217,7 @@ or browse the catalog.
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
 | `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"discover"`, `"capability"`, `"workflow"` |
-| `role` | string | Role tag in `category:variant` form. Required for `run` when `session` is not given. |
+| `role` | string | Role tag in `category:variant` form, or a domain name such as `developer` (starts that domain's `chief` agent; a role in your config with the same name wins). Required for `run` when `session` is not given. |
 | `prompt` | string | User message for `run` or `send`, or capability intent for `capability`. Required for those actions. |
 | `session` | string | Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |

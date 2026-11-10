@@ -46,34 +46,36 @@ The local authoring steps do not require a GitHub token.
 ### 1. Create the tap under your account name
 
 Run this from a parent directory where you keep projects. Enter your GitHub username at the prompt. `release-kit` is the
-tap's short repository name; `release-kit:reviewer` is the agent tag. These are resources you are creating, not a
-pre-existing public tap.
+tap's short repository name and the agent domain; `release-kit:reviewer` is the specialist tag you add in step 3. These
+are resources you are creating, not a pre-existing public tap.
 
 The command creates `./octomind-release-kit`, validates the rendered scaffold, initializes its Git repository, and
-registers it locally. Look for that directory and `release-kit:reviewer` in its output.
+registers it locally. The starter agent it generates is always the domain's orchestrator, `release-kit:chief`. Look for
+that directory and tag in its output.
 
 ```bash
 printf 'Your GitHub username: '
 read -r TAP_OWNER
 export TAP_OWNER
-octomind tap init "$TAP_OWNER/release-kit" --agent release-kit:reviewer
+octomind tap init "$TAP_OWNER/release-kit" --agent release-kit
 ```
 
-### 2. Locate the manifest you will replace
+### 2. Locate where the specialist goes
 
-The agent tag resolves to `agents/release-kit/reviewer.toml` inside the tap. The tap may also contain `skills/`,
-`capabilities/`, `deps/`, `workflows/`, and `plugins/`; those are separate extension surfaces. This specialist needs only
-its manifest because you will supply the release note in the conversation.
+The starter agent is `agents/release-kit/chief.toml` inside the tap. The specialist `release-kit:reviewer` is a second
+file beside it, `agents/release-kit/reviewer.toml`. The tap may also contain `skills/`, `capabilities/`, `deps/`,
+`workflows/`, and `plugins/`; those are separate extension surfaces. This specialist needs only its manifest because you
+will supply the release note in the conversation.
 
-Inspect the generated file before replacing it:
+Inspect the generated starter before adding the specialist:
 
 ```bash
-cat octomind-release-kit/agents/release-kit/reviewer.toml
+cat octomind-release-kit/agents/release-kit/chief.toml
 ```
 
 ### 3. Save the release-review method
 
-Replace `octomind-release-kit/agents/release-kit/reviewer.toml` with this complete manifest. Save it before running the
+Create `octomind-release-kit/agents/release-kit/reviewer.toml` with this complete manifest. Save it before running the
 agent for the first time so the initial cached copy contains your instructions.
 
 The title and description headers describe the specialist for discovery. The filename supplies the runtime tag, which

@@ -32,7 +32,7 @@ fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
 	}
 }
 
-fn role_with(name: &str, temperature: f32, top_p: f32, top_k: u32) -> Role {
+fn role_with(name: &str, temperature: f64, top_p: f64, top_k: u32) -> Role {
 	Role {
 		name: name.to_string(),
 		config: RoleConfig {

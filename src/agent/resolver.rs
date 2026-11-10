@@ -16,29 +16,65 @@
 //!
 //! Shared by the `octomind run/acp/server` commands AND by the runtime `/role`
 //! command. A tag with `:` (e.g. `developer:general`) triggers tap manifest
-//! fetch, INPUT/ENV/dep resolution, and config merge. A plain tag is returned
-//! unchanged against the given config.
+//! fetch, INPUT/ENV/dep resolution, and config merge. A bare domain
+//! (e.g. `developer`) is first expanded to its orchestrator's tag
+//! (`developer:chief`); a plain tag that is not a domain is returned unchanged
+//! against the given config. A role defined in the local config wins over a
+//! domain of the same name.
 
+use crate::agent::taps::ORCHESTRATOR_SPEC;
 use crate::agent::{deps, inputs, registry};
 use crate::config::{loading::merge_agent_toml, Config};
 use anyhow::{Context, Result};
 
+/// Placeholder in a tap manifest's `system` prompt, replaced by the other agents of the same domain.
+const SPECIALISTS_PLACEHOLDER: &str = "{{SPECIALISTS}}";
+
+/// Placeholder in a tap manifest's `system` prompt, replaced by the orchestrator (`chief`) of every other domain.
+const DOMAINS_PLACEHOLDER: &str = "{{DOMAINS}}";
+
+/// Roster text when a placeholder has nothing to list.
+const EMPTY_ROSTER: &str = "(none)";
+
+/// Expand a bare domain (no `:`) to the tag of its orchestrator, `<domain>:chief`.
+///
+/// A role defined in `config.roles` wins, so existing plain-role usage never
+/// breaks. A tag with `:` and a name that is not a domain come back unchanged.
+pub fn expand_domain_role(role: &str, config: &Config) -> Result<String> {
+	if role.contains(':') || config.roles.iter().any(|r| r.name == role) {
+		return Ok(role.to_string());
+	}
+	Ok(crate::agent::taps::resolve_domain_chief(role)?.unwrap_or_else(|| role.to_string()))
+}
+
 /// Resolve config and role from a TAG argument.
 ///
 /// - `None` / default role → plain role, config unchanged
-/// - plain string (no `:`) → plain role name, config unchanged
+/// - plain string (no `:`) that is a role in `config.roles` → plain role, config unchanged
+/// - plain string (no `:`) that is a domain → treated as its orchestrator's tag (`<domain>:chief`)
+/// - plain string (no `:`) that is neither → plain role name, config unchanged
 /// - `"domain:spec"` (contains `:`) → fetch tap manifest, merge into config
+///
+/// `[taps]` model overrides apply per tag, falling back to the bare domain.
 ///
 /// `status_cb` receives human-readable status strings (tap fetch, dep checks)
 /// so callers can drive a spinner.
 ///
-/// Returns `(resolved_config, role_name)`.
+/// Returns `(resolved_config, role_name)`; the role name is the full tag.
 pub async fn resolve_config_and_role(
 	tag: Option<&str>,
 	config: &Config,
 	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<(Config, String)> {
-	let tag = tag.unwrap_or(config.default.as_str());
+	let requested = tag.unwrap_or(config.default.as_str());
+	// A bare domain can be the first thing a new user runs, so the built-in tap
+	// has to exist before the lookup reads it. A local config role never needs
+	// the tap, which keeps local roles usable offline.
+	if !requested.contains(':') && !config.roles.iter().any(|r| r.name == requested) {
+		crate::agent::taps::ensure_default_tap()?;
+	}
+	let tag = expand_domain_role(requested, config)?;
+	let tag = tag.as_str();
 
 	if tag.contains(':') {
 		// Registry agent: fetch manifest, resolve inputs, merge config
@@ -70,8 +106,7 @@ pub async fn resolve_config_and_role(
 			deps::run_dep_entries(&entries, &root, status_cb).await?;
 		}
 		// Always inject the tag as the role name — manifests never need to declare it.
-		let tagged_toml =
-			inject_role_name(&resolved_toml, tag).context("Failed to inject role name into agent manifest")?;
+		let tagged_toml = prepare_role_manifest(&resolved_toml, tag).context("Failed to prepare agent manifest")?;
 		let mut merged =
 			merge_agent_toml(config, &tagged_toml).context("Failed to merge agent manifest into config")?;
 
@@ -86,8 +121,9 @@ pub async fn resolve_config_and_role(
 				"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
 			))?;
 
-		// Apply tap model override if configured
-		if let Some(tap_model) = config.taps.get(tag) {
+		// Apply tap model override if configured: exact tag first, then the bare domain
+		let domain = tag.split_once(':').map_or(tag, |(domain, _)| domain);
+		if let Some(tap_model) = config.taps.get(tag).or_else(|| config.taps.get(domain)) {
 			merged.model_profile.model = tap_model.clone();
 			crate::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
 		}
@@ -99,10 +135,14 @@ pub async fn resolve_config_and_role(
 	}
 }
 
-/// Inject the tag (e.g. `"octomind:tap"`) as the `name` field of the first
-/// `[[roles]]` entry in the manifest TOML. This means manifests never need
-/// to declare their own name — the tag IS the identity.
-fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
+/// Prepare the role entry of a tap manifest: inject the tag (e.g. `"octomind:tap"`)
+/// as the `name` field of the first `[[roles]]` entry, and expand the roster
+/// placeholders in its `system` prompt. Manifests never need to declare their
+/// own name — the tag IS the identity.
+///
+/// Works on the parsed value so descriptions with quotes or backslashes
+/// cannot break the TOML.
+fn prepare_role_manifest(toml_str: &str, tag: &str) -> Result<String> {
 	// The full tag IS the role identity — "doctor:blood" becomes the role name.
 	// This matches what resolve_config_and_role returns as the role string.
 	let role_name = tag;
@@ -112,10 +152,61 @@ fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
 	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
 		if let Some(toml::Value::Table(table)) = roles.first_mut() {
 			table.insert("name".to_string(), toml::Value::String(role_name.to_string()));
+			if let Some(toml::Value::String(system)) = table.get_mut("system") {
+				expand_roster_placeholders(system, tag)?;
+			}
 		}
 	}
 
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
+}
+
+/// Replace `{{SPECIALISTS}}` and `{{DOMAINS}}` in a system prompt. Skips the
+/// tap scan when neither is present. Output depends only on the taps' content,
+/// never on run order, so the prompt stays cacheable.
+fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
+	let wants_specialists = system.contains(SPECIALISTS_PLACEHOLDER);
+	let wants_domains = system.contains(DOMAINS_PLACEHOLDER);
+	if !wants_specialists && !wants_domains {
+		return Ok(());
+	}
+
+	let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents for roster")?;
+	let own_domain = tag.split_once(':').map_or(tag, |(domain, _)| domain);
+	let describe = |name: &str, description: Option<&str>| match description {
+		Some(description) => format!("- {name} — {description}"),
+		None => format!("- {name}"),
+	};
+	let join_lines = |lines: Vec<String>| {
+		if lines.is_empty() {
+			EMPTY_ROSTER.to_string()
+		} else {
+			lines.join("\n")
+		}
+	};
+
+	if wants_specialists {
+		let lines = agents
+			.iter()
+			.filter(|a| a.category == own_domain && a.tag != tag)
+			.map(|a| describe(&a.tag, a.header.description.as_deref()))
+			.collect();
+		*system = system.replace(SPECIALISTS_PLACEHOLDER, &join_lines(lines));
+	}
+	if wants_domains {
+		// `agents` is sorted by tag, where `x-y:chief` precedes `x:chief`; sort by domain instead.
+		let mut chiefs: Vec<_> = agents
+			.iter()
+			.filter(|a| a.category != own_domain && a.tag == format!("{}:{ORCHESTRATOR_SPEC}", a.category))
+			.collect();
+		chiefs.sort_by(|a, b| a.category.cmp(&b.category));
+		let lines = chiefs
+			.into_iter()
+			.map(|a| describe(&a.category, a.header.description.as_deref()))
+			.collect();
+		*system = system.replace(DOMAINS_PLACEHOLDER, &join_lines(lines));
+	}
+	Ok(())
 }
 
 #[cfg(test)]

@@ -87,9 +87,9 @@ pub struct ChatCompletionParams<'a> {
 	/// Model identifier (e.g., "claude-3-5-sonnet", "gpt-4")
 	pub model: &'a str,
 	/// Sampling temperature (0.0 to 2.0)
-	pub temperature: f32,
+	pub temperature: f64,
 	/// Top-p nucleus sampling (0.0 to 1.0)
-	pub top_p: f32,
+	pub top_p: f64,
 	/// Top-k sampling (1 to infinity)
 	pub top_k: u32,
 	/// Maximum tokens to generate (0 = no limit)
@@ -134,8 +134,8 @@ impl<'a> ChatCompletionParams<'a> {
 	pub fn new(
 		messages: &'a [Message],
 		model: &'a str,
-		temperature: f32,
-		top_p: f32,
+		temperature: f64,
+		top_p: f64,
 		top_k: u32,
 		max_tokens: u32,
 		config: &'a Config,

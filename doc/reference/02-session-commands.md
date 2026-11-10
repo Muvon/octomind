@@ -115,6 +115,7 @@ The argument is either:
 
 - a **plain role name** defined in your config's `[[roles]]` (validated up front; an unknown name is rejected with `Invalid role`), or
 - a **tap agent tag** in `domain:spec` form (e.g. `developer:general`), which resolves the manifest, INPUT/ENV placeholders, and dependency scripts.
+- a **domain name** with no `:` (e.g. `developer`), which switches to that domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins.
 
 On success the session is saved; on failure the previous role and complete resolved model profile are restored.
 

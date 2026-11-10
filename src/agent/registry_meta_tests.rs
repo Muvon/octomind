@@ -53,3 +53,25 @@ fn stops_at_first_non_comment_line() {
 	assert_eq!(m.title, "Real");
 	assert_eq!(m.description, "Real desc");
 }
+
+#[test]
+fn header_reads_title_and_description() {
+	let raw = "# Agent: developer:chief\n\
+		           # Title: Engineering Orchestrator\n\
+		           # Description: Controls delivery.\n\
+		           [[roles]]\n";
+	let header = parse_agent_header(raw);
+	assert_eq!(header.title.as_deref(), Some("Engineering Orchestrator"));
+	assert_eq!(header.description.as_deref(), Some("Controls delivery."));
+}
+
+#[test]
+fn header_with_missing_fields_leaves_them_empty() {
+	let header = parse_agent_header("# Agent: x:y\n[[roles]]\n");
+	assert!(header.title.is_none());
+	assert!(header.description.is_none());
+
+	let empty_title = parse_agent_header("# Title:   \n# Description: Only this\n");
+	assert!(empty_title.title.is_none(), "an empty value counts as missing");
+	assert_eq!(empty_title.description.as_deref(), Some("Only this"));
+}

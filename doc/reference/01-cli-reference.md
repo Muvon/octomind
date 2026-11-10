@@ -58,6 +58,7 @@ path differences.
 
 - A **role name** (e.g. `assistant`) — matched against `[[roles]]` in your config.
 - A **registry agent tag** in `category:variant` form (e.g. `developer:general`) — resolved through your installed [taps](../integration/04-tap-system.md).
+- A **domain name** with no `:` (e.g. `developer`) — starts the domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins. A domain that has agents but no `chief` is an error that lists its agents. The same applies to `acp`, the `/role` command, and the `role` parameter of the `tap` tool. Workflows still require full `category:variant` tags.
 - Omitted — uses the `default` tag from config.
 
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required
@@ -343,20 +344,20 @@ registers the directory as a local tap — the starter agent is runnable immedia
 | Argument | Description |
 |----------|-------------|
 | `TAP` | New tap identifier (`user/repo` format). |
-| `--agent DOMAIN:SPEC` | Starter agent tag. Domain defaults to the repo name, spec to the installed scaffold default; pass `--agent` to make it explicit. |
+| `--agent DOMAIN` | Starter agent's domain; `DOMAIN:chief` is accepted too. Defaults to the repo name. The starter agent is always the domain's `chief`; any other spec is rejected. |
 | `--dir DIR` | Destination directory. Defaults to `./octomind-<repo>`. |
 
 **Examples:**
 
 ```bash
 # Scaffold ./octomind-team, validate, git init, register as local tap
-octomind tap init acme/team --agent team:assistant
+octomind tap init acme/team --agent team
 
-# Then run the starter agent
-octomind run team:assistant
+# Then run the starter agent (team:chief)
+octomind run team
 
-# Custom starter agent and destination
-octomind tap init acme/team --agent legal:contracts --dir ~/work/acme-tap
+# Custom starter domain and destination
+octomind tap init acme/team --agent legal --dir ~/work/acme-tap
 ```
 
 The destination must be missing or an empty directory. Rendering fails if any scaffold token remains unresolved or the

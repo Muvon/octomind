@@ -21,8 +21,8 @@ version = 29
 log_level = "info"
 
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
-# Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
-# The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:assistant.
+# Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:chief").
+# The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:chief.
 default = "assistant:concierge"
 
 # Sandbox mode: restrict all filesystem writes to the current working directory
@@ -142,7 +142,8 @@ request_transport = "websocket"
 # Example:
 # [taps]
 # "developer:general" = "ollama:glm-5"
-# "octomind:assistant" = "openai:gpt-4o"
+# "octomind:chief" = "openai:gpt-4o"
+# "developer" = "openai:gpt-4o"   # bare domain: every agent of the domain; an exact tag wins
 # Leave empty to use default model for all tap agents
 [taps]
 
@@ -167,8 +168,8 @@ request_transport = "websocket"
 #   https://github.com/muvon/octomind-tap
 #
 # To use a tap agent directly, just run:
-#   octomind run octomind:assistant
-#   octomind run octomind:developer
+#   octomind run octomind:chief
+#   octomind run developer
 #
 # Define a custom role below only when you need project-specific behaviour.
 # Roles inherit the complete [model] profile. Add [roles.model] only for fields

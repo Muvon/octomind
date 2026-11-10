@@ -354,7 +354,7 @@ pub struct Config {
 	pub model_profile: ModelProfile,
 
 	// Default tag used when no TAG is passed to `octomind run/acp/server`.
-	// Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
+	// Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:chief").
 	pub default: String,
 
 	// System-wide configuration settings (not role-specific)
@@ -440,10 +440,11 @@ pub struct Config {
 	#[serde(default)]
 	pub capabilities: HashMap<String, String>,
 
-	// Tap model overrides (tap_tag → model)
-	// Allows setting preferred model for specific tap agents.
-	// Example: taps = { "developer:general" = "ollama:glm-5" }
+	// Tap model overrides (tap_tag or domain → model)
+	// Allows setting preferred model for specific tap agents, or for a whole domain.
+	// Example: taps = { "developer:general" = "ollama:glm-5", "developer" = "openai:gpt-4o" }
 	// When running `octomind run developer:general`, uses ollama:glm-5 instead of default.
+	// A bare domain key applies to every agent of that domain; an exact tag wins over it.
 	#[serde(default)]
 	pub taps: HashMap<String, String>,
 

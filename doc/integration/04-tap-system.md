@@ -36,7 +36,7 @@ its clone on disk. Neither operation clears the separate agent manifest cache.
 ### Create a New Tap
 
 ```bash
-octomind tap init myorg/my-agents --agent my-agents:assistant
+octomind tap init myorg/my-agents --agent my-agents
 ```
 
 Bootstraps a ready-to-use tap from the default tap's scaffold (`scaffolds/tap/` in the locally downloaded built-in tap).
@@ -49,17 +49,17 @@ In one command it:
 3. Initializes a Git repository.
 4. Registers the directory as a local tap.
 
-The starter domain defaults to the repo name; its spec comes from `[defaults] agent_spec` in the downloaded scaffold.
-The explicit `--agent` above makes the resulting tag predictable:
+`--agent` names the starter agent's domain and defaults to the repo name. The starter is always the domain's
+orchestrator, `chief`, so `--agent my-agents:chief` means the same; any other spec is rejected. Start it with the domain:
 
 ```bash
-octomind run my-agents:assistant
+octomind run my-agents
 ```
 
-To choose the output directory and starter tag together:
+To choose the output directory and starter domain together:
 
 ```bash
-octomind tap init myorg/review-tools --dir ./review-tools --agent review-tools:reviewer
+octomind tap init myorg/review-tools --dir ./review-tools --agent review-tools
 ```
 
 Use a tap ID under your own GitHub account when publishing. Remote installation expects a repository named
@@ -143,6 +143,16 @@ The role's `name` is **always force-injected from the tag** — `category:varian
 entry's `name`, overwriting any value you declare there. Declare `name` for readability, while treating the filename tag
 as authoritative. Manifests can include any config sections: roles, commands, MCP servers, etc.
 
+Each domain (the `category` part of a tag, such as `developer`) can have one **orchestrator**: the agent that `octomind run <domain>` starts. It is the agent named `chief`, stored at `agents/<domain>/chief.toml`, so `octomind run developer` starts `developer:chief`:
+
+```toml
+# agents/developer/chief.toml
+# Title: Engineering Orchestrator
+# Description: Plan engineering work and delegate it to the domain's specialists.
+```
+
+A domain that has agents but no `chief` has no orchestrator. `octomind run <domain>` then fails with an error that lists the domain's agents. If several taps provide `<domain>:chief`, the first tap in [priority](#tap-priority) wins.
+
 If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
 `server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is supervisor-internal, and
 `core` is only needed for conditional `recall` when compression attention or governance is enabled.
@@ -214,6 +224,12 @@ the braces (`{{{{INPUT:KEY}}}}`).
 
 - **`{{CWD}}`** — the runtime current working directory (resolved by the prompt-placeholder layer, e.g. inside a role
   `system` prompt).
+
+- **`{{SPECIALISTS}}`** — the other agents of the same domain, one `- <tag> — <Description>` line each, sorted by tag. `(none)` when there are no others.
+
+- **`{{DOMAINS}}`** — every other domain that has an orchestrator (a `chief` agent), one `- <domain> — <Description>` line each (the description of that domain's `chief`), sorted by domain. `(none)` when there are none.
+
+`{{SPECIALISTS}}` and `{{DOMAINS}}` are expanded in the role's `system` prompt when the manifest loads, from the taps installed on your machine. They are allowed in `system` because their output changes only when a tap changes, so the prompt stays the same between runs and can be cached. Use them to let an agent name its teammates without a hard-coded list.
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 
@@ -393,12 +409,21 @@ Set a preferred model for specific tap agents in your config:
 ```toml
 # In config.toml
 [taps]
-"my-agents:assistant" = "octohub:auto"
+"my-agents:chief" = "octohub:auto"
 ```
 
-This replaces only the main model name for `octomind run my-agents:assistant`; other parameters inherit `[model]` unless
+This replaces only the main model name for `octomind run my-agents:chief`; other parameters inherit `[model]` unless
 the role overrides them. Explicit runtime fields win, then the manifest role profile, then the tap name mapping, then
 `[model]`.
+
+A key without a `:` is a domain and sets the model for every agent of that domain. An exact tag key wins over the domain key:
+
+```toml
+# In config.toml
+[taps]
+"my-agents" = "octohub:auto"
+"my-agents:reviewer" = "openai:gpt-4o"
+```
 
 ## Using Tap Agents
 
@@ -407,7 +432,7 @@ the role overrides them. Explicit runtime fields win, then the manifest role pro
 Run a tap agent with `category:variant` format:
 
 ```bash
-octomind run my-agents:assistant
+octomind run my-agents:chief
 ```
 
 This uses the starter agent created above. Discover tags installed on your machine with:
@@ -415,6 +440,14 @@ This uses the starter agent created above. Discover tags installed on your machi
 ```bash
 octomind complete run
 ```
+
+A domain name without a `:` starts that domain's orchestrator, `<domain>:chief`:
+
+```bash
+octomind run my-agents
+```
+
+If your config defines a role with the same name, that role wins. The same applies to `octomind acp`, the `/role` command, and the `role` parameter of the `tap` tool below. Workflows still require full `category:variant` tags.
 
 When you specify a tag containing `:`, Octomind runs the full resolution pipeline:
 
@@ -449,7 +482,7 @@ These are JSON argument objects for separate MCP calls:
 ```
 
 ```json
-{"action": "run", "role": "my-agents:assistant", "prompt": "Summarize the project instructions", "workdir": "/tmp"}
+{"action": "run", "role": "my-agents:chief", "prompt": "Summarize the project instructions", "workdir": "/tmp"}
 ```
 
 ```json
@@ -459,13 +492,13 @@ These are JSON argument objects for separate MCP calls:
 Use the actual `id` returned by `run` in place of the illustrative ID below:
 
 ```json
-{"action": "stop", "session": "tap-my-agents-assistant-9b2c1d"}
+{"action": "stop", "session": "tap-my-agents-chief-9b2c1d"}
 ```
 
 After a run has stopped or finished, resume it within the same parent session:
 
 ```json
-{"action": "run", "session": "tap-my-agents-assistant-9b2c1d", "prompt": "Summarize your conclusions"}
+{"action": "run", "session": "tap-my-agents-chief-9b2c1d", "prompt": "Summarize your conclusions"}
 ```
 
 `workdir` defaults to the parent session's directory. Resume reuses the original role and workdir and rejects an
@@ -477,8 +510,8 @@ To activate capabilities matching an intent in the current session, use the addi
 {"action": "capability", "prompt": "Search the codebase for authentication handlers"}
 ```
 
-Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-my-agents-assistant-9b2c1d` for
-`my-agents:assistant`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
+Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-my-agents-chief-9b2c1d` for
+`my-agents:chief`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
 `discover` matches your `intent` semantically against each agent's title + description (cosine score must exceed `0.2`,
 top 5 returned) and requires the local embedding model to be ready, erroring if it is not. Runs always execute in the

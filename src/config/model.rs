@@ -56,8 +56,8 @@ pub struct ModelProfile {
 	pub model: String,
 	pub reasoning_effort: ReasoningEffortConfig,
 	pub max_tokens: u32,
-	pub temperature: f32,
-	pub top_p: f32,
+	pub temperature: f64,
+	pub top_p: f64,
 	pub top_k: u32,
 	pub max_retries: u32,
 	pub retry_timeout: u64,
@@ -105,9 +105,9 @@ pub struct ModelProfileOverride {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub max_tokens: Option<u32>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub temperature: Option<f32>,
+	pub temperature: Option<f64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub top_p: Option<f32>,
+	pub top_p: Option<f64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub top_k: Option<u32>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,9 +131,9 @@ struct ModelProfileOverrideFields {
 	#[serde(default)]
 	max_tokens: Option<u32>,
 	#[serde(default)]
-	temperature: Option<f32>,
+	temperature: Option<f64>,
 	#[serde(default)]
-	top_p: Option<f32>,
+	top_p: Option<f64>,
 	#[serde(default)]
 	top_k: Option<u32>,
 	#[serde(default)]

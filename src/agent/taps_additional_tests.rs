@@ -821,3 +821,104 @@ fn missing_default_tap_is_cloned_before_load_taps_returns() {
 		"the first run must have the clone on disk when it returns"
 	);
 }
+
+// --- agent headers and domain chief -----------------------------------------
+
+fn write_agent(tap_root: &Path, category: &str, variant: &str, header: &str) {
+	let dir = tap_root.join("agents").join(category);
+	fs::create_dir_all(&dir).expect("create category dir");
+	fs::write(dir.join(format!("{variant}.toml")), format!("{header}\n[[roles]]\n")).expect("write agent");
+}
+
+const PLAIN_HEADER: &str = "# Title: T\n# Description: D\n";
+
+#[serial]
+#[test]
+fn list_agent_headers_reads_fields_sorted_and_first_tap_wins() {
+	let _data = DataDirGuard::new();
+	let first = tempfile::tempdir().unwrap();
+	let second = tempfile::tempdir().unwrap();
+	write_agent(first.path(), "shared", "x", "# Title: First\n");
+	write_agent(first.path(), "alpha", "b", PLAIN_HEADER);
+	write_agent(second.path(), "shared", "x", "# Title: Second\n");
+	write_agent(second.path(), "alpha", "a", PLAIN_HEADER);
+	add_tap(&format!("alice/one {}", first.path().display())).unwrap();
+	add_tap(&format!("bob/two {}", second.path().display())).unwrap();
+
+	let agents = list_agent_headers().unwrap();
+	let tags: Vec<&str> = agents.iter().map(|a| a.tag.as_str()).collect();
+	assert_eq!(tags, vec!["alpha:a", "alpha:b", "shared:x"]);
+
+	let shared = &agents[2];
+	assert_eq!(shared.category, "shared");
+	assert_eq!(shared.header.title.as_deref(), Some("First"));
+	assert!(shared.header.description.is_none());
+	assert_eq!(agents[0].header.description.as_deref(), Some("D"));
+}
+
+#[serial]
+#[test]
+fn domain_with_a_chief_resolves_to_it() {
+	let _data = DataDirGuard::new();
+	let tap = tempfile::tempdir().unwrap();
+	write_agent(tap.path(), "developer", "chief", PLAIN_HEADER);
+	write_agent(tap.path(), "developer", "general", PLAIN_HEADER);
+	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
+
+	assert_eq!(
+		resolve_domain_chief("developer").unwrap().as_deref(),
+		Some("developer:chief")
+	);
+}
+
+#[serial]
+#[test]
+fn domain_without_a_chief_is_an_error_listing_its_agents() {
+	let _data = DataDirGuard::new();
+	let tap = tempfile::tempdir().unwrap();
+	write_agent(tap.path(), "developer", "cto", PLAIN_HEADER);
+	write_agent(tap.path(), "developer", "general", PLAIN_HEADER);
+	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
+
+	let err = resolve_domain_chief("developer").unwrap_err().to_string();
+	assert!(
+		err.contains("no orchestrator") && err.contains("developer:chief"),
+		"{err}"
+	);
+	assert!(
+		err.contains("developer:cto") && err.contains("developer:general"),
+		"{err}"
+	);
+}
+
+#[serial]
+#[test]
+fn unknown_domain_is_none() {
+	let _data = DataDirGuard::new();
+	let tap = tempfile::tempdir().unwrap();
+	write_agent(tap.path(), "developer", "chief", PLAIN_HEADER);
+	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
+
+	assert_eq!(resolve_domain_chief("nowhere").unwrap(), None);
+}
+
+#[serial]
+#[test]
+fn user_tap_chief_wins_over_builtin_tap_chief() {
+	let _data = DataDirGuard::new();
+	write_agent(&create_default_tap(), "developer", "chief", "# Title: Builtin\n");
+	let tap = tempfile::tempdir().unwrap();
+	write_agent(tap.path(), "developer", "chief", "# Title: User\n");
+	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
+
+	assert_eq!(
+		resolve_domain_chief("developer").unwrap().as_deref(),
+		Some("developer:chief")
+	);
+	let chief = list_agent_headers()
+		.unwrap()
+		.into_iter()
+		.find(|a| a.tag == "developer:chief")
+		.unwrap();
+	assert_eq!(chief.header.title.as_deref(), Some("User"));
+}

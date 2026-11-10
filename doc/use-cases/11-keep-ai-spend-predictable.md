@@ -76,6 +76,7 @@ request_timeout_seconds = 300
 
 [taps]
 "spend:brief" = "octohub:auto"
+"spend" = "octohub:auto"   # bare domain: every agent of the domain; the exact tag above wins
 
 [supervisor]
 enabled = false

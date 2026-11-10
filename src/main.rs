@@ -54,7 +54,7 @@ enum Commands {
 	Configure,
 
 	/// Run an agent or start an interactive session.
-	/// TAG can be a registry agent (e.g. `developer:general`) or a role name (e.g. `assistant`).
+	/// TAG can be a registry agent (e.g. `developer:general`), a bare domain (e.g. `developer`, runs its `chief`) or a role name (e.g. `assistant`).
 	/// Use --format to run non-interactively.
 	/// Default when no subcommand is given.
 	Run(commands::RunArgs),

@@ -24,7 +24,7 @@ pub struct GenericSessionArgs {
 	pub resume_recent: bool,
 	pub model: Option<String>,
 	pub max_tokens: Option<u32>,
-	pub temperature: Option<f32>,
+	pub temperature: Option<f64>,
 	pub role: String,
 	/// The caller named the role explicitly (a CLI tag), rather than inheriting
 	/// it from a resumed session or the config default. An explicit role is a

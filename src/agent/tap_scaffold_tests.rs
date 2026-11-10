@@ -27,42 +27,48 @@ fn split_tap_id_rejects_bad_shapes() {
 }
 
 #[test]
-fn split_agent_tag_accepts_domain_spec() {
-	assert_eq!(split_agent_tag("dev:rust").unwrap(), ("dev", "rust"));
-	assert!(split_agent_tag("dev").is_err());
-	assert!(split_agent_tag("dev:").is_err());
-	assert!(split_agent_tag("a:b:c").is_err());
+fn parse_agent_domain_accepts_domain_and_chief() {
+	assert_eq!(parse_agent_domain("legal").unwrap(), "legal");
+	assert_eq!(parse_agent_domain("legal:chief").unwrap(), "legal");
 }
 
 #[test]
-fn build_tokens_defaults_domain_to_repo_name() {
-	let tokens = build_tokens("acme", "team", None, Some("assistant")).unwrap();
+fn parse_agent_domain_rejects_other_specs_and_bad_shapes() {
+	let err = parse_agent_domain("team:reviewer").unwrap_err().to_string();
+	assert!(err.contains("always the domain's `chief`"), "{err}");
+	assert!(err.contains("--agent <domain>:chief"), "{err}");
+	for bad in ["", ":chief", "dev:", "a:chief:c"] {
+		assert!(parse_agent_domain(bad).is_err(), "should reject {:?}", bad);
+	}
+}
+
+#[test]
+fn build_tokens_defaults_domain_to_repo_name_and_spec_to_chief() {
+	let tokens = build_tokens("acme", "team", None).unwrap();
 	assert_eq!(tokens["__TAP_ID__"], "acme/team");
 	assert_eq!(tokens["__TAP_OWNER__"], "acme");
 	assert_eq!(tokens["__TAP_NAME__"], "team");
 	assert_eq!(tokens["__TAP_REPOSITORY__"], "octomind-team");
 	assert_eq!(tokens["__AGENT_DOMAIN__"], "team");
-	assert_eq!(tokens["__AGENT_SPEC__"], "assistant");
+	assert_eq!(tokens["__AGENT_SPEC__"], "chief");
 	assert_eq!(tokens["__YEAR__"].len(), 4);
 }
 
 #[test]
-fn build_tokens_honors_agent_override() {
-	let tokens = build_tokens("acme", "team", Some("legal:contracts"), Some("assistant")).unwrap();
-	assert_eq!(tokens["__AGENT_DOMAIN__"], "legal");
-	assert_eq!(tokens["__AGENT_SPEC__"], "contracts");
-}
-
-#[test]
-fn build_tokens_requires_spec_default_without_override() {
-	assert!(build_tokens("acme", "team", None, None).is_err());
+fn build_tokens_agent_names_domain_only() {
+	for arg in ["legal", "legal:chief"] {
+		let tokens = build_tokens("acme", "team", Some(arg)).unwrap();
+		assert_eq!(tokens["__AGENT_DOMAIN__"], "legal");
+		assert_eq!(tokens["__AGENT_SPEC__"], "chief");
+	}
+	assert!(build_tokens("acme", "team", Some("legal:contracts")).is_err());
 }
 
 #[test]
 fn render_replaces_tokens_and_preserves_runtime_placeholders() {
-	let tokens = build_tokens("acme", "team", None, Some("assistant")).unwrap();
+	let tokens = build_tokens("acme", "team", None).unwrap();
 	let out = render("run __AGENT_DOMAIN__:__AGENT_SPEC__ in {{CWD}}", &tokens);
-	assert_eq!(out, "run team:assistant in {{CWD}}");
+	assert_eq!(out, "run team:chief in {{CWD}}");
 }
 
 #[test]
@@ -97,10 +103,10 @@ fn render_tree_renders_paths_and_contents() {
 	)
 	.unwrap();
 
-	let tokens = build_tokens("acme", "team", None, Some("assistant")).unwrap();
+	let tokens = build_tokens("acme", "team", None).unwrap();
 	render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap();
 
-	let rendered = dest.path().join("agents/team/assistant.toml");
+	let rendered = dest.path().join("agents/team/chief.toml");
 	let content = std::fs::read_to_string(&rendered).unwrap();
 	assert_eq!(content, "# acme/team\nwelcome = \"ready in {{CWD}}\"\n");
 }
@@ -111,7 +117,7 @@ fn render_tree_fails_on_unresolved_token() {
 	let dest = tempfile::tempdir().unwrap();
 	std::fs::write(src.path().join("file.md"), "leftover __UNKNOWN_TOKEN__").unwrap();
 
-	let tokens = build_tokens("acme", "team", None, Some("assistant")).unwrap();
+	let tokens = build_tokens("acme", "team", None).unwrap();
 	let err = render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap_err();
 	assert!(err.to_string().contains("__UNKNOWN_TOKEN__"));
 }
@@ -126,7 +132,7 @@ fn render_tree_preserves_executable_bit() {
 	std::fs::write(&script, "#!/bin/sh\n").unwrap();
 	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-	let tokens = build_tokens("acme", "team", None, Some("assistant")).unwrap();
+	let tokens = build_tokens("acme", "team", None).unwrap();
 	render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap();
 
 	let mode = std::fs::metadata(dest.path().join("check.sh"))

@@ -85,6 +85,7 @@ The optional positional argument to `octomind run` is a tag:
 
 - A plain name such as `assistant` selects a local `[[roles]]` entry.
 - A `category:variant` tag such as `developer:general` resolves an agent from the configured taps.
+- A domain name such as `developer` starts that domain's orchestrator (`developer:chief`) from the configured taps, unless a local role has the same name.
 
 ```bash
 # Configured default tag

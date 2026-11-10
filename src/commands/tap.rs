@@ -50,9 +50,9 @@ pub struct TapInitArgs {
 	#[arg(value_name = "TAP")]
 	pub tap: String,
 
-	/// Starter agent tag as `domain:spec`. Domain defaults to the repo name,
-	/// spec to the scaffold's default.
-	#[arg(long, value_name = "DOMAIN:SPEC")]
+	/// Starter agent's domain: `DOMAIN` or `DOMAIN:chief`. Defaults to the repo
+	/// name. The starter agent is always the domain's `chief`.
+	#[arg(long, value_name = "DOMAIN")]
 	pub agent: Option<String>,
 
 	/// Destination directory (defaults to ./octomind-<repo>).

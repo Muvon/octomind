@@ -445,7 +445,7 @@ Tap child thinking, text, and tools no longer arrive as plain parent `thinking`,
 CLI, JSONL, and ACP tap output are unchanged.
 
 ```json
-{"type":"run_event","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","role":"developer:cto","seq":17,"event":{"kind":"assistant","content":"Checking the implementation…"}}
+{"type":"run_event","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","role":"developer:chief","seq":17,"event":{"kind":"assistant","content":"Checking the implementation…"}}
 ```
 
 `seq` starts at 1 for each run ID and increments for every emitted event. Resuming the same run ID continues its
@@ -470,13 +470,13 @@ logged and skipped; it does not stop the specialist or prevent subsequent events
 Request replay without waiting for a parent turn to finish:
 
 ```json
-{"type":"run_log","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","request_id":"log-1"}
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","request_id":"log-1"}
 ```
 
 A valid request receives the usual `ack`, then:
 
 ```json
-{"type":"run_log","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","role":"developer:cto","status":"running","source":"live","seq":3,"truncated":false,"events":[{"kind":"status","status":"running"},{"kind":"prompt","content":"Review the implementation"},{"kind":"assistant","content":"Checking…"}],"request_id":"log-1"}
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","role":"developer:chief","status":"running","source":"live","seq":3,"truncated":false,"events":[{"kind":"status","status":"running"},{"kind":"prompt","content":"Review the implementation"},{"kind":"assistant","content":"Checking…"}],"request_id":"log-1"}
 ```
 
 While the run is running in this parent's registry, `source` is `live`. Consecutive assistant or thinking chunks are

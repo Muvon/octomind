@@ -30,6 +30,7 @@
 //! ## Priority
 //! User taps (in order added) → built-in default (muvon/tap)
 
+use crate::agent::registry::{parse_agent_header, AgentHeader};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -260,13 +261,20 @@ pub fn list_taps() -> Result<Vec<Tap>> {
 	Ok(read_taps_file()?.taps)
 }
 
-/// Returns all available agent tags (`category:variant`) from all active taps.
+/// A manifest file found in a tap, not read yet.
+struct AgentManifestFile {
+	category: String,
+	tag: String,
+	path: PathBuf,
+}
+
+/// Walk every active tap's `agents/<category>/<variant>.toml` files.
 ///
 /// Uses only locally cached tap data — no network calls. First tap wins on duplicates
-/// (same priority as `fetch_manifest`). Result is sorted alphabetically.
-pub fn list_agent_tags() -> Result<Vec<String>> {
+/// (same priority as `fetch_manifest`). Result is sorted by tag.
+fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 	let taps = get_taps()?;
-	let mut tags: Vec<String> = Vec::new();
+	let mut manifests: Vec<AgentManifestFile> = Vec::new();
 	let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
 	for tap in &taps {
@@ -302,14 +310,78 @@ pub fn list_agent_tags() -> Result<Vec<String>> {
 				};
 				let tag = format!("{category}:{variant}");
 				if seen.insert(tag.clone()) {
-					tags.push(tag);
+					manifests.push(AgentManifestFile {
+						category: category.clone(),
+						tag,
+						path: variant_path,
+					});
 				}
 			}
 		}
 	}
 
-	tags.sort();
-	Ok(tags)
+	manifests.sort_by(|a, b| a.tag.cmp(&b.tag));
+	Ok(manifests)
+}
+
+/// Returns all available agent tags (`category:variant`) from all active taps.
+///
+/// Uses only locally cached tap data — no network calls. First tap wins on duplicates
+/// (same priority as `fetch_manifest`). Result is sorted alphabetically.
+pub fn list_agent_tags() -> Result<Vec<String>> {
+	Ok(walk_agent_manifests()?.into_iter().map(|m| m.tag).collect())
+}
+
+/// An agent found in a tap with the fields read from its header comments.
+#[derive(Debug, Clone)]
+pub struct TapAgentHeader {
+	/// Domain part of the tag.
+	pub category: String,
+	pub tag: String,
+	pub header: AgentHeader,
+}
+
+/// Returns every agent from all active taps with its header fields.
+///
+/// Same rules as [`list_agent_tags`]: local data only, first tap wins on a
+/// duplicate tag, sorted by tag. An unreadable manifest is an error.
+pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
+	walk_agent_manifests()?
+		.into_iter()
+		.map(|manifest| {
+			let raw = fs::read_to_string(&manifest.path)
+				.with_context(|| format!("Failed to read agent manifest {}", manifest.path.display()))?;
+			Ok(TapAgentHeader {
+				category: manifest.category,
+				tag: manifest.tag,
+				header: parse_agent_header(&raw),
+			})
+		})
+		.collect()
+}
+
+/// Spec name of a domain's orchestrator: `agents/<domain>/chief.toml`.
+pub const ORCHESTRATOR_SPEC: &str = "chief";
+
+/// Resolve a bare domain (e.g. `developer`) to the tag of its orchestrator, `<domain>:chief`.
+///
+/// `None` when no tap has the domain. An error when the domain has agents but no `chief`.
+pub fn resolve_domain_chief(domain: &str) -> Result<Option<String>> {
+	let tags: Vec<String> = list_agent_tags()?
+		.into_iter()
+		.filter(|tag| tag.split_once(':').is_some_and(|(category, _)| category == domain))
+		.collect();
+	if tags.is_empty() {
+		return Ok(None);
+	}
+	let chief = format!("{domain}:{ORCHESTRATOR_SPEC}");
+	if tags.contains(&chief) {
+		return Ok(Some(chief));
+	}
+	anyhow::bail!(
+		"Domain '{domain}' has no orchestrator (no '{chief}' agent). Available agents: {}",
+		tags.join(", ")
+	)
 }
 
 /// Fetch a public workflow definition by name from taps.

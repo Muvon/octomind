@@ -26,9 +26,9 @@ pub struct RoleConfig {
 	// fields. They are accepted as input and folded into `model`; new config is
 	// always written with `[roles.model]`.
 	#[serde(default, skip_serializing)]
-	pub temperature: Option<f32>,
+	pub temperature: Option<f64>,
 	#[serde(default, skip_serializing)]
-	pub top_p: Option<f32>,
+	pub top_p: Option<f64>,
 	#[serde(default, skip_serializing)]
 	pub top_k: Option<u32>,
 	// Custom system prompt (REQUIRED - defined in config template)

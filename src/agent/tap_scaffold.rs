@@ -20,7 +20,7 @@
 //! both file paths and file contents. Rendering fails if any token remains
 //! unresolved. After rendering, the scaffold's own validation command runs,
 //! the directory is git-initialized, and the tap is registered as a local tap
-//! so `octomind run <domain>:<spec>` works immediately.
+//! so `octomind run <domain>` works immediately.
 
 use anyhow::{bail, Context, Result};
 use regex::Regex;
@@ -29,7 +29,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::taps::{self, Tap, DEFAULT_TAP};
+use super::taps::{self, Tap, DEFAULT_TAP, ORCHESTRATOR_SPEC};
 
 const SCAFFOLD_SUBDIR: &str = "scaffolds/tap";
 const SUPPORTED_SCHEMA: u32 = 1;
@@ -43,14 +43,7 @@ struct ScaffoldManifest {
 	#[serde(default)]
 	required_tokens: Vec<String>,
 	#[serde(default)]
-	defaults: ScaffoldDefaults,
-	#[serde(default)]
 	post_create: PostCreate,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-struct ScaffoldDefaults {
-	agent_spec: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -69,8 +62,8 @@ pub struct InitOutcome {
 
 /// Create a new tap repository from the default tap's scaffold.
 ///
-/// `agent` overrides the starter agent tag as `domain:spec` (domain defaults
-/// to the repo name, spec to the scaffold's default). `dir` overrides the
+/// `agent` names the starter agent's domain (`domain` or `domain:chief`;
+/// defaults to the repo name). The spec is always `chief`. `dir` overrides the
 /// destination (defaults to `./octomind-<repo>` in the current directory).
 pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result<InitOutcome> {
 	let (owner, name) = split_tap_id(tap_id)?;
@@ -117,7 +110,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 		bail!("Scaffold root directory missing: {}", scaffold_root.display());
 	}
 
-	let tokens = build_tokens(owner, name, agent, manifest.defaults.agent_spec.as_deref())?;
+	let tokens = build_tokens(owner, name, agent)?;
 	let missing: Vec<&str> = manifest
 		.required_tokens
 		.iter()
@@ -221,29 +214,26 @@ pub(crate) fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
 	}
 }
 
-/// Split a `domain:spec` starter-agent override.
-fn split_agent_tag(arg: &str) -> Result<(&str, &str)> {
+/// Resolve the starter-agent domain from `--agent`. The starter is always the
+/// domain's orchestrator, so only `<domain>` or `<domain>:chief` is accepted.
+fn parse_agent_domain(arg: &str) -> Result<&str> {
 	let mut parts = arg.split(':');
 	match (parts.next(), parts.next(), parts.next()) {
-		(Some(domain), Some(spec), None) if !domain.is_empty() && !spec.is_empty() => Ok((domain, spec)),
-		_ => bail!("Agent must be in 'domain:spec' format, got: {}", arg),
+		(Some(domain), None, None) if !domain.is_empty() => Ok(domain),
+		(Some(domain), Some(ORCHESTRATOR_SPEC), None) if !domain.is_empty() => Ok(domain),
+		_ => bail!(
+			"The starter agent is always the domain's `{ORCHESTRATOR_SPEC}`; pass `--agent <domain>` or \
+			 `--agent <domain>:{ORCHESTRATOR_SPEC}`, got: {arg}"
+		),
 	}
 }
 
-fn build_tokens(
-	owner: &str,
-	name: &str,
-	agent: Option<&str>,
-	default_spec: Option<&str>,
-) -> Result<BTreeMap<String, String>> {
-	let (domain, spec) = match agent {
-		Some(arg) => split_agent_tag(arg)?,
-		None => {
-			let spec =
-				default_spec.context("scaffold.toml defines no [defaults] agent_spec — pass --agent domain:spec")?;
-			(name, spec)
-		}
+fn build_tokens(owner: &str, name: &str, agent: Option<&str>) -> Result<BTreeMap<String, String>> {
+	let domain = match agent {
+		Some(arg) => parse_agent_domain(arg)?,
+		None => name,
 	};
+	let spec = ORCHESTRATOR_SPEC;
 
 	let mut tokens = BTreeMap::new();
 	tokens.insert("__TAP_ID__".to_string(), format!("{}/{}", owner, name));

@@ -48,7 +48,18 @@ pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params:
 		})));
 	}
 
-	let new_role_arg = params[0];
+	// A bare domain (e.g. `developer`) switches to its orchestrator (`developer:chief`); the role
+	// is then handled as the full tag everywhere below.
+	let expanded_role = match resolver::expand_domain_role(params[0], config) {
+		Ok(role) => role,
+		Err(e) => {
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: format!("Failed to resolve role '{}': {}", params[0], e),
+				context: None,
+			})));
+		}
+	};
+	let new_role_arg = expanded_role.as_str();
 	let is_tap_tag = new_role_arg.contains(':');
 
 	// Plain role: validate up-front against the active config.

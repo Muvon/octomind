@@ -74,7 +74,7 @@ octomind config --validate
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `commit_attribution` | string | `"Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"` | Git trailer the agent appends to commits it writes, unless the user says otherwise about attribution. `""` = no trailer and no system-prompt instruction. |
 
-> **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
+> **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]` first; if no local role has that name and a tap domain does, it starts that domain's orchestrator, the agent named `chief` (`developer:chief`). A `category:variant` tag resolves against installed taps.
 
 ```toml
 version = 26
@@ -182,13 +182,15 @@ directory.
 
 ## `[taps]`
 
-String-to-string map, default `{}`, of tap agent tag to model name. It changes only `name`; all other parameters come
-from the main profile before any independent role override.
+String-to-string map, default `{}`, of tap agent tag or domain to model name. It changes only `name`; all other parameters come
+from the main profile before any independent role override. A key without a `:` is a domain and sets the model for every
+agent of that domain; an exact tag key wins over its domain key.
 
 ```toml
 [taps]
 "developer:general" = "ollama:glm-5.3"
 "assistant:concierge" = "openai:gpt-5.6-luna"
+"developer" = "openai:gpt-5.6-luna"   # every developer agent without its own tag key
 ```
 
 **Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap name mapping >
@@ -198,7 +200,7 @@ from the main profile before any independent role override.
 2. The `model` the agent's role/manifest declares (for `developer:general`, the manifest's role model)
 3. Main `[model]` profile — its `name` is replaced by the matching tap mapping when present
 
-`[taps]` only applies to tap agents (tags with `:`). Plain roles resolve `[roles.model]` directly against `[model]`.
+`[taps]` only applies to tap agents (tags with `:`, or their domain). Plain roles resolve `[roles.model]` directly against `[model]`.
 
 ## `[[roles]]`
 

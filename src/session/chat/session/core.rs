@@ -37,7 +37,7 @@ pub struct SessionInitParams<'a> {
 	/// Optional model override
 	pub model: Option<String>,
 	/// Optional temperature override
-	pub temperature: Option<f32>,
+	pub temperature: Option<f64>,
 	/// Optional max tokens override
 	pub max_tokens: Option<u32>,
 	/// Optional max retries override
@@ -106,7 +106,7 @@ impl<'a> SessionInitParams<'a> {
 	}
 
 	/// Set temperature override
-	pub fn with_temperature(mut self, temperature: f32) -> Self {
+	pub fn with_temperature(mut self, temperature: f64) -> Self {
 		self.temperature = Some(temperature);
 		self
 	}
@@ -205,8 +205,8 @@ pub struct ChatSession {
 	pub turn_answers: Vec<String>,
 	pub model: String,
 	pub role: String, // Role for the session
-	pub temperature: f32,
-	pub top_p: f32, // Top-p nucleus sampling parameter
+	pub temperature: f64,
+	pub top_p: f64, // Top-p nucleus sampling parameter
 	pub top_k: u32, // Top-k sampling parameter
 	pub max_tokens: u32,
 	pub estimated_cost: f64,

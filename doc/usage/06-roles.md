@@ -333,7 +333,8 @@ Two distinct cases — don't conflate them:
   does not collide with `developer:general`.
 
 > **Unknown plain role names are rejected.** User-supplied bare names are validated before session setup or `/role`
-> switching, while a `category:variant` tag fails if its manifest cannot be resolved. Spell local role names exactly or
+> switching, unless the name is a tap domain such as `developer`, which starts that domain's `chief` agent (a local role
+> with the same name wins). A `category:variant` tag fails if its manifest cannot be resolved. Spell local role names exactly or
 > prefer a verified tap tag.
 
 ## Troubleshooting

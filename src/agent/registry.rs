@@ -235,7 +235,17 @@ pub struct TapAgent {
 	pub source_tap: String,
 }
 
-/// Extract `Title` and `Description` from the manifest's header comment block.
+const HEADER_TITLE: &str = "# Title:";
+const HEADER_DESCRIPTION: &str = "# Description:";
+
+/// Header fields of a manifest as written. Absent or empty fields stay `None`.
+#[derive(Debug, Clone, Default)]
+pub struct AgentHeader {
+	pub title: Option<String>,
+	pub description: Option<String>,
+}
+
+/// Read `Title` and `Description` from the manifest's header comment block.
 ///
 /// Scans the leading comment block (everything before the first non-comment,
 /// non-blank line) for lines of the form:
@@ -244,32 +254,35 @@ pub struct TapAgent {
 /// # Title: <title>
 /// # Description: <description>
 /// ```
-///
-/// Both are required. Returns an error if either is absent — we own the
-/// authoring convention, so there's no fallback.
-pub fn parse_agent_meta(raw_toml: &str, tag: &str) -> Result<AgentMeta> {
-	let mut title: Option<String> = None;
-	let mut description: Option<String> = None;
+pub fn parse_agent_header(raw_toml: &str) -> AgentHeader {
+	let mut header = AgentHeader::default();
+	let non_empty = |rest: &str| Some(rest.trim().to_string()).filter(|v| !v.is_empty());
 	for line in raw_toml.lines() {
 		let trimmed = line.trim_start();
 		// Stop at first non-comment, non-blank line — header block ends here.
 		if !trimmed.is_empty() && !trimmed.starts_with('#') {
 			break;
 		}
-		if let Some(rest) = trimmed.strip_prefix("# Title:") {
-			let v = rest.trim();
-			if !v.is_empty() {
-				title = Some(v.to_string());
-			}
-		} else if let Some(rest) = trimmed.strip_prefix("# Description:") {
-			let v = rest.trim();
-			if !v.is_empty() {
-				description = Some(v.to_string());
-			}
+		if let Some(rest) = trimmed.strip_prefix(HEADER_TITLE) {
+			header.title = non_empty(rest).or(header.title);
+		} else if let Some(rest) = trimmed.strip_prefix(HEADER_DESCRIPTION) {
+			header.description = non_empty(rest).or(header.description);
 		}
 	}
-	let title = title.ok_or_else(|| anyhow::anyhow!("Agent '{tag}' is missing required `# Title:` header comment."))?;
-	let description = description
+	header
+}
+
+/// Extract `Title` and `Description` from the manifest's header comment block.
+///
+/// Both are required. Returns an error if either is absent — we own the
+/// authoring convention, so there's no fallback.
+pub fn parse_agent_meta(raw_toml: &str, tag: &str) -> Result<AgentMeta> {
+	let header = parse_agent_header(raw_toml);
+	let title = header
+		.title
+		.ok_or_else(|| anyhow::anyhow!("Agent '{tag}' is missing required `# Title:` header comment."))?;
+	let description = header
+		.description
 		.ok_or_else(|| anyhow::anyhow!("Agent '{tag}' is missing required `# Description:` header comment."))?;
 	Ok(AgentMeta { title, description })
 }

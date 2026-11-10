@@ -47,6 +47,8 @@ fn placeholder_description(placeholder: &str) -> &'static str {
 		"{{GIT_TREE}}" => "Git file tree",
 		"{{README}}" => "Project README content",
 		"{{ROLE}}" => "Active session role, resolved separately for each session",
+		"{{SPECIALISTS}}" => "Other agents of the active agent's domain (tap agents only)",
+		"{{DOMAINS}}" => "Orchestrator (`chief`) of every other domain (tap agents only)",
 		_ => "Project context variable",
 	}
 }

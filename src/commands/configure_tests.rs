@@ -173,6 +173,32 @@ fn configure_secret_reprompts_empty_input_without_echoing_values() {
 }
 
 #[test]
+fn configure_secret_trims_surrounding_whitespace() {
+	let mut events = [
+		KeyCode::Char(' '),
+		KeyCode::Char('a'),
+		KeyCode::Char('b'),
+		KeyCode::Char(' '),
+		KeyCode::Enter,
+	]
+	.into_iter();
+	let mut output = Vec::new();
+	let value = prompt_secret("PROVIDER_API_KEY", &mut output, || {
+		Ok(Event::Key(crossterm::event::KeyEvent::new(
+			events.next().expect("input must finish with Enter"),
+			KeyModifiers::NONE,
+		)))
+	})
+	.expect("value entered");
+	assert_eq!(value.as_deref(), Some("ab"));
+	assert!(events.next().is_none());
+	assert_eq!(
+		String::from_utf8(output).unwrap(),
+		"PROVIDER_API_KEY (hidden, Esc to go back): "
+	);
+}
+
+#[test]
 fn configure_secret_esc_goes_back() {
 	let mut output = Vec::new();
 	let value = prompt_secret("PROVIDER_API_KEY", &mut output, || {

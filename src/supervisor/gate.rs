@@ -448,7 +448,7 @@ pub fn take_unsettled_advisory(verdict: &GateVerdict, config: &super::GateConfig
 		return None;
 	}
 	let mut note = String::from(
-		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below. For each one, decide whether it is a real gap. If it is, close it: check that exact case and fix what fails. If it is already covered or out of scope, ignore it. Then finish normally; completion will be checked again, without another note.\n",
+		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below. For each one, either cite the assertion that already exercises exactly that case and the run that passed it, or write that check, run it, and fix what fails; a condition outside the request needs one line saying why. Then finish normally; completion will be checked again, without another note.\n",
 	);
 	for condition in conditions {
 		note.push_str(&format!(

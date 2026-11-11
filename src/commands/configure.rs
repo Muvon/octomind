@@ -520,7 +520,7 @@ fn prompt_secret(
 							write!(output, "\r\n{name}: a non-empty value is required\r\n")?;
 							break;
 						}
-						return Ok(Some(value));
+						return Ok(Some(value.trim().to_string()));
 					}
 					KeyCode::Esc => return Ok(None),
 					KeyCode::Char('c' | 'd') if key.modifiers.contains(KeyModifiers::CONTROL) => {

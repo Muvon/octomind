@@ -198,6 +198,17 @@ fn mcp_validation_rejects_zero_and_over_large_timeouts() {
 }
 
 #[test]
+fn mcp_validation_rejects_empty_url_and_command() {
+	let mut config = template_config();
+	config.mcp.servers = vec![McpServerConfig::http("remote", "", 30, vec![])];
+	let error = config.validate_mcp_config().unwrap_err().to_string();
+	assert!(error.contains("HTTP server URL cannot be empty"), "got: {error}");
+	config.mcp.servers = vec![McpServerConfig::stdin("local", "", vec![], 30, vec![])];
+	let error = config.validate_mcp_config().unwrap_err().to_string();
+	assert!(error.contains("Stdin server command cannot be empty"), "got {error}");
+}
+
+#[test]
 fn mcp_validation_accepts_boundary_timeouts_and_every_server_kind() {
 	let mut config = template_config();
 	config.mcp.servers = vec![

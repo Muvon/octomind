@@ -164,21 +164,8 @@ impl Config {
 				));
 			}
 
-			// Validate external server configuration
-			if matches!(server_config.connection_type(), crate::config::McpConnectionType::Http) {
-				if server_config.url().is_none() && server_config.command().is_none() {
-					return Err(anyhow!(
-						"External server '{}' must have either 'url' or 'command' specified",
-						server_name
-					));
-				}
-
-				if server_config.url().is_some() && server_config.command().is_some() {
-					return Err(anyhow!(
-						"External server '{}' cannot have both 'url' and 'command' specified",
-						server_name
-					));
-				}
+			if let Err(e) = server_config.validate() {
+				return Err(anyhow!("Server '{}': {}", server_name, e));
 			}
 		}
 

@@ -69,7 +69,7 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
       with:
         tool: ripgrep,ast-grep
 
@@ -162,7 +162,7 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep, ast-grep and cargo-llvm-cov
-      uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
       with:
         tool: ripgrep,ast-grep,cargo-llvm-cov
 

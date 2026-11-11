@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{mpsc, Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::{Condvar, Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
 
 /// The built-in default tap — always present as the last fallback.
 pub const DEFAULT_TAP: &str = "muvon/tap";
@@ -63,8 +63,18 @@ const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 /// its miss instead of hanging on a stalled network.
 const REFRESH_WAIT_LIMIT: Duration = Duration::from_secs(30);
 
-/// One receiver per refresh this process started; it yields once that pull has ended.
-static STARTED_REFRESHES: Mutex<Vec<mpsc::Receiver<()>>> = Mutex::new(Vec::new());
+/// Refreshes this process started: how many are still running, and whether any has ended.
+/// Every waiter reads the same state, so one waiter never hides a refresh from another.
+static REFRESH_STATE: Mutex<RefreshState> = Mutex::new(RefreshState {
+	in_flight: 0,
+	any_ended: false,
+});
+static REFRESH_ENDED: Condvar = Condvar::new();
+
+struct RefreshState {
+	in_flight: usize,
+	any_ended: bool,
+}
 
 /// A tap entry: either a GitHub repo or a local path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,21 +275,20 @@ pub fn ensure_default_tap() -> Result<()> {
 	Ok(())
 }
 
-/// Wait for the tap refreshes this process started. `true` when at least one ended within
-/// [`REFRESH_WAIT_LIMIT`], so a lookup that found nothing is worth repeating.
+/// Wait for the tap refreshes this process started. `true` once any of them has ended, so a
+/// lookup that found nothing is worth one more try. Gives up after [`REFRESH_WAIT_LIMIT`].
 ///
 /// A refresh runs in the background and a lookup reads the clone as it is. An agent published
 /// after the last refresh (a renamed one on the first run after an upgrade) is on disk only
-/// once the pull has ended. Only a lookup that found nothing pays this wait.
+/// once the pull has ended. Only a lookup that found nothing pays this wait. A refresh that
+/// ended before this call still counts: the lookup may have read the clone just before the
+/// pull landed. Concurrent callers all see the same refreshes, so parallel lookups all retry.
 pub fn wait_for_started_refreshes() -> bool {
-	let started = std::mem::take(&mut *STARTED_REFRESHES.lock().unwrap_or_else(PoisonError::into_inner));
-	let deadline = Instant::now() + REFRESH_WAIT_LIMIT;
-	let mut any_ended = false;
-	for refresh in started {
-		let time_left = deadline.saturating_duration_since(Instant::now());
-		any_ended |= refresh.recv_timeout(time_left).is_ok();
-	}
-	any_ended
+	let state = REFRESH_STATE.lock().unwrap_or_else(PoisonError::into_inner);
+	let (state, _timed_out) = REFRESH_ENDED
+		.wait_timeout_while(state, REFRESH_WAIT_LIMIT, |state| state.in_flight > 0)
+		.unwrap_or_else(PoisonError::into_inner);
+	state.any_ended
 }
 
 /// Returns only user-added taps (excludes the built-in default).
@@ -700,16 +709,14 @@ fn spawn_refresh(tap_dir: &Path) {
 		}
 	};
 	let tap_dir = tap_dir.to_path_buf();
-	let (ended_sender, ended_receiver) = mpsc::channel();
-	{
-		let mut started = STARTED_REFRESHES.lock().unwrap_or_else(PoisonError::into_inner);
-		// A long-lived server starts a refresh every interval: keep only the running ones.
-		started.retain(|refresh| matches!(refresh.try_recv(), Err(mpsc::TryRecvError::Empty)));
-		started.push(ended_receiver);
-	}
+	// Counted before the thread starts: a lookup that misses right after this call
+	// must already see the refresh as running.
+	let refresh = RefreshEndGuard::start();
 	// Reaps the child (no zombie in a long-lived server) and lets that server
-	// pick up the new files once the pull lands.
+	// pick up the new files once the pull lands. The guard drops last, after the
+	// catalog is invalidated, on every exit path, panic included.
 	std::thread::spawn(move || {
+		let _refresh = refresh;
 		match child.wait() {
 			Ok(status) if !status.success() => {
 				crate::log_debug!("Failed to update tap at {}: {}", tap_dir.display(), status);
@@ -720,9 +727,28 @@ fn spawn_refresh(tap_dir: &Path) {
 			}
 		}
 		crate::agent::registry::invalidate_capability_catalog();
-		// Nobody is waiting when the receiver is gone.
-		let _ = ended_sender.send(());
 	});
+}
+
+/// Counts one refresh as running from start to drop, so a refresh thread that
+/// panics still releases its waiters.
+struct RefreshEndGuard;
+
+impl RefreshEndGuard {
+	fn start() -> Self {
+		REFRESH_STATE.lock().unwrap_or_else(PoisonError::into_inner).in_flight += 1;
+		Self
+	}
+}
+
+impl Drop for RefreshEndGuard {
+	fn drop(&mut self) {
+		let mut state = REFRESH_STATE.lock().unwrap_or_else(PoisonError::into_inner);
+		state.in_flight -= 1;
+		state.any_ended = true;
+		drop(state);
+		REFRESH_ENDED.notify_all();
+	}
 }
 
 /// Remove `.git/*.lock` files older than [`STALE_LOCK_AGE`]. A container stop

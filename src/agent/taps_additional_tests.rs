@@ -945,3 +945,33 @@ fn user_tap_chief_wins_over_builtin_tap_chief() {
 		.unwrap();
 	assert_eq!(chief.header.title.as_deref(), Some("User"));
 }
+
+#[test]
+#[serial]
+fn concurrent_waiters_both_observe_one_in_flight_refresh() {
+	let _guard = DataDirGuard::new();
+	// Simulate a refresh in flight without git: the guard counts it until dropped.
+	let refresh = crate::agent::taps::RefreshEndGuard::start();
+
+	let waiter_a = std::thread::spawn(crate::agent::taps::wait_for_started_refreshes);
+	let waiter_b = std::thread::spawn(crate::agent::taps::wait_for_started_refreshes);
+	// Give both waiters time to park: neither may return while the refresh runs.
+	std::thread::sleep(Duration::from_millis(200));
+	assert!(
+		!waiter_a.is_finished() && !waiter_b.is_finished(),
+		"waiters returned while the refresh was still running"
+	);
+	drop(refresh);
+
+	assert!(waiter_a.join().unwrap(), "first waiter must see the refresh end");
+	assert!(waiter_b.join().unwrap(), "second waiter must see the refresh end");
+}
+
+#[test]
+#[serial]
+fn a_refresh_that_ended_before_the_wait_still_earns_a_retry() {
+	// The lookup can read the clone just before the pull lands; the miss must still be retried.
+	drop(crate::agent::taps::RefreshEndGuard::start());
+
+	assert!(crate::agent::taps::wait_for_started_refreshes());
+}

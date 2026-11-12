@@ -135,12 +135,14 @@ async fn test_loglevel_reports_previous_level_and_real_changes() {
 		CommandOutput::Loglevel {
 			old_level,
 			new_level,
+			current_level,
 			changed,
 			..
 		} => {
 			assert_eq!(old_level.as_deref(), Some("info"), "reports where it came from");
 			assert_eq!(new_level.as_deref(), Some("debug"), "reports where it went");
 			assert!(changed, "info → debug is a real change");
+			assert_eq!(current_level, None, "a real change does not report a current level");
 		}
 		other => panic!("expected loglevel output, got {other:?}"),
 	}
@@ -153,9 +155,19 @@ async fn test_loglevel_reports_previous_level_and_real_changes() {
 		panic!("loglevel yields typed output");
 	};
 	match *output {
-		CommandOutput::Loglevel { old_level, changed, .. } => {
+		CommandOutput::Loglevel {
+			old_level,
+			current_level,
+			changed,
+			..
+		} => {
 			assert_eq!(old_level.as_deref(), Some("debug"));
 			assert!(!changed, "debug → debug is not a change");
+			assert_eq!(
+				current_level.as_deref(),
+				Some("debug"),
+				"re-selecting the active level reports it as current"
+			);
 		}
 		other => panic!("expected loglevel output, got {other:?}"),
 	}

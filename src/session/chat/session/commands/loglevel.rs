@@ -59,7 +59,11 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Loglevel {
 		old_level: Some(old_level.display_name().to_string()),
 		new_level: Some(new_level.display_name().to_string()),
-		current_level: None,
+		current_level: if changed {
+			None
+		} else {
+			Some(new_level.display_name().to_string())
+		},
 		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
 		changed,
 	})))

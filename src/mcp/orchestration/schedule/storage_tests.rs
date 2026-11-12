@@ -436,6 +436,18 @@ fn parse_when_accepts_am_pm_seconds_and_midnight_forms() {
 }
 
 #[test]
+fn parse_when_rejects_am_pm_hours_outside_1_to_12() {
+	assert!(parse_when("13am").is_err(), "13am must not fire at 13:00");
+	assert!(parse_when("0pm").is_err(), "0pm must not fire at noon");
+	assert!(parse_when("13pm").is_err());
+	assert_eq!(
+		parse_when("13:00").unwrap().hour(),
+		13,
+		"bare 24-hour input stays valid"
+	);
+}
+
+#[test]
 fn parse_when_absolute_datetime_with_seconds() {
 	let t = parse_when("2099-06-15 08:45:30").unwrap();
 	assert_eq!((t.year(), t.month(), t.day()), (2099, 6, 15));

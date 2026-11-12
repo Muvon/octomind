@@ -464,15 +464,12 @@ async fn renamed_tag_resolves_to_the_new_agent_and_keeps_its_old_model_key() {
 	assert_eq!(merged.model, "openai:gpt-4o-mini");
 }
 
-// --- roster placeholders -------------------------------------------------------
-
-fn roster_system(manifest: &str, tag: &str) -> String {
-	let prepared = prepare_role_manifest(manifest, tag).expect("prepare");
-	let value: toml::Value = toml::from_str(&prepared).expect("valid toml");
-	value["roles"][0]["system"].as_str().expect("system string").to_string()
+// --- which agents a caller can hand a task to ----------------------------------
+/// The `# Uses:` error loading `tag` would fail with, if any.
+fn reach_error(tag: &str) -> Option<String> {
+	let agents = crate::agent::taps::list_agent_headers().expect("agent headers");
+	reachable_specialists(tag, &agents).err().map(|error| error.to_string())
 }
-
-const ROSTER_MANIFEST: &str = "[[roles]]\nsystem = \"Team:\\n{{SPECIALISTS}}\"\n";
 
 fn reachable_tags(tag: &str) -> Vec<String> {
 	let agents = crate::agent::taps::list_agent_headers().expect("agent headers");
@@ -481,19 +478,6 @@ fn reachable_tags(tag: &str) -> Vec<String> {
 		.into_iter()
 		.map(|agent| agent.tag.clone())
 		.collect()
-}
-
-#[test]
-#[serial]
-fn specialists_placeholder_names_no_agent() {
-	let guard = ResolverDataDir::new();
-	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
-	install_default_tap_manifest(guard.path(), "ztest", "mm", "# Description: He said \"hi\" \\ there\n");
-
-	let system = roster_system(ROSTER_MANIFEST, "ztest:zz");
-
-	assert_eq!(system, format!("Team:\n{ROUTED_ROSTER}"));
-	assert!(!system.contains("ztest:mm"));
 }
 
 #[test]
@@ -520,37 +504,9 @@ fn caller_outside_the_taps_reaches_every_agent() {
 	assert_eq!(reachable_tags("local-role"), ["yother:chief", "ztest:zz"]);
 }
 
-#[test]
-#[serial]
-fn manifest_without_placeholders_is_left_alone() {
-	let guard = ResolverDataDir::new();
-	install_default_tap_manifest(guard.path(), "ztest", "other", MANIFEST_HEADER);
-
-	assert_eq!(
-		roster_system("[[roles]]\nsystem = \"plain {{CWD}} prompt\"\n", "ztest:zz"),
-		"plain {{CWD}} prompt"
-	);
-}
-
-// --- {{USES}} ------------------------------------------------------------------
-
-const USES_MANIFEST: &str = "[[roles]]\nsystem = \"Can call:\\n{{USES}}\"\n";
-
+// --- `# Uses:` header ----------------------------------------------------------
 fn install_uses_agent(data_dir: &std::path::Path, uses: &str) {
 	install_default_tap_manifest(data_dir, "mkt", "chief", &format!("# Description: Runs mkt\n{uses}"));
-}
-
-#[test]
-#[serial]
-fn uses_placeholder_names_no_agent() {
-	let guard = ResolverDataDir::new();
-	install_uses_agent(guard.path(), "# Uses: content\n");
-	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
-
-	assert_eq!(
-		roster_system(USES_MANIFEST, "mkt:chief"),
-		format!("Can call:\n{ROUTED_ROSTER}")
-	);
 }
 
 #[test]
@@ -604,22 +560,13 @@ fn tap_agent_alone_in_its_domain_without_uses_reaches_nothing() {
 }
 
 #[test]
-fn escaped_uses_placeholder_stays_literal() {
-	let manifest = "[[roles]]\nsystem = \"Write {{{{USES}}}} verbatim\"\n";
-
-	assert_eq!(roster_system(manifest, "mkt:chief"), "Write {{USES}} verbatim");
-}
-
-#[test]
 #[serial]
 fn uses_domain_without_chief_is_an_error() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "# Uses: content\n");
 	install_default_tap_manifest(guard.path(), "content", "writer", MANIFEST_HEADER);
 
-	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
-		.unwrap_err()
-		.to_string();
+	let err = reach_error("mkt:chief").expect("bad header");
 	assert_eq!(
 		err,
 		"`mkt:chief` declares `# Uses: content`, but domain `content` has no `chief`"
@@ -632,9 +579,7 @@ fn uses_missing_tag_is_an_error() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "# Uses: seo:audit\n");
 
-	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
-		.unwrap_err()
-		.to_string();
+	let err = reach_error("mkt:chief").expect("bad header");
 	assert_eq!(
 		err,
 		"`mkt:chief` declares `# Uses: seo:audit`, but no such agent exists"
@@ -647,19 +592,14 @@ fn uses_empty_entry_is_an_error_only_for_its_declaring_agent() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "# Uses: content,,seo:audit\n");
 
-	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
-		.unwrap_err()
-		.to_string();
+	let err = reach_error("mkt:chief").expect("bad header");
 	assert_eq!(
 		err,
 		"`mkt:chief` declares `# Uses: content, , seo:audit`, which has an empty entry"
 	);
 	// Another agent's prompt is unaffected by the malformed header.
 	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
-	assert_eq!(
-		roster_system(USES_MANIFEST, "ztest:zz"),
-		format!("Can call:\n{ROUTED_ROSTER}")
-	);
+	assert!(reach_error("ztest:zz").is_none());
 }
 
 #[test]
@@ -668,9 +608,7 @@ fn uses_own_domain_is_an_error() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "# Uses: mkt\n");
 
-	let err = prepare_role_manifest(USES_MANIFEST, "mkt:chief")
-		.unwrap_err()
-		.to_string();
+	let err = reach_error("mkt:chief").expect("bad header");
 	assert_eq!(
 		err,
 		"`mkt:chief` declares `# Uses: mkt`, but `mkt` is its own domain: its agents are reachable without it"

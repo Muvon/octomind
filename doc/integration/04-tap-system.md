@@ -225,9 +225,7 @@ the braces (`{{{{INPUT:KEY}}}}`).
 - **`{{CWD}}`** — the runtime current working directory (resolved by the prompt-placeholder layer, e.g. inside a role
   `system` prompt).
 
-- **`{{SPECIALISTS}}`** and **`{{USES}}`** — both expand to the fixed text ``(matched automatically: `tap(action="run", prompt=…)` picks the specialist for the task; no role name is needed)``. They no longer list agents, because the agent never names a specialist: the runtime matches the prompt to one.
-
-Both are expanded in the role's `system` prompt when the manifest loads. The text is fixed, so the prompt stays the same between runs and can be cached.
+- **`{{SPECIALISTS}}`** and **`{{USES}}`** — removed. Octomind 0.71 and older expanded them to lists of agents; newer versions do not expand them, so one left in a manifest reaches the model as written. Do not add them: the agent never names a specialist, because the runtime matches the prompt to one. The tap registry lint rejects both.
 
 When an agent calls `tap(action="run", prompt=…)`, the runtime picks the specialist from the agents that caller may reach. A tap agent reaches the other agents of its own domain, plus what its `# Uses:` header declares. A caller that is not a tap agent, such as a role from your local config, reaches every installed agent. A lead that needs other domains or single agents declares them in a header comment, as a comma-separated list of bare domains and full tags:
 

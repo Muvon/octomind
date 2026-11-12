@@ -27,19 +27,8 @@ use crate::agent::{deps, inputs, registry};
 use crate::config::{loading::merge_agent_toml, Config};
 use anyhow::{Context, Result};
 
-/// Placeholder in a tap manifest's `system` prompt that used to list the other agents of the same domain.
-const SPECIALISTS_PLACEHOLDER: &str = "{{SPECIALISTS}}";
-
-/// Placeholder in a tap manifest's `system` prompt that used to list the agents and domains its `# Uses:` header declares.
-const USES_PLACEHOLDER: &str = "{{USES}}";
-
 /// `# Uses:` entry standing for every other domain that has a `chief`.
 const ALL_DOMAINS_ENTRY: &str = "*";
-
-/// What both roster placeholders expand to. The agent no longer picks a specialist by name:
-/// `tap` matches the task against the agents `reachable_specialists` returns.
-const ROUTED_ROSTER: &str =
-	"(matched automatically: `tap(action=\"run\", prompt=…)` picks the specialist for the task; no role name is needed)";
 
 /// Expand a bare domain (no `:`) to the tag of its orchestrator, `<domain>:chief`.
 ///
@@ -120,6 +109,9 @@ pub async fn resolve_config_and_role(
 		for (root, entries) in deps_by_root {
 			deps::run_dep_entries(&entries, &root, status_cb).await?;
 		}
+		// A bad `# Uses:` header fails the load, not the agent's first delegation.
+		let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents")?;
+		reachable_specialists(tag, &agents)?;
 		// Always inject the tag as the role name — manifests never need to declare it.
 		let tagged_toml = prepare_role_manifest(&resolved_toml, tag).context("Failed to prepare agent manifest")?;
 		let mut merged =
@@ -162,9 +154,8 @@ pub async fn resolve_config_and_role(
 }
 
 /// Prepare the role entry of a tap manifest: inject the tag (e.g. `"octomind:tap"`)
-/// as the `name` field of the first `[[roles]]` entry, and expand the roster
-/// placeholders in its `system` prompt. Manifests never need to declare their
-/// own name — the tag IS the identity.
+/// as the `name` field of the first `[[roles]]` entry. Manifests never need to
+/// declare their own name — the tag IS the identity.
 ///
 /// Works on the parsed value so descriptions with quotes or backslashes
 /// cannot break the TOML.
@@ -178,30 +169,10 @@ fn prepare_role_manifest(toml_str: &str, tag: &str) -> Result<String> {
 	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
 		if let Some(toml::Value::Table(table)) = roles.first_mut() {
 			table.insert("name".to_string(), toml::Value::String(role_name.to_string()));
-			if let Some(toml::Value::String(system)) = table.get_mut("system") {
-				expand_roster_placeholders(system, tag)?;
-			}
 		}
 	}
 
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
-}
-
-/// Replace `{{SPECIALISTS}}` and `{{USES}}` in a system prompt with `ROUTED_ROSTER`.
-/// Skips the tap scan when none is present. The agent's `# Uses:` header is still
-/// checked here, so a bad entry fails the load and not the first delegation.
-fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
-	// An escaped `{{{{USES}}}}` contains `{{USES}}`; hide it from the replacements.
-	*system = inputs::protect_escaped_braces(system);
-	if system.contains(SPECIALISTS_PLACEHOLDER) || system.contains(USES_PLACEHOLDER) {
-		let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents for roster")?;
-		reachable_specialists(tag, &agents)?;
-		*system = system
-			.replace(SPECIALISTS_PLACEHOLDER, ROUTED_ROSTER)
-			.replace(USES_PLACEHOLDER, ROUTED_ROSTER);
-	}
-	*system = inputs::restore_escaped_braces(system);
-	Ok(())
 }
 
 /// The agents `tag` may hand a task to, sorted by tag, each once.

@@ -345,28 +345,39 @@ pub fn command_key(tool: &str, parameters: &serde_json::Value) -> Option<u64> {
 /// Path-like values in a tool call's parameters — the artifact identities a
 /// mutation touches and a later read-back can verify. Generic across tools and
 /// domains: any non-empty string under a key containing "path" or "file", plus
-/// string arrays under such keys. No tool names, no extension lists.
+/// string arrays under such keys, at any depth — a multi-target call nests one
+/// path per item (a list of edits, each naming its own file), and a file it
+/// skips is invisible to ground truth and read-back alike. No tool names, no
+/// extension lists.
 pub fn param_paths(parameters: &serde_json::Value) -> Vec<String> {
 	let mut out = Vec::new();
-	if let Some(obj) = parameters.as_object() {
-		for (k, v) in obj {
-			let kl = k.to_ascii_lowercase();
-			if !(kl.contains("path") || kl.contains("file")) {
-				continue;
-			}
-			match v {
-				serde_json::Value::String(s) if !s.trim().is_empty() => out.push(s.clone()),
-				serde_json::Value::Array(a) => out.extend(
-					a.iter()
-						.filter_map(|x| x.as_str())
-						.filter(|s| !s.trim().is_empty())
-						.map(str::to_string),
-				),
-				_ => {}
+	collect_param_paths(parameters, &mut out);
+	out
+}
+
+fn collect_param_paths(value: &serde_json::Value, out: &mut Vec<String>) {
+	match value {
+		serde_json::Value::Object(obj) => {
+			for (k, v) in obj {
+				let kl = k.to_ascii_lowercase();
+				if kl.contains("path") || kl.contains("file") {
+					match v {
+						serde_json::Value::String(s) if !s.trim().is_empty() => out.push(s.clone()),
+						serde_json::Value::Array(a) => out.extend(
+							a.iter()
+								.filter_map(|x| x.as_str())
+								.filter(|s| !s.trim().is_empty())
+								.map(str::to_string),
+						),
+						_ => {}
+					}
+				}
+				collect_param_paths(v, out);
 			}
 		}
+		serde_json::Value::Array(items) => items.iter().for_each(|item| collect_param_paths(item, out)),
+		_ => {}
 	}
-	out
 }
 
 /// Normal form for mutated-path bookkeeping: the canonical filesystem path when

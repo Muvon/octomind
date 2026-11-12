@@ -403,6 +403,22 @@ fn param_paths_collects_pathish_keys_only() {
 }
 
 #[test]
+fn param_paths_collects_paths_nested_in_item_lists() {
+	// One call editing several files names each file inside its own item; the
+	// call-level path is only the default for items that omit theirs.
+	use serde_json::json;
+	let p = json!({
+		"command": "str_replace",
+		"edits": [
+			{"path": "src/a.hpp", "old_text": "x", "new_text": "y"},
+			{"path": "src/b.cpp", "old_text": "x", "new_text": "y"},
+			{"old_text": "path: not a key", "new_text": "y"}
+		]
+	});
+	assert_eq!(param_paths(&p), vec!["src/a.hpp", "src/b.cpp"]);
+}
+
+#[test]
 fn verifier_shape_requires_command_string_param() {
 	use serde_json::json;
 	// Command-string param → candidate (tool_map is empty in unit tests, so

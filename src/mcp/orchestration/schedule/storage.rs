@@ -421,6 +421,10 @@ fn parse_naive_time(s: &str) -> Result<NaiveTime> {
 	let minute: u32 = parts.get(1).unwrap_or(&"0").parse()?;
 	let second: u32 = parts.get(2).unwrap_or(&"0").parse()?;
 
+	if meridiem.is_some() && !(1..=12).contains(&hour) {
+		anyhow::bail!("invalid 12-hour time: hour {} must be 1-12 with am/pm", hour);
+	}
+
 	match meridiem {
 		Some(true) if hour != 12 => hour += 12,
 		// 12am = midnight

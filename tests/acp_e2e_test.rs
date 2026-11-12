@@ -26,9 +26,20 @@ const MARKER: &str = "ACP-E2E-MARKER";
 
 type CapturedRequests = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
 
-/// Serves the scripted assistant messages in order, one per provider call, or
-/// the default marker answer to every call when no script is given.
-async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> (String, CapturedRequests) {
+/// A scripted assistant message, optionally tagged with text from the request
+/// it answers.
+type ScriptedReply = (Option<&'static str>, serde_json::Value);
+
+/// Opening words of the supervisor's task-resolution prompt. Resolution runs
+/// in the background, so its request races the main turn to the stub.
+const RESOLUTION_PROMPT: &str = "Classify ONE current user turn";
+
+/// Serves the scripted assistant messages, one per provider call, or the
+/// default marker answer to every call when no script is given. A tagged
+/// message answers the request whose body contains its tag; untagged messages
+/// answer the remaining requests in arrival order. Tag every call that runs
+/// concurrently with the main turn, because its arrival order is not fixed.
+async fn spawn_openai_stub(script: Option<Vec<ScriptedReply>>) -> (String, CapturedRequests) {
 	let script = std::sync::Arc::new(std::sync::Mutex::new(script.map(std::collections::VecDeque::from)));
 	let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 	let captured = requests.clone();
@@ -65,12 +76,19 @@ async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> (String, C
 					}
 					buf.extend_from_slice(&tmp[..n]);
 				}
-				requests
-					.lock()
-					.expect("captured requests")
-					.push(serde_json::from_slice(&buf[header_end..header_end + content_length]).expect("request JSON"));
+				let request: serde_json::Value =
+					serde_json::from_slice(&buf[header_end..header_end + content_length]).expect("request JSON");
+				let request_text = request.to_string();
+				requests.lock().expect("captured requests").push(request);
 				let message = match script.lock().expect("script lock").as_mut() {
-					Some(messages) => messages.pop_front().expect("unexpected provider call"),
+					Some(replies) => {
+						let index = replies
+							.iter()
+							.position(|(tag, _)| tag.is_some_and(|tag| request_text.contains(tag)))
+							.or_else(|| replies.iter().position(|(tag, _)| tag.is_none()))
+							.unwrap_or_else(|| panic!("unexpected provider call: {request_text}"));
+						replies.remove(index).expect("scripted reply").1
+					}
 					None => text_message(&format!("{MARKER}: acp answer")),
 				};
 				let finish_reason = if message.get("tool_calls").is_some() {
@@ -496,8 +514,11 @@ async fn test_acp_initialize_new_session_prompt() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_tool_round_updates() {
 	let (stub_url, _) = spawn_openai_stub(Some(vec![
-		tool_call_message("call_acp", "schedule", serde_json::json!({"action": "list"})),
-		text_message(&format!("{MARKER}: tool round done")),
+		(
+			None,
+			tool_call_message("call_acp", "schedule", serde_json::json!({"action": "list"})),
+		),
+		(None, text_message(&format!("{MARKER}: tool round done"))),
 	]))
 	.await;
 
@@ -548,16 +569,22 @@ async fn test_acp_tool_round_updates() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 	let (stub_url, _) = spawn_openai_stub(Some(vec![
-		text_message(
-			r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
+		(
+			Some(RESOLUTION_PROMPT),
+			text_message(
+				r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
+			),
 		),
-		text_message("ACP-GATE-TIMING: finished"),
-		text_message(
-			r#"<shape name="circular" found="no">independent evidence</shape>
+		(None, text_message("ACP-GATE-TIMING: finished")),
+		(
+			None,
+			text_message(
+				r#"<shape name="circular" found="no">independent evidence</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#,
+			),
 		),
 	]))
 	.await;
@@ -632,31 +659,43 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 async fn test_acp_sub_agent_tool_round() {
 	const SUB_AGENT_MARKER: &str = "ACP-SUB-AGENT-DONE";
 	let (stub_url, _) = spawn_openai_stub(Some(vec![
-		tool_call_message(
-			"call_add",
-			"agent",
-			serde_json::json!({
-				"action": "add",
-				"name": "probe",
-				"description": "Probe agent",
-				"system": "You list schedules.",
-				"server_refs": ["orchestration"]
-			}),
+		(
+			None,
+			tool_call_message(
+				"call_add",
+				"agent",
+				serde_json::json!({
+					"action": "add",
+					"name": "probe",
+					"description": "Probe agent",
+					"system": "You list schedules.",
+					"server_refs": ["orchestration"]
+				}),
+			),
 		),
-		tool_call_message(
-			"call_enable",
-			"agent",
-			serde_json::json!({"action": "enable", "name": "probe"}),
+		(
+			None,
+			tool_call_message(
+				"call_enable",
+				"agent",
+				serde_json::json!({"action": "enable", "name": "probe"}),
+			),
 		),
-		tool_call_message(
-			"call_probe",
-			"agent_probe",
-			serde_json::json!({"task": "list my schedules"}),
+		(
+			None,
+			tool_call_message(
+				"call_probe",
+				"agent_probe",
+				serde_json::json!({"task": "list my schedules"}),
+			),
 		),
 		// The sub-agent's own tool round — the code path under test.
-		tool_call_message("call_sub_schedule", "schedule", serde_json::json!({"action": "list"})),
-		text_message(SUB_AGENT_MARKER),
-		text_message(&format!("{MARKER}: sub-agent done")),
+		(
+			None,
+			tool_call_message("call_sub_schedule", "schedule", serde_json::json!({"action": "list"})),
+		),
+		(None, text_message(SUB_AGENT_MARKER)),
+		(None, text_message(&format!("{MARKER}: sub-agent done"))),
 	]))
 	.await;
 

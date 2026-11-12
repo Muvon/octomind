@@ -12,21 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `tap` core tool — run, message, list, stop, discover agents, and activate capabilities from configured taps.
+//! `tap` core tool — match a task to an agent from the configured taps and run it, message, list and stop runs, and activate capabilities.
 //!
 //! Exposes actions over a single tool surface:
 //!
-//! - `run`      — launch a fresh tap-tag (e.g. `developer:general`) or resume
-//!   an existing run by `session` id. `prompt` is required.
+//! - `run`      — match `prompt` to a tap agent (`tap_route`) and launch it, or
+//!   resume an existing run by `session` id. `prompt` is required.
 //!   Returns the id immediately and pushes the result to the parent session
 //!   inbox when done.
 //! - `list`     — show every tap-run in the current session with id, tag,
 //!   status, and start time.
 //! - `stop`     — cancel a running tap-run by id (sends the cancel watch).
 //! - `send`     — queue a user prompt for a running specialist's next turn.
-//! - `discover` — semantic match a free-text intent against installed tap
-//!   agents' `# Title:` / `# Description:` header lines.
-//!   Same matcher pipeline as `capability discover`.
 //! - `capability` — send a short intent through the same skill/capability
 //!   auto-activation path used for user messages.
 //!
@@ -67,14 +64,14 @@ Important: Every `run` call WITHOUT a `session` id starts a completely fresh age
 Matching:
 - `run` reads only `prompt` to match a specialist, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
 - When no specialist fits, `run` returns an error and starts nothing: do the task with your own tools or report it. Do not rephrase the same task to force a match.
-- If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
+- `run` is the only way to reach a specialist. No action looks a specialist up, lists the available ones, or starts one by name.
 
 Actions:
 - `run`        — match a specialist to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `session` (resume that run with its original role), `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `send`       — queue a user message for a running specialist's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
-- `capability` — trigger skill/capability auto-activation. Required: `prompt`.
+- `capability` — activate a missing TOOL or skill for yourself: `prompt` is the tool need ("query a Postgres database"). It never finds or starts a specialist. Required: `prompt`.
 - `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. With `name` but no `input`: nothing runs; returns the workflow definition (its steps and where `{{input}}` lands) so you can compose the input, then call again with `input`. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
 		parameters: json!({
 			"type": "object",

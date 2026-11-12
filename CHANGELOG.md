@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.71.0] - 2026-11-12
+
+### 📋 Release Summary
+
+Agent and tap references now resolve across domains, including renamed tap agent tags; prompts expand declared dependencies, and successful turns print summaries. Global layer configuration and the unsupported ACP hook option have been removed; fixes address schedule and configuration validation, nested supervisor paths and evidence, tap refresh and role handling, gate evaluation, token formatting, and session resume.
+
+### 🚨 Breaking Changes
+
+- **agent**: resolve cross-domain chief references `1489e930`
+- **tap**: resolve tap domains to chief agents `597e465d`
+- **acp**: remove unsupported ACP hook option `10c59743`
+- **config**: remove global layer configuration `c8e676cf`
+
+### ✨ New Features & Enhancements
+
+- **taps**: resolve renamed tap agent tags `d1d3b3b0`
+- **agent**: expand declared dependencies in prompts `6820e2a8`
+- **session**: print summaries after successful turns `41229299`
+
+### 🔧 Improvements & Optimizations
+
+- **acp-e2e**: match scripted replies to tagged requests `fc8151a3`
+- **agent**: reproduce the missing default tap and keep /role test offline `e43ea85b`
+- **session**: refresh startup command tips `9df70c45`
+- **chat-input**: adapt input handling to reedline 0.53 `ca1decdc`
+
+### 🐛 Bug Fixes & Stability
+
+- **schedule**: reject am/pm hours outside 1-12 `2e5a4f0b`
+- **config**: trim surrounding whitespace from API key input `b84dd81a`
+- **supervisor**: collect paths from nested tool parameters `606f1f12`
+- **supervisor**: tighten advisory evidence guidance `d108f463`
+- **config**: reject MCP servers with an empty url or command `dcfcbbe8`
+- **agent**: let concurrent callers wait for in-flight tap refreshes `f3b6072f`
+- **session**: show token counts from 999,950 as 1.0M, not 1000.0k `0421c0e1`
+- retry lookups after tap refreshes complete `71a6c620`
+- **agent**: ensure default tap before expanding domain roles `64c8bd13`
+- **supervisor**: pass the gate when the evaluation clears every unsettled condition `b4f4ff45`
+- **session**: ignore unreadable fold sidecar on resume `abb0497c`
+
+### 📚 Documentation & Examples
+
+- **integration**: document empty Uses entries as invalid `61998678`
+- **configuration**: clarify auto_bind role selection `8f712be6`
+- document tap-domain invocation semantics `d84fd9e7`
+- **usage**: clarify custom command setup `dba1151a`
+- revise documented token and tool settings `78d0261d`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.70.1] - 2026-11-08
 
 ### 🔧 Improvements & Optimizations

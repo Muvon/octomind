@@ -775,6 +775,7 @@ fn supervisor_outcome(
 				Mechanic::Skills | Mechanic::Capabilities => "activated",
 				Mechanic::Recall => "filtered",
 				Mechanic::Compression => "demoted",
+				Mechanic::Taps => "routed",
 				_ => continue,
 			}),
 			Outcome::DecisionUnavailable => counted("decision unavailable"),
@@ -811,7 +812,7 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport, termin
 	for (&mechanic, usage) in &report.mechanics {
 		let chat = if matches!(
 			mechanic,
-			Mechanic::Skills | Mechanic::Capabilities | Mechanic::Compression
+			Mechanic::Skills | Mechanic::Capabilities | Mechanic::Compression | Mechanic::Taps
 		) {
 			"–".into()
 		} else {

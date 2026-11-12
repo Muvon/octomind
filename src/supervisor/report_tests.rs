@@ -85,6 +85,7 @@ fn every_decision_seam_has_exactly_one_mechanic() {
 		(Seam::Capabilities, Mechanic::Capabilities),
 		(Seam::Compression, Mechanic::Compression),
 		(Seam::Advise, Mechanic::Advise),
+		(Seam::Taps, Mechanic::Taps),
 	] {
 		assert_eq!(Mechanic::from_seam(seam), mechanic);
 		info.supervisor_accounting.seams.insert(

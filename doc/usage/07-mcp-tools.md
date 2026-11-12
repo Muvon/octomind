@@ -209,43 +209,50 @@ The ID shown illustrates the format; it must be replaced with a block ID cited i
 ### `tap` tool: Run Specialist Roles from Taps
 
 Delegate work to a specialist role installed via a tap (e.g. `developer:general`). Each role brings its own system
-prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, stop a run,
-or browse the catalog.
+prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, and stop a
+run. The caller does not name the specialist: the runtime matches the prompt to one.
 
 **Parameters:**
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
-| `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"discover"`, `"capability"`, `"workflow"` |
-| `role` | string | Role tag in `category:variant` form, or a domain name such as `developer` (starts that domain's `chief` agent; a role in your config with the same name wins). Required for `run` when `session` is not given. |
-| `prompt` | string | User message for `run` or `send`, or capability intent for `capability`. Required for those actions. |
+| `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"capability"`, `"workflow"` |
+| `prompt` | string | Task for `run` (the runtime matches it to a specialist), user message for `send`, or capability intent for `capability`. Required for those actions. |
 | `session` | string | Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
-| `intent` | string | Free-text intent for `discover`. |
 | `name` | string | Tap workflow name for `workflow`; omit to list installed workflows. |
 | `input` | string | Input text for `workflow` (required with `name`). |
 
 | Action | Description |
 |--------|-------------|
-| `run` | Launch a role (or resume one via `session`) in the background. Returns the run id immediately and injects the reply later. Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
+| `run` | Match `prompt` to a specialist and launch it in the background (or resume a run via `session`, which reuses the original role without matching). Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no specialist matches, it returns an error and starts nothing. See [Specialist matching](#specialist-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
 | `send` | Queue a user prompt for a running specialist owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
-| `discover` | Semantic match free-text intent against installed roles' titles/descriptions. Requires the local embedding model (errors if not ready). Returns roles scoring above 0.2 cosine, top 5. |
 | `capability` | Run the prompt through the same skill/capability auto-activation path used for user messages. |
 | `workflow` | Run an installed tap workflow (`name` + `input`) as a background run; the final step's output is injected later. Without `name`, list installed workflows. `stop` with the returned id cancels it. |
 
 ```jsonl
-{"action": "discover", "intent": "review this codebase"}
-{"action": "run", "role": "developer:general", "prompt": "Review src/main.rs and report concrete bugs."}
-{"action": "run", "role": "developer:general", "prompt": "Audit this auth module"}
+{"action": "run", "prompt": "Review src/main.rs and report concrete bugs."}
+{"action": "run", "prompt": "Audit this auth module"}
 {"action": "list"}
 {"action": "send", "session": "tap-developer-general-a3f1c2", "prompt": "Also check cancellation before you finish."}
 {"action": "stop", "session": "tap-developer-general-a3f1c2"}
 {"action": "run", "session": "tap-developer-general-a3f1c2", "prompt": "Check the error handling too."}
 ```
 
-Use a role returned by `discover` and replace the sample session IDs with IDs returned by `run` or `list`.
+Replace the sample session IDs with IDs returned by `run` or `list`.
+
+#### Specialist matching
+
+The candidates are the agents the caller may reach. A tap agent reaches the other agents of its own domain plus what its
+`# Uses:` header declares (a bare domain is that domain's `chief`, a full tag is that agent, `*` is the `chief` of every
+other domain). A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
+Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
+local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
+With `[decision] taps = true` (off by default), the decision model confirms or overrules that pick among the top 5
+candidates or none. When nothing matches, `run` returns `No specialist matches this task. Do it with the tools you have,
+or report that it is outside what you can do.`
 
 **Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs
 are cancelled. The on-disk role manifest is unaffected.
@@ -318,11 +325,11 @@ condition. Call `schedule`:
 {"command": "list"}
 ```
 
-When `tap` is enabled and `developer:general` is an installed/discovered role, schedule it directly with ordinary `tap`
-arguments nested under `tool_call.arguments` — there are no tap-specific schedule fields:
+When `tap` is enabled, schedule a specialist run directly with ordinary `tap` arguments nested under
+`tool_call.arguments` — there are no tap-specific schedule fields:
 
 ```json
-{"command":"add","when":"in 5m","tool_call":{"name":"tap","arguments":{"action":"run","role":"developer:general","prompt":"Review auth"}}}
+{"command":"add","when":"in 5m","tool_call":{"name":"tap","arguments":{"action":"run","prompt":"Review auth"}}}
 ```
 
 Use `message` instead when the parent agent should interpret the task with conversation context before choosing tools.

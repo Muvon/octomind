@@ -14,8 +14,8 @@
 
 //! Additional unit tests for the `tap` orchestration tool — complements the
 //! inline `mod tests` with schema-contract checks, action trimming, the
-//! resume-while-busy guard, the capability no-match payload, and the
-//! discover-with-agents-but-no-embeddings path.
+//! resume-while-busy guard, the capability no-match payload, and fresh runs
+//! matched to a specialist installed in a temp tap.
 
 use super::*;
 use serial_test::serial;
@@ -91,6 +91,35 @@ impl Drop for TempDataDir {
 	}
 }
 
+/// Install one agent in the default tap of `data_dir`.
+fn install_unit_agent(data_dir: &std::path::Path, domain: &str, spec: &str, title: &str, description: &str) {
+	let agents_dir = data_dir
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("agents")
+		.join(domain);
+	std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+	std::fs::write(
+		agents_dir.join(format!("{spec}.toml")),
+		format!("# Title: {title}\n# Description: {description}\n[[roles]]\nname = \"{spec}\"\n"),
+	)
+	.expect("write agent file");
+}
+
+/// A task and the only installed agent's description say the same thing, so
+/// the match does not depend on where the cosine threshold sits.
+const RUST_TASK: &str = "Debug a failing Rust build and fix the compile errors";
+fn install_rust_agent(data_dir: &std::path::Path) {
+	install_unit_agent(
+		data_dir,
+		"developer",
+		"general",
+		"Rust build debugger",
+		"Debugs a failing Rust build and fixes the compile errors.",
+	);
+}
+
 fn register_unit_job(id: &str, role: &str, status: TapJobStatus) {
 	let (cancel_tx, _cancel_rx) = watch::channel(false);
 	tap_runs::register_job(TapJob {
@@ -117,7 +146,7 @@ fn schema_documents_every_parameter() {
 		.get("properties")
 		.and_then(|p| p.as_object())
 		.expect("properties object");
-	for key in ["role", "prompt", "session", "workdir", "intent"] {
+	for key in ["prompt", "session", "workdir"] {
 		let prop = props.get(key).unwrap_or_else(|| panic!("{key} missing"));
 		assert_eq!(prop.get("type").and_then(|t| t.as_str()), Some("string"), "{key} type");
 		assert!(
@@ -126,6 +155,10 @@ fn schema_documents_every_parameter() {
 				.is_some_and(|d| !d.is_empty()),
 			"{key} description"
 		);
+	}
+	// The caller sends a task, never a role or a search intent.
+	for key in ["role", "intent"] {
+		assert!(!props.contains_key(key), "{key} must not be a parameter");
 	}
 	assert_eq!(
 		function.parameters.get("required").and_then(|r| r.as_array()),
@@ -136,15 +169,7 @@ fn schema_documents_every_parameter() {
 #[test]
 fn schema_description_documents_actions_and_resume_contract() {
 	let function = get_tap_function();
-	for phrase in [
-		"`run`",
-		"`list`",
-		"`stop`",
-		"`discover`",
-		"`capability`",
-		"session",
-		"workdir",
-	] {
+	for phrase in ["`run`", "`list`", "`stop`", "`capability`", "session", "workdir"] {
 		assert!(function.description.contains(phrase), "description missing '{phrase}'");
 	}
 }
@@ -266,46 +291,6 @@ async fn capability_with_low_signal_prompt_reports_no_match() {
 }
 
 // ---------------------------------------------------------------------------
-// handle_discover — agents installed but embeddings unavailable
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-#[serial]
-async fn discover_with_installed_agents_requires_embeddings() {
-	let guard = TempDataDir::new();
-	if crate::embeddings::is_ready() {
-		eprintln!("skipping: embedding provider already initialized by a prior test");
-		return;
-	}
-	// Fabricate one agent inside the default tap's agents tree so
-	// list_all_tap_agents() finds it, then rely on the embedding model not
-	// being warmed in the unit-test binary.
-	let agents_dir = guard
-		.path()
-		.join("taps")
-		.join("muvon")
-		.join("octomind-tap")
-		.join("agents")
-		.join("developer");
-	std::fs::create_dir_all(&agents_dir).expect("create agents dir");
-	std::fs::write(
-		agents_dir.join("general.toml"),
-		"# Title: Unit Test Developer\n# Description: Fabricated specialist for tests.\n[[roles]]\nname = \"general\"\n",
-	)
-	.expect("write agent file");
-
-	let result = execute_tap_command(
-		&tap_call(json!({"action": "discover", "intent": "debug a failing rust build"})),
-		&unit_config(),
-	)
-	.await
-	.expect("dispatch");
-	assert!(result.is_error());
-	let content = result.extract_content();
-	assert!(content.contains("requires the embedding model"), "content: {content}");
-}
-
-// ---------------------------------------------------------------------------
 // format_job_info + generate_id
 // ---------------------------------------------------------------------------
 
@@ -374,13 +359,14 @@ async fn wait_terminal_status(id: &str) -> TapJobStatus {
 #[tokio::test]
 #[serial]
 async fn run_fresh_registers_job_and_reports_started_payload() {
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
 	let session_id = "__tapunit_fresh".to_string();
 	let out = crate::session::context::with_session_id(session_id.clone(), async {
 		execute_tap_command(
 			&tap_call(json!({
 				"action": "run",
-				"role": "developer:general",
-				"prompt": "do a tiny thing",
+				"prompt": RUST_TASK,
 				"workdir": "/tmp",
 			})),
 			&unit_config(),
@@ -395,6 +381,7 @@ async fn run_fresh_registers_job_and_reports_started_payload() {
 	let id = payload["id"].as_str().expect("id").to_string();
 	assert!(id.starts_with("tap-developer-general-"), "id: {id}");
 	assert_eq!(payload["role"].as_str(), Some("developer:general"));
+	assert_eq!(payload["title"].as_str(), Some("Rust build debugger"));
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
 
 	let status =
@@ -446,14 +433,15 @@ async fn run_resume_restarts_a_finished_job_with_its_original_role() {
 #[tokio::test]
 #[serial]
 async fn run_without_workdir_defaults_to_thread_working_directory() {
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
 	let session_id = "__tapunit_cwd_default".to_string();
 	let (out, expected) = crate::session::context::with_session_id(session_id.clone(), async {
 		let expected = crate::mcp::get_thread_working_directory().to_string_lossy().to_string();
 		let out = execute_tap_command(
 			&tap_call(json!({
 				"action": "run",
-				"role": "developer:general",
-				"prompt": "do a tiny thing",
+				"prompt": RUST_TASK,
 			})),
 			&unit_config(),
 		)
@@ -485,11 +473,12 @@ async fn run_outside_session_scope_still_starts_and_reports() {
 	// background turn executes on the bare future (no with_session_id
 	// wrapper). The child is the test binary, which rejects `--name` and
 	// exits immediately, so nothing outlives the test.
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
 	let out = execute_tap_command(
 		&tap_call(json!({
 			"action": "run",
-			"role": "lawyer:us",
-			"prompt": "do a tiny thing",
+			"prompt": RUST_TASK,
 			"workdir": "/tmp",
 		})),
 		&unit_config(),
@@ -500,22 +489,48 @@ async fn run_outside_session_scope_still_starts_and_reports() {
 	assert!(!out.is_error(), "content: {}", out.extract_content());
 	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
 	assert!(payload["id"].as_str().is_some_and(|id| !id.is_empty()));
-	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
+	assert_eq!(payload["role"].as_str(), Some("developer:general"));
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
 }
 
-// --- discover: tap-enumeration failure --------------------------------------
+// --- run: no match, tap-enumeration failure ---------------------------------
 
 #[tokio::test]
 #[serial]
-async fn discover_reports_tap_enumeration_failures() {
+async fn run_with_an_unrelated_task_is_an_error_and_starts_nothing() {
 	let guard = TempDataDir::new();
-	// A malformed taps.toml breaks tap loading; discover must surface the
-	// enumeration failure instead of reporting an empty catalog.
+	install_rust_agent(guard.path());
+	let session_id = "__tapunit_no_match".to_string();
+	let (out, runs) = crate::session::context::with_session_id(session_id.clone(), async {
+		let out = execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"prompt": "Plan a three-day vegetarian menu for a family of four",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch");
+		(out, tap_runs::list_jobs().len())
+	})
+	.await;
+	tap_runs::clear_for_session(&session_id);
+
+	assert!(out.is_error());
+	assert_eq!(out.extract_content(), super::super::tap_route::NO_SPECIALIST);
+	assert_eq!(runs, 0);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_reports_tap_enumeration_failures() {
+	let guard = TempDataDir::new();
+	// A malformed taps.toml breaks tap loading; run must surface the
+	// enumeration failure instead of reporting that no specialist fits.
 	std::fs::write(guard.path().join("taps.toml"), "not [valid toml").expect("write malformed taps.toml");
 
 	let result = execute_tap_command(
-		&tap_call(json!({"action": "discover", "intent": "debug a rust build"})),
+		&tap_call(json!({"action": "run", "prompt": "debug a rust build"})),
 		&unit_config(),
 	)
 	.await

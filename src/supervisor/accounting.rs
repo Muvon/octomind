@@ -539,7 +539,7 @@ impl Drop for WallTimer {
 			// Keep the raw seam view for persisted journals. Standalone seams already
 			// own their mechanic interval, so adding their duration again would duplicate it.
 			if let Some(seam) = self.seam {
-				if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression) {
+				if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression | Seam::Taps) {
 					let elapsed = now.duration_since(self.started).as_millis() as u64;
 					let usage = usage.seams.entry(seam).or_default();
 					if self.background {

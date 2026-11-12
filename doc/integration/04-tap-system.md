@@ -117,7 +117,7 @@ plugins/
 ## Agent Manifests
 
 Agent manifests are TOML files in `agents/<category>/<variant>.toml`. For discovery, `# Title:` and `# Description:`
-header comments are required and feed `tap discover`'s semantic matching (they are the embedding corpus). They are
+header comments are required and feed the `tap` tool's specialist matching (they are the embedding corpus). They are
 **not** used by `octomind run` shell autocomplete, which derives `category:variant` purely from the file path:
 
 ```toml
@@ -225,13 +225,11 @@ the braces (`{{{{INPUT:KEY}}}}`).
 - **`{{CWD}}`** — the runtime current working directory (resolved by the prompt-placeholder layer, e.g. inside a role
   `system` prompt).
 
-- **`{{SPECIALISTS}}`** — the other agents of the same domain, one `- <tag> — <Description>` line each, sorted by tag. `(none)` when there are no others.
+- **`{{SPECIALISTS}}`** and **`{{USES}}`** — both expand to the fixed text ``(matched automatically: `tap(action="run", prompt=…)` picks the specialist for the task; no role name is needed)``. They no longer list agents, because the agent never names a specialist: the runtime matches the prompt to one.
 
-- **`{{USES}}`** — the domains and agents the manifest declares in its `# Uses:` header, one `- <entry> — <Description>` line each, sorted by entry, without duplicates. A domain entry shows the description of that domain's `chief`; a tag entry shows that agent's description. The entry `*` stands for every other domain that has a `chief`. `(none)` when the manifest has no `# Uses:` header, or when `*` is its only entry and no other domain has a `chief`.
+Both are expanded in the role's `system` prompt when the manifest loads. The text is fixed, so the prompt stays the same between runs and can be cached.
 
-`{{SPECIALISTS}}` and `{{USES}}` are expanded in the role's `system` prompt when the manifest loads, from the taps installed on your machine. They are allowed in `system` because their output changes only when a tap changes, so the prompt stays the same between runs and can be cached. Use them to let an agent name its teammates without a hard-coded list.
-
-A domain's lead can call only agents of its own domain. A lead that also needs other domains or single agents declares them in a header comment, as a comma-separated list of bare domains and full tags:
+When an agent calls `tap(action="run", prompt=…)`, the runtime picks the specialist from the agents that caller may reach. A tap agent reaches the other agents of its own domain, plus what its `# Uses:` header declares. A caller that is not a tap agent, such as a role from your local config, reaches every installed agent. A lead that needs other domains or single agents declares them in a header comment, as a comma-separated list of bare domains and full tags:
 
 ```toml
 # agents/marketing/chief.toml
@@ -245,9 +243,9 @@ The global assistant, `assistant:chief`, uses the entry `*`:
 # Uses: *
 ```
 
-A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. `*` lists every other domain that has a `chief`; it can stand next to other entries, and a domain named both ways appears once. Anything not declared stays outside the lead's reach. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain (use `{{SPECIALISTS}}` for that). Which agents may carry `# Uses:`, and which may use `*`, is enforced by the registry's lint, not at runtime.
+A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. `*` lists every other domain that has a `chief`; it can stand next to other entries, and a domain named both ways appears once. Anything not declared stays outside the lead's reach, and the runtime enforces this when it matches a prompt. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain: its agents are reachable without it. Which agents may carry `# Uses:`, and which may use `*`, is also checked by the registry's lint.
 
-A manifest file that is a symbolic link is an alias: an old agent name kept so that older releases still find the agent. Asking for the alias by name (`octomind run <alias tag>`) loads the agent behind the link. Tag completion, `tap` discovery and the `{{SPECIALISTS}}` and `{{USES}}` lists leave the alias out, so each agent appears once under its current name.
+A manifest file that is a symbolic link is an alias: an old agent name kept so that older releases still find the agent. Asking for the alias by name (`octomind run <alias tag>`) loads the agent behind the link. Tag completion and the `tap` tool's specialist matching leave the alias out, so each agent appears once under its current name.
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 
@@ -492,15 +490,12 @@ before automating ACP/tap subprocesses; do not expect their stdin to be availabl
 
 ### From within a session — the `tap` orchestration tool
 
-Inside a running session, the model can launch a tap role using the `tap` tool from the `orchestration` builtin server.
+Inside a running session, the model can hand a task to a specialist using the `tap` tool from the `orchestration` builtin server.
+The model does not choose the specialist: the runtime matches the prompt to one.
 These are JSON argument objects for separate MCP calls:
 
 ```json
-{"action": "discover", "intent": "review source code"}
-```
-
-```json
-{"action": "run", "role": "my-agents:chief", "prompt": "Summarize the project instructions", "workdir": "/tmp"}
+{"action": "run", "prompt": "Summarize the project instructions", "workdir": "/tmp"}
 ```
 
 ```json
@@ -531,8 +526,11 @@ To activate capabilities matching an intent in the current session, use the addi
 Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-my-agents-chief-9b2c1d` for
 `my-agents:chief`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
-`discover` matches your `intent` semantically against each agent's title + description (cosine score must exceed `0.2`,
-top 5 returned) and requires the local embedding model to be ready, erroring if it is not. Runs always execute in the
+`run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
+description. The best one gets the task when it clears a score threshold and a margin over the second best. With
+`[decision] taps = true` (off by default), the decision model confirms or overrules that pick among the top 5
+candidates or none. If nothing matches, `run` returns an error and starts nothing. Matching needs the local embedding
+model. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
 `tap`](../usage/07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps) for the full schema.
 

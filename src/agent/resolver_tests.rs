@@ -474,29 +474,50 @@ fn roster_system(manifest: &str, tag: &str) -> String {
 
 const ROSTER_MANIFEST: &str = "[[roles]]\nsystem = \"Team:\\n{{SPECIALISTS}}\"\n";
 
-#[test]
-#[serial]
-fn roster_lists_other_agents_of_the_domain_sorted() {
-	let guard = ResolverDataDir::new();
-	// Written out of order on purpose; the roster must come out sorted.
-	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
-	install_default_tap_manifest(guard.path(), "ztest", "mm", "# Description: He said \"hi\" \\ there\n");
-	install_default_tap_manifest(guard.path(), "ztest", "aa", "# Title: Only a title\n");
-	// Agents of other domains never appear in `{{SPECIALISTS}}`.
-	install_default_tap_manifest(guard.path(), "yother", "chief", "# Description: Runs yother\n");
-
-	let system = roster_system(ROSTER_MANIFEST, "ztest:zz");
-
-	assert_eq!(system, "Team:\n- ztest:aa\n- ztest:mm — He said \"hi\" \\ there");
+fn reachable_tags(tag: &str) -> Vec<String> {
+	let agents = crate::agent::taps::list_agent_headers().expect("agent headers");
+	reachable_specialists(tag, &agents)
+		.expect("reachable specialists")
+		.into_iter()
+		.map(|agent| agent.tag.clone())
+		.collect()
 }
 
 #[test]
 #[serial]
-fn roster_with_nothing_to_list_says_none() {
+fn specialists_placeholder_names_no_agent() {
 	let guard = ResolverDataDir::new();
 	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "ztest", "mm", "# Description: He said \"hi\" \\ there\n");
 
-	assert_eq!(roster_system(ROSTER_MANIFEST, "ztest:zz"), "Team:\n(none)");
+	let system = roster_system(ROSTER_MANIFEST, "ztest:zz");
+
+	assert_eq!(system, format!("Team:\n{ROUTED_ROSTER}"));
+	assert!(!system.contains("ztest:mm"));
+}
+
+#[test]
+#[serial]
+fn tap_agent_reaches_other_agents_of_its_domain_sorted() {
+	let guard = ResolverDataDir::new();
+	// Written out of order on purpose; the result must come out sorted.
+	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "ztest", "mm", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "ztest", "aa", "# Title: Only a title\n");
+	// Agents of other domains are out of reach without a `# Uses:` header.
+	install_default_tap_manifest(guard.path(), "yother", "chief", "# Description: Runs yother\n");
+
+	assert_eq!(reachable_tags("ztest:zz"), ["ztest:aa", "ztest:mm"]);
+}
+
+#[test]
+#[serial]
+fn caller_outside_the_taps_reaches_every_agent() {
+	let guard = ResolverDataDir::new();
+	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "yother", "chief", MANIFEST_HEADER);
+
+	assert_eq!(reachable_tags("local-role"), ["yother:chief", "ztest:zz"]);
 }
 
 #[test]
@@ -521,37 +542,43 @@ fn install_uses_agent(data_dir: &std::path::Path, uses: &str) {
 
 #[test]
 #[serial]
-fn uses_lists_domain_chief_and_tag_entries_sorted() {
+fn uses_placeholder_names_no_agent() {
 	let guard = ResolverDataDir::new();
-	install_uses_agent(guard.path(), "# Uses: seo:audit, content\n");
+	install_uses_agent(guard.path(), "# Uses: content\n");
 	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
-	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Not listed\n");
-	install_default_tap_manifest(guard.path(), "seo", "audit", "# Description: Audits pages\n");
 
 	assert_eq!(
 		roster_system(USES_MANIFEST, "mkt:chief"),
-		"Can call:\n- content — Runs content\n- seo:audit — Audits pages"
+		format!("Can call:\n{ROUTED_ROSTER}")
 	);
 }
 
 #[test]
 #[serial]
-fn uses_star_lists_every_other_domain_with_a_chief() {
+fn uses_reaches_domain_chief_and_tag_entries() {
+	let guard = ResolverDataDir::new();
+	install_uses_agent(guard.path(), "# Uses: seo:audit, content\n");
+	install_default_tap_manifest(guard.path(), "mkt", "email", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
+	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Out of reach\n");
+	install_default_tap_manifest(guard.path(), "seo", "audit", "# Description: Audits pages\n");
+
+	assert_eq!(reachable_tags("mkt:chief"), ["content:chief", "mkt:email", "seo:audit"]);
+}
+
+#[test]
+#[serial]
+fn uses_star_reaches_every_other_domain_with_a_chief() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "# Uses: *\n");
-	// Written out of order on purpose; `x` sorts before `x-y` as a domain, not as a tag.
 	install_default_tap_manifest(guard.path(), "x-y", "chief", "# Description: Runs x-y\n");
 	install_default_tap_manifest(guard.path(), "x", "chief", "# Description: Runs x\n");
 	install_default_tap_manifest(guard.path(), "content", "chief", "# Description: Runs content\n");
-	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Not listed\n");
+	install_default_tap_manifest(guard.path(), "content", "writer", "# Description: Out of reach\n");
 	// A domain without a chief is skipped, not an error.
 	install_default_tap_manifest(guard.path(), "nochief", "x", "# Description: Has no chief\n");
 
-	// The agent's own domain (`mkt`) is left out.
-	assert_eq!(
-		roster_system(USES_MANIFEST, "mkt:chief"),
-		"Can call:\n- content — Runs content\n- x — Runs x\n- x-y — Runs x-y"
-	);
+	assert_eq!(reachable_tags("mkt:chief"), ["content:chief", "x-y:chief", "x:chief"]);
 }
 
 #[test]
@@ -563,29 +590,17 @@ fn uses_star_combined_with_exact_entries_has_no_duplicates() {
 	install_default_tap_manifest(guard.path(), "seo", "chief", "# Description: Runs seo\n");
 	install_default_tap_manifest(guard.path(), "seo", "audit", "# Description: Audits pages\n");
 
-	assert_eq!(
-		roster_system(USES_MANIFEST, "mkt:chief"),
-		"Can call:\n- content — Runs content\n- seo — Runs seo\n- seo:audit — Audits pages"
-	);
+	assert_eq!(reachable_tags("mkt:chief"), ["content:chief", "seo:audit", "seo:chief"]);
 }
 
 #[test]
 #[serial]
-fn uses_star_with_no_other_domain_chief_says_none() {
-	let guard = ResolverDataDir::new();
-	install_uses_agent(guard.path(), "# Uses: *\n");
-	install_default_tap_manifest(guard.path(), "nochief", "x", MANIFEST_HEADER);
-
-	assert_eq!(roster_system(USES_MANIFEST, "mkt:chief"), "Can call:\n(none)");
-}
-
-#[test]
-#[serial]
-fn uses_without_header_says_none() {
+fn tap_agent_alone_in_its_domain_without_uses_reaches_nothing() {
 	let guard = ResolverDataDir::new();
 	install_uses_agent(guard.path(), "");
+	install_default_tap_manifest(guard.path(), "nochief", "x", MANIFEST_HEADER);
 
-	assert_eq!(roster_system(USES_MANIFEST, "mkt:chief"), "Can call:\n(none)");
+	assert!(reachable_tags("mkt:chief").is_empty());
 }
 
 #[test]
@@ -639,9 +654,12 @@ fn uses_empty_entry_is_an_error_only_for_its_declaring_agent() {
 		err,
 		"`mkt:chief` declares `# Uses: content, , seo:audit`, which has an empty entry"
 	);
-	// Another agent's roster is unaffected by the malformed header.
+	// Another agent's prompt is unaffected by the malformed header.
 	install_default_tap_manifest(guard.path(), "ztest", "zz", MANIFEST_HEADER);
-	assert_eq!(roster_system(USES_MANIFEST, "ztest:zz"), "Can call:\n(none)");
+	assert_eq!(
+		roster_system(USES_MANIFEST, "ztest:zz"),
+		format!("Can call:\n{ROUTED_ROSTER}")
+	);
 }
 
 #[test]
@@ -655,6 +673,6 @@ fn uses_own_domain_is_an_error() {
 		.to_string();
 	assert_eq!(
 		err,
-		"`mkt:chief` declares `# Uses: mkt`, but `mkt` is its own domain: use `{{SPECIALISTS}}` for your own domain"
+		"`mkt:chief` declares `# Uses: mkt`, but `mkt` is its own domain: its agents are reachable without it"
 	);
 }

@@ -195,9 +195,21 @@ fn plan() -> MigrationPlan {
 				to: 30,
 				apply: rename_v30_chief_tags,
 			},
+			VersionMigration {
+				from: 30,
+				to: 31,
+				apply: add_v31_decision_taps,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required `decision.taps` switch (off); an existing value is kept.
+fn add_v31_decision_taps(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_decision = required_table(template.as_table(), "decision", "embedded config")?;
+	let decision = ensure_table(document.as_table_mut(), template.as_table(), "decision", "user config")?;
+	merge_missing(decision, template_decision, "taps")
 }
 
 /// v30: domain lead agents were renamed to `chief` (see `RENAMED_TAGS`). Rewrite old tags used as
@@ -327,7 +339,8 @@ fn move_v22_decision(document: &mut toml_edit::DocumentMut, template: &toml_edit
 	for (key, item) in decision.iter() {
 		match key {
 			"model" if item.as_str().is_some() => {}
-			"recall" | "skills" | "capabilities" | "compression" | "supervisor" if item.as_bool().is_some() => {}
+			"recall" | "skills" | "capabilities" | "taps" | "compression" | "supervisor"
+				if item.as_bool().is_some() => {}
 			_ => anyhow::bail!("decision.{key}: unknown key or malformed value"),
 		}
 	}

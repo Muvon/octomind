@@ -27,17 +27,19 @@ use crate::agent::{deps, inputs, registry};
 use crate::config::{loading::merge_agent_toml, Config};
 use anyhow::{Context, Result};
 
-/// Placeholder in a tap manifest's `system` prompt, replaced by the other agents of the same domain.
+/// Placeholder in a tap manifest's `system` prompt that used to list the other agents of the same domain.
 const SPECIALISTS_PLACEHOLDER: &str = "{{SPECIALISTS}}";
 
-/// Placeholder in a tap manifest's `system` prompt, replaced by the agents and domains its `# Uses:` header declares.
+/// Placeholder in a tap manifest's `system` prompt that used to list the agents and domains its `# Uses:` header declares.
 const USES_PLACEHOLDER: &str = "{{USES}}";
 
 /// `# Uses:` entry standing for every other domain that has a `chief`.
 const ALL_DOMAINS_ENTRY: &str = "*";
 
-/// Roster text when a placeholder has nothing to list.
-const EMPTY_ROSTER: &str = "(none)";
+/// What both roster placeholders expand to. The agent no longer picks a specialist by name:
+/// `tap` matches the task against the agents `reachable_specialists` returns.
+const ROUTED_ROSTER: &str =
+	"(matched automatically: `tap(action=\"run\", prompt=…)` picks the specialist for the task; no role name is needed)";
 
 /// Expand a bare domain (no `:`) to the tag of its orchestrator, `<domain>:chief`.
 ///
@@ -185,92 +187,78 @@ fn prepare_role_manifest(toml_str: &str, tag: &str) -> Result<String> {
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }
 
-/// Replace `{{SPECIALISTS}}` and `{{USES}}` in a system prompt.
-/// Skips the tap scan when none is present. Output depends only on the taps'
-/// content, never on run order, so the prompt stays cacheable.
+/// Replace `{{SPECIALISTS}}` and `{{USES}}` in a system prompt with `ROUTED_ROSTER`.
+/// Skips the tap scan when none is present. The agent's `# Uses:` header is still
+/// checked here, so a bad entry fails the load and not the first delegation.
 fn expand_roster_placeholders(system: &mut String, tag: &str) -> Result<()> {
 	// An escaped `{{{{USES}}}}` contains `{{USES}}`; hide it from the replacements.
 	*system = inputs::protect_escaped_braces(system);
-	let wants_specialists = system.contains(SPECIALISTS_PLACEHOLDER);
-	let wants_uses = system.contains(USES_PLACEHOLDER);
-	if !wants_specialists && !wants_uses {
-		*system = inputs::restore_escaped_braces(system);
-		return Ok(());
-	}
-
-	let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents for roster")?;
-	let own_domain = tag.split_once(':').map_or(tag, |(domain, _)| domain);
-	let describe = |name: &str, description: Option<&str>| match description {
-		Some(description) => format!("- {name} — {description}"),
-		None => format!("- {name}"),
-	};
-	let join_lines = |lines: Vec<String>| {
-		if lines.is_empty() {
-			EMPTY_ROSTER.to_string()
-		} else {
-			lines.join("\n")
-		}
-	};
-
-	if wants_specialists {
-		let lines = agents
-			.iter()
-			.filter(|a| a.category == own_domain && a.tag != tag)
-			.map(|a| describe(&a.tag, a.header.description.as_deref()))
-			.collect();
-		*system = system.replace(SPECIALISTS_PLACEHOLDER, &join_lines(lines));
-	}
-	if wants_uses {
-		let mut entries = agents
-			.iter()
-			.find(|a| a.tag == tag)
-			.map_or_else(Vec::new, |a| a.header.uses.clone());
-		if entries.iter().any(String::is_empty) {
-			anyhow::bail!(
-				"`{tag}` declares `# Uses: {}`, which has an empty entry",
-				entries.join(", ")
-			);
-		}
-		if entries.iter().any(|entry| entry == ALL_DOMAINS_ENTRY) {
-			entries.retain(|entry| entry != ALL_DOMAINS_ENTRY);
-			entries.extend(
-				agents
-					.iter()
-					.filter(|a| a.category != own_domain && a.tag == format!("{}:{ORCHESTRATOR_SPEC}", a.category))
-					.map(|a| a.category.clone()),
-			);
-		}
-		// Sorted by entry, not by tag (where `x-y:chief` precedes `x:chief`); dedup drops a domain
-		// named both explicitly and through `*`.
-		entries.sort();
-		entries.dedup();
-		let lines = entries
-			.iter()
-			.map(|entry| {
-				let declared = format!("`{tag}` declares `# Uses: {entry}`");
-				let callee_tag = if entry.contains(':') {
-					entry.clone()
-				} else if entry == own_domain {
-					anyhow::bail!(
-						"{declared}, but `{entry}` is its own domain: use `{SPECIALISTS_PLACEHOLDER}` for your own domain"
-					);
-				} else {
-					format!("{entry}:{ORCHESTRATOR_SPEC}")
-				};
-				let callee = agents.iter().find(|a| a.tag == callee_tag).with_context(|| {
-					if entry.contains(':') {
-						format!("{declared}, but no such agent exists")
-					} else {
-						format!("{declared}, but domain `{entry}` has no `{ORCHESTRATOR_SPEC}`")
-					}
-				})?;
-				Ok(describe(entry, callee.header.description.as_deref()))
-			})
-			.collect::<Result<Vec<_>>>()?;
-		*system = system.replace(USES_PLACEHOLDER, &join_lines(lines));
+	if system.contains(SPECIALISTS_PLACEHOLDER) || system.contains(USES_PLACEHOLDER) {
+		let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents for roster")?;
+		reachable_specialists(tag, &agents)?;
+		*system = system
+			.replace(SPECIALISTS_PLACEHOLDER, ROUTED_ROSTER)
+			.replace(USES_PLACEHOLDER, ROUTED_ROSTER);
 	}
 	*system = inputs::restore_escaped_braces(system);
 	Ok(())
+}
+
+/// The agents `tag` may hand a task to, sorted by tag, each once.
+///
+/// A tap agent reaches the other agents of its own domain plus what its `# Uses:` header
+/// declares: a bare domain stands for that domain's `chief`, a full tag for that agent, `*`
+/// for the `chief` of every other domain. A caller that is not a tap agent (a role from the
+/// local config) has no header and reaches every agent.
+pub fn reachable_specialists<'a>(
+	tag: &str,
+	agents: &'a [crate::agent::taps::TapAgentHeader],
+) -> Result<Vec<&'a crate::agent::taps::TapAgentHeader>> {
+	let Some(caller) = agents.iter().find(|a| a.tag == tag) else {
+		return Ok(agents.iter().collect());
+	};
+	let own_domain = caller.category.as_str();
+	let mut reachable: Vec<&crate::agent::taps::TapAgentHeader> = agents
+		.iter()
+		.filter(|a| a.category == own_domain && a.tag != tag)
+		.collect();
+	if caller.header.uses.iter().any(String::is_empty) {
+		anyhow::bail!(
+			"`{tag}` declares `# Uses: {}`, which has an empty entry",
+			caller.header.uses.join(", ")
+		);
+	}
+	for entry in &caller.header.uses {
+		let declared = format!("`{tag}` declares `# Uses: {entry}`");
+		if entry == ALL_DOMAINS_ENTRY {
+			reachable.extend(
+				agents
+					.iter()
+					.filter(|a| a.category != own_domain && a.tag == format!("{}:{ORCHESTRATOR_SPEC}", a.category)),
+			);
+			continue;
+		}
+		let callee_tag = if entry.contains(':') {
+			entry.clone()
+		} else if entry == own_domain {
+			anyhow::bail!("{declared}, but `{entry}` is its own domain: its agents are reachable without it");
+		} else {
+			format!("{entry}:{ORCHESTRATOR_SPEC}")
+		};
+		let callee = agents.iter().find(|a| a.tag == callee_tag).with_context(|| {
+			if entry.contains(':') {
+				format!("{declared}, but no such agent exists")
+			} else {
+				format!("{declared}, but domain `{entry}` has no `{ORCHESTRATOR_SPEC}`")
+			}
+		})?;
+		reachable.push(callee);
+	}
+	// A domain named both explicitly and through `*`, or a tag of the caller's own domain,
+	// would otherwise appear twice.
+	reachable.sort_by(|a, b| a.tag.cmp(&b.tag));
+	reachable.dedup_by(|a, b| a.tag == b.tag);
+	Ok(reachable)
 }
 
 #[cfg(test)]

@@ -210,14 +210,11 @@ builtin server instead of defining your own `[[agents]]`:
 Ask the coordinator to call `tap` with these arguments:
 
 ```json
-{"action": "discover", "intent": "review code for OWASP Top 10 issues"}
+{"action": "run", "prompt": "Audit src/auth/ for security bugs. Do not edit files. Return file:line evidence and concrete failure scenarios."}
 ```
 
-Use an exact role returned by discovery. If `developer:general` is returned and fits the task, the next `tap` call is:
-
-```json
-{"action": "run", "role": "developer:general", "prompt": "Audit src/auth/ for security bugs. Do not edit files. Return file:line evidence and concrete failure scenarios."}
-```
+You do not name the specialist. The runtime matches the prompt to the best installed specialist and starts it; the
+reply names the matched `role` and `title`. If no specialist fits, `run` returns an error and starts nothing.
 
 `run` starts in the background and returns its ID. On completion, the inbox receives a tap-run result labeled with the
 ID and role. It is a system-managed continuation, distinct from the `[Async agent 'NAME' completed]` label used by
@@ -247,9 +244,9 @@ After it finishes, use `run` to resume it:
 `list` lists runs in the current session, not the installed role catalog. Omitting `session` on a follow-up starts a
 fresh specialist. Resuming a still-running tap returns a busy error.
 
-Discovery requires initialized embeddings and returns up to five matches with cosine score above 0.2. A vague intent may
-return none. The separate `tap` capability action attempts capability auto-activation and can return an empty activation
-list; it does not share discovery's explicit embedding error contract:
+Matching requires initialized embeddings. A vague prompt may match no specialist. The separate `tap` capability action
+attempts capability auto-activation and can return an empty activation list; it does not share matching's explicit
+embedding error contract:
 
 ```json
 {"action": "capability", "prompt": "I need to search the project's source code."}

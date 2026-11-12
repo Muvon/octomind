@@ -1191,10 +1191,10 @@ fn v30_leaves_a_config_without_old_tags_unchanged_except_the_version() {
 	let input =
 		"version = 29\ndefault = \"assistant:general\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
 	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
-	assert_eq!(
-		migration.content,
-		input.replace("version = 29", &format!("version = {CURRENT_CONFIG_VERSION}"))
-	);
+	// Later steps may append sections; what v30 could have rewritten stays as written.
+	assert!(migration
+		.content
+		.starts_with(&input.replace("version = 29", &format!("version = {CURRENT_CONFIG_VERSION}"))));
 }
 
 #[test]

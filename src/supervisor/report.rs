@@ -39,6 +39,7 @@ pub enum Mechanic {
 	Capabilities,
 	Compression,
 	Advise,
+	Taps,
 }
 
 impl Mechanic {
@@ -58,6 +59,7 @@ impl Mechanic {
 			Self::Capabilities => "capabilities",
 			Self::Compression => "compression",
 			Self::Advise => "advise",
+			Self::Taps => "taps",
 		}
 	}
 	pub(super) fn from_kind(kind: CallKind) -> Option<Self> {
@@ -90,6 +92,7 @@ impl Mechanic {
 			Seam::Capabilities => Self::Capabilities,
 			Seam::Compression => Self::Compression,
 			Seam::Advise => Self::Advise,
+			Seam::Taps => Self::Taps,
 		}
 	}
 	pub(super) fn usage_mut(self, accounting: &mut SupervisorAccounting) -> &mut Usage {
@@ -108,6 +111,7 @@ impl Mechanic {
 			Self::Skills => return accounting.seams.entry(Seam::Skills).or_default(),
 			Self::Capabilities => return accounting.seams.entry(Seam::Capabilities).or_default(),
 			Self::Compression => return accounting.seams.entry(Seam::Compression).or_default(),
+			Self::Taps => return accounting.seams.entry(Seam::Taps).or_default(),
 		};
 		accounting.kinds.entry(kind).or_default()
 	}

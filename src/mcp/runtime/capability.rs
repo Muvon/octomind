@@ -831,7 +831,7 @@ const AUTO_ACTIVATE_TOP_K: usize = 3;
 /// candidate, top2 is treated as 0.0. Sort is stable (Timsort) so ties
 /// preserve insertion order. Pure helper, separated from the embedding-
 /// driven path so threshold/margin behavior is unit-testable.
-fn select_with_margin<T>(mut scored: Vec<(f32, T)>, threshold: f32, margin: f32) -> Option<(f32, T)> {
+pub(crate) fn select_with_margin<T>(mut scored: Vec<(f32, T)>, threshold: f32, margin: f32) -> Option<(f32, T)> {
 	if scored.is_empty() {
 		return None;
 	}

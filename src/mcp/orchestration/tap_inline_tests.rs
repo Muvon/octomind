@@ -42,7 +42,7 @@ fn schema_advertises_all_actions() {
 	assert!(names.contains(&"list"));
 	assert!(names.contains(&"stop"));
 	assert!(names.contains(&"send"));
-	assert!(names.contains(&"discover"));
+	assert!(!names.contains(&"discover"));
 	assert!(names.contains(&"capability"));
 }
 
@@ -283,22 +283,7 @@ async fn stop_finished_job_reports_terminal_status() {
 }
 
 #[tokio::test]
-async fn discover_requires_intent() {
-	let config = test_config();
-	for params in [
-		json!({"action": "discover"}),
-		json!({"action": "discover", "intent": "  "}),
-	] {
-		let result = execute_tap_command(&tap_call(params), &config).await.expect("dispatch");
-		assert!(result.is_error());
-		assert!(result.extract_content().contains("Missing required parameter 'intent'"));
-	}
-}
-
-#[tokio::test]
-#[serial]
-async fn discover_with_no_taps_installed_succeeds() {
-	let _guard = DataDirGuard::new();
+async fn discover_is_no_longer_an_action() {
 	let config = test_config();
 	let result = execute_tap_command(
 		&tap_call(json!({"action": "discover", "intent": "review a contract"})),
@@ -306,8 +291,8 @@ async fn discover_with_no_taps_installed_succeeds() {
 	)
 	.await
 	.expect("dispatch");
-	assert!(!result.is_error());
-	assert_eq!(result.extract_content(), "No tap agents installed.");
+	assert!(result.is_error());
+	assert!(result.extract_content().contains("Unknown action 'discover'"));
 }
 
 #[tokio::test]
@@ -326,24 +311,23 @@ async fn capability_requires_prompt() {
 #[tokio::test]
 async fn run_requires_prompt() {
 	let config = test_config();
-	let result = execute_tap_command(
-		&tap_call(json!({"action": "run", "role": "developer:general"})),
-		&config,
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_tap_command(&tap_call(json!({"action": "run"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(result.is_error());
 	assert!(result.extract_content().contains("Missing required parameter 'prompt'"));
 }
 
 #[tokio::test]
-async fn run_requires_role_or_session() {
+#[serial]
+async fn run_with_no_specialist_installed_is_an_error_and_starts_nothing() {
+	let _guard = DataDirGuard::new();
 	let config = test_config();
 	let result = execute_tap_command(&tap_call(json!({"action": "run", "prompt": "do work"})), &config)
 		.await
 		.expect("dispatch");
 	assert!(result.is_error());
-	assert!(result.extract_content().contains("Missing 'role' for new run"));
+	assert_eq!(result.extract_content(), super::super::tap_route::NO_SPECIALIST);
 }
 
 #[tokio::test]

@@ -55,26 +55,25 @@ pub fn get_tap_function() -> McpFunction {
 		name: "tap".to_string(),
 		// The tapped agent may change anything its own tools can.
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
-		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit — identified by `category:variant` (e.g. `developer:general`, `lawyer:us`) or a bare domain (`developer`, runs its `chief` orchestrator). Use this tool to hand off a focused task, check its status, stop it, or browse the catalog.
+		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. You do not choose the role: send the task, and the specialist that fits it is matched and started for you. Use this tool to hand off a focused task, check its status, or stop it.
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
 - You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn on its own; do not poll, re-check or relaunch it (`list` shows its status).
-- You want to keep a focused dialog with one specialist across multiple turns — keep the returned `session` id and pass it back on subsequent `run` calls.
+- You want to keep a focused dialog with one specialist across multiple turns — keep the returned `id` and pass it back as `session` on subsequent `run` calls.
 
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
 
-Discovery flow:
-- ALWAYS start with `tap(action="discover", intent="<plain-English need>")` unless the role was already returned by a previous `discover` or `list` call in this session. Never guess a role name from context, documentation, or examples — role names are only valid after `discover` confirms they exist.
-- After `discover` returns matches, pick the best-fit role from the results, then call `run` with that exact role string.
+Matching:
+- `run` reads only `prompt` to match a specialist, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
+- When no specialist fits, `run` returns an error and starts nothing: do the task with your own tools or report it. Do not rephrase the same task to force a match.
 - If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
-- `run`        — launch a role in the background. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
+- `run`        — match a specialist to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `session` (resume that run with its original role), `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `send`       — queue a user message for a running specialist's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
-- `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
 - `capability` — trigger skill/capability auto-activation. Required: `prompt`.
 - `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. With `name` but no `input`: nothing runs; returns the workflow definition (its steps and where `{{input}}` lands) so you can compose the input, then call again with `input`. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
 		parameters: json!({
@@ -82,16 +81,12 @@ Actions:
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "send", "discover", "capability", "workflow"],
+					"enum": ["run", "list", "stop", "send", "capability", "workflow"],
 					"description": "Action to perform"
-				},
-				"role": {
-					"type": "string",
-					"description": "Specialist role to launch: a full tag like 'developer:general' or a bare domain like 'developer' (runs its `chief` orchestrator). Required for run when `session` is not given. Use `discover` first if unsure which role fits."
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run or send, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
+					"description": "Prompt for run or send, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings, and it is also the only text a specialist is matched on. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
 				},
 				"session": {
 					"type": "string",
@@ -100,10 +95,6 @@ Actions:
 				"workdir": {
 					"type": "string",
 					"description": "Working directory the specialist operates in. Optional — defaults to the current working directory. Useful when the specialist must reason over a different repo or sub-project than the parent. Ignored when resuming with `session` (the original workdir is kept)."
-				},
-				"intent": {
-					"type": "string",
-					"description": "Free-text intent for discover (e.g., 'review a Singapore employment contract', 'debug a Kubernetes pod crash')."
 				},
 				"name": {
 					"type": "string",
@@ -139,13 +130,12 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		"run" => handle_run(call, config).await,
 		"stop" => handle_stop(call).await,
 		"send" => handle_send(call),
-		"discover" => handle_discover(call).await,
 		"capability" => handle_capability(call, config).await,
 		"workflow" => handle_workflow(call).await,
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, send, discover, capability, or workflow."),
+			format!("Unknown action '{other}'. Use run, list, stop, send, capability, or workflow."),
 		)),
 	}
 }
@@ -348,107 +338,6 @@ async fn handle_stop(call: &McpToolCall) -> Result<McpToolResult> {
 	}
 }
 
-async fn handle_discover(call: &McpToolCall) -> Result<McpToolResult> {
-	let intent = match call.parameters.get("intent").and_then(|v| v.as_str()) {
-		Some(i) if !i.trim().is_empty() => i.trim().to_string(),
-		_ => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'intent'.".to_string(),
-			));
-		}
-	};
-	let agents = match crate::agent::registry::list_all_tap_agents() {
-		Ok(a) => a,
-		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to enumerate tap agents: {e:#}"),
-			));
-		}
-	};
-	if agents.is_empty() {
-		return Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"No tap agents installed.".to_string(),
-		));
-	}
-	if !crate::embeddings::is_ready() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"tap discover requires the embedding model. Init failed or not ready yet.".to_string(),
-		));
-	}
-
-	let intent_vec = match crate::embeddings::embed(&intent).await {
-		Ok(v) => v,
-		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("tap discover embedding failed: {e:#}"),
-			));
-		}
-	};
-	let corpus: Vec<String> = agents
-		.iter()
-		.map(|a| format!("{}. {}", a.meta.title, a.meta.description))
-		.collect();
-	let corpus_vecs = match crate::embeddings::embed_many(&corpus).await {
-		Ok(v) => v,
-		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("tap discover embedding failed: {e:#}"),
-			));
-		}
-	};
-
-	let mut scored: Vec<(f32, &crate::agent::registry::TapAgent)> = agents
-		.iter()
-		.zip(corpus_vecs.iter())
-		.map(|(a, v)| (crate::embeddings::cosine(&intent_vec, v), a))
-		.filter(|(score, _)| *score > 0.2)
-		.collect();
-	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	let top: Vec<_> = scored.into_iter().take(5).collect();
-
-	if top.is_empty() {
-		return Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("No tap agents matched intent '{intent}'."),
-		));
-	}
-
-	let entries: Vec<serde_json::Value> = top
-		.into_iter()
-		.map(|(score, a)| {
-			json!({
-				"role": a.role,
-				"title": a.meta.title,
-				"description": a.meta.description,
-				"source_tap": a.source_tap,
-				"score": (score * 100.0).round() / 100.0,
-			})
-		})
-		.collect();
-	Ok(McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		json!({
-			"intent": intent,
-			"matches": entries,
-		})
-		.to_string(),
-	))
-}
-
 async fn handle_capability(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
@@ -522,12 +411,6 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 		.and_then(|v| v.as_str())
 		.map(|s| s.trim().to_string())
 		.filter(|s| !s.is_empty());
-	let role_param = call
-		.parameters
-		.get("role")
-		.and_then(|v| v.as_str())
-		.map(|s| s.trim().to_string())
-		.filter(|s| !s.is_empty());
 	let workdir_param = call
 		.parameters
 		.get("workdir")
@@ -540,10 +423,10 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 	// resume picks up the original workdir from the existing job.
 	let cwd_default = crate::mcp::get_thread_working_directory().to_string_lossy().to_string();
 
-	// Resolve (id, role, workdir, status, cancel_rx) for resume vs. fresh.
+	// Resolve (id, role, title, workdir, status, cancel_rx) for resume vs. fresh.
 	// Conversation history is persisted on disk by the ACP subprocess under
 	// the session name `<id>` — we don't track messages in-memory anymore.
-	let (id, role, workdir, status, cancel_rx) = if let Some(sid) = session {
+	let (id, role, title, workdir, status, cancel_rx) = if let Some(sid) = session {
 		let claim = match tap_runs::resume_run(&sid) {
 			Ok(claim) => claim,
 			Err(error) => {
@@ -554,27 +437,19 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 				));
 			}
 		};
-		(sid, claim.role, claim.workdir, claim.status, claim.cancel_rx)
+		(sid, claim.role, None, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
-		let role = match role_param {
-			Some(t) => match crate::agent::resolver::expand_domain_role(&t, config) {
-				Ok(role) => role,
-				Err(error) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						format!("{error:#}"),
-					));
-				}
-			},
-			None => {
+		let specialist = match super::tap_route::route_task(&prompt, config).await {
+			Ok(specialist) => specialist,
+			Err(error) => {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					"Missing 'role' for new run (or supply 'session' to resume).".to_string(),
+					error,
 				));
 			}
 		};
+		let role = specialist.tag;
 		let workdir = workdir_param.unwrap_or(cwd_default);
 		let id = tap_runs::generate_id(&role);
 		let status = Arc::new(RwLock::new(TapJobStatus::Running));
@@ -592,7 +467,7 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 		if let Err(error) = tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role)) {
 			crate::log_error!("Tap run {}: failed to start event stream: {}", id, error);
 		}
-		(id, role, workdir, status, cancel_rx)
+		(id, role, specialist.header.title, workdir, status, cancel_rx)
 	};
 
 	// Resolve the path to the currently-running octomind binary so the
@@ -702,12 +577,19 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
-		json!({
-			"id": id,
-			"role": role,
-			"workdir": workdir,
-			"message": "Tap-run started. Reply will be injected as a user message when ready.",
-		})
+		{
+			let mut started = json!({
+				"id": id,
+				"role": role,
+				"workdir": workdir,
+				"message": "Tap-run started. Reply will be injected as a user message when ready.",
+			});
+			// What the matched specialist does, so a wrong match is visible and can be stopped.
+			if let Some(title) = title {
+				started["title"] = json!(title);
+			}
+			started
+		}
 		.to_string(),
 	))
 }

@@ -609,6 +609,7 @@ or `OCTOHUB_API_KEY` (and optionally `OCTOHUB_API_URL`).
 | `recall` | bool | `false` | Filter recalled scoped lessons for relevance. If unavailable, keep the candidates. |
 | `skills` | bool | `false` | Choose an inactive skill when rules abstain. If unavailable, activate none. |
 | `capabilities` | bool | `false` | Confirm or promote capability selection. If unavailable, keep the cosine result. |
+| `taps` | bool | `false` | Confirm or overrule the specialist that `tap(action="run")` picked by cosine match, choosing among the top 5 candidates or none. If unavailable, keep the cosine result. |
 | `compression` | bool | `false` | Demote unneeded summarize packets before a fold. If unavailable, keep the lanes. |
 | `supervisor` | bool | `false` | Route supervisor decisions and evolution grading through this model. |
 
@@ -618,6 +619,7 @@ model = "cloudflare:typesafe/jev"
 recall = false
 skills = false
 capabilities = false
+taps = false
 compression = false
 supervisor = false
 ```

@@ -75,9 +75,10 @@ pub enum Seam {
 	Capabilities,
 	Evolution,
 	Advise,
+	Taps,
 }
 
-pub const SEAM_COUNT: usize = 11;
+pub const SEAM_COUNT: usize = 12;
 
 impl Seam {
 	pub const ALL: [Seam; SEAM_COUNT] = [
@@ -92,6 +93,7 @@ impl Seam {
 		Seam::Capabilities,
 		Seam::Evolution,
 		Seam::Advise,
+		Seam::Taps,
 	];
 
 	pub fn name(self) -> &'static str {
@@ -107,6 +109,7 @@ impl Seam {
 			Seam::Capabilities => "capabilities",
 			Seam::Evolution => "evolution",
 			Seam::Advise => "advise",
+			Seam::Taps => "taps",
 		}
 	}
 
@@ -123,6 +126,7 @@ impl Seam {
 			Seam::Capabilities => 8,
 			Seam::Evolution => 9,
 			Seam::Advise => 10,
+			Seam::Taps => 11,
 		}
 	}
 
@@ -139,6 +143,7 @@ impl Seam {
 			Seam::Capabilities => config.capabilities,
 			Seam::Evolution => config.supervisor,
 			Seam::Advise => config.supervisor,
+			Seam::Taps => config.taps,
 		}
 	}
 }
@@ -217,6 +222,15 @@ pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
 /// the tap's eval set; listing the whole roster spreads the distribution and
 /// costs nine times the tokens.
 pub const CAPABILITY_TOP_K: usize = 5;
+/// Taps: a cosine-matched specialist keeps the task only when the Choice gives
+/// it at least this. Same reasoning as `CAPABILITY_CONFIRM_AT`: cosine already
+/// cleared its threshold and margin, so only a flat rejection overrules it.
+pub const TAP_CONFIRM_AT: f64 = CAPABILITY_CONFIRM_AT;
+/// Taps: with no cosine winner, the chosen specialist gets the task only when
+/// its own probability in the Choice is at or above this.
+pub const TAP_ACTIVATE_AT: f64 = CAPABILITY_ACTIVATE_AT;
+/// Taps: the Choice lists this many best-scored reachable specialists plus `none`.
+pub const TAP_TOP_K: usize = CAPABILITY_TOP_K;
 /// Evolution: a shadow or live artifact whose "applies to this request"
 /// probability is below this contributes no sample for the turn — its trigger
 /// fired on a request its behavior does not address.
@@ -262,6 +276,10 @@ pub const SKILL_QUESTION_ID: &str = "skill";
 pub const CAPABILITY_NONE: &str = SKILL_NONE;
 /// Question id of the single capability Choice.
 pub const CAPABILITY_QUESTION_ID: &str = "capability";
+/// Choice option meaning "no specialist fits"; the same key as the skills'.
+pub const TAP_NONE: &str = SKILL_NONE;
+/// Question id of the single specialist Choice.
+pub const TAP_QUESTION_ID: &str = "specialist";
 /// Question id of the evolution seam's turn-outcome Noul.
 pub const EVOLUTION_OUTCOME_ID: &str = "outcome";
 /// Question id of the advise seam's usefulness Noul. No threshold constant:
@@ -452,6 +470,8 @@ const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
 const CAPABILITY_QUESTION: &str = "Which capability applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed capability fits.";
 const CAPABILITY_NONE_DESCRIPTION: &str = "No capability in this list applies to the request";
+const TAP_QUESTION: &str = "Which specialist should do the task? Choose the one whose description covers the work the task asks for; choose none when no listed specialist fits.";
+const TAP_NONE_DESCRIPTION: &str = "No specialist in this list fits the task";
 /// Authorizer Nouls, keyed by the suffix appended to each pending call id.
 /// One per conflict kind the supervisor judge may block on (`prohibition`,
 /// `scope`): a flag for a property the judge cannot veto — a routine edit
@@ -500,6 +520,11 @@ pub fn skill_question<'a>(roster: impl IntoIterator<Item = (&'a str, &'a str)>) 
 /// One Choice over the best-scored inactive capabilities plus `none`.
 pub fn capability_question<'a>(roster: impl IntoIterator<Item = (&'a str, &'a str)>) -> Question {
 	roster_question(CAPABILITY_QUESTION, CAPABILITY_NONE_DESCRIPTION, roster)
+}
+
+/// One Choice over the best-scored reachable specialists plus `none`.
+pub fn tap_question<'a>(roster: impl IntoIterator<Item = (&'a str, &'a str)>) -> Question {
+	roster_question(TAP_QUESTION, TAP_NONE_DESCRIPTION, roster)
 }
 
 fn roster_question<'a>(

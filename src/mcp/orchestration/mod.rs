@@ -15,7 +15,7 @@
 //! Orchestration MCP provider — cross-domain delegation and session-flow control.
 //!
 //! Orchestrator-tier session primitives:
-//! - `tap`      — discover and run registry specialists (cross-domain delegation).
+//! - `tap`      — match a task to a registry specialist and run it (cross-domain delegation).
 //! - `schedule` — inject deferred/recurring user messages (session-flow control).
 //! - `monitor`  — run event-stream commands with bounded, rate-limited injection.
 //!
@@ -27,6 +27,7 @@ use crate::mcp::McpFunction;
 pub mod monitor;
 pub mod schedule;
 pub mod tap;
+mod tap_route;
 
 pub use monitor::{execute_monitor_tool, has_running_monitors};
 pub use schedule::{

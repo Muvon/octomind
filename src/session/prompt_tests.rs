@@ -159,7 +159,7 @@ async fn scheduling_guidance_matches_enabled_tools_and_focuses_on_tap() {
 			assert!(prompt.contains("Results/errors return to your inbox"));
 		}
 		if tools.contains(&"schedule") && tools.contains(&"tap") {
-			assert!(prompt.contains("Discover the role before scheduling"));
+			assert!(prompt.contains("the specialist is matched from the prompt when the schedule fires"));
 			assert!(prompt.contains("Include session to resume"));
 			assert!(prompt.contains("do not poll it"));
 		}

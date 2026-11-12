@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 30
+version = 31
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -708,6 +708,8 @@ recall = false
 skills = false
 # Confirm or promote capability selection. Unavailable keeps the cosine result.
 capabilities = false
+# Confirm or promote the specialist matched to a delegated task. Unavailable keeps the cosine result.
+taps = false
 # Demote unneeded summarize packets before a fold. Unavailable keeps lanes.
 compression = false
 # Route supervisor decisions and evolution grading through this model.

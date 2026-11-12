@@ -22,6 +22,7 @@ pub struct DecisionConfig {
 	pub recall: bool,
 	pub skills: bool,
 	pub capabilities: bool,
+	pub taps: bool,
 	pub compression: bool,
 	pub supervisor: bool,
 }

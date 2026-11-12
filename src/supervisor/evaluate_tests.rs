@@ -61,6 +61,7 @@ fn master_switch_off_disables_every_seam() {
 	config.decision.compression = true;
 	config.decision.supervisor = true;
 	config.decision.capabilities = true;
+	config.decision.taps = true;
 	for seam in Seam::ALL {
 		assert!(enabled(&config, seam));
 	}

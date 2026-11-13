@@ -576,11 +576,16 @@ taps/
     octomind-tap/         # built-in default (muvon/tap)
 ```
 
-GitHub taps clone from `github.com/<user>/octomind-<repo>` (note the `octomind-` prefix on the repo name) and are pulled
-during full tap loading. Hot-path discovery uses already-local tap data without a pull. Local taps are live symlinks,
-but agent resolution still uses the separate manifest cache below. The default `muvon/tap` is auto-cloned on first use.
-The pull runs in the background. A tag or bare domain that the clone does not have yet waits for the pull that run
-started, up to 30 seconds, and is then looked up once more, so an agent published since the last pull resolves on the
+GitHub taps clone from `github.com/<user>/octomind-<repo>` (note the `octomind-` prefix on the repo name) and are synced
+during full tap loading, at most every 15 minutes and at once on the first run of a new octomind version. Hot-path
+discovery uses already-local tap data without a sync. Local taps are live symlinks, but agent resolution still uses the
+separate manifest cache below. The default `muvon/tap` is auto-cloned on first use.
+
+A GitHub tap's clone is a read-only mirror: each sync resets it to the upstream default branch, discarding local edits,
+local commits and new files in it. To customise agents, use a local tap or push to the tap's repository.
+
+The sync runs in the background. A tag or bare domain that the clone does not have yet waits for the sync that run
+started, up to 30 seconds, and is then looked up once more, so an agent published since the last sync resolves on the
 first try.
 
 ### Manifest Caching

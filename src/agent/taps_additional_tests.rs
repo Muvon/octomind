@@ -447,10 +447,100 @@ fn git_clone_failure_surfaces_error() {
 }
 
 #[test]
-fn git_pull_on_non_repository_is_ok() {
-	let dir = tempfile::tempdir().unwrap();
-	fs::create_dir_all(dir.path().join("sub")).unwrap();
-	git_pull(&dir.path().to_path_buf()).expect("pull failures are logged, not propagated");
+#[serial]
+fn sync_clone_never_touches_an_enclosing_repository() {
+	// A tap dir left without `.git` (a failed clone) inside a dotfiles repo.
+	let outer = tempfile::tempdir().unwrap();
+	fs::write(outer.path().join("notes.txt"), "committed").unwrap();
+	git_in(outer.path(), &["init"]);
+	commit_all(outer.path(), "init");
+	fs::write(outer.path().join("notes.txt"), "uncommitted edit").unwrap();
+	let tap_dir = outer.path().join("taps").join("probe");
+	fs::create_dir_all(&tap_dir).unwrap();
+
+	let err = sync_clone(&tap_dir).unwrap_err();
+
+	assert!(err.to_string().contains("is not a git clone"), "{err:#}");
+	assert_eq!(
+		fs::read_to_string(outer.path().join("notes.txt")).unwrap(),
+		"uncommitted edit"
+	);
+}
+
+#[test]
+#[serial]
+fn sync_clone_makes_a_dirty_diverged_clone_match_upstream() {
+	// Prod 2026-11-13: an agent edited a manifest inside the default tap clone and
+	// every later `pull --ff-only` failed, so the clone never saw a new agent.
+	let remote = tempfile::tempdir().expect("remote");
+	fs::write(remote.path().join("agent.toml"), "v1").expect("write v1");
+	git_in(remote.path(), &["init"]);
+	commit_all(remote.path(), "v1");
+
+	let root = tempfile::tempdir().expect("clone root");
+	let clone = root.path().join("tap");
+	let url = format!("file://{}", remote.path().display());
+	git_in(
+		root.path(),
+		&["clone", "--depth", "1", &url, clone.to_str().expect("utf-8 path")],
+	);
+
+	fs::write(remote.path().join("agent.toml"), "v2").expect("write v2");
+	commit_all(remote.path(), "v2");
+
+	fs::write(clone.join("committed.toml"), "local").expect("write local file");
+	commit_all(&clone, "local commit");
+	fs::write(clone.join("agent.toml"), "edited in place").expect("edit tracked file");
+	fs::write(clone.join("untracked.toml"), "new").expect("write untracked file");
+
+	sync_clone(&clone).expect("sync a dirty, diverged clone");
+
+	assert_eq!(fs::read_to_string(clone.join("agent.toml")).unwrap(), "v2");
+	assert!(!clone.join("committed.toml").exists(), "local commit discarded");
+	assert!(!clone.join("untracked.toml").exists(), "untracked file removed");
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn sync_clone_leaves_a_symlinked_tap_alone() {
+	let target = tempfile::tempdir().expect("local tap source");
+	let root = tempfile::tempdir().expect("link root");
+	let link = root.path().join("tap");
+	std::os::unix::fs::symlink(target.path(), &link).expect("symlink tap");
+
+	sync_clone(&link).expect("a local tap is never synced");
+}
+
+/// Run `git` in `dir` with no user config prompts; panics on failure.
+fn git_in(dir: &Path, args: &[&str]) {
+	let status = std::process::Command::new("git")
+		.args(args)
+		.current_dir(dir)
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.status()
+		.expect("run git");
+	assert!(status.success(), "git {args:?} failed");
+}
+
+/// Stage everything in `dir` and commit it as a throwaway identity.
+fn commit_all(dir: &Path, message: &str) {
+	git_in(dir, &["add", "."]);
+	git_in(
+		dir,
+		&[
+			"-c",
+			"user.name=test",
+			"-c",
+			"user.email=test@example.com",
+			"-c",
+			"commit.gpgsign=false",
+			"commit",
+			"-m",
+			message,
+		],
+	);
 }
 
 // --- load_taps / list_agent_tags / fetch_workflow edge branches -------------
@@ -660,7 +750,7 @@ fn add_tap_github_existing_dir_pulls_and_succeeds_on_non_repo() {
 	fs::create_dir_all(&tap_dir).expect("pre-create tap dir");
 
 	// An existing directory that is not a git repo: the update path runs, the
-	// pull failure is swallowed by git_pull, and the tap is still registered.
+	// sync failure is logged, and the tap is still registered.
 	add_tap("probe/stale").expect("tap added despite failed pull");
 	let taps = load_taps().expect("reload taps");
 	assert!(
@@ -764,15 +854,25 @@ fn load_taps_returns_while_the_pull_is_still_running() {
 
 	load_taps().expect("load taps");
 
-	assert!(git_dir.join(REFRESH_STAMP).exists(), "stamp is written before the pull");
+	assert!(git_dir.join(REFRESH_STAMP).exists(), "stamp is written before the sync");
 	wait_for(&fake_git.calls_file());
-	assert!(!fake_git.done_file().exists(), "load_taps must not wait for the pull");
+	assert!(!fake_git.done_file().exists(), "load_taps must not wait for the sync");
 	assert_eq!(
 		fs::read_to_string(fake_git.calls_file()).unwrap().trim(),
-		"pull --ff-only prompt=0"
+		"fetch --depth 1 origin HEAD prompt=0"
 	);
 	fake_git.release_and_wait();
+	assert!(wait_for_started_refreshes(), "the sync ends");
+	assert_eq!(
+		fs::read_to_string(fake_git.calls_file()).unwrap(),
+		SYNC_CALLS,
+		"fetch, then reset to it, then clean"
+	);
 }
+
+/// The git calls of one [`sync_clone`], as [`FakeGit`] records them.
+#[cfg(unix)]
+const SYNC_CALLS: &str = "fetch --depth 1 origin HEAD prompt=0\nreset --hard FETCH_HEAD prompt=0\nclean -fd prompt=0\n";
 
 #[cfg(unix)]
 #[test]
@@ -788,10 +888,11 @@ fn back_to_back_load_taps_start_one_refresh() {
 
 	wait_for(&fake_git.calls_file());
 	fake_git.release_and_wait();
+	assert!(wait_for_started_refreshes(), "the sync ends");
 	assert_eq!(
-		fs::read_to_string(fake_git.calls_file()).unwrap().lines().count(),
-		1,
-		"the stamp must keep the second load from pulling again"
+		fs::read_to_string(fake_git.calls_file()).unwrap(),
+		SYNC_CALLS,
+		"the stamp must keep the second load from syncing again"
 	);
 }
 
@@ -803,30 +904,8 @@ fn missing_default_tap_is_cloned_before_load_taps_returns() {
 	let remote = remote_root.path().join("muvon").join("octomind-tap");
 	fs::create_dir_all(&remote).expect("create remote");
 	fs::write(remote.join("marker.txt"), "cloned").expect("write marker");
-	for args in [
-		vec!["init"],
-		vec!["add", "."],
-		vec![
-			"-c",
-			"user.name=test",
-			"-c",
-			"user.email=test@example.com",
-			"-c",
-			"commit.gpgsign=false",
-			"commit",
-			"-m",
-			"init",
-		],
-	] {
-		let status = std::process::Command::new("git")
-			.args(&args)
-			.current_dir(&remote)
-			.stdout(Stdio::null())
-			.stderr(Stdio::null())
-			.status()
-			.expect("run git");
-		assert!(status.success(), "git {args:?} failed");
-	}
+	git_in(&remote, &["init"]);
+	commit_all(&remote, "init");
 
 	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
 	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");

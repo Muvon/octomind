@@ -34,6 +34,7 @@ use crate::agent::registry::{parse_agent_header, AgentHeader};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Condvar, Mutex, PoisonError};
@@ -49,9 +50,10 @@ pub const DEFAULT_TAP: &str = "muvon/tap";
 /// marks the last one.
 const TAP_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-/// File under `.git` touched when a background refresh is started. `FETCH_HEAD`
-/// only changes when the pull finishes, which on a slow mount is long after
-/// other processes have seen the same due refresh and started their own.
+/// File under `.git` written when a background refresh is started, holding the
+/// octomind version that started it. `FETCH_HEAD` only changes when the fetch
+/// finishes, which on a slow mount is long after other processes have seen the
+/// same due refresh and started their own.
 const REFRESH_STAMP: &str = "octomind-refresh";
 
 /// Age past which a `.git/*.lock` has no live owner. A refresh that took 4.5
@@ -169,9 +171,15 @@ fn write_taps_file(taps: &TapsFile) -> Result<()> {
 }
 
 /// Whether a GitHub tap is due for its automatic refresh. A clone that has
-/// never fetched nor started a refresh is due at once.
+/// never fetched nor started a refresh is due at once, and so is one last
+/// refreshed by another octomind version: a new version may need agents
+/// published since (a renamed `chief` on the first run after an upgrade).
 fn refresh_due(tap_dir: &Path) -> bool {
 	let git_dir = tap_dir.join(".git");
+	let stamped_version = fs::read_to_string(git_dir.join(REFRESH_STAMP)).unwrap_or_default();
+	if stamped_version != env!("CARGO_PKG_VERSION") {
+		return true;
+	}
 	let last_refresh = ["FETCH_HEAD", REFRESH_STAMP]
 		.iter()
 		.filter_map(|name| fs::metadata(git_dir.join(name)).and_then(|meta| meta.modified()).ok())
@@ -553,7 +561,9 @@ pub fn add_tap(arg: &str) -> Result<()> {
 			git_clone(&url, &tap_dir)?;
 		} else {
 			crate::log_info!("Tap {} already cloned, updating...", tap.name);
-			git_pull(&tap_dir)?;
+			if let Err(err) = sync_clone(&tap_dir) {
+				crate::log_error!("Failed to update tap {}: {:#}", tap.name, err);
+			}
 		}
 	}
 
@@ -632,63 +642,42 @@ fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 	Ok(())
 }
 
-/// Pull latest changes for a tap. Output is suppressed; only shown in debug mode.
-fn git_pull(dir: &PathBuf) -> Result<()> {
-	let output = std::process::Command::new("git")
-		.args(["pull"])
-		.current_dir(dir)
-		// Automatic tap refresh is best-effort and silent; it must never inherit
-		// stdin and stop the entire session on a credential prompt.
-		.env("GIT_TERMINAL_PROMPT", "0")
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.output()
-		.context("Failed to run git pull")?;
-
-	crate::agent::registry::invalidate_capability_catalog();
-	if !output.status.success() {
-		crate::log_debug!(
-			"Failed to update tap at {}: {}",
-			dir.display(),
-			String::from_utf8_lossy(&output.stderr).trim()
-		);
+/// Make a GitHub tap's clone match its upstream default branch exactly.
+///
+/// The clone is a mirror, not a workspace (Homebrew-style): local edits, local
+/// commits and new files are discarded, so nothing written into it can block a
+/// later refresh. Customise a tap through a local tap or upstream instead. A
+/// symlinked tap dir points at someone's working copy and is never touched.
+/// Each step is its own git process; a refresh that stops between them leaves
+/// a usable clone, and the next refresh completes it.
+fn sync_clone(dir: &Path) -> Result<()> {
+	if dir.symlink_metadata()?.file_type().is_symlink() {
+		return Ok(());
 	}
-	Ok(())
+	// Without its own `.git`, git would find an enclosing repository (a dotfiles
+	// repo over the data dir) and the reset and clean below would wipe it.
+	if !dir.join(".git").is_dir() {
+		anyhow::bail!("{} is not a git clone", dir.display());
+	}
+	run_git(dir, &["fetch", "--depth", "1", "origin", "HEAD"])?;
+	run_git(dir, &["reset", "--hard", "FETCH_HEAD"])?;
+	run_git(dir, &["clean", "-fd"])
 }
 
-/// Start a detached `git pull --ff-only` for a due tap and return at once.
+/// Run one git command in `dir`, returning its stderr as the error on failure.
 ///
-/// The pull is never awaited on the caller's path: on a slow network mount it
-/// takes minutes, and a delegated specialist must answer its parent's ACP
-/// handshake first. Only a lookup that found nothing waits for it, through
-/// [`wait_for_started_refreshes`]. It runs in its own process group so that the parent
-/// killing a timed-out child's group cannot stop git mid-merge and leave a
-/// stale `.git/*.lock` that fails every later pull. `--ff-only` never creates
-/// a merge commit or leaves a half-merge in a clone shared between processes.
-fn spawn_refresh(tap_dir: &Path) {
-	if !refresh_due(tap_dir) {
-		return;
-	}
-	remove_stale_locks(&tap_dir.join(".git"));
-	// Stamp before spawning so concurrent processes see the refresh as taken.
-	// Without a `.git` dir this is not a clone and there is nothing to pull.
-	let stamp = tap_dir.join(".git").join(REFRESH_STAMP);
-	if fs::File::create(&stamp)
-		.and_then(|file| file.set_modified(SystemTime::now()))
-		.is_err()
-	{
-		return;
-	}
-
+/// It runs in its own process group so that the parent killing a timed-out
+/// child's group cannot stop git mid-write and leave a stale `.git/*.lock`
+/// that fails every later refresh. It never waits on a credential prompt.
+fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
 	let mut command = std::process::Command::new("git");
 	command
-		.args(["pull", "--ff-only"])
-		.current_dir(tap_dir)
-		// Best-effort and silent; it must never wait on a credential prompt.
+		.args(args)
+		.current_dir(dir)
 		.env("GIT_TERMINAL_PROMPT", "0")
 		.stdin(Stdio::null())
 		.stdout(Stdio::null())
-		.stderr(Stdio::null());
+		.stderr(Stdio::piped());
 	#[cfg(unix)]
 	{
 		use std::os::unix::process::CommandExt;
@@ -701,30 +690,58 @@ fn spawn_refresh(tap_dir: &Path) {
 		command.creation_flags(CREATE_NEW_PROCESS_GROUP);
 	}
 
-	let mut child = match command.spawn() {
-		Ok(child) => child,
-		Err(err) => {
-			crate::log_debug!("Failed to start tap refresh at {}: {}", tap_dir.display(), err);
-			return;
-		}
-	};
+	let output = command
+		.output()
+		.with_context(|| format!("Failed to run git {}", args[0]))?;
+	if !output.status.success() {
+		let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+		anyhow::bail!(
+			"git {} failed: {}",
+			args[0],
+			if stderr.is_empty() {
+				output.status.to_string()
+			} else {
+				stderr
+			}
+		);
+	}
+	Ok(())
+}
+
+/// Start a background [`sync_clone`] for a due tap and return at once.
+///
+/// The sync is never awaited on the caller's path: on a slow network mount it
+/// takes minutes, and a delegated specialist must answer its parent's ACP
+/// handshake first. Only a lookup that found nothing waits for it, through
+/// [`wait_for_started_refreshes`].
+fn spawn_refresh(tap_dir: &Path) {
+	if !refresh_due(tap_dir) {
+		return;
+	}
+	remove_stale_locks(&tap_dir.join(".git"));
+	// Stamp before starting so concurrent processes see the refresh as taken.
+	// Without a `.git` dir this is not a clone and there is nothing to sync.
+	let stamp = tap_dir.join(".git").join(REFRESH_STAMP);
+	if fs::File::create(&stamp)
+		.and_then(|mut file| {
+			file.write_all(env!("CARGO_PKG_VERSION").as_bytes())?;
+			file.set_modified(SystemTime::now())
+		})
+		.is_err()
+	{
+		return;
+	}
+
 	let tap_dir = tap_dir.to_path_buf();
 	// Counted before the thread starts: a lookup that misses right after this call
 	// must already see the refresh as running.
 	let refresh = RefreshEndGuard::start();
-	// Reaps the child (no zombie in a long-lived server) and lets that server
-	// pick up the new files once the pull lands. The guard drops last, after the
-	// catalog is invalidated, on every exit path, panic included.
+	// Lets a long-lived server pick up the new files once the sync lands. The guard
+	// drops last, after the catalog is invalidated, on every exit path, panic included.
 	std::thread::spawn(move || {
 		let _refresh = refresh;
-		match child.wait() {
-			Ok(status) if !status.success() => {
-				crate::log_debug!("Failed to update tap at {}: {}", tap_dir.display(), status);
-			}
-			Ok(_) => {}
-			Err(err) => {
-				crate::log_debug!("Failed to wait for tap refresh at {}: {}", tap_dir.display(), err);
-			}
+		if let Err(err) = sync_clone(&tap_dir) {
+			tracing::warn!("Failed to update tap at {}: {:#}", tap_dir.display(), err);
 		}
 		crate::agent::registry::invalidate_capability_catalog();
 	});

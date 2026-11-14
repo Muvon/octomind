@@ -157,16 +157,24 @@ pub fn batch_starts_user_turn(batch: &[InboxMessage]) -> bool {
 /// Render an injected inbox message to stdout so the user sees what the AI
 /// is about to respond to. Mirrors the format of a user-typed prompt line
 /// (source-tagged) with the message content below if multi-line.
-pub fn display_injected_input(msg: &InboxMessage) {
+pub fn display_injected_input(msg: &InboxMessage, config: &crate::config::Config) {
+	use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
 	use colored::Colorize;
 
 	let icon = msg.source.display_icon();
 	let label = msg.source.display_label();
-	let first_line = msg.content.lines().next().unwrap_or("");
-	let rest = msg.content.lines().skip(1).collect::<Vec<_>>();
+	let (first_line, body) = msg.content.split_once('\n').unwrap_or((&msg.content, ""));
 
 	println!("{} {} {}", icon, format!("[{label}]").bright_black(), first_line);
-	for line in rest {
+	// A specialist's report is markdown: render it the way an assistant reply is.
+	if config.enable_markdown_rendering && is_markdown_content(body) {
+		let theme = config.markdown_theme.parse().unwrap_or_default();
+		match MarkdownRenderer::with_theme(theme).render_and_print(body) {
+			Ok(()) => return,
+			Err(e) => crate::log_debug!("Injected message markdown rendering failed: {}", e),
+		}
+	}
+	for line in body.lines() {
 		println!("   {}", line);
 	}
 }

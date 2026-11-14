@@ -76,7 +76,11 @@ async fn test_inbox_message_display_metadata() {
 	// control-plane turns, not genuine user asks.
 	assert!(msg.source.is_system_managed());
 
-	display_injected_input(&msg);
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+	config.enable_markdown_rendering = true;
+	display_injected_input(&msg, &config);
+	display_injected_input(&schedule_msg("report\n\n## Heading\n\n- item"), &config);
 }
 
 #[tokio::test]

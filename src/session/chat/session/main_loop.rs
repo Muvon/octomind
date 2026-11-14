@@ -597,7 +597,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 					let input_result = if let Some(inbox_msg) = pending_msg {
 						// An inbox message is ready — inject it without waiting for user input.
 						log_debug!("Processing inbox message from {:?}", inbox_msg.source);
-						crate::session::inbox::display_injected_input(&inbox_msg);
+						crate::session::inbox::display_injected_input(&inbox_msg, &current_config);
 						InputResult::Text(inbox_msg.content, Vec::new())
 					} else {
 						// Reedline blocks for user input. A shared slot lets the
@@ -885,7 +885,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 								pop_inbox_message(&chat_session, &current_config, operation_rx.clone()).await?
 							{
 								log_debug!("Processing inbox message from {:?}", msg.source);
-								crate::session::inbox::display_injected_input(&msg);
+								crate::session::inbox::display_injected_input(&msg, &current_config);
 								injected_source = Some(msg.source.clone());
 								input = msg.content;
 							}

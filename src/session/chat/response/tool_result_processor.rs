@@ -261,7 +261,7 @@ pub async fn process_tool_results(
 			});
 			crate::mcp::process::send_notification_message(injected);
 		} else {
-			crate::session::inbox::display_injected_input(msg);
+			crate::session::inbox::display_injected_input(msg, config);
 		}
 	}
 	chat_session

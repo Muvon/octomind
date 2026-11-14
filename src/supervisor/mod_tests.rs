@@ -54,7 +54,7 @@ fn role_context_without_a_system_message_is_empty() {
 }
 
 #[test]
-fn role_context_caps_an_oversized_system_message_at_the_boundary() {
+fn role_context_caps_an_oversized_system_message_with_a_visible_marker() {
 	let long: String = "rule ".repeat(2_000);
 	assert!(long.chars().count() > ROLE_CONTEXT_CHARS);
 	let messages = vec![crate::session::Message {
@@ -63,8 +63,20 @@ fn role_context_caps_an_oversized_system_message_at_the_boundary() {
 		..Default::default()
 	}];
 	let capped = role_context(&messages);
-	assert_eq!(capped.chars().count(), ROLE_CONTEXT_CHARS);
 	assert!(capped.starts_with("rule rule"));
+	// The cut lands inside a rule; the marker says the block did not end there.
+	let kept = capped
+		.strip_suffix(ROLE_CONTEXT_TRUNCATED)
+		.expect("a capped block ends with the truncation marker");
+	assert_eq!(kept.chars().count(), ROLE_CONTEXT_CHARS);
+
+	let exact: String = "r".repeat(ROLE_CONTEXT_CHARS);
+	let messages = vec![crate::session::Message {
+		role: "system".to_string(),
+		content: exact.clone(),
+		..Default::default()
+	}];
+	assert_eq!(role_context(&messages), exact, "a block within the cap is verbatim");
 }
 
 #[test]

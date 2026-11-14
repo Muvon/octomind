@@ -309,29 +309,44 @@ pub fn strip_self_report(text: &str) -> String {
 /// [`Detectors::note_round_verification`]: a candidate that dirtied the tree
 /// is a mutator, not a verifier.
 pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
-	!is_mutation_call(tool, parameters) && is_command_execution(tool, parameters)
+	!is_mutation_call(tool, parameters) && executed_command(tool, parameters).is_some()
 }
 
-/// A command execution can provide evidence even when it also mutates state.
-/// Keep that output for the independent verifier without granting deterministic
-/// verification credit. Registered runners are identified by their schema;
-/// unregistered tools retain the conservative non-mutation shape fallback.
-pub fn is_command_execution(tool: &str, parameters: &serde_json::Value) -> bool {
-	let Some(cmd) = parameters.get("command").and_then(|v| v.as_str()) else {
-		return false;
+/// The command a call executed, when it executed one. A command execution can
+/// provide evidence even when it also mutates state: keep that output for the
+/// independent verifier without granting deterministic verification credit.
+/// A parameter the tool's own schema declares as a command
+/// ([`register_tool_command_params`]) counts whatever else the call did — an
+/// edit that also ran a check returned that check's output. Otherwise the
+/// `command` parameter decides: registered runners are identified by their
+/// schema; unregistered tools retain the conservative non-mutation shape
+/// fallback.
+pub fn executed_command<'a>(tool: &str, parameters: &'a serde_json::Value) -> Option<&'a str> {
+	let declared = tool_command_params().read().ok().and_then(|declared| {
+		declared
+			.get(tool)?
+			.iter()
+			.find_map(|name| parameters.get(name)?.as_str())
+	});
+	let cmd = match declared {
+		Some(cmd) => cmd,
+		None => {
+			let cmd = parameters.get("command")?.as_str()?;
+			if !executes_free_form_command(tool) && is_mutation_call(tool, parameters) {
+				return None;
+			}
+			cmd
+		}
 	};
-	if !executes_free_form_command(tool) && is_mutation_call(tool, parameters) {
-		return false;
-	}
 	// Reject empty command strings: they execute nothing and cannot validate
 	// completion.
 	if cmd.trim().is_empty() {
-		return false;
+		return None;
 	}
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
-		Some(server) => !matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent"),
+		Some(server) if matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent") => None,
 		// Unregistered command tool: retain the output as possible evidence.
-		None => true,
+		_ => Some(cmd),
 	}
 }
 
@@ -339,7 +354,7 @@ pub fn is_command_execution(tool: &str, parameters: &serde_json::Value) -> bool 
 /// arguments (such as workdir), since an identical command can address a
 /// different target. This identifies receipts, not behavioral test coverage.
 pub fn command_key(tool: &str, parameters: &serde_json::Value) -> Option<u64> {
-	is_command_execution(tool, parameters).then(|| hash2(tool, &parameters.to_string()))
+	executed_command(tool, parameters).map(|_| hash2(tool, &parameters.to_string()))
 }
 
 /// Path-like values in a tool call's parameters — the artifact identities a
@@ -544,6 +559,43 @@ pub fn command_param_is_free_form(schema: &serde_json::Value) -> bool {
 		.filter_map(|key| param.get(key).and_then(|v| v.as_array()))
 		.flatten()
 		.any(unconstrained_string)
+}
+
+/// JSON Schema `contentMediaType` a tool puts on a parameter it executes as a
+/// shell command.
+const COMMAND_MEDIA_TYPE: &str = "application/x-sh";
+
+fn tool_command_params() -> &'static std::sync::RwLock<std::collections::HashMap<String, Vec<String>>> {
+	static PARAMS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, Vec<String>>>> =
+		std::sync::OnceLock::new();
+	PARAMS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Register the parameters a tool's own schema declares it executes as a
+/// command ([`declared_command_params`]), read when its inventory arrives. An
+/// editor that runs a check after writing carries that command beside its
+/// operation; the schema is the only place the runtime can learn that such a
+/// call executed something, without knowing the tool or the parameter by name.
+pub fn register_tool_command_params(tool: &str, params: Vec<String>) {
+	if let Ok(mut declared) = tool_command_params().write() {
+		// A refreshed inventory replaces the old declaration, an empty one included.
+		declared.insert(tool.to_string(), params);
+	}
+}
+
+/// Top-level parameters this input schema marks as an executed command.
+/// `contentMediaType` is the standard JSON Schema annotation for what a string
+/// holds, so the mark is a schema fact like the `command` shape above: no tool
+/// names, no parameter names, no description wording.
+pub fn declared_command_params(schema: &serde_json::Value) -> Vec<String> {
+	let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) else {
+		return Vec::new();
+	};
+	properties
+		.iter()
+		.filter(|(_, param)| param.get("contentMediaType").and_then(|m| m.as_str()) == Some(COMMAND_MEDIA_TYPE))
+		.map(|(name, _)| name.clone())
+		.collect()
 }
 
 const SEEN_CAP: usize = 128;

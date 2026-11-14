@@ -778,7 +778,7 @@ fn operation_selector_is_never_a_verifier_whatever_the_operation_is_called() {
 		let call = json!({ "command": op, "path": "a.rs" });
 		assert!(is_mutation_call(editor, &call), "{op} edits");
 		assert!(!is_verifier_shaped(editor, &call), "{op} executes nothing");
-		assert!(!is_command_execution(editor, &call), "{op} is an operation");
+		assert_eq!(executed_command(editor, &call), None, "{op} is an operation");
 	}
 }
 
@@ -795,10 +795,47 @@ fn mutating_command_output_remains_verification_evidence() {
 		let call = json!({"command": command});
 		assert!(is_mutation_call(runner, &call), "heuristic matches: {command}");
 		assert!(!is_verifier_shaped(runner, &call), "no automatic verification credit");
-		assert!(is_command_execution(runner, &call), "retain evidence: {command}");
+		assert!(executed_command(runner, &call).is_some(), "retain evidence: {command}");
 	}
-	assert!(!is_command_execution(runner, &json!({"command": "  "})));
-	assert!(!is_command_execution(runner, &json!({"command": 42})));
+	assert_eq!(executed_command(runner, &json!({"command": "  "})), None);
+	assert_eq!(executed_command(runner, &json!({"command": 42})), None);
+}
+
+#[test]
+fn a_schema_declared_command_on_a_mutation_is_evidence_without_verifier_credit() {
+	// An editor that runs a check after writing: `command` selects the operation
+	// and the schema marks another parameter as the command the tool executes.
+	let editor = "detectTestsEditorWithDeclaredCommand";
+	let schema = json!({"properties": {
+		"command": {"type": "string", "enum": ["create", "str_replace"]},
+		"content": {"type": "string"},
+		"after": {"type": "string", "contentMediaType": "application/x-sh"},
+	}});
+	assert_eq!(declared_command_params(&schema), vec!["after"]);
+	register_tool_read_only_hint(editor, Some(false));
+	register_tool_command_shape(editor, command_param_is_free_form(&schema));
+	register_tool_command_params(editor, declared_command_params(&schema));
+
+	let checked = json!({"command": "str_replace", "path": "a.rs", "content": "x", "after": "run the covering check"});
+	assert!(is_mutation_call(editor, &checked));
+	assert_eq!(executed_command(editor, &checked), Some("run the covering check"));
+	assert!(
+		!is_verifier_shaped(editor, &checked),
+		"the call changed the tree: a mutator, never a verifier"
+	);
+	assert!(command_key(editor, &checked).is_some());
+
+	// An unmarked string is content, however much it reads like a command.
+	let plain = json!({"command": "create", "path": "a.rs", "content": "cargo test"});
+	assert_eq!(executed_command(editor, &plain), None);
+	assert_eq!(
+		executed_command(editor, &json!({"command": "create", "after": "  "})),
+		None
+	);
+
+	// A refreshed inventory without the mark withdraws the declaration.
+	register_tool_command_params(editor, Vec::new());
+	assert_eq!(executed_command(editor, &checked), None);
 }
 
 #[test]

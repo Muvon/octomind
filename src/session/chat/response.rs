@@ -666,19 +666,15 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 						params.chat_session.evidence.record_ground(sequence, &result_content);
 						// Retain command evidence independently of verification credit:
 						// a smoke test can mutate state and still demonstrate behavior.
-						let command_execution =
-							crate::supervisor::detect::is_command_execution(&call.tool_name, &call.parameters);
+						let executed_command =
+							crate::supervisor::detect::executed_command(&call.tool_name, &call.parameters);
+						let command_execution = executed_command.is_some();
 						let verifier_shaped =
 							crate::supervisor::detect::is_verifier_shaped(&call.tool_name, &call.parameters);
 						if let Some(key) = crate::supervisor::detect::command_key(&call.tool_name, &call.parameters) {
 							round_command_outcomes.push((key, !is_error));
 						}
-						if command_execution && !is_error {
-							let cmd = call
-								.parameters
-								.get("command")
-								.and_then(|v| v.as_str())
-								.unwrap_or_default();
+						if let Some(cmd) = executed_command.filter(|_| !is_error) {
 							params.chat_session.evidence.record_command_output(cmd, &result_content);
 						}
 						// Fold this call's per-result state in; aggregate the rest for the round.

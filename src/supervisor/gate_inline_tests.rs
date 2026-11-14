@@ -313,6 +313,39 @@ fn ledger_truncates_long_args() {
 }
 
 #[test]
+fn ledger_preview_keeps_every_top_level_argument() {
+	// One head-cut of the whole object dropped whatever followed a long value:
+	// here the command an edit ran after writing, the only sign that it ran one.
+	let mut l = EvidenceLedger::default();
+	let edits = serde_json::json!([{"operation": "replace", "start": "2:77", "content": "x".repeat(500)}]);
+	let args = serde_json::json!({"path": "calc.py", "operations": edits, "check": "run the covering check --quiet"});
+	l.record("edit", &args, true, false, 1);
+	let line = l.render();
+	assert!(line.contains(r#""path":"calc.py""#), "{line}");
+	assert!(line.contains(r#""operations":[{"#), "{line}");
+	assert!(line.contains(r#""check":"run the covering check --quiet""#), "{line}");
+	assert!(line.contains('…'), "the long value is still cut: {line}");
+	assert!(
+		!line.contains(&"x".repeat(LEDGER_ARGS_MAX)),
+		"the values share one budget: {line}"
+	);
+
+	// A single value owns the whole budget, and arguments under it are verbatim.
+	let command = serde_json::json!({"command": "c".repeat(500)});
+	l.record("runner", &command, false, false, 1);
+	assert_eq!(
+		l.entries.back().unwrap().args,
+		format!(
+			"{{\"command\":{}…}}",
+			&command["command"].to_string()[..LEDGER_ARGS_MAX]
+		)
+	);
+	let short = serde_json::json!({"path": "a.rs", "start": 1, "end": 20});
+	l.record("view", &short, false, false, 1);
+	assert_eq!(l.entries.back().unwrap().args, short.to_string());
+}
+
+#[test]
 fn citation_provenance_resets_at_real_turn_boundary() {
 	let mut ledger = EvidenceLedger::default();
 	let sequence = ledger.record("view", &serde_json::json!({"path":"a"}), false, false, 16);

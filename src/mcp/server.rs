@@ -85,6 +85,12 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 				&name,
 				crate::supervisor::detect::command_param_is_free_form(&parameters),
 			);
+			// Parameters the schema marks as a command the tool executes beside its
+			// own operation (an editor's post-write check).
+			crate::supervisor::detect::register_tool_command_params(
+				&name,
+				crate::supervisor::detect::declared_command_params(&parameters),
+			);
 			Some(McpFunction {
 				name,
 				annotations: tool.annotations.clone(),

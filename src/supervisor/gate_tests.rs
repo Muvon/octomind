@@ -1837,6 +1837,36 @@ mod verify_round_trip {
 	}
 
 	#[tokio::test]
+	async fn a_finding_no_recorded_observation_supports_is_an_evidence_limit() {
+		let _guard = ENV_LOCK.lock().await;
+		// A well-formed answer whose quoted observation appears nowhere in the input.
+		let url = spawn_stub(vec![final_response(&format!(
+			r#"{CLEAN_SHAPES}<gap sources="ground_truth" settles="the feature reports Ready">Requirement 'ship the feature' conflicts with 'feature smoke check: expected Ready, observed Pending'</gap>"#
+		))])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		crate::supervisor::accounting::isolated(async {
+			crate::session::context::with_session_id("gate-ungrounded".into(), async {
+				let (_tx, receiver) = rx();
+				let verdict = verify(&gate_config(), input(&[], &[]), receiver).await;
+				assert!(matches!(verdict, GateVerdict::Indeterminate(_)), "{verdict:?}");
+				let accounting = crate::supervisor::accounting::take_for("gate-ungrounded");
+				let restored: crate::supervisor::accounting::SupervisorAccounting =
+					serde_json::from_value(serde_json::to_value(accounting).unwrap()).unwrap();
+				let reported = &restored.kinds[&crate::supervisor::stats::CallKind::Gate].reported_findings;
+				assert!(
+					reported.iter().any(|finding| finding
+						== "indeterminate [evidence]: no current recorded observation supports the proposed findings"),
+					"the verifier kept its protocol, so the diagnostic must not blame it: {reported:?}"
+				);
+			})
+			.await;
+		})
+		.await;
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+
+	#[tokio::test]
 	async fn an_unknown_condition_stays_unverified_on_every_pass() {
 		let _guard = ENV_LOCK.lock().await;
 		let answer = format!(
@@ -2404,4 +2434,25 @@ fn readback_arguments_are_bounded_and_legacy_previews_remain_explicit() {
 	let text = render_readback(&legacy, legacy.grounds(), &[seq]).text;
 	assert!(text.contains('…'));
 	assert!(!text.contains("TAIL"));
+}
+
+#[test]
+fn a_check_an_edit_ran_reaches_ground_truth_by_its_output() {
+	let editor = "gateTestsEditorWithDeclaredCommand";
+	crate::supervisor::detect::register_tool_read_only_hint(editor, Some(false));
+	crate::supervisor::detect::register_tool_command_params(editor, vec!["after".to_string()]);
+	let args = serde_json::json!({"path": "gate-tests-absent.py", "content": "x", "after": "run the covering check"});
+	assert!(crate::supervisor::detect::is_mutation_call(editor, &args));
+	// The edit was written and its check failed: the tool reports success
+	// either way, so only the output says how the check went.
+	let output = "edited gate-tests-absent.py\n\nCheck: 1 failed";
+	let mut ledger = EvidenceLedger::default();
+	let seq = ledger.record(editor, &args, true, false, output.len());
+	ledger.record_ground(seq, output);
+	let command = crate::supervisor::detect::executed_command(editor, &args).expect("declared command");
+	ledger.record_command_output(command, output);
+	let truth = render_ground_truth(&ledger);
+	assert!(truth.text.contains("$ run the covering check\n"), "{}", truth.text);
+	assert!(truth.text.contains("Check: 1 failed"));
+	assert!(truth.output_sequences.contains(&seq));
 }

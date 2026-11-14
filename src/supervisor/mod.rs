@@ -158,6 +158,9 @@ pub fn notify(message: &str) {
 
 /// Cap on the standing-instructions block handed to supervisor models.
 const ROLE_CONTEXT_CHARS: usize = 4_000;
+/// Closes a capped block: the cut lands mid-sentence, and without a marker the
+/// half rule before it reads as the whole rule.
+const ROLE_CONTEXT_TRUNCATED: &str = "\n(standing instructions truncated)";
 
 /// Standing role instructions — the session's system message: the durable rules
 /// the agent operates under, distinct from the current user turn. Every
@@ -171,7 +174,9 @@ pub fn role_context(messages: &[crate::session::Message]) -> String {
 	if trimmed.chars().count() <= ROLE_CONTEXT_CHARS {
 		trimmed.to_string()
 	} else {
-		trimmed.chars().take(ROLE_CONTEXT_CHARS).collect()
+		let mut capped: String = trimmed.chars().take(ROLE_CONTEXT_CHARS).collect();
+		capped.push_str(ROLE_CONTEXT_TRUNCATED);
+		capped
 	}
 }
 

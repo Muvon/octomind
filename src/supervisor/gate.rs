@@ -475,6 +475,7 @@ pub fn is_supervisor_injection(content: &str) -> bool {
 /// render) so a very long turn still hands the verifier a bounded block.
 const LEDGER_CAP: usize = 128;
 /// Args locate the object of an action (path, command, url) — not replay it.
+/// Shared between a call's top-level values, see [`ledger_args`].
 const LEDGER_ARGS_MAX: usize = 120;
 /// Cap on distinct mutated paths tracked for ground truth (a task touching more
 /// files than this gets diff coverage for the first N; the ledger still lists all).
@@ -546,6 +547,47 @@ impl LedgerEntry {
 				_ => false,
 			}
 	}
+}
+
+/// The ledger preview of a call's arguments. [`LEDGER_ARGS_MAX`] is shared
+/// between the top-level values instead of spent by one head-cut of the whole
+/// object: that cut dropped every later argument, typically the trailing
+/// command or selector that says what the call did. Each value gets an equal
+/// slice, what the short ones leave unused goes to the long ones, and a cut
+/// value ends in `…`, so every top-level key stays visible.
+fn ledger_args(parameters: &serde_json::Value) -> String {
+	let Some(object) = parameters.as_object().filter(|object| !object.is_empty()) else {
+		return ledger_preview(parameters.to_string(), LEDGER_ARGS_MAX);
+	};
+	let values: Vec<String> = object.values().map(|value| value.to_string()).collect();
+	let equal = LEDGER_ARGS_MAX / values.len();
+	let length = |value: &String| value.chars().count();
+	let over = values.iter().filter(|value| length(value) > equal).count();
+	if over == 0 {
+		return parameters.to_string();
+	}
+	let spare: usize = values.iter().map(|value| equal.saturating_sub(length(value))).sum();
+	let share = equal + spare / over;
+	let fields: Vec<String> = object
+		.keys()
+		.zip(values)
+		.map(|(key, value)| {
+			format!(
+				"{}:{}",
+				serde_json::Value::from(key.as_str()),
+				ledger_preview(value, share)
+			)
+		})
+		.collect();
+	format!("{{{}}}", fields.join(","))
+}
+
+fn ledger_preview(mut text: String, max: usize) -> String {
+	if text.chars().count() > max {
+		text = text.chars().take(max).collect();
+		text.push('…');
+	}
+	text
 }
 
 /// Older sessions and detached jobs may have no addressable call sequence.
@@ -805,15 +847,10 @@ impl EvidenceLedger {
 			}
 		}
 		let full_args = parameters.to_string();
-		let mut args = full_args.clone();
-		if args.chars().count() > LEDGER_ARGS_MAX {
-			args = args.chars().take(LEDGER_ARGS_MAX).collect();
-			args.push('…');
-		}
 		let entry = LedgerEntry {
 			last_sequence: sequence,
 			tool: tool.to_string(),
-			args,
+			args: ledger_args(parameters),
 			readback_args: Some(ReadbackArguments {
 				text: bounded_output(&full_args),
 				complete: full_args.chars().count() <= READBACK_HEAD + READBACK_TAIL,
@@ -1505,7 +1542,13 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 	// blocks the turn — and none of it silently vanishes either: a finding the
 	// runtime declines to charge is exactly the one a human should see.
 	let mut reported = report.reported_findings(&visibility.unseen);
+	let proposed_gaps = matches!(verdict, GateVerdict::Gaps(_));
 	verdict = grounded_verdict(verdict, &report, &input, &mut reported);
+	// The verifier kept its contract here; the runtime declined findings that no
+	// recorded observation supports. That is a limit of the evidence.
+	if proposed_gaps && matches!(verdict, GateVerdict::Indeterminate(_)) {
+		diagnostic_class = "evidence";
+	}
 	// Second opinion, only on a blocking verdict: an independent model tries to
 	// refute each finding with evidence already in the input. What it refutes is
 	// reported to the user instead of costing a re-run; what stands blocks.

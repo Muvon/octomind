@@ -18,7 +18,7 @@
 use super::*;
 use crate::agent::registry::AgentHeader;
 use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
-use crate::supervisor::evaluate::{Seam, TAP_QUESTION_ID};
+use crate::supervisor::evaluate::{Seam, TAP_QUESTION_ID, TAP_TOP_K};
 use serial_test::serial;
 use std::collections::BTreeMap;
 
@@ -65,27 +65,45 @@ fn describe_joins_title_and_description_and_falls_back_to_the_tag() {
 }
 
 #[test]
-fn a_cosine_winner_stands_unless_the_choice_gives_it_no_mass() {
+fn the_choice_replaces_a_different_cosine_winner() {
 	let candidates = ["a:x", "b:x"];
-	// At the confirm floor the winner keeps the task, whatever the choice was.
+	// Cosine put the tester first for a bug fix; the Choice names the developer.
 	assert_eq!(
 		apply_tap_answer(
 			Some("a:x"),
 			&candidates,
 			"b:x",
-			&probabilities(&[("a:x", 0.05), ("b:x", 0.9)])
+			&probabilities(&[("a:x", 0.0), ("b:x", 1.0)])
 		),
-		Ok(Some("a:x"))
+		Ok(Some("b:x"))
 	);
-	// Under it the winner is vetoed and nothing else is promoted in its place.
+	// An unsure pick against the cosine winner starts nothing.
 	assert_eq!(
 		apply_tap_answer(
 			Some("a:x"),
 			&candidates,
 			"b:x",
-			&probabilities(&[("a:x", 0.04), ("b:x", 0.9)])
+			&probabilities(&[("a:x", 0.41), ("b:x", 0.59)])
 		),
 		Ok(None)
+	);
+	// `none` vetoes the cosine winner.
+	assert_eq!(
+		apply_tap_answer(Some("a:x"), &candidates, "none", &probabilities(&[("none", 1.0)])),
+		Ok(None)
+	);
+}
+
+#[test]
+fn a_choice_that_agrees_with_cosine_needs_no_bar() {
+	assert_eq!(
+		apply_tap_answer(
+			Some("a:x"),
+			&["a:x", "b:x"],
+			"a:x",
+			&probabilities(&[("a:x", 0.4), ("b:x", 0.35)])
+		),
+		Ok(Some("a:x"))
 	);
 }
 
@@ -133,14 +151,12 @@ async fn evaluate_pick_makes_no_call_when_the_seam_is_off() {
 #[serial]
 async fn evaluate_pick_asks_over_the_top_candidates_and_can_veto_the_cosine_winner() {
 	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "none", 0.99))]).await;
-	let agents: Vec<TapAgentHeader> = ["a:x", "b:x", "c:x", "d:x", "e:x", "f:x"]
-		.iter()
-		.map(|tag| agent(tag))
-		.collect();
+	let tags: Vec<String> = (0..TAP_TOP_K + 2).map(|i| format!("d{i:02}:x")).collect();
+	let agents: Vec<TapAgentHeader> = tags.iter().map(|tag| agent(tag)).collect();
 	let ranked: Vec<(f32, &TapAgentHeader)> = agents
 		.iter()
 		.enumerate()
-		.map(|(i, agent)| (0.9 - i as f32 * 0.1, agent))
+		.map(|(i, agent)| (0.9 - i as f32 * 0.01, agent))
 		.collect();
 	let applied = evaluate_counter(Seam::Taps, "applied");
 
@@ -154,13 +170,13 @@ async fn evaluate_pick_asks_over_the_top_candidates_and_can_veto_the_cosine_winn
 	assert_eq!(requests[0].state, serde_json::Value::String("unrelated task".into()));
 	match &requests[0].questions[TAP_QUESTION_ID] {
 		octolib::evaluation::Question::Choice { criteria, .. } => {
+			// The best `TAP_TOP_K` by score plus `none`; the two worst are left out.
+			let mut listed: Vec<String> = tags[..TAP_TOP_K].to_vec();
+			listed.push("none".to_string());
+			assert_eq!(criteria.keys().cloned().collect::<Vec<_>>(), listed);
 			assert_eq!(
-				criteria.keys().cloned().collect::<Vec<_>>(),
-				vec!["a:x", "b:x", "c:x", "d:x", "e:x", "none"]
-			);
-			assert_eq!(
-				criteria["a:x"],
-				Some(serde_json::Value::String("a:x title. a:x description".into()))
+				criteria["d00:x"],
+				Some(serde_json::Value::String("d00:x title. d00:x description".into()))
 			);
 		}
 		other => panic!("expected a choice, got {other:?}"),

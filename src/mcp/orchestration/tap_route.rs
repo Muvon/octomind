@@ -16,8 +16,9 @@
 //!
 //! The calling agent sends only the task. The candidates are the agents it may
 //! reach (`resolver::reachable_specialists`); cosine similarity between the task
-//! and each candidate's title and description ranks them, and the `taps`
-//! decision seam, when on, confirms or overrules the cosine result. No match is
+//! and each candidate's title and description ranks them. With the `taps`
+//! decision seam on, that ranking is a shortlist and the seam picks from it;
+//! with it off, the best match gets the task when it is clearly ahead. No match is
 //! an error the caller reads in the same turn, so it never lists agents first.
 
 use crate::agent::taps::TapAgentHeader;
@@ -112,10 +113,10 @@ fn describe(agent: &TapAgentHeader) -> String {
 	}
 }
 
-/// The decision seam's say over the cosine pick, by the same rule as capability
-/// selection: a cosine winner the Choice gives under `TAP_CONFIRM_AT` is
-/// vetoed; with no winner, the Choice's pick gets the task at `TAP_ACTIVATE_AT`
-/// or above. Off or unavailable, the cosine decision stands.
+/// The decision seam picks among the best cosine matches: cosine only
+/// shortlists, the Choice decides. Its pick gets the task at `TAP_ACTIVATE_AT`
+/// or above, or at any probability when cosine picked the same one; `none` and
+/// an unsure pick start nothing. Off or unavailable, the cosine decision stands.
 async fn evaluate_pick<'a>(
 	config: &Config,
 	task: &str,
@@ -188,26 +189,23 @@ async fn evaluate_pick<'a>(
 /// Apply the seam's rule to one Choice answer: `cosine` is the cosine winner's
 /// tag, `candidates` the tags the Choice listed. `Ok(Some)` is the specialist
 /// that gets the task, `Ok(None)` an abstain; `Err` names a choice that was
-/// never offered. Pure, so the two floors are unit-testable.
+/// never offered. Pure, so the rule is unit-testable.
 fn apply_tap_answer<'a>(
 	cosine: Option<&'a str>,
 	candidates: &[&'a str],
 	choice: &str,
 	probabilities: &std::collections::BTreeMap<String, f64>,
 ) -> Result<Option<&'a str>, &'static str> {
-	use crate::supervisor::evaluate::{TAP_ACTIVATE_AT, TAP_CONFIRM_AT, TAP_NONE};
+	use crate::supervisor::evaluate::{TAP_ACTIVATE_AT, TAP_NONE};
 
-	let probability = |tag: &str| probabilities.get(tag).copied().unwrap_or(0.0);
-	if choice != TAP_NONE && !candidates.contains(&choice) {
-		return Err("invalid response");
+	if choice == TAP_NONE {
+		return Ok(None);
 	}
-	Ok(match cosine {
-		Some(winner) => (probability(winner) >= TAP_CONFIRM_AT).then_some(winner),
-		None => candidates
-			.iter()
-			.copied()
-			.find(|tag| *tag == choice && probability(tag) >= TAP_ACTIVATE_AT),
-	})
+	let Some(chosen) = candidates.iter().copied().find(|tag| *tag == choice) else {
+		return Err("invalid response");
+	};
+	let probability = probabilities.get(chosen).copied().unwrap_or(0.0);
+	Ok((cosine == Some(chosen) || probability >= TAP_ACTIVATE_AT).then_some(chosen))
 }
 
 #[cfg(test)]

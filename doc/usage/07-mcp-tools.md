@@ -250,8 +250,8 @@ The candidates are the agents the caller may reach. A tap agent reaches the othe
 other domain). A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
-With `[decision] taps = true` (off by default), the decision model confirms or overrules that pick among the top 5
-candidates or none. When nothing matches, `run` returns `No specialist matches this task. Do it with the tools you have,
+With `[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
+best-ranked candidates or none, and its pick gets the task. When nothing matches, `run` returns `No specialist matches this task. Do it with the tools you have,
 or report that it is outside what you can do.`
 
 **Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs

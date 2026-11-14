@@ -222,15 +222,16 @@ pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
 /// the tap's eval set; listing the whole roster spreads the distribution and
 /// costs nine times the tokens.
 pub const CAPABILITY_TOP_K: usize = 5;
-/// Taps: a cosine-matched specialist keeps the task only when the Choice gives
-/// it at least this. Same reasoning as `CAPABILITY_CONFIRM_AT`: cosine already
-/// cleared its threshold and margin, so only a flat rejection overrules it.
-pub const TAP_CONFIRM_AT: f64 = CAPABILITY_CONFIRM_AT;
-/// Taps: with no cosine winner, the chosen specialist gets the task only when
-/// its own probability in the Choice is at or above this.
+/// Taps: the specialist the Choice picks gets the task when its probability is
+/// at or above this, whatever cosine ranked first. A pick that is also the
+/// cosine winner needs no bar.
 pub const TAP_ACTIVATE_AT: f64 = CAPABILITY_ACTIVATE_AT;
-/// Taps: the Choice lists this many best-scored reachable specialists plus `none`.
-pub const TAP_TOP_K: usize = CAPABILITY_TOP_K;
+/// Taps: the Choice lists this many best-scored reachable specialists plus
+/// `none`. Wide enough to hold a whole domain: for plain coding tasks cosine
+/// does not rank the general developer in its top two, and over all 14
+/// developer specialists the Choice still put 0.98 or more on one option for
+/// a bug fix, a feature, a test task and a task from another field.
+pub const TAP_TOP_K: usize = 16;
 /// Evolution: a shadow or live artifact whose "applies to this request"
 /// probability is below this contributes no sample for the turn — its trigger
 /// fired on a request its behavior does not address.

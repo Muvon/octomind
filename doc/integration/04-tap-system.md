@@ -526,8 +526,8 @@ Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `t
 
 `run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
 description. The best one gets the task when it clears a score threshold and a margin over the second best. With
-`[decision] taps = true` (off by default), the decision model confirms or overrules that pick among the top 5
-candidates or none. If nothing matches, `run` returns an error and starts nothing. Matching needs the local embedding
+`[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
+best-ranked candidates or none, and its pick gets the task. If nothing matches, `run` returns an error and starts nothing. Matching needs the local embedding
 model. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
 `tap`](../usage/07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps) for the full schema.

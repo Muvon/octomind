@@ -146,7 +146,7 @@ fn schema_documents_every_parameter() {
 		.get("properties")
 		.and_then(|p| p.as_object())
 		.expect("properties object");
-	for key in ["prompt", "session", "workdir"] {
+	for key in ["prompt", "role", "session", "workdir"] {
 		let prop = props.get(key).unwrap_or_else(|| panic!("{key} missing"));
 		assert_eq!(prop.get("type").and_then(|t| t.as_str()), Some("string"), "{key} type");
 		assert!(
@@ -156,10 +156,8 @@ fn schema_documents_every_parameter() {
 			"{key} description"
 		);
 	}
-	// The caller sends a task, never a role or a search intent.
-	for key in ["role", "intent"] {
-		assert!(!props.contains_key(key), "{key} must not be a parameter");
-	}
+	// A specialist is matched from the task or named by `role`; there is no search action.
+	assert!(!props.contains_key("intent"), "intent must not be a parameter");
 	assert_eq!(
 		function.parameters.get("required").and_then(|r| r.as_array()),
 		Some(&vec![json!("action")])
@@ -169,7 +167,15 @@ fn schema_documents_every_parameter() {
 #[test]
 fn schema_description_documents_actions_and_resume_contract() {
 	let function = get_tap_function();
-	for phrase in ["`run`", "`list`", "`stop`", "`capability`", "session", "workdir"] {
+	for phrase in [
+		"`run`",
+		"`list`",
+		"`stop`",
+		"`capability`",
+		"`role`",
+		"session",
+		"workdir",
+	] {
 		assert!(function.description.contains(phrase), "description missing '{phrase}'");
 	}
 }
@@ -493,11 +499,13 @@ async fn run_outside_session_scope_still_starts_and_reports() {
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
 }
 
-// --- run: no match, tap-enumeration failure ---------------------------------
+// --- run: no match, named role, tap-enumeration failure ----------------------
+
+const FOREIGN_TASK: &str = "Plan a three-day vegetarian menu for a family of four";
 
 #[tokio::test]
 #[serial]
-async fn run_with_an_unrelated_task_is_an_error_and_starts_nothing() {
+async fn run_with_an_unrelated_task_starts_nothing_and_names_the_closest_specialists() {
 	let guard = TempDataDir::new();
 	install_rust_agent(guard.path());
 	let session_id = "__tapunit_no_match".to_string();
@@ -505,7 +513,7 @@ async fn run_with_an_unrelated_task_is_an_error_and_starts_nothing() {
 		let out = execute_tap_command(
 			&tap_call(json!({
 				"action": "run",
-				"prompt": "Plan a three-day vegetarian menu for a family of four",
+				"prompt": FOREIGN_TASK,
 			})),
 			&unit_config(),
 		)
@@ -517,7 +525,100 @@ async fn run_with_an_unrelated_task_is_an_error_and_starts_nothing() {
 	tap_runs::clear_for_session(&session_id);
 
 	assert!(out.is_error());
-	assert_eq!(out.extract_content(), super::super::tap_route::NO_SPECIALIST);
+	let content = out.extract_content();
+	assert!(
+		content.starts_with("No specialist was matched to this task."),
+		"content: {content}"
+	);
+	// The name the caller may pass back as `role`, with what that specialist does.
+	assert!(
+		content.contains(
+			"- developer:general — Rust build debugger. Debugs a failing Rust build and fixes the compile errors."
+		),
+		"content: {content}"
+	);
+	assert!(content.contains("with `role` set to its name"), "content: {content}");
+	assert_eq!(runs, 0);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_with_role_starts_that_specialist_for_a_task_matching_refuses() {
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
+	install_unit_agent(
+		guard.path(),
+		"developer",
+		"chief",
+		"Developer lead",
+		"Splits a development task between the developer agents.",
+	);
+	let session_id = "__tapunit_named_role".to_string();
+	// A full tag names that agent, a bare domain its `chief`.
+	for (role, started) in [
+		("developer:general", "developer:general"),
+		("developer", "developer:chief"),
+	] {
+		let out = crate::session::context::with_session_id(session_id.clone(), async {
+			execute_tap_command(
+				&tap_call(json!({
+					"action": "run",
+					"prompt": FOREIGN_TASK,
+					"role": role,
+					"workdir": "/tmp",
+				})),
+				&unit_config(),
+			)
+			.await
+			.expect("dispatch")
+		})
+		.await;
+
+		assert!(!out.is_error(), "content: {}", out.extract_content());
+		let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+		assert_eq!(payload["role"].as_str(), Some(started));
+		let id = payload["id"].as_str().expect("id").to_string();
+		let status =
+			crate::session::context::with_session_id(session_id.clone(), async { wait_terminal_status(&id).await })
+				.await;
+		assert!(
+			matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
+			"status: {status:?}"
+		);
+	}
+	tap_runs::clear_for_session(&session_id);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_with_a_role_outside_reach_starts_nothing_and_names_the_closest_specialists() {
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
+	let session_id = "__tapunit_unknown_role".to_string();
+	let (out, runs) = crate::session::context::with_session_id(session_id.clone(), async {
+		let out = execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"prompt": RUST_TASK,
+				"role": "lawyer:us",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch");
+		(out, tap_runs::list_jobs().len())
+	})
+	.await;
+	tap_runs::clear_for_session(&session_id);
+
+	assert!(out.is_error());
+	let content = out.extract_content();
+	// The task alone would match `developer:general`; a wrong name is refused, not rerouted.
+	assert!(
+		content.starts_with("`lawyer:us` is not a specialist you can reach."),
+		"content: {content}"
+	);
+	assert!(content.contains("- developer:general — "), "content: {content}");
 	assert_eq!(runs, 0);
 }
 

@@ -213,8 +213,9 @@ Ask the coordinator to call `tap` with these arguments:
 {"action": "run", "prompt": "Audit src/auth/ for security bugs. Do not edit files. Return file:line evidence and concrete failure scenarios."}
 ```
 
-You do not name the specialist. The runtime matches the prompt to the best installed specialist and starts it; the
-reply names the matched `role` and `title`. If no specialist fits, `run` returns an error and starts nothing.
+The runtime matches the prompt to the best installed specialist and starts it; the reply names the matched `role` and
+`title`. If no specialist fits, `run` starts nothing and returns an error that lists the closest ones. To use one of
+them anyway, repeat the call with `role` set to its name.
 
 `run` starts in the background and returns its ID. On completion, the inbox receives a tap-run result labeled with the
 ID and role. It is a system-managed continuation, distinct from the `[Async agent 'NAME' completed]` label used by

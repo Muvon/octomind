@@ -210,7 +210,7 @@ The ID shown illustrates the format; it must be replaced with a block ID cited i
 
 Delegate work to a specialist role installed via a tap (e.g. `developer:general`). Each role brings its own system
 prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, and stop a
-run. The caller does not name the specialist: the runtime matches the prompt to one.
+run. The runtime matches the prompt to a specialist. The caller can also name one with `role`.
 
 **Parameters:**
 
@@ -218,6 +218,7 @@ run. The caller does not name the specialist: the runtime matches the prompt to 
 |-----------|--------------------|---------|
 | `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"capability"`, `"workflow"` |
 | `prompt` | string | Task for `run` (the runtime matches it to a specialist), user message for `send`, or capability intent for `capability`. Required for those actions. |
+| `role` | string | Specialist to start for a new `run` without matching: a full tag (`developer:general`) or a bare domain (its `chief`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. |
 | `session` | string | Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
 | `name` | string | Tap workflow name for `workflow`; omit to list installed workflows. |
@@ -225,7 +226,7 @@ run. The caller does not name the specialist: the runtime matches the prompt to 
 
 | Action | Description |
 |--------|-------------|
-| `run` | Match `prompt` to a specialist and launch it in the background (or resume a run via `session`, which reuses the original role without matching). Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no specialist matches, it returns an error and starts nothing. See [Specialist matching](#specialist-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
+| `run` | Match `prompt` to a specialist and launch it in the background (or resume a run via `session`, which reuses the original role without matching). With `role`, start that specialist without matching. Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no specialist matches, it starts nothing and returns an error that lists the closest ones. See [Specialist matching](#specialist-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
 | `send` | Queue a user prompt for a running specialist owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
@@ -234,7 +235,7 @@ run. The caller does not name the specialist: the runtime matches the prompt to 
 
 ```jsonl
 {"action": "run", "prompt": "Review src/main.rs and report concrete bugs."}
-{"action": "run", "prompt": "Audit this auth module"}
+{"action": "run", "prompt": "Audit this auth module", "role": "developer:general"}
 {"action": "list"}
 {"action": "send", "session": "tap-developer-general-a3f1c2", "prompt": "Also check cancellation before you finish."}
 {"action": "stop", "session": "tap-developer-general-a3f1c2"}
@@ -251,8 +252,13 @@ other domain). A caller that is not a tap agent, such as a role from your local 
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
 With `[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
-best-ranked candidates or none, and its pick gets the task. When nothing matches, `run` returns `No specialist matches this task. Do it with the tools you have,
-or report that it is outside what you can do.`
+best-ranked candidates or none, and its pick gets the task.
+
+When nothing matches, `run` starts nothing and returns an error that lists the five best-ranked candidates by name,
+title and description. The caller can send the task again with `role` set to one of those names: that agent starts
+without matching. `role` reaches only the same candidates. Any other name starts nothing and returns the same list. A
+caller that reaches no agent gets `No specialist matches this task. Do it with the tools you have, or report that it is
+outside what you can do.`
 
 **Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs
 are cancelled. The on-disk role manifest is unaffected.

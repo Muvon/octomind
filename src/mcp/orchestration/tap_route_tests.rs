@@ -65,6 +65,33 @@ fn describe_joins_title_and_description_and_falls_back_to_the_tag() {
 }
 
 #[test]
+fn a_no_match_error_names_the_best_ranked_specialists_and_the_recovery_step() {
+	let mut agents: Vec<TapAgentHeader> = (0..SHOWN_CANDIDATES + 2).map(|i| agent(&format!("d{i}:x"))).collect();
+	agents[1].header.title = None;
+	agents[1].header.description = None;
+	let ranked: Vec<(f32, &TapAgentHeader)> = agents
+		.iter()
+		.enumerate()
+		.map(|(i, agent)| (0.5 - i as f32 * 0.01, agent))
+		.collect();
+
+	let error = closest_specialists("No specialist was matched to this task.", &ranked);
+
+	let lines: Vec<&str> = error.lines().collect();
+	assert_eq!(
+		lines[0],
+		"No specialist was matched to this task. The closest ones to this task:"
+	);
+	assert_eq!(lines[1], "- d0:x — d0:x title. d0:x description");
+	// An agent with no title and no description is listed by name alone.
+	assert_eq!(lines[2], "- d1:x");
+	// The best `SHOWN_CANDIDATES` by score, then the recovery step; the two worst are left out.
+	assert_eq!(lines.len(), SHOWN_CANDIDATES + 2);
+	assert_eq!(lines[SHOWN_CANDIDATES + 1], NO_MATCH_RECOVERY);
+	assert!(!error.contains(&format!("d{SHOWN_CANDIDATES}:x")));
+}
+
+#[test]
 fn the_choice_replaces_a_different_cosine_winner() {
 	let candidates = ["a:x", "b:x"];
 	// Cosine put the tester first for a bug fix; the Choice names the developer.

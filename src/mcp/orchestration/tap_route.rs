@@ -19,9 +19,10 @@
 //! and each candidate's title and description ranks them. With the `taps`
 //! decision seam on, that ranking is a shortlist and the seam picks from it;
 //! with it off, the best match gets the task when it is clearly ahead. No match is
-//! an error the caller reads in the same turn, so it never lists agents first.
+//! an error that names the closest specialists; the caller may send the task
+//! again with one of them as `role`, which starts it without matching.
 
-use crate::agent::taps::TapAgentHeader;
+use crate::agent::taps::{TapAgentHeader, ORCHESTRATOR_SPEC};
 use crate::config::Config;
 
 /// Lowest cosine between the task and a specialist's title and description
@@ -34,15 +35,21 @@ const ROUTE_THRESHOLD: f32 = 0.62;
 /// specialists abstain: a wrong handoff is silent, a refusal costs one turn.
 const ROUTE_MARGIN: f32 = 0.04;
 
-/// How many ranked candidates the debug log shows.
-const LOGGED_CANDIDATES: usize = 5;
+/// How many ranked candidates the debug log and a no-match error show.
+const SHOWN_CANDIDATES: usize = 5;
 
-/// Tool error when no reachable specialist fits the task.
+/// Tool error when the caller reaches no specialist at all.
 pub const NO_SPECIALIST: &str =
 	"No specialist matches this task. Do it with the tools you have, or report that it is outside what you can do.";
 
-/// Choose the specialist for `task`, or the tool error to return.
-pub async fn route_task(task: &str, config: &Config) -> Result<TapAgentHeader, String> {
+/// Last line of a no-match error: how the caller recovers from it.
+const NO_MATCH_RECOVERY: &str =
+	"If one of them covers the task, call `run` again with `role` set to its name. If none does, do the task with the tools you have, or report that it is outside what you can do.";
+
+/// Choose the specialist for `task`, or the tool error to return. A `role` the
+/// caller may reach gets the task without matching: a full tag names that
+/// agent, a bare domain its `chief`.
+pub async fn route_task(task: &str, role: Option<&str>, config: &Config) -> Result<TapAgentHeader, String> {
 	let agents = crate::agent::taps::list_agent_headers()
 		.map_err(|error| format!("Failed to enumerate tap agents: {error:#}"))?;
 	let caller = crate::session::context::current_session_id()
@@ -54,12 +61,20 @@ pub async fn route_task(task: &str, config: &Config) -> Result<TapAgentHeader, S
 		return Err(NO_SPECIALIST.to_string());
 	}
 
+	if let Some(role) = role {
+		let chief = format!("{role}:{ORCHESTRATOR_SPEC}");
+		if let Some(agent) = reachable.iter().find(|agent| agent.tag == role || agent.tag == chief) {
+			crate::log_debug!("tap route: caller={:?} named '{}'", caller, agent.tag);
+			return Ok((*agent).clone());
+		}
+	}
+
 	let ranked = rank_specialists(task, &reachable)
 		.await
 		.map_err(|error| format!("tap run embedding failed: {error:#}"))?;
 	let preview: Vec<String> = ranked
 		.iter()
-		.take(LOGGED_CANDIDATES)
+		.take(SHOWN_CANDIDATES)
 		.map(|(score, agent)| format!("{}={score:.3}", agent.tag))
 		.collect();
 	crate::log_debug!(
@@ -71,14 +86,45 @@ pub async fn route_task(task: &str, config: &Config) -> Result<TapAgentHeader, S
 		preview.join(", ")
 	);
 
+	// A name outside the caller's reach is refused, not rerouted: the caller
+	// asked for one specialist and would not notice another taking the task.
+	if let Some(role) = role {
+		return Err(closest_specialists(
+			&format!("`{role}` is not a specialist you can reach."),
+			&ranked,
+		));
+	}
+
 	let cosine = crate::mcp::runtime::capability::select_with_margin(ranked.clone(), ROUTE_THRESHOLD, ROUTE_MARGIN);
 	match evaluate_pick(config, task, cosine, &ranked).await {
 		Some((score, agent)) => {
 			crate::log_debug!("tap route: picked '{}' (score {:.2})", agent.tag, score);
 			Ok(agent.clone())
 		}
-		None => Err(NO_SPECIALIST.to_string()),
+		None => Err(closest_specialists("No specialist was matched to this task.", &ranked)),
 	}
+}
+
+/// The tool error for a task that starts nothing: `reason`, the best-ranked
+/// specialists by name, and how the caller recovers. This list is the only
+/// place the caller learns a name, so it never has to guess one.
+fn closest_specialists(reason: &str, ranked: &[(f32, &TapAgentHeader)]) -> String {
+	let lines: Vec<String> = ranked
+		.iter()
+		.take(SHOWN_CANDIDATES)
+		.map(|(_, agent)| {
+			let about = describe(agent);
+			if about == agent.tag {
+				format!("- {}", agent.tag)
+			} else {
+				format!("- {} — {about}", agent.tag)
+			}
+		})
+		.collect();
+	format!(
+		"{reason} The closest ones to this task:\n{}\n{NO_MATCH_RECOVERY}",
+		lines.join("\n")
+	)
 }
 
 /// `candidates` with their cosine to `task`, best first.

@@ -52,7 +52,7 @@ pub fn get_tap_function() -> McpFunction {
 		name: "tap".to_string(),
 		// The tapped agent may change anything its own tools can.
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
-		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. You do not choose the role: send the task, and the specialist that fits it is matched and started for you. Use this tool to hand off a focused task, check its status, or stop it.
+		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. Send the task, and the specialist that fits it is matched and started for you; you name a role only after this tool has shown you its name. Use this tool to hand off a focused task, check its status, or stop it.
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
@@ -62,12 +62,12 @@ When to use:
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
 
 Matching:
-- `run` reads only `prompt` to match a specialist, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
-- When no specialist fits, `run` returns an error and starts nothing: do the task with your own tools or report it. Do not rephrase the same task to force a match.
-- `run` is the only way to reach a specialist. No action looks a specialist up, lists the available ones, or starts one by name.
+- `run` without `role` reads only `prompt` to match a specialist, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
+- When no specialist is matched, `run` returns an error, starts nothing, and lists the closest specialists by name. If one of them covers the task, call `run` again with the same prompt and `role` set to that name. If none does, do the task with your own tools or report it. Do not rephrase the same task to force a match.
+- Pass `role` only with a name this tool returned: in that list, or as the role of an earlier run. Never guess a name. No action lists every installed specialist.
 
 Actions:
-- `run`        — match a specialist to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `session` (resume that run with its original role), `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
+- `run`        — match a specialist to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `role` (start that specialist without matching), `session` (resume that run with its original role), `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `send`       — queue a user message for a running specialist's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
@@ -84,6 +84,10 @@ Actions:
 				"prompt": {
 					"type": "string",
 					"description": "Prompt for run or send, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings, and it is also the only text a specialist is matched on. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
+				},
+				"role": {
+					"type": "string",
+					"description": "Specialist to start for a new run, by the exact name this tool returned (e.g. 'developer:general'). Optional — omit it and the specialist is matched from `prompt`. Ignored when resuming with `session` (the original role is kept)."
 				},
 				"session": {
 					"type": "string",
@@ -408,6 +412,12 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 		.and_then(|v| v.as_str())
 		.map(|s| s.trim().to_string())
 		.filter(|s| !s.is_empty());
+	let role_param = call
+		.parameters
+		.get("role")
+		.and_then(|v| v.as_str())
+		.map(|s| s.trim().to_string())
+		.filter(|s| !s.is_empty());
 	let workdir_param = call
 		.parameters
 		.get("workdir")
@@ -436,7 +446,7 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 		};
 		(sid, claim.role, None, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
-		let specialist = match super::tap_route::route_task(&prompt, config).await {
+		let specialist = match super::tap_route::route_task(&prompt, role_param.as_deref(), config).await {
 			Ok(specialist) => specialist,
 			Err(error) => {
 				return Ok(McpToolResult::error(

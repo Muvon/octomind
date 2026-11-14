@@ -461,7 +461,7 @@ A domain name without a `:` starts that domain's orchestrator, `<domain>:chief`:
 octomind run my-agents
 ```
 
-If your config defines a role with the same name, that role wins. The same applies to `octomind acp`, the `/role` command, and the `role` parameter of the `tap` tool below. Workflows still require full `category:variant` tags.
+If your config defines a role with the same name, that role wins. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below also takes a bare domain, but it reaches only tap agents, so a config role never wins there. Workflows still require full `category:variant` tags.
 
 When you specify a tag containing `:`, Octomind runs the full resolution pipeline:
 
@@ -489,7 +489,7 @@ before automating ACP/tap subprocesses; do not expect their stdin to be availabl
 ### From within a session — the `tap` orchestration tool
 
 Inside a running session, the model can hand a task to a specialist using the `tap` tool from the `orchestration` builtin server.
-The model does not choose the specialist: the runtime matches the prompt to one.
+The runtime matches the prompt to a specialist. The model can also name one with `role`.
 These are JSON argument objects for separate MCP calls:
 
 ```json
@@ -527,7 +527,9 @@ Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `t
 `run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
 description. The best one gets the task when it clears a score threshold and a margin over the second best. With
 `[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
-best-ranked candidates or none, and its pick gets the task. If nothing matches, `run` returns an error and starts nothing. Matching needs the local embedding
+best-ranked candidates or none, and its pick gets the task. If nothing matches, `run` starts nothing and returns an
+error that lists the closest agents; the same call with `role` set to one of those names starts that agent without
+matching. Matching needs the local embedding
 model. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
 `tap`](../usage/07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps) for the full schema.

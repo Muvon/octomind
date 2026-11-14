@@ -594,7 +594,7 @@ impl ChatSession {
 					// config was resolved under the new one. A stored role the config has is kept.
 					let restored_role = match runtime_state.role.as_deref().filter(|_| !params.role_explicit) {
 						Some(role) if params.config.has_role(role) => Some(role.to_string()),
-						Some(role) => Some(crate::agent::taps::resolve_renamed_tag(role)?),
+						Some(role) => Some(crate::agent::taps::resolve_alias_tag(role)?),
 						None => None,
 					};
 					let role = restored_role.as_deref().unwrap_or(params.role);

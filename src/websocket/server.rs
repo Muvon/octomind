@@ -1814,8 +1814,15 @@ async fn resume_role_config(session_id: &str, server: &ServerState) -> Result<(A
 /// the session's scope and pin the result to the session, so every later turn
 /// runs under that role's tools. Shared by a bind that names a role and by a
 /// disk resume that restores one.
+///
+/// A name that resolves to the server role (a bare domain, or an alias a rename left behind)
+/// is the server role: its config is already loaded and nothing is pinned.
 async fn pin_role_config(session_id: &str, role: &str, server: &ServerState) -> Result<(Arc<Config>, String)> {
-	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(role), &server.config, None).await?;
+	let role = crate::agent::resolver::expand_domain_role(role, &server.config)?;
+	if role == server.role {
+		return Ok((Arc::clone(&server.config), role));
+	}
+	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(&role), &server.config, None).await?;
 	crate::session::context::with_session_id(
 		session_id.to_string(),
 		crate::mcp::initialize_mcp_for_role(&role, &config),

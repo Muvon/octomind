@@ -445,22 +445,33 @@ async fn exact_tag_key_beats_the_domain_key() {
 	assert_eq!(merged.model, "openai:gpt-4o-mini");
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn renamed_tag_resolves_to_the_new_agent_and_keeps_its_old_model_key() {
+async fn alias_tag_resolves_to_its_target_and_keeps_its_own_model_key() {
 	let guard = ResolverDataDir::new();
-	install_default_tap_manifest(guard.path(), "developer", "chief", MANIFEST_HEADER);
+	install_default_tap_manifest(guard.path(), "ztest", "chief", MANIFEST_HEADER);
+	// The tap renamed `ztest:old` to `ztest:chief` and kept the old name as a symlink.
+	let domain_dir = guard
+		.path()
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("agents")
+		.join("ztest");
+	std::os::unix::fs::symlink("chief.toml", domain_dir.join("old.toml")).expect("create alias");
 	let mut config = base_config();
-	config.taps.insert("developer".to_string(), "openai:gpt-4o".to_string());
+	config.taps.insert("ztest".to_string(), "openai:gpt-4o".to_string());
 	config
 		.taps
-		.insert("developer:cto".to_string(), "openai:gpt-4o-mini".to_string());
+		.insert("ztest:old".to_string(), "openai:gpt-4o-mini".to_string());
 
-	let (merged, role) = resolve_config_and_role(Some("developer:cto"), &config, None)
+	let (merged, role) = resolve_config_and_role(Some("ztest:old"), &config, None)
 		.await
 		.expect("resolves");
 
-	assert_eq!(role, "developer:chief");
+	assert_eq!(role, "ztest:chief");
 	assert_eq!(merged.model, "openai:gpt-4o-mini");
 }
 

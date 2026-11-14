@@ -414,40 +414,66 @@ pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
 /// Spec name of a domain's orchestrator: `agents/<domain>/chief.toml`.
 pub const ORCHESTRATOR_SPEC: &str = "chief";
 
-/// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
-/// `developer:general` and `assistant:general` kept their names and are not listed.
-pub const RENAMED_TAGS: [(&str, &str); 16] = [
-	("assistant:concierge", "assistant:chief"),
-	("developer:cto", "developer:chief"),
-	("video:producer", "video:chief"),
-	("octomind:assistant", "octomind:chief"),
-	("octoweb:assistant", "octoweb:chief"),
-	("browser:general", "browser:chief"),
-	("coach:general", "coach:chief"),
-	("devops:general", "devops:chief"),
-	("doctor:general", "doctor:chief"),
-	("lawyer:general", "lawyer:chief"),
-	("tutor:general", "tutor:chief"),
-	("vet:general", "vet:chief"),
-	("chef:general", "chef:chief"),
-	("device:operator", "device:chief"),
-	("shopping:advisor", "shopping:chief"),
-	("travel:planner", "travel:chief"),
-];
-
-/// Map a renamed tag to its new tag; any other tag comes back unchanged.
+/// Variant an alias manifest points to: `chief` for `cto.toml -> chief.toml`.
 ///
-/// A tap that still has a manifest for the old tag keeps it, so a user's own agent is never
-/// redirected. Local tap data only, no network. Logs one notice per mapping.
-pub fn resolve_renamed_tag(tag: &str) -> Result<String> {
-	let Some((_, new_tag)) = RENAMED_TAGS.iter().find(|(old_tag, _)| *old_tag == tag) else {
+/// `None` for a real file, a missing one, or a link that leaves its domain directory.
+fn alias_target_variant(manifest: &Path) -> Option<String> {
+	let target = fs::read_link(manifest).ok()?;
+	if target.parent() != Some(Path::new("")) || target.extension()? != "toml" {
+		return None;
+	}
+	Some(target.file_stem()?.to_str()?.to_string())
+}
+
+/// Map an alias tag to the tag of the agent it points to; any other tag comes back unchanged.
+///
+/// A tap renames an agent by leaving a symlink under the old name (`cto.toml -> chief.toml`).
+/// The first tap that has the name decides, as in `fetch_manifest`: a real manifest there is
+/// an agent of its own and is never redirected. Local tap data only, no network. Logs one
+/// notice per mapping.
+pub fn resolve_alias_tag(tag: &str) -> Result<String> {
+	let Some((category, variant)) = tag.split_once(':') else {
 		return Ok(tag.to_string());
 	};
-	if list_agent_tags()?.iter().any(|installed| installed == tag) {
-		return Ok(tag.to_string());
+	for tap in get_taps()? {
+		let manifest = tap.agents_dir()?.join(category).join(format!("{variant}.toml"));
+		if manifest.symlink_metadata().is_err() {
+			continue;
+		}
+		let Some(target_variant) = alias_target_variant(&manifest) else {
+			return Ok(tag.to_string());
+		};
+		let target_tag = format!("{category}:{target_variant}");
+		crate::log_info!("`{}` is an alias of `{}`; using `{}`", tag, target_tag, target_tag);
+		return Ok(target_tag);
 	}
-	crate::log_info!("`{}` was renamed to `{}`; using `{}`", tag, new_tag, new_tag);
-	Ok(new_tag.to_string())
+	Ok(tag.to_string())
+}
+
+/// Tags that are aliases of `tag`: the symlinks in its domain that point to its manifest.
+/// Sorted, each once. Local tap data only, no network.
+pub fn alias_tags_of(tag: &str) -> Result<Vec<String>> {
+	let Some((category, variant)) = tag.split_once(':') else {
+		return Ok(Vec::new());
+	};
+	let mut aliases: Vec<String> = Vec::new();
+	for tap in get_taps()? {
+		let Ok(entries) = fs::read_dir(tap.agents_dir()?.join(category)) else {
+			continue;
+		};
+		for entry in entries.flatten() {
+			let path = entry.path();
+			if alias_target_variant(&path).as_deref() != Some(variant) {
+				continue;
+			}
+			if let Some(alias) = path.file_stem().and_then(|stem| stem.to_str()) {
+				aliases.push(format!("{category}:{alias}"));
+			}
+		}
+	}
+	aliases.sort();
+	aliases.dedup();
+	Ok(aliases)
 }
 
 /// Resolve a bare domain (e.g. `developer`) to the tag of its orchestrator, `<domain>:chief`.

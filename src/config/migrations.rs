@@ -19,7 +19,6 @@
 //! atomic replace — live in `octolib::utils`; this module only declares
 //! octomind's version steps and the CLI-facing entry points.
 
-use crate::agent::taps::RENAMED_TAGS;
 use anyhow::{Context, Result};
 use octolib::utils::config_file;
 // `toml_edit` comes from octolib's re-export: the migration `apply` signature
@@ -212,8 +211,32 @@ fn add_v31_decision_taps(document: &mut toml_edit::DocumentMut, template: &toml_
 	merge_missing(decision, template_decision, "taps")
 }
 
-/// v30: domain lead agents were renamed to `chief` (see `RENAMED_TAGS`). Rewrite old tags used as
-/// `[taps]` keys and as the root `default`; where the new key already exists it keeps its value
+/// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
+/// `developer:general` and `assistant:general` kept their names and are not listed.
+///
+/// A record of the v30 config format change only: at runtime an old tag resolves through the
+/// alias symlink its tap keeps (`agent::taps::resolve_alias_tag`).
+const V30_RENAMED_TAGS: [(&str, &str); 16] = [
+	("assistant:concierge", "assistant:chief"),
+	("developer:cto", "developer:chief"),
+	("video:producer", "video:chief"),
+	("octomind:assistant", "octomind:chief"),
+	("octoweb:assistant", "octoweb:chief"),
+	("browser:general", "browser:chief"),
+	("coach:general", "coach:chief"),
+	("devops:general", "devops:chief"),
+	("doctor:general", "doctor:chief"),
+	("lawyer:general", "lawyer:chief"),
+	("tutor:general", "tutor:chief"),
+	("vet:general", "vet:chief"),
+	("chef:general", "chef:chief"),
+	("device:operator", "device:chief"),
+	("shopping:advisor", "shopping:chief"),
+	("travel:planner", "travel:chief"),
+];
+
+/// v30: domain lead agents were renamed to `chief` (see `V30_RENAMED_TAGS`). Rewrite old tags used
+/// as `[taps]` keys and as the root `default`; where the new key already exists it keeps its value
 /// and the old key is dropped.
 fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml_edit::DocumentMut) -> Result<()> {
 	if let Some(taps) = document
@@ -222,7 +245,7 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 		.map(|item| item.as_table_like_mut().context("taps must be a table"))
 		.transpose()?
 	{
-		for (old_tag, new_tag) in RENAMED_TAGS {
+		for (old_tag, new_tag) in V30_RENAMED_TAGS {
 			if let Some(item) = taps.remove(old_tag) {
 				if !taps.contains_key(new_tag) {
 					taps.insert(new_tag, item);
@@ -235,7 +258,7 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 		.get_mut("default")
 		.and_then(|item| item.as_value_mut())
 	{
-		if let Some((_, new_tag)) = RENAMED_TAGS
+		if let Some((_, new_tag)) = V30_RENAMED_TAGS
 			.iter()
 			.find(|(old_tag, _)| default.as_str() == Some(*old_tag))
 		{

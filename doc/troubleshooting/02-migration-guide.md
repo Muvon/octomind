@@ -417,8 +417,9 @@ supported older primary config:
 
 Old lead-agent tags keep working: a saved session, `default`, `/role` or `tap` call that names one (for example
 `developer:cto`, now `developer:chief`, or `assistant:concierge`, the global assistant, now `assistant:chief`) is mapped to
-the new tag with a notice, unless one of your own taps still
-defines the old tag. Version `30` also rewrites those tags in `config.toml`. Where both the old and the new `[taps]`
+the new tag with a notice. The mapping comes from the tap, not from octomind: the tap keeps the old name as a symlink
+to the new manifest (`cto.toml -> chief.toml`). A tap of your own listed earlier that still defines the old tag as a
+real manifest keeps it. Version `30` also rewrites those tags in `config.toml`. Where both the old and the new `[taps]`
 key exist, the new key's value is kept. A `[taps]` key with an old tag in another config file is not rewritten and
 keeps applying to the renamed agent.
 

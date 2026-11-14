@@ -3737,6 +3737,41 @@ async fn session_resume_with_an_unresolvable_tap_role_reports_the_restore_failur
 	);
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn session_saved_under_an_alias_of_the_server_role_resumes_on_the_server_role() {
+	let _data = TestDataDirGuard::new();
+	// The tap renamed `ztest:old` to `ztest:chief` and kept the old name as a symlink.
+	let domain_dir = crate::agent::taps::Tap {
+		name: crate::agent::taps::DEFAULT_TAP.to_string(),
+		local_path: None,
+	}
+	.agents_dir()
+	.expect("agents dir")
+	.join("ztest");
+	std::fs::create_dir_all(&domain_dir).expect("create domain dir");
+	std::fs::write(domain_dir.join("chief.toml"), "").expect("write manifest");
+	std::os::unix::fs::symlink("chief.toml", domain_dir.join("old.toml")).expect("create alias");
+
+	// A session logged before the rename records the old name.
+	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
+	write_session_log_entry(
+		&sessions_dir.join("aliased.jsonl.zst"),
+		r#"{"type":"SUMMARY","session_info":{"role":"ztest:old","name":"aliased"}}"#,
+	);
+	let server = ServerState::new(Arc::new(ws_fake_config()), "ztest:chief".to_string(), Vec::new());
+
+	let (config, role) = resume_role_config("aliased", &server)
+		.await
+		.expect("an alias of the server role restores");
+
+	assert_eq!(role, "ztest:chief");
+	assert!(Arc::ptr_eq(&config, &server.config), "the server config is reused");
+	assert!(server.role_configs.lock().await.is_empty(), "nothing is pinned");
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn failing_command_on_a_memory_session_reports_the_save_failure() {

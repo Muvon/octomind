@@ -371,6 +371,43 @@ fn symlinked_manifest_is_an_alias_and_is_not_listed() {
 	);
 }
 
+#[cfg(unix)]
+#[serial]
+#[test]
+fn alias_tag_resolves_to_the_agent_its_symlink_points_to() {
+	let _data = DataDirGuard::new();
+	let src = tempfile::tempdir().unwrap();
+	write_agent(src.path(), "assistant", "chief", PLAIN_HEADER);
+	let dir = src.path().join("agents").join("assistant");
+	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
+	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
+
+	assert_eq!(resolve_alias_tag("assistant:old").unwrap(), "assistant:chief");
+	assert_eq!(alias_tags_of("assistant:chief").unwrap(), vec!["assistant:old"]);
+	// Not an alias: the agent itself, a tag no tap has, a plain role name.
+	for tag in ["assistant:chief", "assistant:missing", "assistant"] {
+		assert_eq!(resolve_alias_tag(tag).unwrap(), tag);
+	}
+	assert!(alias_tags_of("assistant:old").unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[serial]
+#[test]
+fn real_manifest_in_an_earlier_tap_is_not_redirected_by_a_later_alias() {
+	let _data = DataDirGuard::new();
+	let own = tempfile::tempdir().unwrap();
+	write_agent(own.path(), "assistant", "old", PLAIN_HEADER);
+	let renamed = tempfile::tempdir().unwrap();
+	write_agent(renamed.path(), "assistant", "chief", PLAIN_HEADER);
+	let dir = renamed.path().join("agents").join("assistant");
+	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
+	add_tap(&format!("alice/own {}", own.path().display())).unwrap();
+	add_tap(&format!("bob/renamed {}", renamed.path().display())).unwrap();
+
+	assert_eq!(resolve_alias_tag("assistant:old").unwrap(), "assistant:old");
+}
+
 // --- load_taps / fetch_workflow ------------------------------------------------
 
 #[serial]

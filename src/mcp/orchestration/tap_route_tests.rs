@@ -20,7 +20,6 @@ use crate::agent::registry::AgentHeader;
 use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
 use crate::supervisor::evaluate::{Seam, TAP_QUESTION_ID, TAP_TOP_K};
 use serial_test::serial;
-use std::collections::BTreeMap;
 
 fn agent(tag: &str) -> TapAgentHeader {
 	TapAgentHeader {
@@ -46,10 +45,6 @@ fn seam_on_config() -> Config {
 	config.supervisor.enabled = true;
 	config.decision.taps = true;
 	config
-}
-
-fn probabilities(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
-	pairs.iter().map(|(tag, p)| (tag.to_string(), *p)).collect()
 }
 
 #[test]
@@ -92,71 +87,15 @@ fn a_no_match_error_names_the_best_ranked_specialists_and_the_recovery_step() {
 }
 
 #[test]
-fn the_choice_replaces_a_different_cosine_winner() {
+fn the_named_specialist_gets_the_task_and_none_starts_nothing() {
 	let candidates = ["a:x", "b:x"];
-	// Cosine put the tester first for a bug fix; the Choice names the developer.
-	assert_eq!(
-		apply_tap_answer(
-			Some("a:x"),
-			&candidates,
-			"b:x",
-			&probabilities(&[("a:x", 0.0), ("b:x", 1.0)])
-		),
-		Ok(Some("b:x"))
-	);
-	// An unsure pick against the cosine winner starts nothing.
-	assert_eq!(
-		apply_tap_answer(
-			Some("a:x"),
-			&candidates,
-			"b:x",
-			&probabilities(&[("a:x", 0.41), ("b:x", 0.59)])
-		),
-		Ok(None)
-	);
-	// `none` vetoes the cosine winner.
-	assert_eq!(
-		apply_tap_answer(Some("a:x"), &candidates, "none", &probabilities(&[("none", 1.0)])),
-		Ok(None)
-	);
-}
-
-#[test]
-fn a_choice_that_agrees_with_cosine_needs_no_bar() {
-	assert_eq!(
-		apply_tap_answer(
-			Some("a:x"),
-			&["a:x", "b:x"],
-			"a:x",
-			&probabilities(&[("a:x", 0.4), ("b:x", 0.35)])
-		),
-		Ok(Some("a:x"))
-	);
-}
-
-#[test]
-fn without_a_cosine_winner_the_choice_is_promoted_only_at_the_floor() {
-	let candidates = ["a:x", "b:x"];
-	assert_eq!(
-		apply_tap_answer(None, &candidates, "b:x", &probabilities(&[("b:x", 0.6)])),
-		Ok(Some("b:x"))
-	);
-	assert_eq!(
-		apply_tap_answer(None, &candidates, "b:x", &probabilities(&[("b:x", 0.59)])),
-		Ok(None)
-	);
-	assert_eq!(
-		apply_tap_answer(None, &candidates, "none", &probabilities(&[("none", 1.0)])),
-		Ok(None)
-	);
+	assert_eq!(apply_tap_answer(&candidates, "b:x"), Ok(Some("b:x")));
+	assert_eq!(apply_tap_answer(&candidates, "none"), Ok(None));
 }
 
 #[test]
 fn a_choice_that_was_never_offered_is_rejected() {
-	assert_eq!(
-		apply_tap_answer(None, &["a:x"], "z:x", &probabilities(&[("z:x", 1.0)])),
-		Err("invalid response")
-	);
+	assert_eq!(apply_tap_answer(&["a:x"], "z:x"), Err("invalid response"));
 }
 
 #[tokio::test]
@@ -212,9 +151,11 @@ async fn evaluate_pick_asks_over_the_top_candidates_and_can_veto_the_cosine_winn
 
 #[tokio::test]
 #[serial]
-async fn evaluate_pick_promotes_the_choice_when_cosine_abstained_and_keeps_cosine_when_unavailable() {
+async fn evaluate_pick_follows_the_choice_at_any_probability_and_keeps_cosine_when_unavailable() {
+	// 0.3 is a top option of a wide list: the mass is spread over the other candidates.
 	let _fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "b:x", 0.8)),
+		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "b:x", 0.3)),
+		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "b:x", 0.3)),
 		FakeEvaluationStep::MissingKey("TYPESAFE_API_KEY"),
 	])
 	.await;
@@ -223,10 +164,18 @@ async fn evaluate_pick_promotes_the_choice_when_cosine_abstained_and_keeps_cosin
 	let config = seam_on_config();
 	let unavailable = evaluate_counter(Seam::Taps, "unavailable");
 
+	// Cosine abstained: the Choice's specialist gets the task.
 	let picked = evaluate_pick(&config, "do the b thing", None, &ranked).await;
 	assert_eq!(
 		picked.map(|(score, agent)| (score, agent.tag.as_str())),
-		Some((0.8, "b:x"))
+		Some((0.3, "b:x"))
+	);
+
+	// Cosine picked another one: the Choice's specialist replaces it.
+	let picked = evaluate_pick(&config, "do the b thing", Some(ranked[0]), &ranked).await;
+	assert_eq!(
+		picked.map(|(score, agent)| (score, agent.tag.as_str())),
+		Some((0.3, "b:x"))
 	);
 
 	// A provider failure leaves the cosine winner in place.

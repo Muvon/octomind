@@ -222,10 +222,6 @@ pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
 /// the tap's eval set; listing the whole roster spreads the distribution and
 /// costs nine times the tokens.
 pub const CAPABILITY_TOP_K: usize = 5;
-/// Taps: the specialist the Choice picks gets the task when its probability is
-/// at or above this, whatever cosine ranked first. A pick that is also the
-/// cosine winner needs no bar.
-pub const TAP_ACTIVATE_AT: f64 = CAPABILITY_ACTIVATE_AT;
 /// Taps: the Choice lists this many best-scored reachable specialists plus
 /// `none`. Wide enough to hold a whole domain: for plain coding tasks cosine
 /// does not rank the general developer in its top two, and over all 14

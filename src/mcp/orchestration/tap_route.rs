@@ -168,9 +168,9 @@ fn describe(agent: &TapAgentHeader) -> String {
 }
 
 /// The decision seam picks among the best cosine matches: cosine only
-/// shortlists, the Choice decides. Its pick gets the task at `TAP_ACTIVATE_AT`
-/// or above, or at any probability when cosine picked the same one; `none` and
-/// an unsure pick start nothing. Off or unavailable, the cosine decision stands.
+/// shortlists, the Choice decides. The specialist it names gets the task,
+/// whatever cosine ranked first; `none` starts nothing. Off or unavailable,
+/// the cosine decision stands.
 async fn evaluate_pick<'a>(
 	config: &Config,
 	task: &str,
@@ -211,7 +211,7 @@ async fn evaluate_pick<'a>(
 	};
 	let cosine_tag = cosine.map(|(_, agent)| agent.tag.as_str());
 	let tags: Vec<&str> = candidates.iter().map(|(_, agent)| agent.tag.as_str()).collect();
-	let verdict = match apply_tap_answer(cosine_tag, &tags, choice, probabilities) {
+	let verdict = match apply_tap_answer(&tags, choice) {
 		Ok(verdict) => verdict,
 		Err(reason) => {
 			evaluate::unavailable(Seam::Taps, reason);
@@ -240,26 +240,21 @@ async fn evaluate_pick<'a>(
 	picked
 }
 
-/// Apply the seam's rule to one Choice answer: `cosine` is the cosine winner's
-/// tag, `candidates` the tags the Choice listed. `Ok(Some)` is the specialist
-/// that gets the task, `Ok(None)` an abstain; `Err` names a choice that was
-/// never offered. Pure, so the rule is unit-testable.
-fn apply_tap_answer<'a>(
-	cosine: Option<&'a str>,
-	candidates: &[&'a str],
-	choice: &str,
-	probabilities: &std::collections::BTreeMap<String, f64>,
-) -> Result<Option<&'a str>, &'static str> {
-	use crate::supervisor::evaluate::{TAP_ACTIVATE_AT, TAP_NONE};
-
-	if choice == TAP_NONE {
+/// Apply the seam's rule to one Choice answer: `candidates` are the tags the
+/// Choice listed. `Ok(Some)` is the specialist that gets the task, `Ok(None)`
+/// an abstain; `Err` names a choice that was never offered. No probability
+/// bar: `choice` is already the likeliest option of the list, `none` included,
+/// and that list spreads the mass over up to `TAP_TOP_K` specialists.
+fn apply_tap_answer<'a>(candidates: &[&'a str], choice: &str) -> Result<Option<&'a str>, &'static str> {
+	if choice == crate::supervisor::evaluate::TAP_NONE {
 		return Ok(None);
 	}
-	let Some(chosen) = candidates.iter().copied().find(|tag| *tag == choice) else {
-		return Err("invalid response");
-	};
-	let probability = probabilities.get(chosen).copied().unwrap_or(0.0);
-	Ok((cosine == Some(chosen) || probability >= TAP_ACTIVATE_AT).then_some(chosen))
+	candidates
+		.iter()
+		.copied()
+		.find(|tag| *tag == choice)
+		.map(Some)
+		.ok_or("invalid response")
 }
 
 #[cfg(test)]

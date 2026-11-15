@@ -244,7 +244,11 @@ async fn evaluate_pick<'a>(
 /// Choice listed. `Ok(Some)` is the specialist that gets the task, `Ok(None)`
 /// an abstain; `Err` names a choice that was never offered. No probability
 /// bar: `choice` is already the likeliest option of the list, `none` included,
-/// and that list spreads the mass over up to `TAP_TOP_K` specialists.
+/// and that list spreads the mass over up to `TAP_TOP_K` specialists. Measured
+/// 2026-11 with live Jev over the 14 developer specialists: three of four 2 KB
+/// briefs from a real lead got their top option at 0.30 to 0.51, so a 0.6 bar
+/// refused them; on 168 written briefs the bar kept the same 158 right picks
+/// and only turned 2 of 8 wrong picks into refusals.
 fn apply_tap_answer<'a>(candidates: &[&'a str], choice: &str) -> Result<Option<&'a str>, &'static str> {
 	if choice == crate::supervisor::evaluate::TAP_NONE {
 		return Ok(None);

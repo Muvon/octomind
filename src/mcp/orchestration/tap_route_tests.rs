@@ -17,7 +17,9 @@
 
 use super::*;
 use crate::agent::registry::AgentHeader;
-use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
+use crate::session::chat::test_support::{
+	choice, evaluate_counter, install_fake_evaluation, refusals, FakeEvaluationStep,
+};
 use crate::supervisor::evaluate::{Seam, TAP_QUESTION_ID, TAP_TOP_K};
 use serial_test::serial;
 
@@ -185,6 +187,26 @@ async fn evaluate_pick_follows_the_choice_at_any_probability_and_keeps_cosine_wh
 		Some((0.5, "a:x"))
 	);
 	assert_eq!(evaluate_counter(Seam::Taps, "unavailable"), unavailable + 1);
+}
+
+#[tokio::test]
+#[serial]
+async fn evaluate_pick_keeps_cosine_when_the_question_is_refused_or_the_choice_was_never_offered() {
+	let _fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(refusals(&[TAP_QUESTION_ID])),
+		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "z:x", 0.9)),
+	])
+	.await;
+	let agents = [agent("a:x"), agent("b:x")];
+	let ranked: Vec<(f32, &TapAgentHeader)> = vec![(0.9, &agents[0]), (0.5, &agents[1])];
+	let config = seam_on_config();
+	let unavailable = evaluate_counter(Seam::Taps, "unavailable");
+
+	for expected_unavailable in [unavailable + 1, unavailable + 2] {
+		let picked = evaluate_pick(&config, "do the a thing", Some(ranked[0]), &ranked).await;
+		assert_eq!(picked.map(|(_, agent)| agent.tag.as_str()), Some("a:x"));
+		assert_eq!(evaluate_counter(Seam::Taps, "unavailable"), expected_unavailable);
+	}
 }
 
 // --- matching against a real roster ------------------------------------------

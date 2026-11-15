@@ -404,7 +404,7 @@ async fn nothing_relevant_omits_an_ok_result_and_never_an_error_result() {
 		.expect("scored");
 	let notice = outcomes[0].content.as_deref().expect("ok result omitted");
 	assert!(notice.starts_with(CONDENSE_NOTICE_TAG));
-	assert!(notice.contains("omitted the complete 150-line successful `shell` result"));
+	assert!(notice.contains("the complete 150-line successful `shell` result was moved out of view"));
 	assert_eq!(outcomes[0].verdict, "omit");
 	assert!(outcomes[1].content.is_none(), "an error result is never omitted");
 	assert_eq!(outcomes[1].verdict, "omit");

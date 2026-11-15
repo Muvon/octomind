@@ -215,7 +215,7 @@ fn reconstruct_full_range_is_verbatim_with_no_markers() {
 fn reconstruct_with_no_ranges_marks_everything_omitted() {
 	let lines = vec!["a", "b", "c"];
 	let (body, kept) = reconstruct(&lines, &[], 3);
-	assert_eq!(body, "[... 3 lines omitted]");
+	assert_eq!(body, "[... 3 lines omitted: lines 1-3 of the full output file]");
 	assert_eq!(kept, 0);
 }
 
@@ -223,7 +223,10 @@ fn reconstruct_with_no_ranges_marks_everything_omitted() {
 fn reconstruct_range_from_line_one_has_no_leading_marker() {
 	let lines = vec!["a", "b", "c", "d"];
 	let (body, kept) = reconstruct(&lines, &[(1, 1), (3, 3)], 4);
-	assert_eq!(body, "a\n[... 1 lines omitted]\nc\n[... 1 lines omitted]");
+	assert_eq!(
+		body,
+		"a\n[... 1 lines omitted: lines 2-2 of the full output file]\nc\n[... 1 lines omitted: lines 4-4 of the full output file]"
+	);
 	assert_eq!(kept, 2);
 }
 
@@ -468,7 +471,7 @@ async fn extract_protects_diagnostics_the_selection_missed() {
 		let out = apply_verdict(&entry("extract", &["1-2"]), &ok, &original, &full_view(10))
 			.expect("a partial selection applies");
 		assert!(out.starts_with("l1\nl2\n"));
-		assert!(out.contains("[... 3 lines omitted]"));
+		assert!(out.contains("[... 3 lines omitted: lines 3-5 of the full output file]"));
 		assert!(
 			out.contains("error: boom"),
 			"diagnostics survive a selection that missed them"

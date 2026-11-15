@@ -114,7 +114,7 @@ fn reconstruct_keeps_lines_verbatim_with_gap_markers() {
 	assert_eq!(kept, 3);
 	assert_eq!(
 		body,
-		"[... 1 lines omitted]\nb\nc\n[... 1 lines omitted]\ne\n[... 1 lines omitted]"
+		"[... 1 lines omitted: lines 1-1 of the full output file]\nb\nc\n[... 1 lines omitted: lines 4-4 of the full output file]\ne\n[... 1 lines omitted: lines 6-6 of the full output file]"
 	);
 }
 
@@ -123,7 +123,7 @@ fn reconstruct_counts_capped_tail_the_model_never_saw() {
 	let lines = vec!["a", "b"]; // capped view of a 10-line original
 	let (body, kept) = reconstruct(&lines, &[(1, 2)], 10);
 	assert_eq!(kept, 2);
-	assert!(body.ends_with("[... 8 lines omitted]"));
+	assert!(body.ends_with("[... 8 lines omitted: lines 3-10 of the full output file]"));
 }
 
 #[test]

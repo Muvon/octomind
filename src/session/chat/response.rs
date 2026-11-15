@@ -551,9 +551,15 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 				// Keep the prompt cache warm while long tool runs execute. Finished on
 				// every path before the follow-up request, so no handle leaks.
 				let keepalive = KeepaliveHandle::spawn(params.chat_session, params.config, WaitKind::Tools);
+				// Reasoning models often state why they issue a batch only in their
+				// thinking; without it the condenser judges outputs blind to intent.
+				let tool_round_intent = match &current_thinking {
+					Some(thinking) if current_content.trim().is_empty() => thinking.content.as_str(),
+					_ => current_content.as_str(),
+				};
 				let tool_run = tool_execution::execute_tools_parallel(
 					current_tool_calls.clone(),
-					&current_content,
+					tool_round_intent,
 					params.chat_session,
 					params.config,
 					&mut tool_processor,

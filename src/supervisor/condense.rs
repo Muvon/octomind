@@ -953,7 +953,7 @@ fn extract_content(r: &McpToolResult, original: &str, lines: &[&str], ranges: &[
 	}
 	let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
 	Some(format!(
-		"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; the kept lines are verbatim original text, nothing was rewritten. Full original output:\n  {}\nIf something you need was cut, read the exact span from that file. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
+		"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; the kept lines are verbatim original text, nothing was rewritten. Full original output, verbatim:\n  {}\nIf something you need was cut, read just that span of this file: each omission marker gives its line numbers there. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
 		lines.len(),
 		path.display()
 	))
@@ -968,7 +968,7 @@ fn omission_notice(r: &McpToolResult, original: &str) -> Option<String> {
 	let total_lines = original.lines().count();
 	let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
 	Some(format!(
-		"{CONDENSE_NOTICE_TAG}: omitted the complete {total_lines}-line successful `{}` result because none of it was judged to advance the current task. No tool facts were summarized or rewritten. Full original output:\n  {}\nRead it there if needed. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
+		"{CONDENSE_NOTICE_TAG}: the complete {total_lines}-line successful `{}` result was moved out of view because no part of it was judged to advance the current task; the call itself succeeded and nothing was summarized or rewritten. Full original output, verbatim:\n  {}\nIf you need any of it, read lines 1-{total_lines} of this file or just the span you need. Re-run the original tool only when its underlying state may have changed, not merely to recover moved text.",
 		r.tool_name,
 		path.display()
 	))
@@ -1548,13 +1548,15 @@ fn clip_to_visible(ranges: Vec<(usize, usize)>, view: &NumberedView) -> Vec<(usi
 /// omission marker. `total_lines` is the ORIGINAL line count (may exceed
 /// `lines.len()` when the prompt view was capped) so the trailing marker
 /// accounts for lines the model never saw. Returns `(body, kept_count)`.
+/// Markers carry the omitted span's line numbers in the spill, which holds the
+/// original verbatim, so recovering a gap is one ranged read.
 fn reconstruct(lines: &[&str], ranges: &[(usize, usize)], total_lines: usize) -> (String, usize) {
 	let mut out: Vec<String> = Vec::new();
 	let mut kept = 0usize;
 	let mut cursor = 1usize;
 	for &(s, e) in ranges {
 		if s > cursor {
-			out.push(format!("[... {} lines omitted]", s - cursor));
+			out.push(omission_marker(cursor, s - 1));
 		}
 		for line in &lines[s - 1..e] {
 			out.push((*line).to_string());
@@ -1563,9 +1565,16 @@ fn reconstruct(lines: &[&str], ranges: &[(usize, usize)], total_lines: usize) ->
 		cursor = e + 1;
 	}
 	if total_lines >= cursor {
-		out.push(format!("[... {} lines omitted]", total_lines - cursor + 1));
+		out.push(omission_marker(cursor, total_lines));
 	}
 	(out.join("\n"), kept)
+}
+
+fn omission_marker(first: usize, last: usize) -> String {
+	format!(
+		"[... {} lines omitted: lines {first}-{last} of the full output file]",
+		last - first + 1
+	)
 }
 
 #[cfg(test)]

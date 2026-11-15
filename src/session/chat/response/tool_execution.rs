@@ -29,8 +29,9 @@ pub enum ToolExecutionContext<'a> {
 	MainSession {
 		chat_session: &'a mut ChatSession,
 		tool_processor: &'a mut ToolProcessor,
-		/// Assistant text accompanying this batch: the nearest available
-		/// explanation of why these calls were issued now.
+		/// Assistant text accompanying this batch, or its thinking when it wrote
+		/// none: the nearest available explanation of why these calls were
+		/// issued now.
 		tool_round_intent: &'a str,
 	},
 	/// Layer/agent context — tool access controlled by the ACP session's role config

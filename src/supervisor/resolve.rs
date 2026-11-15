@@ -125,7 +125,7 @@ shorten a stated requirement: an incomplete checklist makes incomplete work look
 and the requirements late in a request are exactly the ones work tends to miss. An empty list
 whenever answer_only is true, and for a conversation or a trivial ask. Each condition must be:
 - stated in the request's own terms (its nouns, names, examples), never in terms of any
-  particular way of doing the work (a tool, a command, a test to add);
+  particular way of doing the work (a tool, a command, a test the request does not ask for);
 - checkable against a log of performed actions and observed outputs ("X was produced and
   the observed output shows Y"), never a restatement of intent.
 Never include a condition whose only demonstration would require an action the request
@@ -187,7 +187,7 @@ The user message is one JSON object. Identify each field by its KEY, never by it
 Use the bounded context only to replace missing references or omitted arguments. Preserve every
 action, temporal qualifier, prohibition, and scope boundary from the current request. Never
 merge an older request, add a new action, or turn background into a requirement. Prefer the
-most recent relevant history; use durable session context or the active plan only when needed.
+most recent relevant history; use durable session context, the active plan or role_context only when needed.
 If one minimal interpretation is not supported, return ambiguous and an empty request.
 Preserve the distinction between asking for a solution or proposal and authorizing its
 implementation. Resolving "it" to an earlier defect must not turn "do you know the solution?"

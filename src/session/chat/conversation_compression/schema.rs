@@ -327,7 +327,7 @@ pub const SHOULD_COMPRESS_FORCED_RULE: &str = "Compression is required on this c
 
 /// What each `defer_reason` token means, and why naming one honestly is in the
 /// model's interest: the runtime corroborates the claim against state it owns.
-pub const DEFER_REASON_RULE: &str = "Only meaningful when should_compress is false: why the fold is deferred. mid_derivation — a build, test, edit, or hypothesis is still running; verification_in_flight — a verification the agent is waiting on has not returned; stuck — the agent is stalled and re-reading; transcript_minimal — there is nothing older worth folding. Use none when should_compress is true. The runtime corroborates an in-flight claim against the live plan and the agent's own state and overrules any claim it cannot confirm, so name the reason honestly rather than picking one to be safe.";
+pub const DEFER_REASON_RULE: &str = "Only meaningful when should_compress is false: why the fold is deferred. mid_derivation — a build, test, edit, or hypothesis is still running; verification_in_flight — a verification the agent is waiting on has not returned; stuck — the agent is stalled and re-reading; transcript_minimal — there is nothing older worth folding (the runtime never honors stuck or transcript_minimal: answer true instead). Use none when should_compress is true. The runtime corroborates an in-flight claim against the live plan and the agent's own state and overrules any claim it cannot confirm, so name the reason honestly rather than picking one to be safe.";
 
 /// The no-veto variant of `DEFER_REASON_RULE`: there is no deferral to
 /// justify, so the field is nailed to `none` rather than explaining buckets

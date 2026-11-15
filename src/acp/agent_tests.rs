@@ -51,6 +51,196 @@ fn progress_patches_the_tool_call_it_belongs_to() {
 	}
 }
 
+/// The tool call an ACP client receives for one tool use.
+fn tool_call(tool: &str, params: serde_json::Value, session_id: &str) -> ToolCall {
+	let update = translate_server_message_to_acp(ServerMessage::ToolUse(ToolUsePayload {
+		tool: tool.to_string(),
+		tool_id: "call-1".to_string(),
+		server: "octofs".to_string(),
+		params,
+		session_id: session_id.to_string(),
+	}))
+	.expect("a tool use is forwarded");
+	match update {
+		SessionUpdate::ToolCall(call) => call,
+		other => panic!("expected a tool call, got {other:?}"),
+	}
+}
+
+fn diff(path: impl Into<PathBuf>, old_text: &str, new_text: &str) -> ToolCallContent {
+	ToolCallContent::Diff(Diff::new(path, new_text).old_text(old_text.to_string()))
+}
+
+/// A tool whose `readOnlyHint` is false and whose `command` selects an operation.
+fn register_editor(tool: &str) {
+	crate::supervisor::detect::register_tool_read_only_hint(tool, Some(false));
+	crate::supervisor::detect::register_tool_command_shape(tool, false);
+}
+
+// No session in these tests registers a working directory unless it says so,
+// so the paths come back as the tool received them.
+const NO_WORKDIR_SESSION: &str = "acpTestsNoWorkdir";
+
+#[test]
+fn read_call_reports_kind_file_and_line() {
+	crate::supervisor::detect::register_tool_read_only_hint("acpTestsReader", Some(true));
+
+	let call = tool_call(
+		"acpTestsReader",
+		serde_json::json!({"path": "src/main.rs", "line": 42}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(call.kind, ToolKind::Read);
+	assert_eq!(call.locations, vec![ToolCallLocation::new("src/main.rs").line(42u32)]);
+	assert!(call.content.is_empty(), "a read changes nothing");
+}
+
+#[test]
+fn edit_call_reports_kind_file_and_diff() {
+	register_editor("acpTestsEditor");
+
+	let call = tool_call(
+		"acpTestsEditor",
+		serde_json::json!({"command": "str_replace", "path": "src/lib.rs", "old_text": "old", "new_text": "new"}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(call.kind, ToolKind::Edit);
+	assert_eq!(call.locations, vec![ToolCallLocation::new("src/lib.rs")]);
+	assert_eq!(call.content, vec![diff("src/lib.rs", "old", "new")]);
+}
+
+#[test]
+fn edit_list_reports_one_diff_per_item() {
+	register_editor("acpTestsListEditor");
+
+	let call = tool_call(
+		"acpTestsListEditor",
+		serde_json::json!({
+			"path": "a.rs",
+			"edits": [
+				{"old_text": "1", "new_text": "2"},
+				{"path": "b.rs", "old_text": "3", "new_text": ""}
+			]
+		}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(
+		call.content,
+		vec![diff("a.rs", "1", "2"), diff("b.rs", "3", "")],
+		"an item without a path uses the call's; an empty replacement is a deletion"
+	);
+}
+
+#[test]
+fn edit_without_old_text_reports_no_diff() {
+	register_editor("acpTestsWholeFileWriter");
+
+	let call = tool_call(
+		"acpTestsWholeFileWriter",
+		serde_json::json!({"path": "a.rs", "content": "whole file", "operations": [{"start": 1, "content": "x"}]}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(call.kind, ToolKind::Edit);
+	assert!(
+		call.content.is_empty(),
+		"a diff with no old text would show the file as new"
+	);
+}
+
+#[test]
+fn shell_call_is_an_execute_with_no_file() {
+	crate::supervisor::detect::register_tool_read_only_hint("acpTestsRunner", Some(false));
+	crate::supervisor::detect::register_tool_command_shape("acpTestsRunner", true);
+
+	let call = tool_call(
+		"acpTestsRunner",
+		serde_json::json!({"command": "cargo test"}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(call.kind, ToolKind::Execute);
+	assert!(call.locations.is_empty());
+	assert!(call.content.is_empty());
+}
+
+#[test]
+fn write_capable_call_that_names_no_file_is_not_an_edit() {
+	crate::supervisor::detect::register_tool_read_only_hint("acpTestsSender", Some(false));
+
+	let call = tool_call(
+		"acpTestsSender",
+		serde_json::json!({"message": "hi", "old_text": "a", "new_text": "b"}),
+		NO_WORKDIR_SESSION,
+	);
+	assert_eq!(call.kind, ToolKind::Other);
+	assert!(call.content.is_empty());
+
+	let call = tool_call(
+		"acpTestsNeverRegistered",
+		serde_json::json!({"path": "a.rs"}),
+		NO_WORKDIR_SESSION,
+	);
+	assert_eq!(call.kind, ToolKind::Other, "no metadata, no claim");
+}
+
+#[test]
+fn relative_paths_resolve_against_the_session_workdir() {
+	register_editor("acpTestsWorkdirEditor");
+	let workdir = std::env::temp_dir().join("acpTestsWorkdir");
+	let session_id = "acpTestsWorkdirSession".to_string();
+	crate::session::context::set_session_workdir(&session_id, workdir.clone());
+	let elsewhere = std::env::temp_dir().join("acpTestsElsewhere").join("b.rs");
+
+	let call = tool_call(
+		"acpTestsWorkdirEditor",
+		serde_json::json!({
+			"path": "src/lib.rs",
+			"old_text": "old",
+			"new_text": "new",
+			"files": [elsewhere.to_str().expect("temp dir is UTF-8")]
+		}),
+		&session_id,
+	);
+
+	assert_eq!(
+		call.locations,
+		vec![
+			ToolCallLocation::new(workdir.join("src/lib.rs")),
+			ToolCallLocation::new(elsewhere)
+		],
+		"a relative path joins the workdir; an absolute one is kept"
+	);
+	assert_eq!(call.content, vec![diff(workdir.join("src/lib.rs"), "old", "new")]);
+}
+
+#[test]
+fn tool_result_leaves_the_call_content_alone() {
+	register_editor("acpTestsResultEditor");
+
+	let update = translate_server_message_to_acp(ServerMessage::ToolResult(ToolResultPayload {
+		tool: "acpTestsResultEditor".to_string(),
+		tool_id: "call-1".to_string(),
+		server: "octofs".to_string(),
+		content: r#"{"path":"src/lib.rs"}"#.to_string(),
+		success: true,
+		session_id: NO_WORKDIR_SESSION.to_string(),
+	}))
+	.expect("a tool result is forwarded");
+
+	match update {
+		SessionUpdate::ToolCallUpdate(upd) => {
+			assert_eq!(upd.fields.status, Some(ToolCallStatus::Completed));
+			// An update's content replaces the call's, so sending any would drop the diff.
+			assert_eq!(upd.fields.content, None);
+		}
+		other => panic!("expected a tool call update, got {other:?}"),
+	}
+}
+
 #[test]
 fn progress_without_a_tool_call_is_dropped() {
 	// ACP has no session-level progress surface, so an unattributable beat has

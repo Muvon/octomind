@@ -23,12 +23,13 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::schema::{
 	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
 	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification, ClientRequest,
-	ContentBlock, ContentChunk, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
+	ContentBlock, ContentChunk, CreateElicitationRequest, CreateElicitationResponse, Diff, ElicitationAction,
 	ElicitationCapabilities, ElicitationFormMode, ElicitationSchema, ElicitationSessionScope, ElicitationUrlMode,
 	EmbeddedResourceResource, ExtRequest, ExtResponse, Implementation, InitializeRequest, InitializeResponse,
 	LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse,
 	PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification, SessionUpdate,
-	StopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, UnstructuredCommandInput,
+	StopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
+	ToolCallUpdateFields, ToolKind, UnstructuredCommandInput,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{ByteStreams, Client};
@@ -445,6 +446,121 @@ pub(super) fn notify_usage(conn: Option<&ConnectionTo<Client>>, session_id: &str
 	}
 }
 
+/// Parameter names tools use for the file a call works on.
+const PATH_KEYS: &[&str] = &["path", "file", "filepath", "file_path", "filename", "file_name"];
+/// Parameter names for a list of such files.
+const PATH_LIST_KEYS: &[&str] = &["paths", "files"];
+/// Parameter names for a line in that file.
+const LINE_KEYS: &[&str] = &["line", "start_line", "startLine", "offset", "line_number", "lineNumber"];
+/// Parameter names for the text an edit removes.
+const OLD_TEXT_KEYS: &[&str] = &["old_text", "old_string"];
+/// Parameter names for the text an edit puts in its place.
+const NEW_TEXT_KEYS: &[&str] = &["new_text", "new_string"];
+
+/// ACP `ToolKind` of one call, from metadata the runtime already holds: the
+/// command shape read off the tool's schema and its MCP `readOnlyHint`. No
+/// tool names. A tool that may write counts as an edit only when the call
+/// names a file: `readOnlyHint: false` also covers tools that send, schedule
+/// or store, and those edit no file.
+fn tool_kind(tool_name: &str, names_file: bool) -> ToolKind {
+	if crate::supervisor::detect::executes_free_form_command(tool_name) {
+		return ToolKind::Execute;
+	}
+	match crate::supervisor::detect::tool_read_only_hint(tool_name) {
+		Some(true) => ToolKind::Read,
+		Some(false) if names_file => ToolKind::Edit,
+		_ => ToolKind::Other,
+	}
+}
+
+/// First string found under any of `keys`.
+fn string_param<'a>(params: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+	keys.iter().find_map(|key| params.get(*key)?.as_str())
+}
+
+/// ACP file paths are absolute, while tools take them relative to the
+/// session's working directory. A session with no registered directory leaves
+/// the path as the tool received it.
+fn absolute_path(path: &str, session_id: &str) -> PathBuf {
+	let path = Path::new(path);
+	if path.is_absolute() {
+		return path.to_path_buf();
+	}
+	match crate::session::context::get_current_workdir(&session_id.to_string()) {
+		Some(workdir) => workdir.join(path),
+		None => path.to_path_buf(),
+	}
+}
+
+/// Files a call's input names, with the line when the input gives one.
+fn extract_locations(params: &serde_json::Value, session_id: &str) -> Vec<ToolCallLocation> {
+	let line = LINE_KEYS.iter().find_map(|key| {
+		let value = params.get(*key)?;
+		let line = value.as_u64().or_else(|| value.as_str()?.parse().ok())?;
+		u32::try_from(line).ok()
+	});
+	let single = PATH_KEYS.iter().filter_map(|key| params.get(*key)?.as_str());
+	let listed = PATH_LIST_KEYS
+		.iter()
+		.filter_map(|key| params.get(*key)?.as_array())
+		.flatten()
+		.filter_map(|item| item.as_str());
+	single
+		.chain(listed)
+		.filter(|path| !path.is_empty())
+		.map(|path| ToolCallLocation::new(absolute_path(path, session_id)).line(line))
+		.collect()
+}
+
+/// Diffs an edit call spells out in its input: the text to remove and the text
+/// that replaces it, beside the file they apply to. The pair sits at the top
+/// level or once per item in a list of edits; an item that names no file uses
+/// the call's. A call without such a pair (a line-addressed edit, a whole-file
+/// write) yields none, because a diff with no old text tells the client the
+/// file is new.
+fn edit_diffs(params: &serde_json::Value, session_id: &str) -> Vec<ToolCallContent> {
+	let call_path = string_param(params, PATH_KEYS);
+	let listed = params
+		.as_object()
+		.into_iter()
+		.flat_map(|fields| fields.values())
+		.filter_map(|value| value.as_array())
+		.flatten();
+	std::iter::once(params)
+		.chain(listed)
+		.filter_map(|edit| {
+			let path = string_param(edit, PATH_KEYS)
+				.or(call_path)
+				.filter(|path| !path.is_empty())?;
+			let old_text = string_param(edit, OLD_TEXT_KEYS)?;
+			let new_text = string_param(edit, NEW_TEXT_KEYS)?;
+			Some(ToolCallContent::Diff(
+				Diff::new(absolute_path(path, session_id), new_text).old_text(old_text.to_string()),
+			))
+		})
+		.collect()
+}
+
+/// The ACP tool call that announces a tool use. Beside the raw input it tells
+/// the client what the call is (`kind`), which files it works on (`locations`)
+/// and, for an edit, what changes (`content`). The diff comes from the input:
+/// a tool result is the tool's own report, not the text it wrote.
+fn tool_call_for(tool_use: &crate::websocket::ToolUsePayload) -> ToolCall {
+	let locations = extract_locations(&tool_use.params, &tool_use.session_id);
+	let kind = tool_kind(&tool_use.tool, !locations.is_empty());
+	let content = if kind == ToolKind::Edit {
+		edit_diffs(&tool_use.params, &tool_use.session_id)
+	} else {
+		Vec::new()
+	};
+	ToolCall::new(tool_use.tool_id.clone(), tool_use.tool.clone())
+		.kind(kind)
+		.status(ToolCallStatus::InProgress)
+		.raw_input(tool_use.params.clone())
+		.locations(locations)
+		.content(content)
+}
+
 /// Translate an internal `ServerMessage` (the protocol shared with the WebSocket
 /// server) into an ACP `SessionUpdate` for forwarding to the client. Returns
 /// `None` for messages that have no ACP equivalent (e.g. Cost — sent separately).
@@ -452,12 +568,7 @@ fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> 
 	match msg {
 		ServerMessage::Assistant(p) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(p.content.into()))),
 		ServerMessage::Thinking(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(p.content.into()))),
-		ServerMessage::ToolUse(p) => {
-			let tc = ToolCall::new(p.tool_id.clone(), p.tool.clone())
-				.status(ToolCallStatus::InProgress)
-				.raw_input(p.params.clone());
-			Some(SessionUpdate::ToolCall(tc))
-		}
+		ServerMessage::ToolUse(p) => Some(SessionUpdate::ToolCall(tool_call_for(&p))),
 		ServerMessage::ToolResult(p) => {
 			let status = if p.success {
 				ToolCallStatus::Completed
@@ -1591,12 +1702,7 @@ impl OctomindAgent {
 						ServerMessage::Thinking(p) => {
 							Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(p.content.into())))
 						}
-						ServerMessage::ToolUse(p) => {
-							let tool_call = ToolCall::new(p.tool_id.clone(), p.tool.clone())
-								.status(ToolCallStatus::InProgress)
-								.raw_input(p.params.clone());
-							Some(SessionUpdate::ToolCall(tool_call))
-						}
+						ServerMessage::ToolUse(p) => Some(SessionUpdate::ToolCall(tool_call_for(&p))),
 						ServerMessage::ToolResult(p) => {
 							let status = if p.success {
 								ToolCallStatus::Completed

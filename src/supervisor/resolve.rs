@@ -52,7 +52,7 @@ The user message is one JSON object. Identify each field by its KEY, never by it
 Field "scope": return self_contained when the requested actions, objects, timing, and
 prohibitions are understandable from the current turn alone. Return context_dependent only when
 an explicit reference or ellipsis (for example a bare "continue", "that", "it", "same but hourly")
-leaves a required referent or argument missing. Related subject matter, a reference the turn itself
+leaves a required referent or argument unnamed in the turn. Related subject matter, a reference the turn itself
 resolves, or a named artifact whose content must be read does not create a dependency.
 
 Field "forbids_verification": this boolean imposes a blanket ban on ALL assistant-run
@@ -125,7 +125,7 @@ shorten a stated requirement: an incomplete checklist makes incomplete work look
 and the requirements late in a request are exactly the ones work tends to miss. An empty list
 whenever answer_only is true, and for a conversation or a trivial ask. Each condition must be:
 - stated in the request's own terms (its nouns, names, examples), never in terms of any
-  particular way of doing the work;
+  particular way of doing the work (a tool, a command, a test to add);
 - checkable against a log of performed actions and observed outputs ("X was produced and
   the observed output shows Y"), never a restatement of intent.
 Never include a condition whose only demonstration would require an action the request

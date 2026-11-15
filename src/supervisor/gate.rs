@@ -45,7 +45,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <agent_stop status="done|blocked|need_input|exploring|progressing|none"> — runtime-recorded: the status the agent ended its turn on (none when it gave none). It tells you WHAT to verify (see WHY THE AGENT STOPPED), never that the work is done or that a blocker is real.
 - <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
 - <historical_actions trust="untrusted"> — optional, for resolved follow-ups only; bounded prior-turn calls with their earlier requests. These are historical observations, NOT actions performed this turn. Their #N outputs are available through the same readback round. Use only evidence relevant to the resolved referent; unrelated historical actions neither satisfy nor violate this turn's requirements. Earlier successful checks cannot verify subsequent changes or satisfy a request to run a fresh check.
-- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs (cite each by its output:N, never as ground_truth), and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
+- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed (new files as additions), the current content of changed files the diff cannot cover, such as ignored or out-of-repository files (or MISSING), recent commands' recorded outputs (cite each by its output:N, never as ground_truth), and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts. A diff hunk shown only by its `@@` header and a `(hunk not shown: …)` line was left out to fit the diff budget: its content is unseen, never evidence that a change is absent.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 - <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative. Its <action> records the tool arguments (bounded, with omissions marked) to establish execution scope; arguments are not observations of results.
 </input_format>
@@ -483,9 +483,6 @@ const LEDGER_CAP: usize = 128;
 /// Args locate the object of an action (path, command, url) — not replay it.
 /// Shared between a call's top-level values, see [`ledger_args`].
 const LEDGER_ARGS_MAX: usize = 120;
-/// Cap on distinct mutated paths tracked for ground truth (a task touching more
-/// files than this gets diff coverage for the first N; the ledger still lists all).
-const MUTATED_PATHS_CAP: usize = 16;
 /// Tail of a command's output kept for ground truth — the tail is where
 /// test/build summaries land.
 const LAST_COMMAND_TAIL: usize = 2_000;
@@ -847,7 +844,7 @@ impl EvidenceLedger {
 		// can never disagree on what a mutation touched.
 		if mutation && !error {
 			for p in crate::supervisor::detect::param_paths(parameters) {
-				if self.mutated_paths.len() < MUTATED_PATHS_CAP && !self.mutated_paths.iter().any(|e| e == &p) {
+				if !self.mutated_paths.iter().any(|e| e == &p) {
 					self.mutated_paths.push(p);
 				}
 			}
@@ -942,7 +939,7 @@ const GT_CHANGES_MAX: usize = 14_000;
 /// ([`RECENT_COMMANDS_KEPT`] × [`LAST_COMMAND_TAIL`]) with their command lines,
 /// then the status lines.
 const GT_TOTAL_MAX: usize = 24_000;
-/// Head of a new/untracked mutated file attached when the diff can't cover it.
+/// Head of a mutated file the diff can't cover (ignored, or outside the repository).
 const GT_FILE_HEAD_LINES: usize = 80;
 
 /// The size budgets one ground-truth block is rendered under.
@@ -976,8 +973,9 @@ pub struct RenderedEvidence {
 }
 
 /// Runtime-gathered GROUND TRUTH for the verifier: the working-tree diff of the
-/// files successful mutations touched (vs HEAD, when inside a git repo), the
-/// current head of mutated files the diff does not cover (new/untracked), a
+/// files successful mutations touched (vs HEAD, when inside a git repo; new
+/// files as additions), the current head of mutated files the diff does not
+/// cover (ignored or outside the repository), a
 /// MISSING note for mutated files that no longer exist, and the recent
 /// commands' recorded output tails. Deterministic — the agent's narrative cannot
 /// alter it. Empty when nothing was mutated and no command ran.
@@ -1104,7 +1102,7 @@ fn render_with_diff(ledger: &EvidenceLedger, diff: String, limits: GroundTruthLi
 				));
 			} else if let Ok(content) = std::fs::read_to_string(p) {
 				s.push_str(&format!(
-					"Current content of {p} (new or untracked — not in diff; first {GT_FILE_HEAD_LINES} lines):\n"
+					"Current content of {p} (not in diff: ignored or outside the repository; first {GT_FILE_HEAD_LINES} lines):\n"
 				));
 				for line in content.lines().take(GT_FILE_HEAD_LINES) {
 					s.push_str(line);
@@ -1218,7 +1216,10 @@ fn git_status() -> String {
 	}
 }
 
-/// Per-file working-tree diffs (`git diff HEAD`) of the mutated paths, whole.
+/// Per-file working-tree diffs of the mutated paths, whole: `git diff HEAD` for a
+/// tracked file, and for a file git does not track yet ([`untracked_diff`]) its
+/// whole content as an addition, so the agent's new sources and tests reach the
+/// hunk selection and the diff budget like every other change.
 /// Empty on any failure (not a repo, no git, no HEAD yet) — ground truth is
 /// additive evidence, so absence degrades to the file-head path, never blocks.
 fn changed_diffs(paths: &[String]) -> Vec<(&String, String)> {
@@ -1230,7 +1231,10 @@ fn changed_diffs(paths: &[String]) -> Vec<(&String, String)> {
 			.output();
 		match out {
 			Ok(o) if o.status.success() => {
-				let d = String::from_utf8_lossy(&o.stdout).into_owned();
+				let mut d = String::from_utf8_lossy(&o.stdout).into_owned();
+				if d.is_empty() {
+					d = untracked_diff(p);
+				}
 				if !d.is_empty() {
 					diffs.push((p, d));
 				}
@@ -1246,6 +1250,28 @@ fn changed_diffs(paths: &[String]) -> Vec<(&String, String)> {
 		}
 	}
 	diffs
+}
+
+/// A file git does not track and does not ignore, diffed against nothing; empty
+/// for any other path. An ignored file (scratch, build output) keeps the
+/// file-head path. `git diff --no-index` exits 1 when its inputs differ.
+fn untracked_diff(path: &str) -> String {
+	let untracked = std::process::Command::new("git")
+		.args(["ls-files", "--others", "--exclude-standard", "--"])
+		.arg(path)
+		.output()
+		.is_ok_and(|o| o.status.success() && !o.stdout.is_empty());
+	if !untracked {
+		return String::new();
+	}
+	match std::process::Command::new("git")
+		.args(["diff", "--no-index", "--", "/dev/null"])
+		.arg(path)
+		.output()
+	{
+		Ok(o) if o.status.code() == Some(1) => String::from_utf8_lossy(&o.stdout).into_owned(),
+		_ => String::new(),
+	}
 }
 
 /// Working-tree diff of the mutated paths, capped at [`GT_DIFF_MAX`].

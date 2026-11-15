@@ -616,6 +616,61 @@ fn ground_truth_leads_with_the_working_tree_diff() {
 	assert!(truth.contains("test result: ok"));
 }
 
+/// Every changed file reaches the verifier, however many the task touched, and a
+/// file git does not track yet arrives as a whole-file addition in the diff —
+/// the agent's new tests are the evidence the gate asks for.
+#[test]
+#[serial_test::serial]
+fn ground_truth_diffs_every_changed_file_including_new_ones() {
+	const TRACKED_FILES: usize = 20;
+	let tmp = tempfile::tempdir().expect("tempdir for the scratch repo");
+	let repo = tmp.path().join("repo");
+	std::fs::create_dir_all(&repo).expect("create repo dir");
+	run_git(&repo, &["init"]);
+	let tracked: Vec<std::path::PathBuf> = (0..TRACKED_FILES).map(|n| repo.join(format!("src_{n}.txt"))).collect();
+	for path in &tracked {
+		std::fs::write(path, "seed\n").expect("seed file");
+	}
+	run_git(&repo, &["add", "."]);
+	run_git(
+		&repo,
+		&[
+			"-c",
+			"user.email=gate@test",
+			"-c",
+			"user.name=gate",
+			"commit",
+			"-m",
+			"seed",
+		],
+	);
+	for path in &tracked {
+		std::fs::write(path, "seed\nchanged\n").expect("dirty the file");
+	}
+	let new_test = repo.join("test_new.py");
+	std::fs::write(&new_test, "def test_written_this_task():\n    assert True\n").expect("new test file");
+
+	let mut ledger = EvidenceLedger::default();
+	for path in tracked.iter().chain([&new_test]) {
+		ledger.record("edit", &serde_json::json!({ "path": path }), true, false, 1);
+	}
+	let env = RepoEnv::point_at(&repo);
+	let diffs = changed_diffs(ledger.mutated_paths());
+	drop(env);
+
+	assert_eq!(
+		ledger.mutated_paths().len(),
+		TRACKED_FILES + 1,
+		"no changed file is dropped"
+	);
+	assert_eq!(diffs.len(), TRACKED_FILES + 1, "every changed file has a diff");
+	let (_, new_diff) = diffs.last().expect("the new file's diff");
+	assert!(
+		new_diff.contains("+def test_written_this_task():"),
+		"a new file arrives whole, as an addition: {new_diff}"
+	);
+}
+
 #[test]
 #[serial_test::serial]
 fn git_diff_fair_shares_the_budget_across_files() {
@@ -724,7 +779,7 @@ fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 
 	let _ = std::fs::remove_file(&name);
 	assert!(
-		truth.contains(&format!("Current content of {name} (new or untracked")),
+		truth.contains(&format!("Current content of {name} (not in diff")),
 		"an existing path outside the diff gets its head attached"
 	);
 	let marker = truth

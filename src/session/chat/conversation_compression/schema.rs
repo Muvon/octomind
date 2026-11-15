@@ -336,6 +336,22 @@ pub const DEFER_REASON_RULE: &str = "Only meaningful when should_compress is fal
 pub const DEFER_REASON_FORCED_RULE: &str =
 	"Compression is required on this call, so there is no deferral to justify. MUST be none.";
 
+/// The narrative fields of the legacy path. PACT neither renders nor commits
+/// them: its live state is the runtime's own bands plus `folded_units`.
+const LEGACY_NARRATIVE_FIELDS: &[&str] = &[
+	"original_request",
+	"session_context",
+	"current_task",
+	"progress",
+	"analysis_findings",
+	"errors_and_corrections",
+	"recent_exchanges",
+	"key_entities",
+	"next_steps",
+	"critical_knowledge",
+	"open_loops",
+	"file_states",
+];
 /// Build the JSON Schema sent to the provider via `with_schema(..)`.
 ///
 /// `no_veto=true`: `should_compress` MUST be `true`; the schema description
@@ -346,6 +362,9 @@ pub const DEFER_REASON_FORCED_RULE: &str =
 /// unfinished step, naming it in `defer_reason`. Other fields are still
 /// required by the schema (strict mode); they're expected to be empty strings
 /// / empty arrays when `should_compress` is false.
+///
+/// `pact=true`: the schema carries `folded_units` and none of
+/// [`LEGACY_NARRATIVE_FIELDS`]; `pact=false` is the reverse.
 pub fn build_compression_schema(no_veto: bool, pact: bool) -> serde_json::Value {
 	let should_compress_desc = if no_veto {
 		SHOULD_COMPRESS_FORCED_RULE
@@ -526,56 +545,28 @@ pub fn build_compression_schema(no_veto: bool, pact: bool) -> serde_json::Value 
 			"folded_units"
 		]
 	});
-	if pact {
-		let properties = schema
-			.get_mut("properties")
-			.and_then(serde_json::Value::as_object_mut)
-			.expect("compression schema properties are an object");
-		for field in [
-			"original_request",
-			"session_context",
-			"current_task",
-			"progress",
-			"next_steps",
-		] {
-			let property = properties[field]
-				.as_object_mut()
-				.expect("PACT legacy string field is an object");
-			property.insert("maxLength".into(), 0.into());
-			property.insert(
-				"description".into(),
-				"PACT wire-compatibility field. Return an empty string; runtime-owned bands and attributed folds carry live state."
-					.into(),
-			);
-		}
-		for field in [
-			"analysis_findings",
-			"errors_and_corrections",
-			"recent_exchanges",
-			"critical_knowledge",
-			"open_loops",
-			"file_states",
-		] {
-			let property = properties[field]
-				.as_object_mut()
-				.expect("PACT legacy array field is an object");
-			property.insert("maxItems".into(), 0.into());
-			property.insert(
-				"description".into(),
-				"PACT wire-compatibility field. Return []; only source-attributed folded_units are committed.".into(),
-			);
-		}
-		for field in ["files", "names", "decisions"] {
-			properties["key_entities"]["properties"][field]["maxItems"] = 0.into();
-		}
+	// Each path's schema holds only the fields that path renders and commits.
+	// PACT's narrative fields used to stay in its schema pinned to empty
+	// (maxLength / maxItems 0). A model that had just written a dozen
+	// required-empty fields mostly left `folded_units` empty as well: on one
+	// 85k-token fold glm-5.3-flash returned no unit in 8 of 16 replies and
+	// deepseek-v4.1-flash in 24 of 24, against 0 of 16 and 0 of 12 with the
+	// fields gone (2026-11-15, octobench pydantic_deque_schema).
+	let absent: &[&str] = if pact {
+		LEGACY_NARRATIVE_FIELDS
 	} else {
-		if let Some(properties) = schema.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
-			properties.remove("folded_units");
-		}
-		if let Some(required) = schema.get_mut("required").and_then(|v| v.as_array_mut()) {
-			required.retain(|v| v.as_str() != Some("folded_units"));
-		}
-	}
+		&["folded_units"]
+	};
+	schema
+		.get_mut("properties")
+		.and_then(serde_json::Value::as_object_mut)
+		.expect("compression schema properties are an object")
+		.retain(|name, _| !absent.contains(&name.as_str()));
+	schema
+		.get_mut("required")
+		.and_then(serde_json::Value::as_array_mut)
+		.expect("compression schema required is an array")
+		.retain(|name| !name.as_str().is_some_and(|name| absent.contains(&name)));
 	schema
 }
 

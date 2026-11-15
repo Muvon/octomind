@@ -162,9 +162,18 @@ fn pact_schema_requires_folds_while_legacy_schema_does_not_expose_them() {
 		.unwrap()
 		.iter()
 		.any(|field| field == "folded_units"));
-	assert_eq!(pact["properties"]["current_task"]["maxLength"], 0);
-	assert_eq!(pact["properties"]["critical_knowledge"]["maxItems"], 0);
-	assert_eq!(pact["properties"]["key_entities"]["properties"]["files"]["maxItems"], 0);
+	let pact_fields: Vec<&str> = pact["properties"]
+		.as_object()
+		.unwrap()
+		.keys()
+		.map(String::as_str)
+		.collect();
+	assert_eq!(
+		pact_fields,
+		["should_compress", "defer_reason", "file_context", "folded_units"],
+		"no narrative field is left for the model to write empty"
+	);
+	assert_eq!(pact["required"].as_array().unwrap().len(), pact_fields.len());
 
 	let legacy = build_compression_schema(false, false);
 	assert!(legacy["properties"].get("folded_units").is_none());

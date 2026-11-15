@@ -740,7 +740,10 @@ only if those pass.
 | `enabled` | bool | `true` | Enable the verify-gate |
 | `unsettled_advisory` | bool | `true` | Offer one nonblocking evidence advisory per genuine user turn, then re-gate normally |
 
-The advisory names every remaining unsettled condition. With gate evaluation enabled, a calibrated check removes
+The advisory names the conditions the verifier left unknown. It is not sent when a recognized check passed after the
+agent's last change: the stop is then accepted and the unknown conditions are only reported to you. A condition the
+verifier ruled matched without a verbatim citation is reported the same way and never listed in the advisory.
+With gate evaluation enabled, a calibrated check removes
 conditions whose specific case a recorded action exercised (probability at least 0.5 in any evidence slice). Refused
 answers, unavailable evaluation, or disabled evaluation keep the conditions. Repeated uncertainty does not send
 another advisory within the same turn, and it never certifies success or becomes a blocking failure. Matched findings

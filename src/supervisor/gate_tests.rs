@@ -30,6 +30,7 @@ fn unsettled_advisory_includes_every_condition_once_and_is_switchable() {
 				number,
 				requirement: format!("requirement {number}"),
 				observation: "No direct observation available".to_string(),
+				uncited_match: false,
 			})
 			.collect(),
 	);
@@ -54,6 +55,28 @@ fn unsettled_advisory_includes_every_condition_once_and_is_switchable() {
 		assert!(take_unsettled_advisory(&verdict, &config, &mut sent).is_none());
 		assert!(!sent);
 	}
+}
+
+#[test]
+fn unsettled_advisory_skips_conditions_matched_without_a_citation() {
+	let template: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("template");
+	let config = template.supervisor.gate;
+	let condition = |number: usize, uncited_match: bool| UnsettledCondition {
+		number,
+		requirement: format!("requirement {number}"),
+		observation: "recorded run shows it".to_string(),
+		uncited_match,
+	};
+	// A citation fault is the verifier's, so on its own it sends no note at all.
+	let mut sent = false;
+	let only_uncited = GateVerdict::Unsettled(vec![condition(1, true)]);
+	assert!(take_unsettled_advisory(&only_uncited, &config, &mut sent).is_none());
+	assert!(!sent);
+	let mixed = GateVerdict::Unsettled(vec![condition(1, true), condition(2, false)]);
+	let note = take_unsettled_advisory(&mixed, &config, &mut sent).expect("open condition");
+	assert!(!note.contains("requirement 1") && note.contains("requirement 2"));
+	assert!(sent);
 }
 
 #[test]
@@ -1587,8 +1610,9 @@ mod verify_round_trip {
 		}
 	}
 
-	/// One weak citation must not void a valid report: the uncited match is
-	/// unsettled and both conditions reach the advisory.
+	/// One weak citation must not void a valid report: the uncited match stays
+	/// unsettled beside the unknown condition, flagged so that only the unknown
+	/// one reaches the agent's note.
 	#[tokio::test]
 	async fn an_uncited_match_after_repair_leaves_the_report_unsettled() {
 		let _guard = ENV_LOCK.lock().await;
@@ -1606,6 +1630,7 @@ mod verify_round_trip {
 		};
 		assert_eq!(unsettled.len(), 2);
 		assert_eq!((unsettled[0].number, unsettled[1].number), (1, 2));
+		assert_eq!((unsettled[0].uncited_match, unsettled[1].uncited_match), (true, false));
 	}
 
 	#[tokio::test]

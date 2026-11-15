@@ -350,8 +350,9 @@ Every condition gets exactly one of three statuses:
     stop.
 - unknown — the supplied evidence can establish neither satisfaction nor violation, and no
   basis fits. A verification limit, not a violation. Prefer the bounded readback round when
-  an already-recorded output would decide it. The runtime may offer one
-  nonblocking advisory opportunity to supply evidence or a fix; uncertainty never becomes a
+  an already-recorded output would decide it. The runtime may offer the agent one
+  nonblocking chance to supply evidence or a fix, and only when no check passed after its
+  last change; uncertainty never becomes a
   violation. Name the exact part, combination, boundary, or context still unobserved,
   distinguishing it from the parts already supported. Do not substitute a
   blanket visibility note for checking each requested case. When an unseen retained output
@@ -433,6 +434,10 @@ pub struct UnsettledCondition {
 	pub number: usize,
 	pub requirement: String,
 	pub observation: String,
+	/// The verifier ruled this condition matched but quoted nothing the runtime
+	/// finds in the evidence. A citation fault, not missing work: it reaches the
+	/// user report and never the agent's note.
+	pub uncited_match: bool,
 }
 
 /// Consume at most one advisory opportunity for the whole genuine user turn,
@@ -444,13 +449,14 @@ pub fn take_unsettled_advisory(verdict: &GateVerdict, config: &super::GateConfig
 	let GateVerdict::Unsettled(conditions) = verdict else {
 		return None;
 	};
-	if conditions.is_empty() {
+	let open: Vec<&UnsettledCondition> = conditions.iter().filter(|condition| !condition.uncited_match).collect();
+	if open.is_empty() {
 		return None;
 	}
 	let mut note = String::from(
-		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found insufficient evidence for the conditions below. For each one, either cite the assertion that already exercises exactly that case and the run that passed it, or write that check, run it, and fix what fails; a condition outside the request needs one line saying why. Then finish normally; completion will be checked again, without another note.\n",
+		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found no evidence for the conditions below. For each one, do exactly one of: point to evidence that already exists (the command and its output line, or the file and line); if nothing has exercised the condition yet, run the check that would and fix what fails; if the condition is not met, finish that work; if it is outside the request, say why in one line. Do not repeat a check that already passed. Then finish normally; completion is checked once more, without another note.\n",
 	);
-	for condition in conditions {
+	for condition in open {
 		note.push_str(&format!(
 			"- Condition {}: {}. {}\n",
 			condition.number,
@@ -1604,6 +1610,7 @@ pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::
 					number,
 					requirement: input.evidence_conditions.get(number.checked_sub(1)?)?.clone(),
 					observation: condition.observation.clone(),
+					uncited_match: condition.status == "matched",
 				})
 			})
 			.collect();

@@ -686,6 +686,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			verdict_label,
 		);
 		crate::supervisor::hindsight::record_gate(config, verdict_label);
+		// Unknowns that remain after a command check passed on the final state are
+		// limits of what the verifier could see, and `verify` already reported them
+		// to the user. Sending the agent back for them only made it restate or
+		// repeat that check, so the stop is accepted.
+		let check_passed_after_change = !chat_session.evidence.mutated_paths().is_empty()
+			&& !chat_session
+				.detectors
+				.needs_verification(crate::supervisor::workdir::fingerprint())
+			&& !chat_session.detectors.cleared_by_readback_only();
+		let unsettled_accepted = !hand_back
+			&& check_passed_after_change
+			&& matches!(verdict, crate::supervisor::gate::GateVerdict::Unsettled(_));
+		let verdict = if unsettled_accepted {
+			crate::supervisor::gate::GateVerdict::Pass
+		} else {
+			verdict
+		};
 		if let Some(note) = crate::supervisor::gate::take_unsettled_advisory(
 			&verdict,
 			&config.supervisor.gate,
@@ -737,13 +754,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// (a pure answer, a read-back clearance) stays Unknown and earns no
 				// correctness credit — LLM judges accept confident false-success
 				// claims, and this label steers memory credit, experience records,
-				// and evolution samples.
-				let execution_verified = !hand_back
-					&& !chat_session.evidence.mutated_paths().is_empty()
-					&& !chat_session
-						.detectors
-						.needs_verification(crate::supervisor::workdir::fingerprint())
-					&& !chat_session.detectors.cleared_by_readback_only();
+				// and evolution samples. A stop accepted with conditions still
+				// unknown earns none either.
+				let execution_verified = !hand_back && !unsettled_accepted && check_passed_after_change;
 				chat_session.learning_outcome = if execution_verified {
 					crate::supervisor::learning::TrajectoryOutcome::Verified
 				} else {

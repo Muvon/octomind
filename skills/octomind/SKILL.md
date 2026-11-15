@@ -55,8 +55,10 @@ terminal(command="echo 'Refactor the auth module' | octomind run developer --for
 Restrict file writes to the working directory with `--sandbox`.
 
 Completion verification may offer one evidence advisory per user turn and then check completion again. Configure
-`[supervisor.gate] unsettled_advisory` (default `true`). With gate evaluation enabled, a calibrated check removes
-conditions whose specific case recorded actions exercised; otherwise every unsettled condition remains eligible.
+`[supervisor.gate] unsettled_advisory` (default `true`). The advisory is skipped when a recognized check passed after
+the agent's last change; the unknown conditions are then only reported to the user. With gate evaluation enabled, a
+calibrated check removes conditions whose specific case recorded actions exercised; otherwise every condition the
+verifier left unknown remains eligible.
 The advisory is not a failure or a block.
 With `[supervisor.advise] enabled = true` (default `false`), a loop or recovery alarm note is written by the supervisor
 model and cites one tool receipt (`#N`); it is an observation, never a command, and one alarm in four keeps the plain

@@ -1070,6 +1070,63 @@ async fn test_verify_gate_pass_with_a_recognized_check_labels_verified() {
 	.await;
 }
 
+/// Conditions still unknown after a recognized check passed on the changed
+/// state are a limit of the verifier's view: the stop is accepted with no
+/// note to the agent, and learning earns no correctness credit for it.
+#[tokio::test]
+async fn unsettled_after_a_recognized_check_is_accepted_without_an_advisory() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-unsettled-after-check".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let verifier = final_response(&format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">The summary does not name the counter case.</condition><verdict>PASS</verdict>"#
+		));
+		let url = spawn_stub(vec![
+			done_response("Fixed the counter; the test suite passes."),
+			verifier,
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = supervised_config();
+		config.supervisor.plan.enabled = false;
+		config.decision.supervisor = false;
+		let task = "fix the counter";
+		let mut session = fake_session(task);
+		let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
+		resolved.evidence_conditions = vec![task.into()];
+		session.gate_task = Some(resolved);
+		session.completion_gate_eligible = true;
+		let dir = tempfile::tempdir().expect("edit directory");
+		let path = dir.path().join("stats.rs");
+		std::fs::write(&path, "pub fn counter() -> u32 { 1 }").expect("write edit fixture");
+		let edit = serde_json::json!({"command": "str_replace", "path": path});
+		session.evidence.record("text_editor", &edit, true, false, 12);
+		// The edit round moved the tree; the next round ran a check on it.
+		session
+			.detectors
+			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
+		session
+			.detectors
+			.note_round_verification(Some(11), Some(11), true, false, false, false, true);
+
+		run_turn(&mut session, &config).await.expect("gated turn is accepted");
+
+		assert_eq!(session.session.info.total_api_calls, 1, "no advisory re-run");
+		assert!(!session.evidence.unsettled_advisory_sent);
+		assert!(!session.gate_failed);
+		assert!(matches!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Unknown
+		));
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
 /// A `done` claim the verifier rejects with a charged gap: the advisory lands
 /// in the conversation, the turn re-runs once, and the re-run's stop is
 /// verified too — its PASS clears the retained gap.

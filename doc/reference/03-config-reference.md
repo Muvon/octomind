@@ -740,8 +740,9 @@ only if those pass.
 | `enabled` | bool | `true` | Enable the verify-gate |
 | `unsettled_advisory` | bool | `true` | Offer one nonblocking evidence advisory per genuine user turn, then re-gate normally |
 
-The advisory names the conditions the verifier left unknown. It is not sent when a recognized check passed after the
-agent's last change: the stop is then accepted and the unknown conditions are only reported to you. A condition the
+The advisory names the conditions the verifier left unknown. It is not sent when the agent changed state and a
+recognized check passed after its last change: the stop is then accepted, whatever `unsettled_advisory` is set to, and
+the unknown conditions are only reported to you. A hand-back stop (`blocked`, `need_input`) is never accepted this way. A condition the
 verifier ruled matched without a verbatim citation is reported the same way and never listed in the advisory.
 With gate evaluation enabled, a calibrated check removes
 conditions whose specific case a recorded action exercised (probability at least 0.5 in any evidence slice). Refused

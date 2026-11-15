@@ -153,7 +153,7 @@ fn nonempty_checklists_keep_uncertainty_nonblocking_in_both_encodings() {
 				prompt.contains("one entry per condition")
 					|| prompt.contains("one entry per numbered evidence condition")
 			);
-			assert!(prompt.contains("nonblocking advisory opportunity"));
+			assert!(prompt.contains("nonblocking chance to supply evidence or a fix"));
 			assert!(prompt.contains("Quote both and explain that"));
 			assert!(prompt.contains("A global green"));
 			assert!(prompt.contains("combination and ordering"));

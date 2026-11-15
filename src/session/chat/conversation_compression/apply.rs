@@ -212,7 +212,7 @@ fn build_continuation_content(
 				.join("\n");
 			format!(
 				"<tap_runs_running>\n\
-				As of this point these backgrounded tap-runs were still working. Each reply is delivered to you as a message the moment that specialist finishes — do NOT relaunch them, poll them, or wait on them by hand. To continue a dialog with one after its reply arrives, pass its id as `session` on a later `tap(action=\"run\")` call; while it still works, `run` is rejected (use `send`).\n\
+				As of this point these backgrounded tap-runs were still working. Each reply is delivered to you as a message the moment that specialist finishes — do NOT relaunch them, poll them, or wait on them by hand. To continue a dialog with one after its reply arrives, pass its id as `session` on a later `tap(action=\"run\")` call; while it still works, `run` is rejected (use `send`; a workflow accepts no prompt).\n\
 				{list}\n\
 				</tap_runs_running>\n\n"
 			)

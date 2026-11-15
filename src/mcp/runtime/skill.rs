@@ -817,7 +817,7 @@ pub fn get_skill_function() -> McpFunction {
 Actions:
 - list: discover available skills across all taps. Supports optional pattern (substring filter on name/description), offset, and limit (default 20).
 - use: inject a skill's full content into the current session context. Instructions become immediately active.
-- forget: remove a skill from context. Triggers conversation compression to clean up injected content.
+- forget: remove a skill from context. The injected text is cleaned up at the next compression, not at once.
 
 Workflow: list to explore, use to activate, forget when no longer needed."#.to_string(),
 		parameters: json!({

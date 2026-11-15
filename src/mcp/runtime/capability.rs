@@ -267,7 +267,7 @@ Actions:
 - list: show all installed capabilities. Active ones are marked. One line per capability: name + brief description.
 - enable: activate a capability by name. Registers and enables its MCP servers, exposing tools in subsequent turns.
 - disable: deactivate a previously-enabled capability.
-- discover: find capabilities matching an intent string (semantic match via embeddings, falls back to keyword match).
+- discover: find capabilities matching an intent string (top 5 by embedding similarity; there is no keyword fallback, so it fails while the embedding model is unavailable).
 
 Workflow: call list or discover to find the right capability, then enable to activate it. Tool surface grows on demand. When intent is generic (e.g. 'I need a database') and multiple capabilities could fit, prefer list or discover over guessing."#.to_string(),
 		parameters: json!({

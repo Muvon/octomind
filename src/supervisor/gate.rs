@@ -1782,7 +1782,7 @@ Never label an unseen action absent: its call and outcome remain recorded. Never
 contradicting output or ground truth omitted merely because another part of that output is cut.
 After the one readback round, do not demand re-running an already recorded action merely to fit
 its output into the same evidence window. Report that visibility limit and judge the evidence
-you can see. Visible violations and required actions that never ran still block completion.
+you can see. Visible violations still block completion; a required action that never ran is reported to the user instead.
 </evidence_visibility_rules>"#;
 
 fn render_gate_prompt(encoding: Encoding, expected_conditions: usize) -> String {

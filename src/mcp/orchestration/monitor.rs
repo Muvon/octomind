@@ -138,7 +138,7 @@ pub fn get_monitor_function() -> McpFunction {
 
 Actions:
 - start: launch one inline monitoring command. Required: command. Optional: description, working_directory, flush_interval_seconds, max_batch_bytes, timeout_ms, persistent.
-- list: show what is running, to get an ID for stop. Not a way to wait: background task results arrive on their own.
+- list: show what is running, to get an ID for stop. Not a way to wait or to check progress, not even once: batches and background task results arrive on their own.
 - stop: cancel one monitor, or one background MCP task (id `mcp-task:...`), by id.
 
 The command runs through `sh -c` in the session working directory. It should remain running, write event text to stdout as events arrive, and use stderr for diagnostics. Empty intervals produce no turn. Output is capped per batch; excess bytes are reported as omitted rather than growing memory. A pending delivery from the same monitor is coalesced and bounded. Non-zero exit, I/O failure, or an unexpected clean exit is injected once as terminal status; monitors are never auto-restarted, preventing broken-command failure loops.

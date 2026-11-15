@@ -336,7 +336,8 @@ Every condition gets exactly one of three statuses:
   · recorded_output — a recorded action's output shows the condition failing: a failing check,
     an ERROR outcome on the decisive call.
   · ground_truth — a current diff or artifact shows it directly: a forbidden change is
-    present, or a required file is MISSING. For command output use recorded_output and its
+    present, or a required file is MISSING; code that merely looks wrong is inference.
+    For command output use recorded_output and its
     output:N reference, including when that output is shown in ground truth.
   · absent_action — <current_user_turn> explicitly requests the action (quote those words) and
     no recorded call this turn performed it. Reported to the user, never charged to the agent;
@@ -454,7 +455,7 @@ pub fn take_unsettled_advisory(verdict: &GateVerdict, config: &super::GateConfig
 		return None;
 	}
 	let mut note = String::from(
-		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found no evidence for the conditions below. For each one, do exactly one of: point to evidence that already exists (the command and its output line, or the file and line); if nothing has exercised the condition yet, run the check that would and fix what fails; if the condition is not met, finish that work; if it is outside the request, say why in one line. Do not repeat a check that already passed. Then finish normally; completion is checked once more, without another note.\n",
+		"<pay-attention>\nCompletion check (not a failure or a block): the verifier found no evidence for the conditions below. For each one, do exactly one of: point to evidence that already exists (the command and its output line, or the file and line); if nothing has exercised the condition yet, run the check that would and fix what fails; if the condition is not met, finish that work; if it is outside the request, say why in one line. Do not repeat a check that passed after your last change. Then finish normally; completion is checked once more, without another note.\n",
 	);
 	for condition in open {
 		note.push_str(&format!(

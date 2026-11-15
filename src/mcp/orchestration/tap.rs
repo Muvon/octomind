@@ -56,7 +56,7 @@ pub fn get_tap_function() -> McpFunction {
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
-- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn on its own; do not poll, re-check or relaunch it (`list` shows its status).
+- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn on its own; do not poll, re-check or relaunch it, not even once (`list` is not a way to wait for it).
 - You want to keep a focused dialog with one specialist across multiple turns — keep the returned `id` and pass it back as `session` on subsequent `run` calls.
 
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.

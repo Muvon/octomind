@@ -25,9 +25,11 @@ use super::schema::{CompressionSummary, FoldedUnit};
 use crate::session::chat::session::ChatSession;
 use crate::session::Message;
 use anyhow::{anyhow, Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::LazyLock;
 
 pub(crate) const CONTROLLER_VERSION: u32 = 1;
 
@@ -441,6 +443,19 @@ fn stable_packet_id(session_name: &str, messages: &[Message]) -> String {
 
 fn short_hex(bytes: &[u8]) -> String {
 	bytes.iter().take(16).map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// How the fold model reads and cites a block: this prefix plus the block's
+/// position in [`PactContext::block_ids`], counted from 1 (`b#12`).
+const SHORT_BLOCK_ID_PREFIX: &str = "b#";
+/// A block id as [`stable_packet_id`] writes it.
+static BLOCK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bb:[0-9a-f]{32}\b").expect("block id"));
+static SHORT_BLOCK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bb#(\d+)\b").expect("short block id"));
+
+/// The block id a short id's number stands for, if the number is in range.
+fn block_id_at<'a>(ids: &[&'a str], number: &str) -> Option<&'a str> {
+	let index = number.parse::<usize>().ok()?.checked_sub(1)?;
+	ids.get(index).copied()
 }
 
 fn packet_for_offset(packets: &[EvidencePacket], offset: usize) -> Option<&EvidencePacket> {
@@ -1401,7 +1416,68 @@ impl PactContext {
 			}
 		}
 		out.push_str("</packets>");
-		out
+		self.with_short_block_ids(&out)
+	}
+
+	/// Every block id the fold model can meet in its prompt, in a fixed order:
+	/// this fold's packets, then the session's earlier blocks. A block's
+	/// position here is the short id the model reads and cites, so the list
+	/// must come out the same when the reply is read as when the prompt was
+	/// written — it depends only on fields that travel with the fold job.
+	fn block_ids(&self) -> Vec<&str> {
+		let mut ids: Vec<&str> = self.packets.iter().map(|packet| packet.id.as_str()).collect();
+		let current: HashSet<&str> = ids.iter().copied().collect();
+		ids.extend(
+			self.known_provenance
+				.keys()
+				.map(String::as_str)
+				.filter(|id| !current.contains(id)),
+		);
+		ids
+	}
+
+	/// Swap every known block id in the fold prompt for its short id. A block
+	/// id is a 32-digit hash and every summarize packet must be cited: on a
+	/// fold of 146 packets glm-5.3-flash spent up to 19k reasoning tokens
+	/// copying the id list, and 3 of 15 replays of that request ran into the
+	/// 32k output limit and returned nothing; with 14 packets none of 15 did
+	/// (2026-11-15, octobench pydantic_deque_schema). The runtime owns the
+	/// ids, so the model copies a number and `restore_block_ids` puts the
+	/// hashes back.
+	fn with_short_block_ids(&self, text: &str) -> String {
+		let mut number_of: HashMap<&str, usize> = HashMap::new();
+		for (index, id) in self.block_ids().into_iter().enumerate() {
+			number_of.entry(id).or_insert(index + 1);
+		}
+		BLOCK_ID
+			.replace_all(text, |found: &regex::Captures| match number_of.get(&found[0]) {
+				Some(number) => format!("{SHORT_BLOCK_ID_PREFIX}{number}"),
+				None => found[0].to_string(),
+			})
+			.into_owned()
+	}
+
+	/// Put the block ids back where the fold model wrote short ids: in each
+	/// unit's refs and in its text. Must run before anything else reads the
+	/// summary — every check and the archive know blocks by their hash.
+	pub(crate) fn restore_block_ids(&self, summary: &mut CompressionSummary) {
+		let ids = self.block_ids();
+		for unit in &mut summary.folded_units {
+			for source in &mut unit.refs {
+				let restored = source
+					.trim()
+					.strip_prefix(SHORT_BLOCK_ID_PREFIX)
+					.and_then(|number| block_id_at(&ids, number));
+				if let Some(id) = restored {
+					*source = id.to_string();
+				}
+			}
+			unit.text = SHORT_BLOCK_ID
+				.replace_all(&unit.text, |found: &regex::Captures| {
+					block_id_at(&ids, &found[1]).map_or_else(|| found[0].to_string(), str::to_string)
+				})
+				.into_owned();
+		}
 	}
 
 	/// `carried_request` is the exact request the post-fold user turn holds

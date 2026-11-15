@@ -939,15 +939,12 @@ async fn verify_exit_applies_an_already_finished_fold() {
 }
 
 /// A fold whose response was cut by the output budget before any content
-/// (finish_reason=length — the model reasoned its budget away) is not re-sent
-/// as is: the generic empty-completion retry stops on a length cut, and the
-/// fold repairs itself once with reasoning off and twice the budget. With
-/// `max_retries = 0` the old path fails after the first attempt; the repair is
-/// the only way the second scripted response can be reached.
+/// (finish_reason=length — the model reasoned its budget away) is not sent
+/// again: the same request buys the same cut at the same price. The fold fails
+/// with the typed empty-completion error and the cooldown starts.
 #[serial_test::serial]
 #[tokio::test]
-async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
-	let _data = crate::session::chat::test_support::DataDirGuard::new();
+async fn verify_length_cut_fails_the_fold_without_a_second_request() {
 	let _guard = ENV_LOCK.lock().await;
 	let length_cut = serde_json::json!({
 		"choices": [{
@@ -956,60 +953,13 @@ async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
 		}],
 		"usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cost": 0.001}
 	});
-	let url = spawn_stub(vec![length_cut, final_response(&xml_summary_body())]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-	let mut config = fake_provider_config();
-	config.compression.model.model = Some("ollama:fake-model".to_string());
-	config.compression.model.max_retries = Some(0);
-
-	let mut session = regime_session(&mut config).await;
-	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
-
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-		.await
-		.expect("compression pipeline");
-	assert!(!compressed && session.fold_job.is_some(), "spawned");
-	wait_until_finished(&session).await;
-	assert!(
-		settle_pending_fold(&mut session, &config).await.expect("settle"),
-		"the repaired fold must land"
-	);
-	assert!(
-		session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
-		"summary spliced in"
-	);
-
-	std::env::remove_var("OLLAMA_API_URL");
-}
-
-/// Two length cuts in a row exhaust the single repair: the fold fails with the
-/// typed length-cut error and the cooldown starts, without a third request.
-#[serial_test::serial]
-#[tokio::test]
-async fn verify_second_length_cut_fails_the_fold_without_identical_retries() {
-	let _guard = ENV_LOCK.lock().await;
-	let length_cut = || {
-		serde_json::json!({
-			"choices": [{
-				"message": {"role": "assistant", "content": ""},
-				"finish_reason": "length"
-			}],
-			"usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cost": 0.001}
-		})
-	};
-	// Only two responses are scripted although max_retries=1 would allow four
-	// requests on the old path: any identical retry would hit an empty stub.
-	let url = spawn_stub(vec![length_cut(), length_cut()]).await;
+	// One response is scripted although max_retries=1 allows a second request:
+	// any retry would hit an empty stub.
+	let url = spawn_stub(vec![length_cut]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
 	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.compression.model.max_retries = Some(1);
-
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 	let before = session.session.messages.len();
@@ -1024,12 +974,12 @@ async fn verify_second_length_cut_fails_the_fold_without_identical_retries() {
 		cancel: _cancel,
 		..
 	} = session.fold_job.take().expect("parked");
-	let error = handle.await.expect("join").expect_err("two length cuts fail the fold");
+	let error = handle.await.expect("join").expect_err("a length cut fails the fold");
 	let empty = error
 		.downcast_ref::<crate::session::completion::EmptyCompletion>()
 		.expect("typed empty-completion error");
-	assert!(empty.is_length_cut());
-	assert_eq!(empty.attempts, 1, "a length cut is never re-sent unchanged");
+	assert_eq!(empty.finish_reason.as_deref(), Some("length"));
+	assert_eq!(empty.attempts, 1, "a length cut is never re-sent");
 	assert_eq!(session.session.messages.len(), before, "transcript untouched");
 
 	std::env::remove_var("OLLAMA_API_URL");

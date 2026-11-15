@@ -37,7 +37,7 @@ use crate::config::Config;
 use crate::providers::ProviderFactory;
 use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Invoke the compression model and return the parsed summary.
 ///
@@ -131,53 +131,14 @@ pub(super) async fn run_decision_call(
 		decision_config.temperature
 	);
 
-	let response = match crate::session::chat_completion_with_validation(decision_params(
+	let response = crate::session::chat_completion_with_validation(decision_params(
 		&messages,
 		&decision_config,
 		config,
 		&operation_rx,
 		schema.as_ref(),
 	))
-	.await
-	{
-		Ok(response) => response,
-		Err(error)
-			if error
-				.downcast_ref::<crate::session::completion::EmptyCompletion>()
-				.is_some_and(|empty| empty.is_length_cut()) =>
-		{
-			// The model spent the whole output budget reasoning about a large
-			// range and emitted no summary (measured: medium effort on a 70-190k
-			// range hit a 16k budget every time; each identical retry cost ~2.7
-			// min and a fold's price, then the turn died at the ceiling). One
-			// repair, with the request changed where it failed: reasoning
-			// switched off (`ReasoningEffort::None` — an explicit off, not a
-			// missing hint: hybrid models such as Alibaba's DeepSeek-V4 keep
-			// thinking when the effort is merely absent) and four times the
-			// budget. A second failure is the caller's cooldown.
-			let mut repair_profile = decision_config.clone();
-			repair_profile.max_tokens = repair_profile.max_tokens.saturating_mul(4);
-			log_info!(
-				"Compression model '{}' returned nothing within {} output tokens (length cut) — retrying once with reasoning off and a {}-token budget",
-				decision_config.model,
-				decision_config.max_tokens,
-				repair_profile.max_tokens
-			);
-			let mut params = decision_params(&messages, &repair_profile, config, &operation_rx, schema.as_ref());
-			params.reasoning_effort = Some(crate::config::ReasoningEffortConfig::None);
-			// Logs from this task can be dropped (thread-local config), so the
-			// repair leaves its trace on the error the main task reports.
-			crate::session::chat_completion_with_validation(params)
-				.await
-				.with_context(|| {
-					format!(
-						"fold repaired once (reasoning off, {}-token budget) and still cut",
-						repair_profile.max_tokens
-					)
-				})?
-		}
-		Err(error) => return Err(error),
-	};
+	.await?;
 	let usage = response.exchange.usage.clone();
 
 	let summary = if schema.is_some() {

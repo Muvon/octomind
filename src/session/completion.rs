@@ -72,9 +72,10 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// off for the retry: the model spent the whole output budget thinking, so
 	/// the same request would do it again, while the same prompt without
 	/// reasoning gets an answer out. Default true — for the agent loop this is
-	/// the only recovery there is. A caller that repairs the request itself
-	/// (compression, see `conversation_compression::ai`) turns it off and sees
-	/// the typed error at once.
+	/// the only recovery there is. A caller with its own answer to a failed
+	/// call (compression holds the fold for one runway, see
+	/// `conversation_compression::note_fold_failure`) turns it off and sees the
+	/// typed error at once.
 	pub identical_retry_on_length_cut: bool,
 }
 
@@ -192,8 +193,8 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 		self
 	}
 
-	/// The caller repairs a length-cut empty completion itself: surface it at
-	/// once instead of re-sending the unchanged request.
+	/// The caller handles a length-cut empty completion itself: surface it at
+	/// once instead of re-sending the request.
 	pub fn without_identical_retry_on_length_cut(mut self) -> Self {
 		self.identical_retry_on_length_cut = false;
 		self
@@ -240,13 +241,6 @@ pub struct EmptyCompletion {
 	pub model: String,
 	pub finish_reason: Option<String>,
 	pub attempts: usize,
-}
-
-impl EmptyCompletion {
-	/// The output budget ran out before any content was produced.
-	pub fn is_length_cut(&self) -> bool {
-		self.finish_reason.as_deref() == Some("length")
-	}
 }
 
 /// Delay between empty-completion retries. The retry COUNT is the request's own

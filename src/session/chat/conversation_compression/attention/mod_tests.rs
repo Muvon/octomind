@@ -1994,6 +1994,60 @@ fn prompt_view_renders_descriptor_lines_and_grounded_hints() {
 	assert!(view.contains("focus: b:x"));
 }
 
+/// A block id shaped as the runtime writes it: `b:` and 32 hex digits.
+fn hash_block_id(digit: char) -> String {
+	format!("b:{}", digit.to_string().repeat(32))
+}
+
+#[test]
+fn fold_prompt_shows_short_block_ids_and_the_reply_gets_the_hashes_back() {
+	let first = hash_block_id('a');
+	let second = hash_block_id('b');
+	let earlier = hash_block_id('c');
+	let unknown = hash_block_id('d');
+	let mut dependent = tool_packet(&second, Lane::Summarize, "second output");
+	dependent.depends_on = vec![first.clone()];
+	let mut pact = pact_with_packets(vec![
+		tool_packet(
+			&first,
+			Lane::Summarize,
+			&format!("first output, see {earlier} and {unknown}"),
+		),
+		dependent,
+	]);
+	pact.known_provenance.insert(earlier.clone(), Provenance::ToolObserved);
+
+	let view = pact.prompt_view();
+	assert!(view.contains("[b#1 summarize"), "{view}");
+	assert!(view.contains("[b#2 summarize") && view.contains("deps=b#1"), "{view}");
+	assert!(
+		view.contains("see b#3"),
+		"an earlier block of the session is numbered after this fold's packets: {view}"
+	);
+	assert!(!view.contains(&first) && !view.contains(&second) && !view.contains(&earlier));
+	assert!(
+		view.contains(&unknown),
+		"an id the runtime does not know is left as written"
+	);
+
+	let mut summary = CompressionSummary {
+		folded_units: vec![FoldedUnit {
+			text: "b#2 built on b#1; b#9 is not a block".into(),
+			kind: "observation".into(),
+			status: "established".into(),
+			refs: vec!["b#1".into(), " b#3 ".into(), "b#9".into(), second.clone()],
+		}],
+		..Default::default()
+	};
+	pact.restore_block_ids(&mut summary);
+	let unit = &summary.folded_units[0];
+	assert_eq!(
+		unit.refs,
+		vec![first.clone(), earlier, "b#9".to_string(), second.clone()]
+	);
+	assert_eq!(unit.text, format!("{second} built on {first}; b#9 is not a block"));
+}
+
 // ---------------------------------------------------------------------------
 // Governance-only builds carry the same evidence as attention-enabled ones
 // ---------------------------------------------------------------------------

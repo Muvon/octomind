@@ -855,6 +855,7 @@ async fn finish_fold(
 	}
 
 	let pact_validation = if let Some(pact) = ctx.pact.as_ref() {
+		pact.restore_block_ids(&mut summary);
 		pact.normalize_summary(&mut summary);
 		if config.compression.attention.enabled && config.compression.attention.validator {
 			pact.repair_summary(&mut summary);

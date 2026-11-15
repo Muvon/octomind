@@ -3118,9 +3118,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.53.1"
+version = "0.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2e0c623d0b358195cc492ad62b2c407987d4f7c392f072b1c3d94509436c88"
+checksum = "94e178cf6f2e81df2274c9a04d9af6e7ee8b80fb6bf3486766c68f2e0f1b8b41"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3572,7 +3572,7 @@ dependencies = [
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
- "rand 0.10.3",
+ "rand 0.10.4",
  "rand_pcg",
  "ring",
  "rustc-hash 2.1.3",
@@ -3643,9 +3643,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.3"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
+checksum = "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -5239,7 +5239,7 @@ dependencies = [
  "http",
  "httparse",
  "log",
- "rand 0.10.3",
+ "rand 0.10.4",
  "sha1 0.11.0",
  "thiserror 2.0.21",
 ]

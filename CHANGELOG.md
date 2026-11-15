@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.72.0] - 2026-11-15
+
+### 📋 Release Summary
+
+Tool calls now include their kind, file locations, and diffs, and TAP runs can be routed to a named specialist. Agent loading validates `uses` entries; TAP routing honors selected and confidence-gated choices, renamed-agent aliases, and the raised specialist threshold. Other fixes enforce pinned embedding revisions, correct log-level reselection, recognize schema-declared command arguments, render inbox markdown, and sync TAP clones with the upstream default branch.
+
+### 🚨 Breaking Changes
+
+- **resolver**: validate uses entries when loading agents `33ed199a`
+- **tap**: route tap runs to matching specialists `b8b5d569`
+
+### ✨ New Features & Enhancements
+
+- **acp**: send tool kind, file locations and diffs with tool calls `c76a2e52`
+- **tap**: route TAP runs to a named specialist `4ac4e1c7`
+
+### 🔧 Improvements & Optimizations
+
+- **tap-route**: cover cosine fallback for invalid tap answers `735842e6`
+- **semantic**: adjust semantic selection thresholds `4b6152d1`
+- **tap**: clarify specialist routing instructions `b824875e`
+
+### 🐛 Bug Fixes & Stability
+
+- **tap-route**: honor Choice selection in tap routing `e8b2eec4`
+- **embeddings**: enforce pinned embedding revisions `ccaa3d32`
+- **session**: show the current level when /loglevel re-selects it `53f6f593`
+- **orchestration**: raise specialist routing threshold `aa4f4ac9`
+- **agents**: resolve renamed agent tags through tap aliases `14acd06d`
+- **supervisor**: recognize schema-declared command arguments `39f28cb3`
+- **inbox**: render markdown in injected inbox messages `967941d9`
+- **tap**: honor confidence-gated tap choices `88808216`
+- **taps**: sync tap clones to the upstream default branch `3bc2bc5a`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.71.0] - 2026-11-12
 
 ### 📋 Release Summary

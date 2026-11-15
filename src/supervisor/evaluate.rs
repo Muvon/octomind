@@ -293,11 +293,11 @@ pub const CONDENSE_FACTORS: [(&str, &str); 3] = [
 	),
 	(
 		"data",
-		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold the specific data that `task` or `arguments` ask for, or a count, total or exit code the task needs? No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.",
+		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold what `intent` says the agent is looking for (a symbol, function, type, section or value it names; when `intent` says it reads this output whole to study or copy it, any part of it), the specific data that `task` or `arguments` ask for, or a count, total or exit code the task needs? No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content neither `intent` nor `task` touches; dropped chunks stay readable in a file.",
 	),
 	(
 		"locator",
-		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold a path, line number or signature the agent must act on to finish `task`? No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.",
+		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold a path, line number or signature the agent must act on to finish `task` or to do what `intent` says? No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content neither `intent` nor `task` touches; dropped chunks stay readable in a file.",
 	),
 ];
 const COMPRESSION_QUESTION: &str = "Does the work that continues after this fold still need the content of this tool interaction? Yes when it holds an unresolved error, a user-facing correction, or facts the pinned task, constraints or plan still depend on; no when it is a completed step whose outcome is already established or a lookup the task has moved past.";

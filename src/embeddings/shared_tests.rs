@@ -267,3 +267,41 @@ async fn stale_endpoint_is_replaced() {
 	assert_ne!(current.token, "stale", "stale claim must be replaced");
 	assert_eq!(current.pid, std::process::id());
 }
+
+/// A live owner from a build pinned to other weights is refused, and its
+/// endpoint is left in place: its vectors would be scored against this
+/// build's thresholds.
+#[tokio::test]
+async fn an_owner_serving_another_revision_is_refused() {
+	let directory = tempfile::tempdir().unwrap();
+	let path = directory.path().join("embed.json");
+	let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+	let other = Endpoint {
+		port: listener.local_addr().unwrap().port(),
+		token: "other".to_string(),
+		model: super::super::MODEL_NAME.to_string(),
+		pid: 0,
+	};
+	std::fs::write(&path, serde_json::to_string(&other).unwrap()).unwrap();
+	let owner = tokio::spawn(async move {
+		let (stream, _) = listener.accept().await.unwrap();
+		let mut reader = BufReader::new(stream);
+		read_line(&mut reader).await.unwrap();
+		write_line(
+			reader.get_mut(),
+			&Hello {
+				revision: "0".repeat(super::super::MODEL_REVISION.len()),
+				tokenizer: String::new(),
+			},
+		)
+		.await
+		.unwrap();
+	});
+
+	let error = join_at(&path).await.err().expect("another revision must be refused");
+	owner.await.unwrap();
+
+	assert!(error.to_string().contains("this build needs"), "error: {error:#}");
+	let current: Endpoint = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+	assert_eq!(current.token, "other", "a live owner's endpoint must stay");
+}

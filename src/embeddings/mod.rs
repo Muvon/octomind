@@ -69,6 +69,16 @@ use tokio::sync::Mutex as TokioMutex;
 /// this name.
 const MODEL_NAME: &str = "muvon/octomind-embed";
 
+/// The commit of `MODEL_NAME` on HuggingFace that this build loads: the one
+/// its thresholds were calibrated against. octolib serves a repo already in
+/// its cache without asking the server whether it changed, so with no pin an
+/// existing install keeps its old weights under new thresholds, and an older
+/// build on a fresh machine gets new weights under old thresholds. New
+/// weights, this commit and the recalibrated thresholds change together. The
+/// full 40-character SHA, in the `@<revision>` form of octolib's ONNX model
+/// string.
+const MODEL_REVISION: &str = "0751f83ab414884b71ecff77867020e47e685310";
+
 /// Which octolib provider loads `MODEL_NAME`.
 ///
 /// `Onnx` reads the repo's `onnx/` export (int8 preferred, fp32 fallback) and
@@ -348,13 +358,21 @@ async fn model() -> Result<&'static Model> {
 	if let Some(m) = MODEL.get() {
 		return Ok(m);
 	}
-	let provider = octolib::create_embedding_provider_from_parts(&EMBED_BACKEND, MODEL_NAME).await?;
+	let provider =
+		octolib::create_embedding_provider_from_parts(&EMBED_BACKEND, &format!("{MODEL_NAME}@{MODEL_REVISION}"))
+			.await?;
 	// Both are `Some` for every in-process provider (ONNX and HuggingFace);
 	// `None` is the API-provider case, which `EMBED_BACKEND` rules out.
 	let revision = provider
 		.model_revision()
 		.await?
 		.expect("local embedding provider reports its revision");
+	// A branch, tag or short SHA would load, but report the full commit and
+	// never equal the pin that shared-model clients compare against.
+	anyhow::ensure!(
+		revision == MODEL_REVISION,
+		"embedding model loaded revision {revision}, this build pins {MODEL_REVISION}"
+	);
 	let tokenizer = provider
 		.tokenizer()
 		.await?

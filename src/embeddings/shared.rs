@@ -200,6 +200,15 @@ async fn join_at(path: &Path) -> Result<Elected> {
 		};
 		match client.connect().await {
 			Ok((_, hello)) => {
+				// The owner may be a build pinned to other weights: its vectors
+				// would be scored against this build's thresholds.
+				anyhow::ensure!(
+					hello.revision == super::MODEL_REVISION,
+					"embedding model shared by pid {} is revision {}, this build needs {}: restart that process",
+					existing.pid,
+					hello.revision,
+					super::MODEL_REVISION
+				);
 				let tokenizer = hello
 					.tokenizer
 					.parse()

@@ -77,7 +77,7 @@ const MODEL_NAME: &str = "muvon/octomind-embed";
 /// weights, this commit and the recalibrated thresholds change together. The
 /// full 40-character SHA, in the `@<revision>` form of octolib's ONNX model
 /// string.
-const MODEL_REVISION: &str = "0751f83ab414884b71ecff77867020e47e685310";
+const MODEL_REVISION: &str = "52329bc20c36e717fbbcd3b852414f071b055ee6";
 
 /// Which octolib provider loads `MODEL_NAME`.
 ///

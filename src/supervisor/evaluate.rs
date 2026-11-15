@@ -293,7 +293,7 @@ pub const CONDENSE_FACTORS: [(&str, &str); 3] = [
 	),
 	(
 		"data",
-		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold the specific data that `task` asks for, a count, total or exit code the task needs, or content `arguments` single out: text matching a pattern or name the call searched for, or lines inside a range or context the call requested? Content `arguments` single out is yes even when `task` never mentions it. No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content neither `task` nor `arguments` single out; dropped chunks stay readable in a file.",
+		"`chunks[{slot}]`: Does `chunks[{slot}].text` hold the specific data that `task` or `arguments` ask for, or a count, total or exit code the task needs? No when it is more of a listing that other chunks already answer (never a failure entry), boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.",
 	),
 	(
 		"locator",

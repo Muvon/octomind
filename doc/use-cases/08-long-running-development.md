@@ -86,13 +86,13 @@ max_session_tokens_threshold = 300000
 [compression]
 knowledge_retention = 25
 analysis_findings_max_tokens = 6000
-threshold = 105000
+threshold = 120000
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
 | `max_session_tokens_threshold` | `300000` | Context cap, further bounded by the model window minus output reservation; `0` uses the model bound alone |
-| `compression.threshold` | `105000` | Base automatic trigger in absolute tokens; `0` disables automatic eligibility |
+| `compression.threshold` | `120000` | Base automatic trigger in absolute tokens; `0` disables automatic eligibility |
 | `compression.knowledge_retention` | `25` | Retained critical-knowledge entries; `0` disables trimming of these entries |
 | `compression.analysis_findings_max_tokens` | `6000` | Token budget for retained analysis findings; `0` disables their retention |
 

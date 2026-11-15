@@ -643,7 +643,7 @@ analysis_findings_max_tokens = 6000
 # session growth rate and the context ceiling (the lower of
 # max_session_tokens_threshold and the model's usable window), so hot sessions
 # compress deeply and winding-down sessions compress gently.
-threshold = 105000
+threshold = 120000
 
 # Idle compaction (on by default): when you send a message after the provider's
 # prompt cache has expired, compact first if the cost math says it saves money.

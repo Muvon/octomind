@@ -353,7 +353,7 @@ existing `[compression]` table, before nested tables such as `[compression.model
 
 ```toml
 [compression]
-threshold = 105000
+threshold = 120000
 ```
 
 `0` disables automatic compression; `/done` still bypasses its threshold/cooldown guards. Automatic checks run at

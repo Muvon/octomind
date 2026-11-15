@@ -521,7 +521,7 @@ Automatic context compression system.
 |-------|------|---------|-------------|
 | `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
 | `analysis_findings_max_tokens` | usize | `6000` | Hard token budget for retained analysis findings; `0` disables retention |
-| `threshold` | usize | `105000` | Baseline automatic compression trigger in tokens; `0` disables automatic checks, while `/done` can still force compression |
+| `threshold` | usize | `120000` | Baseline automatic compression trigger in tokens; `0` disables automatic checks, while `/done` can still force compression |
 
 The automatic trigger adapts within a long turn: successive folds raise the baseline geometrically, capped under the
 usable ceiling; a real user turn resets it. Compression may therefore wait beyond `threshold`.
@@ -581,7 +581,7 @@ Model used for compression decisions and summary generation.
 [compression]
 knowledge_retention = 25
 analysis_findings_max_tokens = 6000
-threshold = 105000
+threshold = 120000
 
 [compression.model]
 name = "octohub:auto"

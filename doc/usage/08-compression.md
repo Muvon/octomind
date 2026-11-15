@@ -5,7 +5,7 @@ automatic folds and task boundaries. This guide also explains retained context a
 
 ## Get Started
 
-Compression is enabled by default at `105000` tokens. Start a session and inspect its context with `/info`; use `/done`
+Compression is enabled by default at `120000` tokens. Start a session and inspect its context with `/info`; use `/done`
 when you finish a task and want to compress its history before the next task:
 
 ```bash
@@ -47,7 +47,7 @@ analysis_findings_max_tokens = 6000
 # The single compression trigger, in absolute tokens (0 = compression disabled).
 # Depth is NOT configured — it is computed per cycle from the measured session
 # growth rate and the context ceiling.
-threshold = 105000
+threshold = 120000
 
 [compression.model]
 name = "openai:gpt-5.6-luna"
@@ -65,7 +65,7 @@ The example uses an explicit compression model override; the shipped name is `oc
 
 | Field | Shipped default | Purpose |
 |-------|-----------------|---------|
-| `compression.threshold` | `105000` | Soft automatic trigger; `0` disables automatic folding |
+| `compression.threshold` | `120000` | Soft automatic trigger; `0` disables automatic folding |
 | `compression.knowledge_retention` | `25` | Maximum rolling critical-knowledge entries |
 | `compression.analysis_findings_max_tokens` | `6000` | Retained findings budget; `0` disables this channel |
 | `compression.attention.enabled` | `false` | Enable attributed PACT summaries |
@@ -270,7 +270,7 @@ fold iff expected_calls ≥ runway
 - `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a
   longer predicted horizon.
 - The fire line itself is a geometric per-turn ladder: the k-th consecutive successful in-turn fold doubles it —
-  `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 105k → 210k → cap of room
+  `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 120k → 240k → cap of room
   instead of re-folding at the same mark. A genuine user turn resets the level.
 - The amortization calculation uses provider accounting when available and conservative internal fallback weights
   otherwise.

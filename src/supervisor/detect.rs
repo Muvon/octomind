@@ -521,7 +521,7 @@ pub fn register_tool_command_shape(tool: &str, free_form: bool) {
 /// Does this tool execute a free-form command? `false` when unregistered: a
 /// tool whose schema the runtime never saw keeps the annotation-first
 /// classification it had before.
-fn executes_free_form_command(tool: &str) -> bool {
+pub fn executes_free_form_command(tool: &str) -> bool {
 	tool_command_shapes()
 		.read()
 		.ok()

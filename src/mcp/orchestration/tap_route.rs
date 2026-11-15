@@ -26,18 +26,22 @@ use crate::agent::taps::{TapAgentHeader, ORCHESTRATOR_SPEC};
 use crate::config::Config;
 
 /// Lowest cosine between the task and a specialist's title and description
-/// for the cosine stage alone to hand the task over. The int8 graph scores
-/// the same text up to 0.05 apart on different CPUs, so the bar comes from
-/// the developer fixture in `tap_route_tests.rs` measured on ARM and on x86:
-/// a task from another field scores up to 0.59 against its nearest developer
-/// specialist; on x86 a bug-fix brief scores up to 0.666 against the tester,
-/// far enough ahead of the general developer to pass the margin below; on ARM
-/// the weakest brief that must still reach its specialist scores 0.674.
-const ROUTE_THRESHOLD: f32 = 0.67;
+/// for the cosine stage alone to hand the task over. Calibrated 2026-11 with
+/// the margin below on 2,232 task briefs written for the 186 agents of the
+/// default tap (`octomind-tap/model/scripts/calibrate_cpus.py`): the pair
+/// that hands over the most briefs while a wrong specialist gets at most 2%
+/// of them and a brief from another field fires on at most 3%. At 0.65 with
+/// margin 0.05 a brief ranked against its own domain reaches its specialist
+/// 46% of the time, a wrong one 1.1%, and a foreign brief fires 2.7%. The
+/// embedding graph scores the same on ARM and x86, so the pair holds on every
+/// machine.
+const ROUTE_THRESHOLD: f32 = 0.65;
 
 /// Required gap between the best and second-best specialist. Two near-tied
 /// specialists abstain: a wrong handoff is silent, a refusal costs one turn.
-const ROUTE_MARGIN: f32 = 0.04;
+/// At 0.04 a wrong specialist among all agents gets 3.0% of the briefs and a
+/// foreign brief fires 3.4%.
+const ROUTE_MARGIN: f32 = 0.05;
 
 /// How many ranked candidates the debug log and a no-match error show.
 const SHOWN_CANDIDATES: usize = 5;

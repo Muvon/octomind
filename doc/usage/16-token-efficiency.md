@@ -220,7 +220,7 @@ It is a silent no-op when:
      - Score = mean of top-3 cosines between intent and trigger vectors.
 
 6. Margin gate:
-     activate iff   top1 >= 0.65   AND   top1 - top2 >= 0.06.
+     activate iff   top1 >= 0.68   AND   top1 - top2 >= 0.05.
 
 7. On a hit, register + enable the capability's MCP servers directly.
    Subsequent model requests receive the changed tool surface.
@@ -228,8 +228,8 @@ It is a silent no-op when:
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `AUTO_ACTIVATE_THRESHOLD` | `0.65` | Minimum mean-of-top-3 cosine for automatic activation. |
-| `AUTO_ACTIVATE_MARGIN` | `0.06` | Required gap between top-1 and top-2. Prevents flipping a near-tied competitor on. |
+| `AUTO_ACTIVATE_THRESHOLD` | `0.68` | Minimum mean-of-top-3 cosine for automatic activation. |
+| `AUTO_ACTIVATE_MARGIN` | `0.05` | Required gap between top-1 and top-2. Prevents flipping a near-tied competitor on. |
 | `AUTO_ACTIVATE_TOP_K` | `3` | Number of triggers averaged per capability. Mean-of-top-K smooths a single noisy trigger while still rewarding cap-author-aligned triggers. |
 
 These are compile-time constants in `src/mcp/runtime/capability.rs`; routing fixtures live in

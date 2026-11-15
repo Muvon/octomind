@@ -56,10 +56,10 @@ pub struct SkillMeta {
 	pub rules: Vec<Vec<ActivateCheck>>,
 }
 /// Default cosine floor for `semantic(phrase)` checks. Tuned for
-/// `muvon/octomind-embed` (granite-embedding-30m soup).
+/// `muvon/octomind-embed` (granite-embedding-30m fine-tune).
 ///
-/// 0.65 is the 2026-09 calibration for the granite soup (its cosines sit
-/// higher than the BGE fine-tune's, which ran at 0.45). Lexical-overlap
+/// 0.68 is the 2026-11 calibration for the granite fine-tune (the BGE
+/// fine-tune ran at 0.45, the 2026-09 granite soup at 0.65). Lexical-overlap
 /// noise (a "humanize the landing page" prompt clearing
 /// `marketing-guest-posting` paraphrases on "blogs"/"landing" alone) is
 /// filtered by this absolute floor plus the `_oos` cluster learned at
@@ -68,9 +68,9 @@ pub struct SkillMeta {
 /// Authors override per check via `semantic(phrase, 0.7)`.
 ///
 /// Re-calibrate after every embed retrain with
-/// `octomind-tap/model/scripts/calibrate_thresholds.py`. Keep this in
+/// `octomind-tap/model/scripts/calibrate_cpus.py`. Keep this in
 /// sync with `capability::AUTO_ACTIVATE_THRESHOLD`.
-pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.65;
+pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.68;
 
 /// Required gap between top-1 and top-2 semantic-only skill scores in a
 /// single activation cycle. Mirrors `capability::AUTO_ACTIVATE_MARGIN`. When
@@ -79,9 +79,9 @@ pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.65;
 /// — better to abstain than activate the wrong one. Skills that match via
 /// any deterministic check (file/content/grep/match/etc.) bypass this gate;
 /// hand-authored regex/keyword rules are precise by construction. 0.05 →
-/// 0.08 for the BGE fine-tune; 0.06 for the granite soup (narrower margins,
-/// higher absolute floor), calibrated with `SEMANTIC_DEFAULT_THRESHOLD`.
-pub const SEMANTIC_MARGIN: f32 = 0.06;
+/// 0.08 for the BGE fine-tune → 0.06 for the 2026-09 granite soup → 0.05 for
+/// the 2026-11 fine-tune, calibrated with `SEMANTIC_DEFAULT_THRESHOLD`.
+pub const SEMANTIC_MARGIN: f32 = 0.05;
 
 /// Individual activation check within a group.
 #[derive(Debug, Clone)]

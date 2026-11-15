@@ -42,13 +42,12 @@ use tokio::sync::Mutex as TokioMutex;
 ///
 /// `muvon/octomind-embed` is `ibm-granite/granite-embedding-30m-english`
 /// (6-layer RoBERTa, 384-dim, CLS-pooled) fine-tuned on the octomind-tap
-/// capability triggers with paraphrase + hard-negative augmentation and
-/// blended back into the base as a WiSE-FT soup (see `octomind-tap/model/`).
-/// Picked by the 2026-09 base bake-off on the raw trigger corpus (each model
+/// catalog (see `octomind-tap/model/`): capability trigger phrases with
+/// paraphrase + hard-negative augmentation, and task briefs paired with the
+/// title and description of the agent that should take them. Granite was
+/// picked by the 2026-09 base bake-off on the raw trigger corpus (each model
 /// at its own best operating point): gate accuracy 0.846 zero-shot vs 0.690
-/// for the previous BGE-small fine-tune, at half the layers. At the shipped
-/// 0.65 / 0.06 point the published int8 graph scores 0.848 vs 0.778 for the
-/// old fine-tune, at ≈ 2 ms per intent on CPU.
+/// for the previous BGE-small fine-tune, at half the layers.
 ///
 /// The model is prefix-free: embed both sides bare (`InputType::None`).
 /// Its native cap is 512 tokens; we keep the 256-token chunking below.
@@ -56,14 +55,18 @@ use tokio::sync::Mutex as TokioMutex;
 /// Loaded via octolib's ONNX provider, which pulls `onnx/model_quantized.onnx`
 /// from `https://huggingface.co/muvon/octomind-embed`, honours the CLS
 /// pooling declared in `1_Pooling/config.json`, and runs it through ONNX
-/// Runtime. The int8 graph is ~4x smaller and 2-4x faster on CPU than the
-/// candle/safetensors path, which matters because auto-activation embeds on
-/// the user's hot path. The candle `HuggingFace` backend always mean-pools,
+/// Runtime. That graph stores its weight matrices as int8 (30 MB against
+/// 121 MB) and restores them to fp32 when it loads, so the arithmetic is
+/// fp32: a text gets the same vector alone or in a batch, and the same score
+/// on ARM and x86. The graph published before 2026-11 quantized activations
+/// per batch and did neither, which made thresholds calibrated on one CPU
+/// misfire on another. The candle `HuggingFace` backend always mean-pools,
 /// so switching `EMBED_BACKEND` back to it degrades this model's routing.
 ///
-/// Thresholds are model-specific: `capability::AUTO_ACTIVATE_*` and
-/// `skill::SEMANTIC_*` were calibrated against this int8 graph and must be
-/// re-calibrated whenever new weights are published under this name.
+/// Thresholds are model-specific: `capability::AUTO_ACTIVATE_*`,
+/// `skill::SEMANTIC_*` and `tap_route::ROUTE_*` were calibrated against this
+/// graph and must be re-calibrated whenever new weights are published under
+/// this name.
 const MODEL_NAME: &str = "muvon/octomind-embed";
 
 /// Which octolib provider loads `MODEL_NAME`.

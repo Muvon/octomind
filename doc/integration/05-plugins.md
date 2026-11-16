@@ -9,6 +9,76 @@ plugin and is the only one a new configuration lists.
 
 The wire types are in `src/plugins/protocol.rs`. Every field name on this page comes from that file.
 
+## How it works
+
+Octomind runs the agent loop: it takes the user's prompt, asks the model, runs the tools the model calls, and repeats until the model answers without a tool call. A part of Octomind called the plugin host sits beside that loop. At fixed points the loop tells the host what just happened. The host sends that to each plugin as an event, waits for the answer, and hands the effects to the loop. The plugin only answers; it never starts a request of its own.
+
+```mermaid
+flowchart LR
+    subgraph octomind["Octomind process"]
+        agent["Agent loop<br/>(prompt, model request, tool calls)"]
+        host["Plugin host<br/>(sends events, applies answers)"]
+        agent -->|"what just happened"| host
+        host -->|"notes, refusals, replaced results"| agent
+    end
+    host -->|"starts the program, then sends<br/>one request per line: the event"| plugin["Plugin program<br/>(type stdio)"]
+    plugin -->|"one response per line: the effects"| host
+    host -->|"starts the program, then sends<br/>the same lines"| bridge["besydr connect<br/>(type stdio, only passes lines on)"]
+    bridge -->|"starts the server when nobody listens,<br/>then copies lines both ways<br/>over a local socket"| server["Shared Besydr server<br/>(serves several Octomind processes)"]
+```
+
+What the diagram shows:
+
+- Octomind starts a `stdio` plugin as a child process and talks to it over its standard input and output, one JSON object per line. Octomind sends requests, and the plugin sends responses.
+- The entry of a new configuration, `besydr connect`, is such a child process. It does not read the protocol. It connects to the shared Besydr server on a local socket, starts that server when nobody listens, and copies lines between Octomind and the server in both directions. The server keeps running after this Octomind process ends and serves other Octomind processes too.
+- A `socket` plugin is reached over a local socket and started by Octomind only when nothing answers there. An `http` plugin gets each message as a POST to a URL. Both are left out of the diagram. See [Connection types](#connection-types).
+- With several plugins, the host asks them one after the other, in the order of the `plugins` list.
+
+The next diagram follows one turn, from the user's prompt to the final answer. Each arrow to the plugin is an event, and each dotted arrow back is its answer, which holds effects. The text of each answer lists examples; the full list per event is in [Events](#events).
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Agent as Agent loop
+    participant Host as Plugin host
+    participant Plugin as Plugin program
+
+    Note over Agent,Plugin: Session start
+    Host->>Plugin: initialize: which events do you want?
+    Plugin-->>Host: the events, time limits and options it wants
+    Agent->>Host: The system prompt is final
+    Host->>Plugin: session.start
+    Plugin-->>Host: effects, for example a notice
+
+    Note over User,Plugin: One turn
+    User->>Agent: Sends a prompt
+    Agent->>Host: The prompt is about to be added to the history
+    Host->>Plugin: prompt.submit
+    Plugin-->>Host: effects: replace_prompt, block, context, note
+    loop Until the model answers without a tool call
+        Agent->>Host: A model request is about to start
+        Host->>Plugin: request.before
+        Plugin-->>Host: effects: context, note
+        Agent->>Agent: The model answers and asks for tools
+        Agent->>Host: The tool calls are about to run
+        Host->>Plugin: tool.before
+        Plugin-->>Host: effects: deny, lift
+        Agent->>Agent: The allowed tools run
+        Agent->>Host: The results are ready, the model has not seen them
+        Host->>Plugin: tool.after
+        Plugin-->>Host: effects: replace, result_note, stop
+    end
+    Agent->>Host: The model answered without a tool call
+    Host->>Plugin: turn.end
+    Plugin-->>Host: effects: continue, verified
+    opt The plugin answered with continue
+        Note over Agent: Its text becomes the next input and the loop runs again
+    end
+    Agent->>User: Shows the final answer
+```
+
+The last pass of the loop has no tool call, so it has no `tool.before` or `tool.after`. After a `continue`, `turn.end` is sent again when the agent stops again. The events that are not in the diagram are `compact.before`, `compact.after`, `subagent.start`, `subagent.end`, `command`, `status`, `judge` and, when the session ends, `session.end`.
+
 ## Declaring a plugin
 
 A plugin is one entry in the `plugins` list of `config.toml`. Octomind rejects an entry with a field it does not know.
@@ -32,7 +102,7 @@ args = []
 | `headers` | table | `{}` | Extra request headers for `http`. Values may contain `{{ENV:KEY}}`. |
 | `enabled` | bool | `true` | `false` keeps the entry in the file and does not start it. |
 | `roles` | list of strings | `[]` | Roles the plugin applies to. Empty means all roles. |
-| `timeout_seconds` | integer | none | Upper limit in seconds for one event, 1 to 3600. See [Time limits](#time-limits). |
+| `timeout_seconds` | integer | none | Seconds, 1 to 3600. It is the time `initialize` gets and the most any other event gets. See [Time limits](#time-limits). |
 | `install_manifest` | string | none | `https://` URL of a signed release. See [First-use download](#first-use-download). |
 | `install_key` | string | none | Base64 of the 32-byte Ed25519 public key the release must be signed with. Required with `install_manifest`, and only valid together with it. |
 
@@ -62,12 +132,18 @@ Details that matter when writing the program:
   when Octomind itself ends. A `socket` program started by Octomind is detached and may serve other Octomind processes.
 - Over `http`, a notification is a POST whose answer body is ignored; it gets 10 seconds.
 
+### The entry of a new configuration
+
+A new configuration lists Besydr as a `stdio` entry with `command = "besydr"` and `args = ["connect"]`, plus `install_manifest` and `install_key` for the first-use download. There is no connection type named `connect`: `besydr connect` is a program that Octomind starts like any other `stdio` plugin. See [How it works](#how-it-works).
+
 ### First-use download
 
 When `command` is not installed, Octomind can download it. This needs `install_manifest` and `install_key`, works only
-for `stdio` and `socket`, and happens when the plugin is first connected. Octomind looks for the program in this order:
-`command` itself when it contains a path separator, then `PATH`, then `plugins/<name>/` in the Octomind data directory,
-then the download. A program that is installed is never replaced by a newer release.
+for `stdio` and `socket`, and happens when the plugin is first connected. For `socket` it happens only when nothing
+answers on `path`. The download needs `command` to be a plain program name: a `command` with a path separator is used as
+given and never downloaded. Octomind looks for the program in this order: `command` itself when it contains a path
+separator, then `PATH`, then `plugins/<name>/` in the Octomind data directory, then the download. A program that is
+installed is never replaced by a newer release. The line that says what was installed goes to the debug log only.
 
 The manifest is a JSON file with a `version` and a `targets` table. Each target is a build for one machine, with the
 `url` of an archive and its `sha256`:
@@ -87,8 +163,9 @@ Octomind picks the target of the machine: `x86_64-unknown-linux-musl`, `aarch64-
 5. Write the program to `plugins/<name>/` and its version to `plugins/<name>/version`.
 
 The data directory is `OCTOMIND_DATA_DIR`, or `~/.local/share/octomind` on macOS and Linux and
-`%LOCALAPPDATA%/octomind` on Windows. A connection that includes a download may take up to 300 seconds. After that the
-handshake starts with its own time limit.
+`%LOCALAPPDATA%/octomind` on Windows. A connection that includes a download may take up to 300 seconds. Each network
+request of the download gives up after 30 seconds without data, and the unpacked program may be at most 1 GiB. After
+that the handshake starts with its own time limit.
 
 ## Handshake
 
@@ -131,8 +208,9 @@ three entries). A plugin may read it to learn what the host in front of it suppo
 Fields of the request: `protocol` (integer), `host` (`name` and `version`) and `events` (event name to list of effect
 names).
 
-A plugin that does not answer `initialize` in time, answers with an error, or sends an answer that cannot be read is off
-for the session, and the user sees one notice.
+A plugin that does not answer `initialize` in time, answers with an error, speaks another protocol number, or sends an
+answer that cannot be read is off for the session. The user sees one notice, `plugin 'name' is off for this session:
+reason`, and the next session tries again.
 
 Options, all optional. Without an option the host sends the plain default.
 
@@ -157,11 +235,12 @@ Options, all optional. Without an option the host sends the plain default.
 | `workdir` | string | Working directory of the session. |
 | `project` | string | Base name of the repository root, or of the workdir outside a repository. |
 | `git_remote` | string, optional | URL of the `origin` remote, when the workdir has one. |
+| `model` | string, optional | The model the agent's requests go to, as `provider:model`. Absent on events sent from places that have no chat session at hand, such as `judge`, `subagent.start` and `subagent.end`. |
 | `messages` | list | Messages added to the session since the previous event this plugin answered. With `messages_reset` it is the full list. Empty on `subagent.start`, `subagent.end` and `judge`, which are sent from places that have no message list; these events do not move the cursor. |
 | `messages_reset` | bool | The host rewrote its history (a compaction, a resume, a rollback). `messages` then replaces everything the plugin holds for this session. |
 | `status` | object, optional | The status line parsed from the latest assistant message: `state` (`exploring`, `progressing`, `blocked`, `need_input` or `done`), `focus`, `next`, `carry` (list of strings) and `fields` (values of the plugin-registered fields, by name). |
 | `rule_matches` | list | Rules this plugin registered that matched since the previous event: `id` and `outcome` (`applied`, or `observed` for a rule in `observe` mode). |
-| `plan` | object, optional | The host's plan, when one is open: `title`, `tasks`, `current`, `touched_at` and `task_start_index`. Each task has `title`, `done_when`, `done`, and optionally `valid_if` and `valid`. |
+| `plan` | object, optional | The host's plan, when one is open: `title`, `tasks`, `current`, `touched_at` and `task_start_index`. Each task has `title`, `done_when`, `done`, and optionally `valid_if` (`file_exists:<path>` or `file_absent:<path>`) and `valid` (`false` when `valid_if` no longer holds). |
 | `plan_error` | string, optional | The host could not apply the last `plan` effect. This is the reason. |
 | `tools` | list, optional | The session's tools. Always present on `session.start`; afterwards only when the list changed since the previous event this plugin answered. Each tool has `name`, `server`, `description`, `parameters` (JSON schema) and optionally `read_only`. |
 | `active_skills` | list of strings | Names of the skills active now. Sent when not empty. |
@@ -221,11 +300,11 @@ plugin that answers in a certain way; this is stated per event.
 
 ### session.start
 
-A session starts, resumes, forks or is cleared. It is sent after the system prompt is final.
+A session starts or resumes, or `/done` folded its history and started the session over. It is sent once the system prompt is final. An in-process subagent gets its own `session.start`.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `source` | string | `startup`, `resume`, `clear`, `compact` or `fork`. |
+| `source` | string | `startup`, `resume`, or `compact` after `/done`. The protocol also names `clear` and `fork`; Octomind does not send them. |
 | `system_prompt` | string | The system prompt of the session. |
 | `interactive` | bool | A person is at the terminal. False for one-shot and server runs. |
 | `can_read_saved_output` | bool | The agent can read a file the host saved a full tool output to. |
@@ -256,10 +335,10 @@ Before every model request.
 |-------|------|---------|
 | `phase` | string | `turn_start` (first request of a turn), `follow_up` (after a round of tool calls) or `continuation` (after a `continue` effect). |
 | `turn` | string | `user` when the turn belongs to the user's latest task, `system` when the host started it (a background result, a schedule, a hook). |
-| `free_context_tokens` | integer, optional | Estimated tokens left in the context window. |
+| `free_context_tokens` | integer, optional | Estimated tokens left in the context window. Octomind does not send it yet. |
 | `pending_async` | bool | Background work of this session is still running. |
 
-Extra effects: none.
+Extra effects: none. A `context` block in the answer applies to the model request this event announces.
 
 ### tool.before
 
@@ -272,8 +351,8 @@ Before a round of tool calls runs.
 `denied` is set when a built-in rule already denied the call; the plugin is not asked about it. `rules` lists the ids of
 rules this plugin registered that would deny the call.
 
-Extra effects: `deny`, `lift`. The first plugin that sends a `deny` wins, and later plugins are not asked. A `lift` only
-counts for rules the same plugin registered.
+Extra effects: `deny`, `lift`. The first plugin that sends a `deny` wins, and later plugins are not asked. A `deny` or
+`lift` that names a `call_id` outside this round is ignored. A `lift` only counts for rules the same plugin registered.
 
 ### tool.after
 
@@ -328,6 +407,10 @@ The agent stopped with no more tool calls.
 
 Extra effects: `continue`, `verified`. The first plugin that sends a `continue` wins, and later plugins are not asked.
 `verified` is passed on only when every plugin that sent one said `true`.
+
+A `continue` adds its text as a message that the host wrote, not the user, and starts another model request with the
+phase `continuation`. When the agent stops again, `turn.end` is sent again. Octomind follows at most 5 continuations in
+one user turn and ignores later ones. A `note` sent with `turn.end` is written to the history at once.
 
 ### compact.before
 
@@ -417,7 +500,7 @@ never held up; work that takes longer belongs in the background.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `reason` | string | `exit`, `clear`, `switch` or `error`. |
+| `reason` | string | `exit` (the session ends, or an in-process subagent finishes) or `switch` (the user moved to another session). The protocol also names `clear` and `error`; Octomind does not send them. |
 
 Allowed effects: `usage`, `report` and `notice` only. They are shown and stored with the session before it closes.
 
@@ -442,7 +525,7 @@ notice, and the rest of the answer still counts.
 | `context` | list of `{name, text, keep}` | Keeps the block by `name`. Its text is added to every model request and never written into the history. A block with the same `name` is replaced in place. No `text` removes the block. A plugin's blocks are joined in the order they were first set, with nothing between them. When the context window is short, the host may leave blocks out; `keep: true` asks to keep that one, and `dropped_context` tells the plugin which blocks were left out. |
 | `pin` | list of `{name, text, items}` | Keeps text through every compaction and recites it near the end of the context. `items` are lines the host keeps as separate items when it folds history. An item is a string, or `{text, label, from_request}`: the fold lists it as `label: text` (`constraint: text` without a label), and with `from_request` it names the user's message as the source when that message contains the text. No `text` removes the block. A plugin's pinned blocks are joined in the order they were first set. Pins are stored with the session. |
 | `usage` | list of `{label, calls, input_tokens, output_tokens, reasoning_tokens, cost, wall_ms, blocking}` | Books the spend into the session's cost under the plugin. `label` is shown in `/info`, `cost` is in US dollars, `wall_ms` is milliseconds, `blocking` says the agent waited for the calls. |
-| `report` | `{mechanics, totals}` | Stores the plugin's accounting for the session as data, for the machine-readable cost output. A new report replaces the previous one. `mechanics` maps a name to any JSON; `totals` holds `chat_calls`, `decision_calls`, `wall_blocking_ms`, `wall_background_ms`, `api_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens` and `cost`. |
+| `report` | `{mechanics, totals}` | Stores the plugin's accounting for the session as data, for the machine-readable cost output. A new report replaces the previous one. `mechanics` maps a name to any JSON; `totals` holds `chat_calls`, `decision_calls`, `wall_blocking_ms`, `wall_background_ms` (leave it out when the plugin cannot tell), `api_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens` and `cost`. |
 | `notice` | list of strings | Shows each entry to the user as a dim notice. An entry may hold several lines. |
 | `register` | `{rules, skill_dirs}` | `rules` is a TOML text in the format of `.agents/guardrails.toml`; each rule has an `id` and a `mode`, `apply` or `observe` (a match is recorded and nothing is done). `skill_dirs` is a list of `{id, path, mode}`. Sending `register` again replaces what the plugin registered before. |
 | `history` | `true` | Sends the full message list once as a `session.history` notification. Meant for a plugin that lost its state. |
@@ -511,10 +594,11 @@ answer wins and where each plugin sees the result of the one before it. For the 
 
 Octomind waits for the answer to a request for a limited time without hearing from the plugin.
 
-- `initialize`: `timeout_seconds` of the entry, or 30 seconds without it.
+- `initialize`: `timeout_seconds` of the entry, or 30 seconds without it. This is the whole wait: a `progress`
+  notification does not extend it.
 - Any other event: the plugin declares the seconds in `timeouts` by event name, and 30 seconds is the limit for an event
-  it did not list. If the entry sets `timeout_seconds`, the smaller of the two applies. The limit is never below 1
-  second or above 3600.
+  it did not list. `timeout_seconds` of the entry can only lower that limit: with `timeout_seconds = 300` and no
+  declaration for an event, the limit stays 30 seconds. The limit is never below 1 second or above 3600.
 - Over `stdio` and `socket`, a `progress` notification for the request starts this wait again. A plugin that needs
   longer than its limit for one answer sends one from time to time while it works, and is not taken for dead. Whatever
   arrives, Octomind stops waiting 3600 seconds after it sent the request. Over `http` the limit is the whole wait.
@@ -557,55 +641,421 @@ are put back for plugins that are connected, and items of a plugin that is not c
 gets the full message list, with `messages_reset` true, with its next event. Anything else a plugin set in an earlier run,
 such as context blocks, is not stored and must be sent again.
 
-## A minimal plugin
+## Tutorial: a plugin in five steps
 
-This program subscribes to `tool.after` and tells the model which tools failed in a round. It uses only the Python
-standard library.
+This tutorial builds one Python program, `plugin.py`, and adds one behaviour per step. After step 5 the plugin refuses
+dangerous shell commands, adds an instruction to every model request, shortens long tool results, and sends the agent
+back to work once after a turn that changed files. It uses only the Python standard library. The finished program is
+listed at the end.
+
+After each step, restart Octomind. A `stdio` plugin is started once per Octomind process and keeps its code until that
+process ends. Start a session in a terminal with `octomind run`; notices are shown only on an interactive terminal (see
+[Failures](#failures)).
+
+### Where to look when nothing happens
+
+Each step ends with checks for that step. These apply to all of them:
+
+- Standard error of the plugin goes to the debug log, one line each, as `Plugin 'tutorial' stderr: ...`. Turn the debug
+  log on with `log_level = "debug"` in `config.toml` (needed to see the handshake) or with `/loglevel debug` in a
+  running session. See [Debug Mode](../troubleshooting/01-common-issues.md#debug-mode).
+- A failed event is written to the debug log as `Plugin 'tutorial' did not answer EVENT: reason`, and shown as a notice
+  on an interactive terminal.
+- This program declares 5 seconds per event. A slower answer is a failure, and Octomind sends `cancel` for that request.
+- Octomind sends only the events in `subscribe`. A name in `subscribe` that is not an event is dropped, and only the
+  debug log says so.
+- A line on standard output that is not a JSON-RPC response is ignored. Write log lines to standard error.
+
+### Step 1: handshake and a notice at session start
+
+You get a program that Octomind starts, that tells Octomind which events it wants, and that shows one line when a
+session starts.
 
 ```python
 import json
 import sys
 
 PROTOCOL_VERSION = 1
+EVENT_TIME_LIMIT_SECONDS = 5
+
+HANDLERS = {}
+
+
+def on(event):
+    def register(handler):
+        HANDLERS[event] = handler
+        return handler
+
+    return register
+
+
+def log(text):
+    print(text, file=sys.stderr, flush=True)
+
+
+def initialize(params):
+    log("subscribing to " + ", ".join(HANDLERS))
+    return {
+        "protocol": PROTOCOL_VERSION,
+        "plugin": {"name": "tutorial", "version": "0.1.0"},
+        "subscribe": list(HANDLERS),
+        "timeouts": {event: EVENT_TIME_LIMIT_SECONDS for event in HANDLERS},
+    }
+
+
+@on("session.start")
+def session_start(params):
+    log("session.start " + params["session_id"])
+    return {"notice": ["tutorial plugin is connected"]}
 
 
 def answer_for(request):
     method = request["method"]
     if method == "initialize":
-        return {
-            "protocol": PROTOCOL_VERSION,
-            "plugin": {"name": "failed-tools", "version": "0.1.0"},
-            "subscribe": ["tool.after"],
-            "timeouts": {"tool.after": 5},
-        }
-    if method == "tool.after":
-        failed = [call["tool"] for call in request["params"]["calls"] if call["error"]]
-        if failed:
-            return {"note": ["These tools failed in the last round: " + ", ".join(failed)]}
-    return {}
+        return initialize(request["params"])
+    handler = HANDLERS.get(method)
+    return handler(request["params"]) if handler else {}
 
 
-for line in sys.stdin:
-    request = json.loads(line)
-    if "id" not in request:
-        continue  # a notification such as `cancel`: no answer
-    response = {"jsonrpc": "2.0", "id": request["id"], "result": answer_for(request)}
-    sys.stdout.write(json.dumps(response) + "\n")
-    sys.stdout.flush()
+def main():
+    for line in sys.stdin:
+        request = json.loads(line)
+        if "id" not in request:
+            continue  # a notification such as `cancel`: no answer
+        response = {"jsonrpc": "2.0", "id": request["id"]}
+        try:
+            response["result"] = answer_for(request)
+        except Exception as error:
+            log("failed " + request["method"] + ": " + repr(error))
+            response["error"] = {"code": -32603, "message": str(error)}
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-Save it as `failed_tools.py` and add the entry:
+The program reads one request per line. A request with an `id` gets a response with the same `id`; a request without one
+is a notification and gets none. The handshake answer builds `subscribe` and `timeouts` from the registered handlers, so
+the later steps only add a handler. A handler that raises an exception is answered with an `error`, so Octomind reports
+the reason at once and does not wait for the time limit.
+
+Add the entry to the `plugins` list of `config.toml`, with the real path of the file:
 
 ```toml
 [[plugins]]
-name = "failed-tools"
+name = "tutorial"
 type = "stdio"
 command = "python3"
-args = ["/absolute/path/to/failed_tools.py"]
+args = ["/absolute/path/to/plugin.py"]
 ```
 
-Start a session and run a tool that fails. The model then gets the note with the next request. If the plugin does not
-start, an interactive terminal session shows a notice that says why.
+What you should see: at the start of the session, a dim line `tutorial plugin is connected`. With the debug log on, also
+`Plugin 'tutorial' stderr: subscribing to session.start` and `Plugin 'tutorial' stderr: session.start <session id>`.
+
+If nothing appears:
+
+- No notice and no failure line: the entry has `enabled = false`, or `roles` does not list the role of the session, or
+  the output is not an interactive terminal. Check the debug log.
+- `plugin 'tutorial' is off for this session: ...`: the handshake failed, and the reason follows the colon. A reason
+  that starts with `Failed to start plugin` means `python3` or the path was not found.
+- The `subscribing to` line is missing from the debug log: the program did not start, or it started and did not read
+  its standard input.
+
+### Step 2: refuse a dangerous shell command
+
+You get a plugin that stops a tool call whose `command` argument contains `rm -rf` or `git push --force`. The model
+receives the reason as the result of that call, and the command does not run.
+
+Add this above `def answer_for`, with the constant at the top of the file:
+
+```python
+BLOCKED_COMMANDS = ("rm -rf", "git push --force")
+
+
+@on("tool.before")
+def tool_before(params):
+    denials = []
+    for call in params["calls"]:
+        arguments = call["arguments"]
+        command = arguments.get("command") if isinstance(arguments, dict) else None
+        if not isinstance(command, str):
+            continue
+        for blocked in BLOCKED_COMMANDS:
+            if blocked in command:
+                log("denied " + call["id"] + ": " + command)
+                reason = "tutorial plugin: '" + blocked + "' is not allowed here"
+                denials.append({"call_id": call["id"], "reason": reason})
+                break
+    return {"deny": denials} if denials else {}
+```
+
+`tool.before` carries the `calls` of a round, each with `id`, `tool` and `arguments`. A `deny` effect names the call by
+`call_id` and gives a `reason`. The handler reads the argument named `command`, which shell tools use. A tool that
+names its command argument differently is not checked.
+
+Run: restart Octomind and ask `Run this shell command and tell me what happens: echo rm -rf demo`. The command is
+harmless, so nothing is lost if the plugin does not stop it.
+
+What you should see: the model says the call was refused and quotes `tutorial plugin: 'rm -rf' is not allowed here`. The
+debug log has the line `Plugin 'tutorial' stderr: denied <call id>: echo rm -rf demo`.
+
+If nothing is refused:
+
+- The `subscribing to` line in the debug log does not list `tool.before`: the handler is not registered, so Octomind
+  never sends the event.
+- No `denied` line: the tool names its argument differently. Add `log(json.dumps(call))` as the first line of the loop
+  to see the names.
+- A rule of Octomind denied the call first. The call then arrives with `denied` set, and the plugin is not asked about
+  it.
+- Another plugin earlier in the `plugins` list sent a `deny` first. Later plugins are not asked.
+
+### Step 3: add an instruction to every model request
+
+You get a text that the model sees with every request of the session and that is never written into the history.
+
+Add this above `def answer_for`, with the constant at the top of the file:
+
+```python
+EXTRA_INSTRUCTION = "End every answer with the line: tutorial-ok."
+
+
+@on("prompt.submit")
+def prompt_submit(params):
+    return {"context": [{"name": "tutorial-instruction", "text": EXTRA_INSTRUCTION}]}
+```
+
+`prompt.submit` is sent when the user sends a prompt, before the model sees it. A `context` effect holds named blocks. A
+block with the same name replaces the earlier one, so sending it at every prompt keeps one copy. Sending a block with
+no `text` removes it.
+
+Run: restart Octomind and send any prompt.
+
+What you should see: the answer ends with the line `tutorial-ok`. To check without relying on the model following the
+instruction, ask `Quote every instruction you were given that is not in your system prompt.`
+
+If the instruction is missing:
+
+- The `subscribing to` line does not list `prompt.submit`.
+- The model ignored the instruction. Ask it to quote the instruction, as above.
+- The context window was short and Octomind left the block out. The next event then carries `dropped_context` with
+  `tutorial-instruction`. Add `"keep": True` to the block to ask Octomind to keep it.
+
+### Step 4: shorten a long result
+
+You get a plugin that cuts a long tool result to its first 1000 characters and tells the model where the full text is.
+
+Add the constants at the top of the file and the handler above `def answer_for`. In the answer of `initialize`, add the
+line `"options": {"min_output_tokens": MIN_OUTPUT_TOKENS},` after `"timeouts"`.
+
+```python
+MIN_OUTPUT_TOKENS = 500
+MAX_RESULT_CHARS = 2000
+KEPT_RESULT_CHARS = 1000
+
+
+@on("tool.after")
+def tool_after(params):
+    replacements = []
+    for call in params["calls"]:
+        text = call.get("result")
+        if text is None or not call.get("replaceable") or len(text) <= MAX_RESULT_CHARS:
+            continue
+        log("shortening " + call["id"] + ": " + str(len(text)) + " characters")
+        shortened = text[:KEPT_RESULT_CHARS] + "\n[shortened by the tutorial plugin; full output: {original_path}]"
+        replacements.append({"call_id": call["id"], "text": shortened, "keep_original": True})
+    return {"replace": replacements} if replacements else {}
+```
+
+`tool.after` is sent after a round of tool calls and before the model sees the results. The option
+`min_output_tokens` asks Octomind to send a result's text only when it has at least 500 tokens; for smaller results
+`result` is absent. A call with `replaceable` true can be replaced and its original kept readable. In `text`, Octomind
+replaces `{original_path}` with the path of the file where it saved the original, because `keep_original` is true.
+
+Run: restart Octomind and ask for a file longer than 2000 characters, for example `Show me the whole text of
+doc/integration/05-plugins.md` in a checkout of Octomind.
+
+What you should see: the debug log has `Plugin 'tutorial' stderr: shortening <call id>: <n> characters`, and the model
+can quote the last line of the result, which starts with `[shortened by the tutorial plugin`.
+
+If the result is not shortened:
+
+- No `shortening` line: the result is under about 500 tokens, so it arrived without text, or it is not plain text and
+  `replaceable` is false. Octomind also cuts very large results itself before the plugin sees them.
+- A `shortening` line but the model still sees the whole result: Octomind could not save the original where the agent
+  can read it, and then it leaves the result as it is. `can_read_saved_output` in `session.start` is false when the
+  agent has no tool that reads files.
+- The `subscribing to` line does not list `tool.after`.
+
+### Step 5: send the agent back to work once
+
+You get a plugin that, after a turn in which the agent changed files, makes the agent do one more pass to re-read its
+changes.
+
+Add the constants at the top of the file, and the handler above `def answer_for`. Change `prompt_submit` from step 3 to
+forget the session first.
+
+```python
+REVIEW_REQUEST = "Re-read the files you changed and fix any mistake you find. Then give your final answer."
+
+sessions_continued = set()
+
+
+@on("prompt.submit")
+def prompt_submit(params):
+    sessions_continued.discard(params["session_id"])
+    return {"context": [{"name": "tutorial-instruction", "text": EXTRA_INSTRUCTION}]}
+
+
+@on("turn.end")
+def turn_end(params):
+    session_id = params["session_id"]
+    if params["turn"] != "user" or not params["changes"] or session_id in sessions_continued:
+        return {}
+    sessions_continued.add(session_id)
+    log("continuing " + session_id)
+    return {"continue": REVIEW_REQUEST}
+```
+
+`turn.end` is sent when the agent stops with no tool call left. `changes` lists the files that the tool calls of the turn
+changed. `turn` is `user` when the turn belongs to the user's task. A `continue` effect gives the text that becomes the
+agent's next input. The set remembers that this session already got its one extra pass, and `prompt.submit` clears it so
+each new prompt can get one. Octomind also stops after 5 continuations in a turn, whatever the plugin sends.
+
+Run: restart Octomind and ask `Create a file hello.txt with a one-line greeting.`
+
+What you should see: after the first answer the agent works again, re-reads the file, and gives a second answer. The
+debug log has `Plugin 'tutorial' stderr: continuing <session id>`.
+
+If the agent does not go back to work:
+
+- No `continuing` line: `changes` was empty, because no tool call changed a file; or `turn` was `system`, because a
+  background result, a schedule or a hook started the turn; or the session already got its pass in this turn.
+- A `continuing` line, but no second pass: the user stopped the turn with Ctrl+C, or Octomind had already followed 5
+  continuations. The debug log then says `Plugin asked to continue the turn after 5 continuations; ending it`.
+- The `subscribing to` line does not list `turn.end`.
+
+### The whole program
+
+```python
+import json
+import sys
+
+PROTOCOL_VERSION = 1
+EVENT_TIME_LIMIT_SECONDS = 5
+MIN_OUTPUT_TOKENS = 500
+MAX_RESULT_CHARS = 2000
+KEPT_RESULT_CHARS = 1000
+BLOCKED_COMMANDS = ("rm -rf", "git push --force")
+EXTRA_INSTRUCTION = "End every answer with the line: tutorial-ok."
+REVIEW_REQUEST = "Re-read the files you changed and fix any mistake you find. Then give your final answer."
+
+HANDLERS = {}
+sessions_continued = set()
+
+
+def on(event):
+    def register(handler):
+        HANDLERS[event] = handler
+        return handler
+
+    return register
+
+
+def log(text):
+    print(text, file=sys.stderr, flush=True)
+
+
+def initialize(params):
+    log("subscribing to " + ", ".join(HANDLERS))
+    return {
+        "protocol": PROTOCOL_VERSION,
+        "plugin": {"name": "tutorial", "version": "0.1.0"},
+        "subscribe": list(HANDLERS),
+        "timeouts": {event: EVENT_TIME_LIMIT_SECONDS for event in HANDLERS},
+        "options": {"min_output_tokens": MIN_OUTPUT_TOKENS},
+    }
+
+
+@on("session.start")
+def session_start(params):
+    log("session.start " + params["session_id"])
+    return {"notice": ["tutorial plugin is connected"]}
+
+
+@on("tool.before")
+def tool_before(params):
+    denials = []
+    for call in params["calls"]:
+        arguments = call["arguments"]
+        command = arguments.get("command") if isinstance(arguments, dict) else None
+        if not isinstance(command, str):
+            continue
+        for blocked in BLOCKED_COMMANDS:
+            if blocked in command:
+                log("denied " + call["id"] + ": " + command)
+                reason = "tutorial plugin: '" + blocked + "' is not allowed here"
+                denials.append({"call_id": call["id"], "reason": reason})
+                break
+    return {"deny": denials} if denials else {}
+
+
+@on("prompt.submit")
+def prompt_submit(params):
+    sessions_continued.discard(params["session_id"])
+    return {"context": [{"name": "tutorial-instruction", "text": EXTRA_INSTRUCTION}]}
+
+
+@on("tool.after")
+def tool_after(params):
+    replacements = []
+    for call in params["calls"]:
+        text = call.get("result")
+        if text is None or not call.get("replaceable") or len(text) <= MAX_RESULT_CHARS:
+            continue
+        log("shortening " + call["id"] + ": " + str(len(text)) + " characters")
+        shortened = text[:KEPT_RESULT_CHARS] + "\n[shortened by the tutorial plugin; full output: {original_path}]"
+        replacements.append({"call_id": call["id"], "text": shortened, "keep_original": True})
+    return {"replace": replacements} if replacements else {}
+
+
+@on("turn.end")
+def turn_end(params):
+    session_id = params["session_id"]
+    if params["turn"] != "user" or not params["changes"] or session_id in sessions_continued:
+        return {}
+    sessions_continued.add(session_id)
+    log("continuing " + session_id)
+    return {"continue": REVIEW_REQUEST}
+
+
+def answer_for(request):
+    method = request["method"]
+    if method == "initialize":
+        return initialize(request["params"])
+    handler = HANDLERS.get(method)
+    return handler(request["params"]) if handler else {}
+
+
+def main():
+    for line in sys.stdin:
+        request = json.loads(line)
+        if "id" not in request:
+            continue  # a notification such as `cancel`: no answer
+        response = {"jsonrpc": "2.0", "id": request["id"]}
+        try:
+            response["result"] = answer_for(request)
+        except Exception as error:
+            log("failed " + request["method"] + ": " + repr(error))
+            response["error"] = {"code": -32603, "message": str(error)}
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
+```
 
 ## Security notes
 

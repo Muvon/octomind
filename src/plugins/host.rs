@@ -59,6 +59,8 @@ pub struct EventContext<'a> {
 	pub session_id: &'a str,
 	pub parent_session_id: Option<&'a str>,
 	pub role: &'a str,
+	/// The model the agent's requests go to, when the caller knows it.
+	pub model: Option<&'a str>,
 	pub workdir: &'a Path,
 	/// Name of the project the session works in.
 	pub project: &'a str,
@@ -736,6 +738,7 @@ impl Host {
 			role: ctx.role.to_string(),
 			workdir: ctx.workdir.to_string_lossy().into_owned(),
 			project: ctx.project.to_string(),
+			model: ctx.model.map(str::to_string),
 			git_remote: envelope.git_remote.clone(),
 			messages: envelope.messages.clone(),
 			messages_reset: envelope.messages_reset,
@@ -952,6 +955,7 @@ impl Host {
 			role: ctx.role.to_string(),
 			workdir: ctx.workdir.to_string_lossy().into_owned(),
 			project: ctx.project.to_string(),
+			model: ctx.model.map(str::to_string),
 			git_remote,
 			messages: ctx
 				.messages

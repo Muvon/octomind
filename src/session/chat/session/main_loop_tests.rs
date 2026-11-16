@@ -236,10 +236,11 @@ async fn background_job_left_running_at_turn_end_is_checked_at_once() {
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
-/// An MCP task has no resource to read: its status check reports the latest
-/// status message its poller saw, and is due at once like any unchecked job.
+/// An MCP task's poller delivers its outcome itself, so the turn that leaves a
+/// task running neither hurries a status check nor gets one: a check that early
+/// only wakes the model to wait, and it re-launched the same command.
 #[tokio::test]
-async fn background_task_status_check_reports_the_polled_status() {
+async fn background_task_left_running_at_turn_end_is_not_checked_at_once() {
 	let session_id = "main-loop-background-task";
 	let key = crate::session::shell_jobs::task_key("toolu_task");
 	let status = "shell: cargo test · PID 42 (stop: kill -- -42) · running 30s · test a ... ok";
@@ -251,17 +252,36 @@ async fn background_task_status_check_reports_the_polled_status() {
 		crate::session::inbox::init_inbox_for_session();
 		let mut reported_statuses = std::collections::HashMap::new();
 		let mut checked_jobs = std::collections::HashSet::new();
-		assert_eq!(reconcile_delay(&checked_jobs), std::time::Duration::ZERO);
+		assert_eq!(reconcile_delay(&checked_jobs), BACKGROUND_JOB_RECONCILE);
 		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
-		assert!(checked_jobs.contains(&key));
-		assert_eq!(reported_statuses.get(&key).map(String::as_str), Some(status));
-		let batch = crate::session::inbox::drain_inbox_batch();
-		assert_eq!(batch.len(), 1);
-		assert!(batch[0].content.contains(status), "{}", batch[0].content);
+		assert!(checked_jobs.is_empty());
+		assert!(reported_statuses.is_empty());
+		assert!(crate::session::inbox::drain_inbox_batch().is_empty());
 	})
 	.await;
 	assert!(crate::session::shell_jobs::has_pending_for_session(session_id));
 	crate::session::shell_jobs::clear_for_session(session_id);
+}
+
+/// A resource job is due at once (its completion push can be lost); a task
+/// only once it has run a full reconcile window, when its latest status can
+/// show it stuck.
+#[test]
+fn status_check_due_waits_a_window_for_tasks_only() {
+	let job = |task: bool, age: std::time::Duration| crate::session::shell_jobs::PendingResource {
+		server_name: "custommcp".to_string(),
+		uri: "custommcp://tasks/1".to_string(),
+		label: "background task".to_string(),
+		delivering: false,
+		started_at: std::time::SystemTime::now() - age,
+		task,
+		status: None,
+	};
+	let fresh = std::time::Duration::from_secs(1);
+	let window = BACKGROUND_JOB_RECONCILE;
+	assert!(status_check_due(&job(false, fresh)));
+	assert!(!status_check_due(&job(true, fresh)));
+	assert!(status_check_due(&job(true, window)));
 }
 
 #[test]

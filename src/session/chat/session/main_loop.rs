@@ -2140,11 +2140,11 @@ async fn pop_inbox_message(
 /// this the turn waits until the safety backstop, which any caller with a
 /// shorter deadline never reaches. The job stays registered: this reports
 /// status, it does not complete the job, so the real completion path still
-/// delivers the output. Every still-pending, non-delivering job is reported
-/// once as soon as the model ends a turn with it running, then once per
-/// reconcile window. This bounds silent waiting at the cost of one model turn
-/// per report while a job runs; an unchanged snapshot also tells the model that
-/// the job may be stuck.
+/// delivers the output. A still-pending, non-delivering job is reported once
+/// its status check is due (see [`status_check_due`]), then once per reconcile
+/// window. This bounds silent waiting at the cost of one model turn per report
+/// while a job runs; an unchanged snapshot also tells the model that the job
+/// may be stuck.
 async fn reconcile_pending_background_jobs(
 	reported_statuses: &mut std::collections::HashMap<String, String>,
 	checked_jobs: &mut std::collections::HashSet<String>,
@@ -2159,7 +2159,7 @@ async fn reconcile_pending_background_jobs(
 	checked_jobs.retain(|uri| pending_jobs.iter().any(|job| job.uri == *uri));
 	for job in pending_jobs {
 		// A delivery already in flight will produce the real completion message.
-		if job.delivering {
+		if job.delivering || !status_check_due(&job) {
 			continue;
 		}
 		checked_jobs.insert(job.uri.clone());
@@ -2209,20 +2209,31 @@ async fn reconcile_pending_background_jobs(
 	}
 }
 
-/// Zero while a pending job has never had a status check, so the turn that left
-/// it running gets one at once; a full reconcile window otherwise.
+/// Zero while a pending resource job has never had a status check, so the turn
+/// that left it running gets one at once; a full reconcile window otherwise.
+/// An MCP task never hurries it: its first check waits out a window anyway.
 fn reconcile_delay(checked_jobs: &std::collections::HashSet<String>) -> std::time::Duration {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return BACKGROUND_JOB_RECONCILE;
 	};
 	let unchecked = crate::session::shell_jobs::pending_resources_for_session(&session_id)
 		.iter()
-		.any(|job| !job.delivering && !checked_jobs.contains(&job.uri));
+		.any(|job| !job.delivering && !job.task && !checked_jobs.contains(&job.uri));
 	if unchecked {
 		std::time::Duration::ZERO
 	} else {
 		BACKGROUND_JOB_RECONCILE
 	}
+}
+
+/// Whether a pending job owes the model a status check yet. A resource job does
+/// as soon as the turn leaves it running: its completion push can be lost, and
+/// the turn would then wait out the safety backstop. An MCP task does only after
+/// a full reconcile window: its poller delivers the outcome itself, so an earlier
+/// check only wakes the model to wait again, and the model, told the run cannot
+/// finish while the job is pending, starts the same command a second time.
+fn status_check_due(job: &crate::session::shell_jobs::PendingResource) -> bool {
+	!job.task || job.started_at.elapsed().unwrap_or_default() >= BACKGROUND_JOB_RECONCILE
 }
 /// What a background job's resource returned at a reconcile pass. Only a
 /// snapshot is evidence about the job; an unavailable read is not compared.

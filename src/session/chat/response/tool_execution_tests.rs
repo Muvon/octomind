@@ -1500,12 +1500,16 @@ async fn tool_after_of_a_repeated_call(tool: &str, stub: &StubPlugin) -> serde_j
 		),
 	);
 	let config = template_config();
-	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
+	// A session id of its own: other tests run rounds under "test" at the same
+	// time, and a stub connected there would be sent their `tool.after` events.
+	let sid = format!("tool-round-own-{tool}");
+	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::init_session_services("assistant");
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-		connect_stub(TEST_SESSION, "assistant", tmp.path(), stub).await;
+		connect_stub(&sid, "assistant", tmp.path(), stub).await;
 
 		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
 		let mut processor = ToolProcessor::new();
 		let mut context = main_session_context(&mut session, &mut processor);
 		let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -1525,8 +1529,8 @@ async fn tool_after_of_a_repeated_call(tool: &str, stub: &StubPlugin) -> serde_j
 		.expect("local tool execution");
 		assert!(results[1].is_error(), "the second call is shown as a repeat note");
 
-		crate::plugins::end_session(TEST_SESSION);
-		crate::session::context::cleanup_session(&TEST_SESSION.to_string());
+		crate::plugins::end_session(&sid);
+		crate::session::context::cleanup_session(&sid);
 	})
 	.await;
 	stub.sent(event::TOOL_AFTER).remove(0)

@@ -230,12 +230,12 @@ fn seen_and_returned<'a>(
 	(call(shown), call(returned))
 }
 
+/// One round: what the agent was shown and what the tool returned, each as
+/// its text and whether it is an error.
+type Round<'a> = ((&'a str, bool), (&'a str, bool));
+
 /// Feed rounds of one call each and collect the guard's counts.
-fn run_pairs(
-	guard: &mut RepeatGuard,
-	parameters: &serde_json::Value,
-	rounds: &[((&str, bool), (&str, bool))],
-) -> Vec<usize> {
+fn run_pairs(guard: &mut RepeatGuard, parameters: &serde_json::Value, rounds: &[Round<'_>]) -> Vec<usize> {
 	rounds
 		.iter()
 		.map(|(shown, returned)| {

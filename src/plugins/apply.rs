@@ -59,7 +59,7 @@ pub async fn apply(chat_session: &mut ChatSession, effects: Effects) -> Result<(
 }
 
 /// The part of [`apply`] that needs no chat session: show notices, book usage
-/// into `session`, refresh registered rules.
+/// and the time the agent waited into `session`, refresh registered rules.
 pub fn settle(session_id: &str, session: Option<&mut Session>) {
 	for notice in super::take_notices(session_id) {
 		crate::session::notice::supervisor_notice(&notice);
@@ -67,6 +67,8 @@ pub fn settle(session_id: &str, session: Option<&mut Session>) {
 
 	// Without a session the usage and reports stay in the host: the next `apply` that has one books them.
 	if let Some(session) = session {
+		// The time the agent waited is what octomind measured, not what plugins say they spent.
+		session.info.supervisor_accounting.blocking_wall_time_ms += super::take_waited_ms(session_id);
 		for (plugin, usage) in &super::take_usage(session_id) {
 			crate::session::accounting::record_plugin_usage(session, plugin, usage);
 		}

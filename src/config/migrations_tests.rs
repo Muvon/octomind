@@ -318,7 +318,11 @@ fn carried_settings_of_an_older_config_are_the_users_tables_as_they_are_in_the_f
 	let value = parse(&carried);
 	let learning = &value["supervisor"]["learning"];
 	assert_eq!(learning["enabled"].as_bool(), Some(true));
-	assert_eq!(learning["backend"].as_str(), Some("mcp"), "no step is applied to the carried tables");
+	assert_eq!(
+		learning["backend"].as_str(),
+		Some("mcp"),
+		"no step is applied to the carried tables"
+	);
 	assert!(learning.get("evolution").is_none());
 	assert!(value.get("decision").is_none());
 	assert!(value.get("version").is_none());

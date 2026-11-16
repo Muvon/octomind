@@ -1015,13 +1015,46 @@ impl PluginRig {
 		config: &Config,
 		calls: &[crate::mcp::McpToolCall],
 		denied: &[bool],
+		results: Vec<crate::mcp::McpToolResult>,
+		tree_before: Option<u64>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let round = RoundCalls {
+			calls,
+			denied,
+			own_answers: &HashMap::new(),
+		};
+		self.finish(session, config, &round, results, tree_before).await
+	}
+
+	/// `finish_round` for tools whose own answers differ from the results shown.
+	async fn finish_round_own(
+		&self,
+		session: &mut ChatSession,
+		calls: &[crate::mcp::McpToolCall],
+		results: Vec<crate::mcp::McpToolResult>,
+		own_answers: &HashMap<String, OwnAnswer>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let denied = vec![false; calls.len()];
+		let round = RoundCalls {
+			calls,
+			denied: &denied,
+			own_answers,
+		};
+		self.finish(session, &self.config, &round, results, None).await
+	}
+
+	async fn finish(
+		&self,
+		session: &mut ChatSession,
+		config: &Config,
+		round: &RoundCalls<'_>,
 		mut results: Vec<crate::mcp::McpToolResult>,
 		tree_before: Option<u64>,
 	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
 		let dir = self.dir.path().to_path_buf();
 		crate::session::context::with_session_id(self.id.clone(), async {
 			crate::mcp::workdir::set_session_working_directory(dir);
-			let stop = plugin_round(session, config, calls, denied, &mut results, ROUND_INTENT, tree_before).await;
+			let stop = plugin_round(session, config, round, &mut results, ROUND_INTENT, tree_before).await;
 			(results, stop)
 		})
 		.await
@@ -1367,4 +1400,164 @@ async fn a_replacement_for_a_call_the_plugin_was_not_allowed_to_replace_is_ignor
 
 	assert_eq!(results[0].extract_content(), "[plugin] not now");
 	assert_eq!(rig.stub.sent(event::TOOL_AFTER)[0]["calls"][0]["replaceable"], false);
+}
+
+/// What a tool returned, as `plugin_round` is told of it.
+fn own_answer(error: bool, text: &str) -> OwnAnswer {
+	OwnAnswer {
+		error,
+		digest: payload::result_hash(text),
+		returned: None,
+	}
+}
+
+/// Ten rounds of one `greet` call. Round `n` shows the agent `shown(n)` and
+/// the tool returned `returned(n)`. The last round's stop.
+async fn last_stop_of_ten_rounds(
+	label: &str,
+	shown: impl Fn(usize) -> (String, bool),
+	returned: impl Fn(usize) -> (String, bool),
+) -> Option<RoundStop> {
+	let rig = PluginRig::new(label, StubPlugin::new(&[]), false).await;
+	let mut session = rig.session();
+	let mut last = None;
+	for round in 1..=10 {
+		let id = format!("{label}{round}");
+		let call = plugin_call("greet", &id, json!({}));
+		let (text, error) = shown(round);
+		let result = if error {
+			crate::mcp::McpToolResult::error("greet".into(), id.clone(), text)
+		} else {
+			crate::mcp::McpToolResult::success("greet".into(), id.clone(), text)
+		};
+		let (text, error) = returned(round);
+		let own_answers = HashMap::from([(id, own_answer(error, &text))]);
+		last = rig
+			.finish_round_own(&mut session, &[call], vec![result], &own_answers)
+			.await
+			.1;
+	}
+	last
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn rounds_that_became_repeat_notes_still_end_the_turn_as_repeats_of_what_the_tool_returned() {
+	let stop = last_stop_of_ten_rounds(
+		"notes",
+		|round| {
+			if round == 1 {
+				("hello".to_string(), false)
+			} else {
+				("duplicate tool call".to_string(), true)
+			}
+		},
+		|_| ("hello".to_string(), false),
+	)
+	.await;
+
+	assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn the_same_output_shown_differently_each_round_still_ends_the_turn() {
+	let stop = last_stop_of_ten_rounds(
+		"reshown",
+		|round| (format!("summary {round}"), false),
+		|_| ("the full output".to_string(), false),
+	)
+	.await;
+
+	assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn different_output_each_round_never_ends_the_turn() {
+	let stop = last_stop_of_ten_rounds(
+		"different",
+		|round| (format!("shown {round}"), false),
+		|round| (format!("returned {round}"), false),
+	)
+	.await;
+
+	assert!(stop.is_none());
+}
+
+/// Run two identical calls of the local tool `tool` through the main session's
+/// execution with `stub` as its plugin; the second is shown as a repeat note.
+/// The `tool.after` event the plugin got.
+#[cfg(unix)]
+async fn tool_after_of_a_repeated_call(tool: &str, stub: &StubPlugin) -> serde_json::Value {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		tool,
+		&format!(
+			"#!/bin/sh\n# @description Dump a fixed payload.\nprintf '%s' '{}'\n",
+			"B".repeat(600)
+		),
+	);
+	let config = template_config();
+	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		connect_stub(TEST_SESSION, "assistant", tmp.path(), stub).await;
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let call = |id: &str| crate::mcp::McpToolCall {
+			tool_name: tool.to_string(),
+			parameters: json!({}),
+			tool_id: id.to_string(),
+		};
+		let (results, _) = execute_tools_in_context(
+			vec![call("r1"), call("r2")],
+			&mut context,
+			&config,
+			Some(rx),
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("local tool execution");
+		assert!(results[1].is_error(), "the second call is shown as a repeat note");
+
+		crate::plugins::end_session(TEST_SESSION);
+		crate::session::context::cleanup_session(&TEST_SESSION.to_string());
+	})
+	.await;
+	stub.sent(event::TOOL_AFTER).remove(0)
+}
+
+const RETURNED_CHARS: usize = 40;
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn a_repeat_note_reaches_a_plugin_that_asked_with_what_the_tool_returned() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]).init_field("options", json!({"returned_chars": RETURNED_CHARS}));
+
+	let sent = tool_after_of_a_repeated_call("returned_dump", &stub).await;
+
+	// The first call was shown as the tool returned it.
+	assert!(sent["calls"][0].get("returned").is_none());
+	let second = &sent["calls"][1];
+	assert_eq!(second["error"], true);
+	assert_eq!(second["returned"]["error"], false);
+	assert_eq!(second["returned"]["text"], "B".repeat(RETURNED_CHARS));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn a_plugin_that_did_not_ask_is_sent_no_returned_text() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]);
+
+	let sent = tool_after_of_a_repeated_call("unasked_dump", &stub).await;
+
+	assert_eq!(sent["calls"][1]["error"], true);
+	assert!(sent["calls"][1].get("returned").is_none());
 }

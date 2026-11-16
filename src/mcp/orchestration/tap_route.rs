@@ -22,6 +22,7 @@
 //! again with one of them as `role`, which starts it without matching.
 
 use crate::agent::taps::{TapAgentHeader, ORCHESTRATOR_SPEC};
+use crate::plugins::judgement;
 
 /// Lowest cosine between the task and a specialist's title and description
 /// for the cosine stage alone to hand the task over. Calibrated 2026-11 with
@@ -102,7 +103,7 @@ pub async fn route_task(task: &str, role: Option<&str>) -> Result<TapAgentHeader
 	}
 
 	let cosine = crate::mcp::runtime::capability::select_with_margin(ranked.clone(), ROUTE_THRESHOLD, ROUTE_MARGIN);
-	match cosine {
+	match evaluate_pick(task, cosine, &ranked).await {
 		Some((score, agent)) => {
 			crate::log_debug!("tap route: picked '{}' (score {:.2})", agent.tag, score);
 			Ok(agent.clone())
@@ -152,7 +153,7 @@ async fn rank_specialists<'a>(
 	Ok(ranked)
 }
 
-/// The text a specialist is matched on.
+/// The text a specialist is matched on and a plugin's judgement reads.
 fn describe(agent: &TapAgentHeader) -> String {
 	let parts: Vec<&str> = [agent.header.title.as_deref(), agent.header.description.as_deref()]
 		.into_iter()
@@ -163,6 +164,68 @@ fn describe(agent: &TapAgentHeader) -> String {
 	} else {
 		parts.join(". ")
 	}
+}
+
+/// A plugin picks among the best cosine matches: cosine only shortlists, the
+/// choice decides. The specialist it names gets the task, whatever cosine
+/// ranked first; `none` starts nothing. With no answer, the cosine decision
+/// stands.
+async fn evaluate_pick<'a>(
+	task: &str,
+	cosine: Option<(f32, &'a TapAgentHeader)>,
+	ranked: &[(f32, &'a TapAgentHeader)],
+) -> Option<(f32, &'a TapAgentHeader)> {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return cosine;
+	};
+	let candidates = &ranked[..ranked.len().min(judgement::TAP_TOP_K)];
+	let descriptions: Vec<String> = candidates.iter().map(|(_, agent)| describe(agent)).collect();
+	let Some(pick) = judgement::TAPS
+		.pick(
+			&session_id,
+			task,
+			candidates
+				.iter()
+				.zip(descriptions.iter())
+				.map(|((_, agent), description)| (agent.tag.as_str(), description.as_str())),
+		)
+		.await
+	else {
+		return cosine;
+	};
+	let cosine_tag = cosine.map(|(_, agent)| agent.tag.as_str());
+	let tags: Vec<&str> = candidates.iter().map(|(_, agent)| agent.tag.as_str()).collect();
+	let picked = match apply_tap_answer(&tags, &pick.choice) {
+		Some(tag) if cosine_tag == Some(tag) => cosine,
+		Some(tag) => candidates
+			.iter()
+			.find(|(_, agent)| agent.tag == tag)
+			.map(|(_, agent)| (pick.probability(tag) as f32, *agent)),
+		None => None,
+	};
+	if picked.map(|(_, agent)| agent.tag.as_str()) != cosine_tag {
+		crate::log_debug!(
+			"tap judgement: {} → {} (choice '{}' p={:.2})",
+			cosine_tag.unwrap_or("none"),
+			picked.map(|(_, agent)| agent.tag.as_str()).unwrap_or("none"),
+			pick.choice,
+			pick.probability(&pick.choice)
+		);
+		pick.applied(&session_id);
+	}
+	picked
+}
+
+/// The specialist the choice names, among the tags it listed: `none` names
+/// no specialist. No probability bar: `choice` is already the likeliest option
+/// of the list, `none` included, and that list spreads the mass over up to
+/// `TAP_TOP_K` specialists. Measured 2026-11 with live Jev over the 14
+/// developer specialists: three of four 2 KB briefs from a real lead got their
+/// top option at 0.30 to 0.51, so a 0.6 bar refused them; on 168 written briefs
+/// the bar kept the same 158 right picks and only turned 2 of 8 wrong picks
+/// into refusals.
+fn apply_tap_answer<'a>(candidates: &[&'a str], choice: &str) -> Option<&'a str> {
+	candidates.iter().copied().find(|tag| *tag == choice)
 }
 
 #[cfg(test)]

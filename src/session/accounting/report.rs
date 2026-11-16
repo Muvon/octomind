@@ -245,10 +245,11 @@ impl Totals {
 		self.cost += usage.cost;
 	}
 
+	/// `other.wall_blocking_ms` is not added: it describes the wait that octomind
+	/// measures itself, and adding it would count that wait twice.
 	fn include_report(&mut self, other: &protocol::ReportTotals) {
 		self.chat_calls += other.chat_calls;
 		self.decision_calls += other.decision_calls;
-		self.wall_blocking_ms += other.wall_blocking_ms;
 		self.wall_background_ms = self
 			.wall_background_ms
 			.zip(other.wall_background_ms)
@@ -311,8 +312,8 @@ impl SupervisorReport {
 			})
 			.collect();
 		if accounting.plugin_reports.is_empty() {
-			// A plugin that sends only `usage` stays visible. Its blocking time is
-			// already in `accounting.blocking_wall_time_ms`, so only the rest is added.
+			// A plugin that sends only `usage` stays visible. The total blocking
+			// time is octomind's own measurement, so only the rest is added.
 			for (label, usage) in &accounting.plugin_usage {
 				let row = MechanicUsage::of_plugin_usage(usage);
 				totals.include(&row);
@@ -322,16 +323,6 @@ impl SupervisorReport {
 					serde_json::to_value(row).expect("a mechanic row serializes"),
 				);
 			}
-		} else {
-			// A report is the plugin's own total for the session. It covers the
-			// blocking time that was booked from the plugin's `usage`, so that time
-			// is taken out before the report's is added.
-			let booked_from_usage: u64 = accounting
-				.plugin_usage
-				.values()
-				.map(|usage| usage.blocking_wall_time_ms)
-				.sum();
-			totals.wall_blocking_ms = totals.wall_blocking_ms.saturating_sub(booked_from_usage);
 		}
 		for report in accounting.plugin_reports.values() {
 			mechanics.extend(report.mechanics.iter().map(|(name, row)| (name.clone(), row.clone())));

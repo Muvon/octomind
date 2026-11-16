@@ -21,6 +21,18 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 
 const WAIT: Duration = Duration::from_secs(5);
+const LIMIT: WaitLimit = WaitLimit {
+	silence: WAIT,
+	total: WAIT,
+};
+
+/// The same time for the silence and for the whole request.
+fn limit(time: Duration) -> WaitLimit {
+	WaitLimit {
+		silence: time,
+		total: time,
+	}
+}
 
 fn config(body: &str) -> PluginConfig {
 	toml::from_str(&format!("name = \"fake\"\n{body}")).expect("test config parses")
@@ -90,8 +102,8 @@ mod unix_socket {
 
 		let transport = socket::connect_socket(&socket_config(&path)).await.unwrap();
 		let (first, second) = tokio::join!(
-			transport.request("alpha", json!({"n": 1}), WAIT),
-			transport.request("beta", json!({"n": 2}), WAIT)
+			transport.request("alpha", json!({"n": 1}), LIMIT),
+			transport.request("beta", json!({"n": 2}), LIMIT)
 		);
 		assert_eq!(first.unwrap(), json!({"n": 1, "method": "alpha"}));
 		assert_eq!(second.unwrap(), json!({"n": 2, "method": "beta"}));
@@ -108,7 +120,7 @@ mod unix_socket {
 		server.await.unwrap();
 		// The server is gone: the connection is seen as closed and requests fail fast.
 		wait_until_closed(&transport).await;
-		let error = transport.request("late", json!({}), WAIT).await.unwrap_err();
+		let error = transport.request("late", json!({}), LIMIT).await.unwrap_err();
 		assert!(error.to_string().contains("closed the connection"), "{error}");
 	}
 
@@ -124,7 +136,7 @@ mod unix_socket {
 			read_request(&mut lines).await;
 		});
 		let transport = socket::connect_socket(&socket_config(&path)).await.unwrap();
-		let error = transport.request("x", json!({}), WAIT).await.unwrap_err();
+		let error = transport.request("x", json!({}), LIMIT).await.unwrap_err();
 		assert!(error.to_string().contains("closed the connection"), "{error}");
 		server.await.unwrap();
 	}
@@ -148,7 +160,7 @@ mod unix_socket {
 			let _ = lines.next_line().await;
 		});
 		let transport = socket::connect_socket(&socket_config(&path)).await.unwrap();
-		let error = transport.request("x", json!({}), WAIT).await.unwrap_err().to_string();
+		let error = transport.request("x", json!({}), LIMIT).await.unwrap_err().to_string();
 		assert!(error.contains("-32601") && error.contains("no such method"), "{error}");
 		assert!(transport.is_connected());
 	}
@@ -166,7 +178,7 @@ mod unix_socket {
 		});
 		let transport = socket::connect_socket(&socket_config(&path)).await.unwrap();
 		let error = transport
-			.request("x", json!({}), Duration::from_millis(100))
+			.request("x", json!({}), limit(Duration::from_millis(100)))
 			.await
 			.unwrap_err();
 		assert!(error.to_string().contains("no answer"), "{error}");
@@ -238,10 +250,10 @@ async fn a_child_process_answers_over_its_standard_streams() {
 		..config("type = \"stdio\"\ncommand = \"sh\"\n")
 	};
 	let transport = spawn_stdio(&plugin).unwrap();
-	let first = transport.request("one", json!({}), WAIT).await.unwrap();
+	let first = transport.request("one", json!({}), LIMIT).await.unwrap();
 	assert_eq!(first, json!({"seen": true}));
 	transport.notify("note", json!({})).await.unwrap();
-	let answers = futures::future::join_all((0..5).map(|n| transport.request("many", json!({"n": n}), WAIT))).await;
+	let answers = futures::future::join_all((0..5).map(|n| transport.request("many", json!({"n": n}), LIMIT))).await;
 	assert!(answers
 		.iter()
 		.all(|answer| answer.as_ref().is_ok_and(|value| value["seen"] == true)));
@@ -257,7 +269,7 @@ async fn a_child_that_exits_closes_the_connection() {
 	};
 	let transport = spawn_stdio(&plugin).unwrap();
 	wait_until_closed(&transport).await;
-	let error = transport.request("x", json!({}), WAIT).await.unwrap_err();
+	let error = transport.request("x", json!({}), LIMIT).await.unwrap_err();
 	assert!(error.to_string().contains("closed the connection"), "{error}");
 }
 
@@ -364,7 +376,7 @@ async fn http_posts_each_request_with_resolved_headers_and_reads_the_result() {
 
 	let transport = HttpTransport::new(&plugin).unwrap();
 	let result = transport
-		.request("initialize", json!({"protocol": 1}), WAIT)
+		.request("initialize", json!({"protocol": 1}), LIMIT)
 		.await
 		.unwrap();
 	assert_eq!(result, json!({"ok": 1}));
@@ -415,13 +427,13 @@ async fn http_error_status_and_error_objects_are_errors() {
 		],
 	);
 	let transport = HttpTransport::new(&plugin).unwrap();
-	let status = transport.request("x", json!({}), WAIT).await.unwrap_err().to_string();
+	let status = transport.request("x", json!({}), LIMIT).await.unwrap_err().to_string();
 	assert!(status.contains("500"), "{status}");
-	let refused = transport.request("x", json!({}), WAIT).await.unwrap_err().to_string();
+	let refused = transport.request("x", json!({}), LIMIT).await.unwrap_err().to_string();
 	assert!(refused.contains("-32000") && refused.contains("refused"), "{refused}");
-	let wrong_id = transport.request("x", json!({}), WAIT).await.unwrap_err().to_string();
+	let wrong_id = transport.request("x", json!({}), LIMIT).await.unwrap_err().to_string();
 	assert!(wrong_id.contains("4242"), "{wrong_id}");
-	let unreadable = transport.request("x", json!({}), WAIT).await.unwrap_err().to_string();
+	let unreadable = transport.request("x", json!({}), LIMIT).await.unwrap_err().to_string();
 	assert!(unreadable.contains("unreadable"), "{unreadable}");
 	server.await.unwrap();
 }
@@ -492,7 +504,7 @@ mod cancel_over_socket {
 		let dir = tempfile::tempdir().unwrap();
 		let (transport, peer) = connect(dir.path()).await;
 		assert!(transport
-			.request("slow", json!({}), Duration::from_millis(100))
+			.request("slow", json!({}), limit(Duration::from_millis(100)))
 			.await
 			.is_err());
 		let (request, cancel) = tokio::time::timeout(WAIT, peer).await.unwrap().unwrap();
@@ -506,7 +518,7 @@ mod cancel_over_socket {
 		let (transport, peer) = connect(dir.path()).await;
 		// The caller gives up (Ctrl+C): its future is dropped long before the limit.
 		let abandoned =
-			tokio::time::timeout(Duration::from_millis(100), transport.request("slow", json!({}), WAIT)).await;
+			tokio::time::timeout(Duration::from_millis(100), transport.request("slow", json!({}), LIMIT)).await;
 		assert!(abandoned.is_err());
 		let (request, cancel) = tokio::time::timeout(WAIT, peer).await.unwrap().unwrap();
 		assert_cancel_of(&request, &cancel);
@@ -544,7 +556,7 @@ async fn http_sends_one_cancel_post_when_a_request_times_out() {
 	let server = cancel_watching_server(listener);
 	let transport = HttpTransport::new(&plugin).unwrap();
 	assert!(transport
-		.request("slow", json!({}), Duration::from_millis(200))
+		.request("slow", json!({}), limit(Duration::from_millis(200)))
 		.await
 		.is_err());
 	let (first, second) = tokio::time::timeout(WAIT, server).await.unwrap().unwrap();
@@ -556,7 +568,7 @@ async fn http_sends_one_cancel_post_when_a_request_is_dropped() {
 	let (listener, plugin) = http_plugin("").await;
 	let server = cancel_watching_server(listener);
 	let transport = HttpTransport::new(&plugin).unwrap();
-	let abandoned = tokio::time::timeout(Duration::from_millis(200), transport.request("slow", json!({}), WAIT)).await;
+	let abandoned = tokio::time::timeout(Duration::from_millis(200), transport.request("slow", json!({}), LIMIT)).await;
 	assert!(abandoned.is_err());
 	let (first, second) = tokio::time::timeout(WAIT, server).await.unwrap().unwrap();
 	assert_http_cancel(&first, &second);
@@ -572,7 +584,7 @@ async fn a_request_that_times_out_mid_write_still_puts_a_whole_line_on_the_pipe(
 
 	let padding = "x".repeat(200);
 	let error = transport
-		.request("first", json!({"padding": padding}), Duration::from_millis(100))
+		.request("first", json!({"padding": padding}), limit(Duration::from_millis(100)))
 		.await
 		.unwrap_err();
 	assert!(error.to_string().contains("no answer"), "{error}");
@@ -592,4 +604,140 @@ async fn a_request_that_times_out_mid_write_still_puts_a_whole_line_on_the_pipe(
 		.expect("a line");
 	let cancel: RpcRequest = serde_json::from_str(&cancel).expect("the cancel is a line of its own");
 	assert_eq!(cancel.method, METHOD_CANCEL);
+}
+
+// ---------------------------------------------------------------------------
+// Progress
+// ---------------------------------------------------------------------------
+
+const PIPE_ROOM: usize = 64 * 1024;
+/// Shorter than the silence limit of the tests below, so one gap alone never fails a request.
+const PROGRESS_GAP: Duration = Duration::from_millis(300);
+
+type SentLines = tokio::io::Lines<BufReader<tokio::io::DuplexStream>>;
+
+/// A transport with a peer the test drives: the lines the transport wrote and
+/// a way to write to it.
+fn piped() -> (LineTransport, SentLines, tokio::io::DuplexStream) {
+	let (reader, to_transport) = tokio::io::duplex(PIPE_ROOM);
+	let (writer, from_transport) = tokio::io::duplex(PIPE_ROOM);
+	let transport = LineTransport::new("piped", reader, writer, None);
+	(transport, BufReader::new(from_transport).lines(), to_transport)
+}
+
+fn progress_line(id: u64) -> String {
+	format!(
+		"{}\n",
+		json!({"jsonrpc": "2.0", "method": "progress", "params": {"id": id}})
+	)
+}
+
+async fn next_request_id(sent: &mut SentLines) -> u64 {
+	let line = sent.next_line().await.unwrap().expect("a request line");
+	let request: RpcRequest = serde_json::from_str(&line).expect("a request");
+	request.id.expect("a request has an id")
+}
+
+/// A waiter for request 1, as `request` registers it.
+fn waiter_of_request_one() -> (Waiters, oneshot::Receiver<Result<Value>>, Arc<Notify>) {
+	let waiters = Waiters::default();
+	let (answer, receiver) = oneshot::channel();
+	let progress = Arc::new(Notify::new());
+	waiters.lock().insert(
+		1,
+		Waiter {
+			answer,
+			progress: progress.clone(),
+		},
+	);
+	(waiters, receiver, progress)
+}
+
+#[tokio::test]
+async fn an_answer_after_the_silence_limit_is_accepted_when_progress_came_in_between() {
+	let (transport, mut sent, mut to_transport) = piped();
+	let peer = tokio::spawn(async move {
+		let id = next_request_id(&mut sent).await;
+		for _ in 0..2 {
+			tokio::time::sleep(PROGRESS_GAP).await;
+			to_transport.write_all(progress_line(id).as_bytes()).await.unwrap();
+		}
+		tokio::time::sleep(PROGRESS_GAP).await;
+		let answer = response_line(Some(id), json!({"done": true}));
+		to_transport.write_all(answer.as_bytes()).await.unwrap();
+	});
+	let limit = WaitLimit {
+		silence: Duration::from_millis(500),
+		total: WAIT,
+	};
+
+	let answer = transport.request("slow", json!({}), limit).await.unwrap();
+
+	assert_eq!(answer, json!({"done": true}));
+	peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_plugin_that_sends_nothing_fails_the_request_at_the_silence_limit() {
+	let (transport, mut sent, to_transport) = piped();
+	let _peer = tokio::spawn(async move {
+		let _held_open = to_transport;
+		while let Ok(Some(_)) = sent.next_line().await {}
+	});
+	let limit = WaitLimit {
+		silence: Duration::from_secs(1),
+		total: WAIT,
+	};
+
+	let error = transport.request("slow", json!({}), limit).await.unwrap_err();
+
+	assert!(error.to_string().contains("no answer within 1s"), "{error}");
+	assert!(transport.waiters.lock().is_empty());
+}
+
+#[tokio::test]
+async fn progress_cannot_carry_a_request_past_the_total_limit() {
+	let (transport, mut sent, mut to_transport) = piped();
+	let _peer = tokio::spawn(async move {
+		let id = next_request_id(&mut sent).await;
+		loop {
+			tokio::time::sleep(PROGRESS_GAP).await;
+			if to_transport.write_all(progress_line(id).as_bytes()).await.is_err() {
+				break;
+			}
+		}
+	});
+	let limit = WaitLimit {
+		silence: Duration::from_secs(1),
+		total: Duration::from_secs(2),
+	};
+
+	let error = transport.request("slow", json!({}), limit).await.unwrap_err();
+
+	assert!(error.to_string().contains("no answer within 2s"), "{error}");
+}
+
+#[tokio::test]
+async fn a_progress_line_for_an_unknown_request_changes_nothing() {
+	let (waiters, mut receiver, progress) = waiter_of_request_one();
+
+	route_line("piped", &progress_line(999), &waiters);
+
+	assert!(waiters.lock().contains_key(&1));
+	assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+	let woken = tokio::time::timeout(Duration::from_millis(50), progress.notified()).await;
+	assert!(woken.is_err(), "the other request was not told about it");
+}
+
+#[tokio::test]
+async fn a_progress_line_wakes_its_request_and_is_not_taken_for_the_answer() {
+	let (waiters, mut receiver, progress) = waiter_of_request_one();
+
+	route_line("piped", &progress_line(1), &waiters);
+
+	assert!(waiters.lock().contains_key(&1), "the request is still waiting");
+	assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+	tokio::time::timeout(WAIT, progress.notified())
+		.await
+		.expect("the request was woken");
 }

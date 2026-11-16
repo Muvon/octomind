@@ -20,7 +20,7 @@
 //! each other.
 
 use super::install;
-use super::protocol::{CancelParams, RpcRequest, RpcResponse, METHOD_CANCEL};
+use super::protocol::{CancelParams, ProgressParams, RpcRequest, RpcResponse, METHOD_CANCEL, METHOD_PROGRESS};
 use crate::config::{PluginConfig, PluginKind};
 use crate::mcp::client::resolve_env_placeholders;
 use anyhow::{anyhow, bail, Context, Result};
@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{oneshot, Mutex as AsyncMutex, Notify};
 
 /// First id of a connection. Ids are never reused within one connection.
 const FIRST_REQUEST_ID: u64 = 1;
@@ -40,11 +40,20 @@ const HTTP_NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
+/// How long a request may wait for its answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitLimit {
+	/// The request fails when this long passes without an answer or a `progress` notification for it.
+	pub silence: Duration,
+	/// The request fails when this long passes since it was written, whatever the plugin sent meanwhile.
+	pub total: Duration,
+}
+
 /// One connection to one plugin.
 #[async_trait]
 pub trait Transport: Send + Sync {
-	/// Send a request and wait for its answer, at most `timeout`.
-	async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value>;
+	/// Send a request and wait for its answer within `limit`.
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value>;
 	/// Send a notification: no answer is expected.
 	async fn notify(&self, method: &str, params: Value) -> Result<()>;
 	/// False once the connection is known to be gone. The host then connects again.
@@ -113,7 +122,14 @@ async fn connect_socket(config: &PluginConfig) -> Result<LineTransport> {
 // Line transport: stdio and sockets
 // ---------------------------------------------------------------------------
 
-type Waiters = Arc<parking_lot::Mutex<HashMap<u64, oneshot::Sender<Result<Value>>>>>;
+/// Where the reader delivers what arrives for one request.
+struct Waiter {
+	answer: oneshot::Sender<Result<Value>>,
+	/// Woken by each `progress` notification for the request.
+	progress: Arc<Notify>,
+}
+
+type Waiters = Arc<parking_lot::Mutex<HashMap<u64, Waiter>>>;
 
 type SharedWriter = Arc<AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>>;
 
@@ -211,10 +227,17 @@ impl Drop for LineTransport {
 
 #[async_trait]
 impl Transport for LineTransport {
-	async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value> {
 		let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-		let (sender, receiver) = oneshot::channel();
-		self.waiters.lock().insert(id, sender);
+		let (answer, mut receiver) = oneshot::channel();
+		let progress = Arc::new(Notify::new());
+		self.waiters.lock().insert(
+			id,
+			Waiter {
+				answer,
+				progress: progress.clone(),
+			},
+		);
 		let mut pending = PendingRequest {
 			id,
 			waiters: self.waiters.clone(),
@@ -227,15 +250,33 @@ impl Transport for LineTransport {
 		if !self.is_connected() {
 			bail!("plugin '{}' closed the connection", self.name);
 		}
-		let exchange = async {
-			self.write(&RpcRequest::new(Some(id), method, params)).await?;
-			receiver
-				.await
-				.map_err(|_| anyhow!("plugin '{}' dropped the request", self.name))?
-		};
-		let outcome = tokio::time::timeout(timeout, exchange).await;
-		pending.answered = outcome.is_ok();
-		outcome.unwrap_or_else(|_| Err(anyhow!("no answer within {}s", timeout.as_secs())))
+		let message = RpcRequest::new(Some(id), method, params);
+		let write = self.write(&message);
+		tokio::pin!(write);
+		let mut written = false;
+		let last_moment = tokio::time::Instant::now() + limit.total;
+		// The write is part of the wait: a plugin that does not read its input must not hold the caller.
+		// Each loop turn starts a new silence clock, so a `progress` notification restarts it.
+		loop {
+			tokio::select! {
+				biased;
+				answer = &mut receiver => {
+					pending.answered = true;
+					return answer.map_err(|_| anyhow!("plugin '{}' dropped the request", self.name))?;
+				}
+				done = &mut write, if !written => {
+					done?;
+					written = true;
+				}
+				_ = progress.notified() => {}
+				_ = tokio::time::sleep_until(last_moment) => {
+					bail!("no answer within {}s", limit.total.as_secs());
+				}
+				_ = tokio::time::sleep(limit.silence) => {
+					bail!("no answer within {}s", limit.silence.as_secs());
+				}
+			}
+		}
 	}
 
 	async fn notify(&self, method: &str, params: Value) -> Result<()> {
@@ -261,13 +302,20 @@ async fn read_loop<R: AsyncRead + Unpin>(name: String, reader: R, waiters: Waite
 	}
 	open.store(false, Ordering::SeqCst);
 	let pending: Vec<_> = waiters.lock().drain().collect();
-	for (_, sender) in pending {
-		let _ = sender.send(Err(anyhow!("plugin '{}' closed the connection", name)));
+	for (_, waiter) in pending {
+		let _ = waiter
+			.answer
+			.send(Err(anyhow!("plugin '{}' closed the connection", name)));
 	}
 }
 
 fn route_line(name: &str, line: &str, waiters: &Waiters) {
 	if line.trim().is_empty() {
+		return;
+	}
+	// A response has no `method`, so only a message of the plugin's own parses as a request.
+	if let Ok(notification) = serde_json::from_str::<RpcRequest>(line) {
+		route_notification(name, &notification, waiters);
 		return;
 	}
 	let response: RpcResponse = match serde_json::from_str(line) {
@@ -278,11 +326,35 @@ fn route_line(name: &str, line: &str, waiters: &Waiters) {
 			return;
 		}
 	};
-	let Some(sender) = waiters.lock().remove(&response.id) else {
+	let Some(waiter) = waiters.lock().remove(&response.id) else {
 		crate::log_debug!("Plugin '{}' answered unknown request {}", name, response.id);
 		return;
 	};
-	let _ = sender.send(response_value(name, response));
+	let _ = waiter.answer.send(response_value(name, response));
+}
+
+/// The one message a plugin sends on its own is `progress`. It never answers a
+/// request; it only tells the waiting side that the plugin is still working.
+fn route_notification(name: &str, notification: &RpcRequest, waiters: &Waiters) {
+	if notification.method != METHOD_PROGRESS || notification.id.is_some() {
+		crate::log_debug!(
+			"Plugin '{}' sent '{}', which octomind does not take",
+			name,
+			notification.method
+		);
+		return;
+	}
+	let params: ProgressParams = match serde_json::from_value(notification.params.clone()) {
+		Ok(params) => params,
+		Err(error) => {
+			crate::log_debug!("Plugin '{}' sent progress without a request id: {}", name, error);
+			return;
+		}
+	};
+	match waiters.lock().get(&params.id) {
+		Some(waiter) => waiter.progress.notify_one(),
+		None => crate::log_debug!("Plugin '{}' reported progress on unknown request {}", name, params.id),
+	}
 }
 
 fn response_value(name: &str, response: RpcResponse) -> Result<Value> {
@@ -467,7 +539,9 @@ impl Drop for HttpCancel {
 
 #[async_trait]
 impl Transport for HttpTransport {
-	async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
+	// One POST has no channel for `progress` notifications: the wait is `limit.silence`
+	// and `limit.total` does not apply.
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value> {
 		let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 		let mut cancel = HttpCancel {
 			id,
@@ -475,7 +549,9 @@ impl Transport for HttpTransport {
 			url: self.url.clone(),
 			answered: false,
 		};
-		let sent = self.post(&RpcRequest::new(Some(id), method, params), timeout).await;
+		let sent = self
+			.post(&RpcRequest::new(Some(id), method, params), limit.silence)
+			.await;
 		// An error status is an answer; only a timeout leaves the plugin working.
 		cancel.answered = !matches!(&sent, Err(error) if error.is_timeout());
 		let response = sent

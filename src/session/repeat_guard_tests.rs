@@ -211,3 +211,124 @@ fn loop_stop_note_names_the_repeated_call_and_its_result() {
 		repeated.len()
 	);
 }
+
+/// One finished call of the same search, as the agent saw it and as the tool
+/// returned it.
+fn seen_and_returned<'a>(
+	parameters: &'a serde_json::Value,
+	shown: (&'a str, bool),
+	returned: (&'a str, bool),
+) -> (RoundCall<'a>, RoundCall<'a>) {
+	let call = |(result, is_error)| RoundCall {
+		tool: "search",
+		parameters,
+		result,
+		is_error,
+		is_mutation: false,
+		free_form: false,
+	};
+	(call(shown), call(returned))
+}
+
+/// Feed rounds of one call each and collect the guard's counts.
+fn run_pairs(
+	guard: &mut RepeatGuard,
+	parameters: &serde_json::Value,
+	rounds: &[((&str, bool), (&str, bool))],
+) -> Vec<usize> {
+	rounds
+		.iter()
+		.map(|(shown, returned)| {
+			let (shown, returned) = seen_and_returned(parameters, *shown, *returned);
+			guard.note_round_returned(&[shown], &[returned])
+		})
+		.collect()
+}
+
+#[test]
+fn rounds_that_became_repeat_notes_count_as_repeats_of_the_real_result() {
+	let parameters = json!({"path": "a.rs"});
+	let real = ("no matches", false);
+	// The tool says the same again; the agent is told it is a repeat, as an error.
+	let note = ("duplicate tool call", true);
+	let rounds = [(real, real), (note, real), (note, real), (note, real)];
+
+	let counts = run_pairs(&mut RepeatGuard::default(), &parameters, &rounds);
+
+	assert_eq!(counts, vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn the_same_returned_text_shown_differently_each_round_is_still_a_repeat() {
+	let parameters = json!({"path": "a.rs"});
+	let real = ("no matches", false);
+	let rounds = [
+		(("summary one", false), real),
+		(("summary two", false), real),
+		(("summary three", false), real),
+	];
+
+	let counts = run_pairs(&mut RepeatGuard::default(), &parameters, &rounds);
+
+	assert_eq!(counts, vec![1, 2, 3]);
+}
+
+#[test]
+fn the_same_shown_text_over_different_returned_texts_is_a_repeat() {
+	let parameters = json!({"path": "a.rs"});
+	let cut = "first lines of the output [cut]";
+	// The size cap cuts every output down to the same start.
+	let rounds = [
+		((cut, false), ("output ending in one", false)),
+		((cut, false), ("output ending in two", false)),
+		((cut, false), ("output ending in three", false)),
+	];
+
+	let counts = run_pairs(&mut RepeatGuard::default(), &parameters, &rounds);
+
+	assert_eq!(counts, vec![1, 2, 3]);
+}
+
+#[test]
+fn different_output_stays_different_whatever_the_agent_was_shown() {
+	let parameters = json!({"path": "a.rs"});
+	let rounds = [
+		(("one", false), ("output one", false)),
+		(("two", false), ("output two", false)),
+		(("duplicate tool call", true), ("output three", false)),
+	];
+
+	let counts = run_pairs(&mut RepeatGuard::default(), &parameters, &rounds);
+
+	assert_eq!(counts, vec![1, 1, 1]);
+}
+
+#[test]
+fn a_successful_write_shown_as_a_repeat_note_is_still_progress() {
+	let parameters = json!({"path": "a.rs"});
+	let call = |result, is_error, returned_error| {
+		(
+			RoundCall {
+				tool: "edit",
+				parameters: &parameters,
+				result,
+				is_error,
+				is_mutation: true,
+				free_form: false,
+			},
+			RoundCall {
+				tool: "edit",
+				parameters: &parameters,
+				result: "ok",
+				is_error: returned_error,
+				is_mutation: true,
+				free_form: false,
+			},
+		)
+	};
+	let mut guard = RepeatGuard::default();
+	for _ in 0..3 {
+		let (shown, returned) = call("duplicate tool call", true, false);
+		assert_eq!(guard.note_round_returned(&[shown], &[returned]), 1);
+	}
+}

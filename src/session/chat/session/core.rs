@@ -1347,6 +1347,9 @@ impl ChatSession {
 
 	pub(crate) fn begin_turn_timing(&mut self) {
 		self.session.fold_external_spend();
+		// Time waited before this turn began belongs to the work before it.
+		let info = &mut self.session.info;
+		info.supervisor_accounting.blocking_wall_time_ms += crate::plugins::take_waited_ms(&info.name);
 		self.turn_started_at = Some(TurnStart {
 			at: std::time::Instant::now(),
 			main_api_time_ms: self.session.info.total_api_time_ms,
@@ -1364,6 +1367,8 @@ impl ChatSession {
 			let elapsed = started_at.at.elapsed();
 			self.session.info.turn_timing.record(elapsed);
 			let info = &mut self.session.info;
+			// Settle may not have run since the last wait, so the turn's waiting is booked here.
+			info.supervisor_accounting.blocking_wall_time_ms += crate::plugins::take_waited_ms(&info.name);
 			let split = &mut info.supervisor_accounting.turn_time;
 			split.completed += 1;
 			split.total_time_ms += elapsed.as_millis() as u64;

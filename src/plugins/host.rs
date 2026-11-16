@@ -24,9 +24,9 @@ use super::protocol::{
 use super::read::{self, Limits};
 use super::state::{
 	events_table, queue_files, rule_ids, sanitize, set_block, tools_hash, wire_message, PluginBlock, PluginCommand,
-	PluginSlot, PluginStatusField, SessionState, StoredBlock, MAX_CONSECUTIVE_FAILURES,
+	PluginSlot, PluginStatusField, SessionState, StoredBlock, WaitClock, LONGEST_PAUSE, MAX_CONSECUTIVE_FAILURES,
 };
-use super::transport::{Connector, Transport};
+use super::transport::{Connector, Transport, WaitLimit};
 use crate::config::{PluginConfig, DEFAULT_PLUGIN_TIMEOUT_SECONDS, MAX_PLUGIN_TIMEOUT_SECONDS};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::Instant;
 
 /// Reading the git remote is a convenience; it never holds a session start for long.
 const GIT_REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -97,7 +98,7 @@ pub struct Prepared {
 	pub name: String,
 	pub options: PluginOptions,
 	transport: Arc<dyn Transport>,
-	timeout: Duration,
+	limit: WaitLimit,
 	envelope: Envelope,
 }
 
@@ -119,14 +120,38 @@ struct Envelope {
 	files: Vec<FileText>,
 }
 
-/// The notice that a plugin is off for the session. A notice is shown in an
-/// interactive terminal only, and a session must not lose a plugin without a
-/// word, so everywhere else the same text goes out as an error.
+/// The notice that a plugin is off for the session or paused. A notice is shown
+/// in an interactive terminal only, and a session must not lose a plugin without
+/// a word, so everywhere else the same text goes out as an error.
 fn off_notice(message: String) -> String {
 	if !crate::session::notice::notices_are_shown() {
 		crate::log_error!("{}", message);
 	}
 	message
+}
+
+/// Counts the time of an awaited event as time the agent waited for plugins,
+/// also when the event is dropped before it ends.
+struct WaitGuard<'a> {
+	host: &'a Host,
+	session_id: &'a str,
+}
+
+impl<'a> WaitGuard<'a> {
+	fn start(host: &'a Host, session_id: &'a str) -> Self {
+		if let Some(session) = host.sessions.lock().get_mut(session_id) {
+			session.wait.enter(Instant::now());
+		}
+		Self { host, session_id }
+	}
+}
+
+impl Drop for WaitGuard<'_> {
+	fn drop(&mut self) {
+		if let Some(session) = self.host.sessions.lock().get_mut(self.session_id) {
+			session.wait.leave(Instant::now());
+		}
+	}
 }
 
 pub struct Host {
@@ -186,6 +211,7 @@ impl Host {
 				slots,
 				plan_owner: None,
 				notices,
+				wait: WaitClock::default(),
 			},
 		);
 	}
@@ -194,48 +220,40 @@ impl Host {
 		self.sessions.lock().remove(session_id);
 	}
 
+	/// Milliseconds the agent waited for plugins since the last call. Events
+	/// that ran at the same time count once.
+	pub fn take_waited_ms(&self, session_id: &str) -> u64 {
+		self.sessions
+			.lock()
+			.get_mut(session_id)
+			.map_or(0, |session| session.wait.take_ms(Instant::now()))
+	}
+
 	async fn handshake(&self, config: &PluginConfig) -> Result<PluginSlot> {
 		let transport = self.transport_for(config).await?;
-		let timeout = plugin_timeout(config);
-		let params = serde_json::to_value(InitializeParams {
-			protocol: PROTOCOL_VERSION,
-			host: ProgramInfo {
-				name: HOST_NAME.to_string(),
-				version: env!("CARGO_PKG_VERSION").to_string(),
-			},
-			events: events_table(),
-		})
-		.expect("initialize params serialize");
-		let value = tokio::time::timeout(timeout, transport.request(METHOD_INITIALIZE, params, timeout))
-			.await
-			.map_err(|_| anyhow!("no answer to initialize within {}s", timeout.as_secs()))??;
-		let result: InitializeResult = serde_json::from_value(value).context("unreadable answer to initialize")?;
-		if result.protocol != PROTOCOL_VERSION {
-			bail!(
-				"it speaks protocol {} and octomind speaks {}",
-				result.protocol,
-				PROTOCOL_VERSION
-			);
-		}
-		let mut subscribed = HashSet::new();
-		for name in &result.subscribe {
-			if event::ALL.contains(&name.as_str()) {
-				subscribed.insert(name.clone());
-			} else {
-				crate::log_debug!(
-					"Plugin '{}' subscribed to unknown event '{}'; ignored",
-					config.name,
-					name
-				);
-			}
-		}
-		Ok(PluginSlot::new(
-			&config.name,
-			transport,
-			config.timeout_seconds,
-			subscribed,
-			&result,
-		))
+		let (result, subscribed) = initialize(config, transport.as_ref()).await?;
+		Ok(PluginSlot::new(config, transport, subscribed, &result))
+	}
+
+	/// A plugin whose connection closed is connected again and told `initialize`
+	/// once more, with the checks of the first handshake. The slot keeps what it
+	/// holds except the connection and the plugin's time limits. The plugin may
+	/// have lost what it knew, so its next event carries the full message list.
+	async fn reconnect_if_closed(&self, session_id: &str, name: &str) -> Result<()> {
+		let closed = self.with_slot(session_id, name, |slot| {
+			(!slot.transport.is_connected()).then(|| slot.config.clone())
+		});
+		let Some(Some(config)) = closed else {
+			return Ok(());
+		};
+		let transport = self.transport_for(&config).await?;
+		let (result, _) = initialize(&config, transport.as_ref()).await?;
+		self.with_slot(session_id, name, |slot| {
+			slot.transport = transport;
+			slot.declared_limits = result.timeouts;
+			slot.reset_pending = true;
+		});
+		Ok(())
 	}
 
 	async fn transport_for(&self, config: &PluginConfig) -> Result<Arc<dyn Transport>> {
@@ -263,15 +281,18 @@ impl Host {
 	// Queries and small updates
 	// -----------------------------------------------------------------------
 
-	/// A plugin is on for the session.
+	/// A plugin is part of the session. A paused plugin still is: its blocks stay
+	/// and it is asked again when the pause is over. One that failed its first
+	/// handshake has no slot.
 	pub fn active(&self, session_id: &str) -> bool {
 		self.sessions
 			.lock()
 			.get(session_id)
-			.is_some_and(|session| session.slots.iter().any(|slot| !slot.off))
+			.is_some_and(|session| !session.slots.is_empty())
 	}
 
-	/// A plugin that is on for the session wants `event_name`.
+	/// A plugin that is not paused wants `event_name`. Callers use it to skip
+	/// building a payload nobody takes.
 	pub fn subscribed(&self, session_id: &str, event_name: &str) -> bool {
 		self.sessions
 			.lock()
@@ -293,7 +314,7 @@ impl Host {
 		let mut sessions = self.sessions.lock();
 		let slot = sessions
 			.get_mut(session_id)
-			.and_then(|session| session.slots.iter_mut().find(|slot| slot.name == plugin && !slot.off));
+			.and_then(|session| session.slots.iter_mut().find(|slot| slot.name == plugin));
 		if let Some(slot) = slot {
 			slot.rule_matches.push(RuleMatch {
 				id: rule_id.to_string(),
@@ -320,12 +341,12 @@ impl Host {
 			.unwrap_or_default()
 	}
 
-	/// Context blocks of the plugins that are on, in config order.
+	/// Context blocks of the plugins, in config order. A paused plugin's stay.
 	pub fn context_blocks(&self, session_id: &str) -> Vec<PluginBlock> {
 		self.collect_blocks(session_id, false)
 	}
 
-	/// Pinned blocks of every plugin of the session, in config order. They stay when a plugin goes off.
+	/// Pinned blocks of every plugin of the session, in config order.
 	pub fn pinned_blocks(&self, session_id: &str) -> Vec<PluginBlock> {
 		self.collect_blocks(session_id, true)
 	}
@@ -338,7 +359,6 @@ impl Host {
 		session
 			.slots
 			.iter()
-			.filter(|slot| pinned || !slot.off)
 			.flat_map(|slot| {
 				let blocks = if pinned { &slot.pinned } else { &slot.context };
 				blocks.iter().map(|held| PluginBlock {
@@ -417,7 +437,7 @@ impl Host {
 		}
 	}
 
-	/// Slash commands of the plugins that are on.
+	/// Slash commands of the plugins.
 	pub fn commands(&self, session_id: &str) -> Vec<PluginCommand> {
 		let sessions = self.sessions.lock();
 		let Some(session) = sessions.get(session_id) else {
@@ -426,7 +446,6 @@ impl Host {
 		session
 			.slots
 			.iter()
-			.filter(|slot| !slot.off)
 			.flat_map(|slot| {
 				slot.commands.iter().map(|spec| PluginCommand {
 					plugin: slot.name.clone(),
@@ -478,6 +497,28 @@ impl Host {
 					.map(move |usage| (name.clone(), usage))
 			})
 			.collect()
+	}
+
+	/// Move what the plugins of `from` spent and nobody booked yet to the plugin
+	/// of the same name in `to`. A plugin that `to` does not have loses it.
+	pub fn pass_usage(&self, from: &str, to: &str) {
+		let mut sessions = self.sessions.lock();
+		let Some(source) = sessions.get_mut(from) else {
+			return;
+		};
+		let passed: Vec<(String, Vec<Usage>)> = source
+			.slots
+			.iter_mut()
+			.map(|slot| (slot.name.clone(), std::mem::take(&mut slot.usage)))
+			.collect();
+		let Some(target) = sessions.get_mut(to) else {
+			return;
+		};
+		for (name, usage) in passed {
+			if let Some(slot) = target.slots.iter_mut().find(|slot| slot.name == name) {
+				slot.usage.extend(usage);
+			}
+		}
 	}
 
 	/// The latest report of each plugin that sent one since the last call.
@@ -569,7 +610,16 @@ impl Host {
 		P: Serialize,
 	{
 		let mut effects = Effects::default();
-		for name in self.targets(ctx.session_id, event_name, only) {
+		let targets = self.targets(ctx.session_id, event_name, only);
+		// A notification does not hold the agent back, so it is not waiting time.
+		let _waiting = (!event::NOTIFICATIONS.contains(&event_name) && !targets.is_empty())
+			.then(|| WaitGuard::start(self, ctx.session_id));
+		for name in targets {
+			// Before `prepare`: that holds the sessions lock and cannot wait for a connection.
+			if let Err(error) = self.reconnect_if_closed(ctx.session_id, &name).await {
+				self.reject(ctx.session_id, &name, event_name, &error);
+				continue;
+			}
 			self.refresh_files(ctx, &name, event_name).await;
 			let Some(prepared) = self.prepare(ctx, &name, event_name) else {
 				continue;
@@ -647,7 +697,7 @@ impl Host {
 			name: slot.name.clone(),
 			options: slot.options.clone(),
 			transport: slot.transport.clone(),
-			timeout: slot.limit(event_name),
+			limit: slot.wait_limit(event_name),
 			envelope: Envelope {
 				git_remote,
 				messages,
@@ -676,7 +726,7 @@ impl Host {
 		let Prepared {
 			name,
 			transport,
-			timeout,
+			limit,
 			envelope,
 			..
 		} = prepared;
@@ -700,7 +750,7 @@ impl Host {
 			judged: envelope.judged.clone(),
 			payload,
 		};
-		match deliver(transport.as_ref(), event_name, &params, timeout).await {
+		match deliver(transport.as_ref(), event_name, &params, limit).await {
 			Ok(mut answer) => {
 				sanitize(&name, event_name, &mut answer);
 				let wants_history = answer.history;
@@ -731,7 +781,9 @@ impl Host {
 		let Some(slot) = slots.iter_mut().find(|slot| slot.name == name) else {
 			return Vec::new();
 		};
-		slot.failures = 0;
+		if slot.recover() {
+			notices.push(format!("plugin '{}' answers again", name));
+		}
 		slot.seen = envelope.sent_through;
 		if !envelope.detached {
 			slot.reset_pending = false;
@@ -837,8 +889,9 @@ impl Host {
 		});
 	}
 
-	/// The event failed or timed out: count it, tell the user, and switch the
-	/// plugin off for the session after too many in a row.
+	/// The event failed or timed out. After too many failures in a row the
+	/// plugin is paused, and the user hears of it once. When the pause is over
+	/// the next event is a trial: a failed trial doubles the pause.
 	fn reject(&self, session_id: &str, name: &str, event_name: &str, error: &anyhow::Error) {
 		crate::log_debug!("Plugin '{}' did not answer {}: {:#}", name, event_name, error);
 		let mut sessions = self.sessions.lock();
@@ -849,12 +902,27 @@ impl Host {
 		let Some(slot) = slots.iter_mut().find(|slot| slot.name == name) else {
 			return;
 		};
+		if slot.paused_until.is_some() {
+			// An event that went out before the pause began can still fail during it.
+			if !slot.is_paused() {
+				slot.pause = (slot.pause * 2).min(LONGEST_PAUSE);
+				slot.paused_until = Some(Instant::now() + slot.pause);
+				crate::log_debug!(
+					"Plugin '{}' failed its trial; paused again for {}s",
+					name,
+					slot.pause.as_secs()
+				);
+			}
+			return;
+		}
 		slot.failures += 1;
 		if slot.failures >= MAX_CONSECUTIVE_FAILURES {
-			slot.off = true;
+			slot.paused_until = Some(Instant::now() + slot.pause);
 			notices.push(off_notice(format!(
-				"plugin '{}' is off for this session after {} failures in a row",
-				name, MAX_CONSECUTIVE_FAILURES
+				"plugin '{}' did not answer {} events in a row; octomind goes on without it and tries again in {}s",
+				name,
+				MAX_CONSECUTIVE_FAILURES,
+				slot.pause.as_secs()
 			)));
 		} else {
 			notices.push(format!("plugin '{}' did not answer {}: {:#}", name, event_name, error));
@@ -913,23 +981,62 @@ impl Host {
 	}
 }
 
+/// Send `initialize` and check the answer: the protocol version must match.
+/// Returns the answer and the events it subscribes to that octomind knows.
+async fn initialize(config: &PluginConfig, transport: &dyn Transport) -> Result<(InitializeResult, HashSet<String>)> {
+	let timeout = plugin_timeout(config);
+	let params = serde_json::to_value(InitializeParams {
+		protocol: PROTOCOL_VERSION,
+		host: ProgramInfo {
+			name: HOST_NAME.to_string(),
+			version: env!("CARGO_PKG_VERSION").to_string(),
+		},
+		events: events_table(),
+	})
+	.expect("initialize params serialize");
+	let limit = WaitLimit {
+		silence: timeout,
+		total: timeout,
+	};
+	let value = transport.request(METHOD_INITIALIZE, params, limit).await?;
+	let result: InitializeResult = serde_json::from_value(value).context("unreadable answer to initialize")?;
+	if result.protocol != PROTOCOL_VERSION {
+		bail!(
+			"it speaks protocol {} and octomind speaks {}",
+			result.protocol,
+			PROTOCOL_VERSION
+		);
+	}
+	let mut subscribed = HashSet::new();
+	for name in &result.subscribe {
+		if event::ALL.contains(&name.as_str()) {
+			subscribed.insert(name.clone());
+		} else {
+			crate::log_debug!(
+				"Plugin '{}' subscribed to unknown event '{}'; ignored",
+				config.name,
+				name
+			);
+		}
+	}
+	Ok((result, subscribed))
+}
+
 /// Send the event as a request, or as a notification when it has no answer.
 async fn deliver<P: Serialize>(
 	transport: &dyn Transport,
 	event_name: &str,
 	params: &Event<P>,
-	timeout: Duration,
+	limit: WaitLimit,
 ) -> Result<Answer> {
 	let params = serde_json::to_value(params).context("Failed to encode the event")?;
 	if event::NOTIFICATIONS.contains(&event_name) {
-		tokio::time::timeout(timeout, transport.notify(event_name, params))
+		tokio::time::timeout(limit.silence, transport.notify(event_name, params))
 			.await
-			.map_err(|_| anyhow!("not taken within {}s", timeout.as_secs()))??;
+			.map_err(|_| anyhow!("not taken within {}s", limit.silence.as_secs()))??;
 		return Ok(Answer::default());
 	}
-	let value = tokio::time::timeout(timeout, transport.request(event_name, params, timeout))
-		.await
-		.map_err(|_| anyhow!("no answer within {}s", timeout.as_secs()))??;
+	let value = transport.request(event_name, params, limit).await?;
 	if value.is_null() {
 		return Ok(Answer::default());
 	}

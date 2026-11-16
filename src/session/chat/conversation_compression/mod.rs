@@ -1354,7 +1354,7 @@ async fn check_and_compress_conversation_inner(
 	// excluded structurally by the packet builder and preserved through their
 	// existing dedicated paths.
 	let pact_started = std::time::Instant::now();
-	let pact = if config.compression.attention.enabled || config.compression.attention.governance.enabled {
+	let mut pact = if config.compression.attention.enabled || config.compression.attention.governance.enabled {
 		Some(
 			attention::build(
 				session,
@@ -1369,6 +1369,10 @@ async fn check_and_compress_conversation_inner(
 	} else {
 		None
 	};
+	if let Some(pact) = pact.as_mut() {
+		let session_id = session.session.info.name.clone();
+		pact.prune_dead_tool_packets(&session_id).await;
+	}
 
 	// `analysis_findings` is runtime state, while the rendered summary is what
 	// survives on disk. Rebuild the store deterministically on resume before the

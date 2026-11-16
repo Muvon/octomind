@@ -541,10 +541,7 @@ fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
 #[test]
 fn v30_renames_old_agent_tags_in_taps_and_default() {
 	let input = "version = 29\ndefault = \"developer:cto\" # lead\nlog_level = \"info\"\n\n[taps]\n\"developer:cto\" = \"openai:gpt-5\"\n\"travel:planner\" = \"openai:gpt-4o\"\n\"assistant:concierge\" = \"openai:gpt-4.1\"\n\"developer:general\" = \"openai:o3\"\ndoctor = \"openai:o3-mini\"\n";
-	let migration = plan()
-		.migrate(input, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.unwrap();
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 29);
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
@@ -563,10 +560,7 @@ fn v30_renames_old_agent_tags_in_taps_and_default() {
 #[test]
 fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
 	let input = "version = 29\n[taps]\n\"video:producer\" = \"old-model\"\n\"video:chief\" = \"new-model\"\n";
-	let migration = plan()
-		.migrate(input, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.unwrap();
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	let taps = value["taps"].as_table().unwrap();
 	assert_eq!(taps.len(), 1);
@@ -577,10 +571,7 @@ fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
 fn v30_leaves_a_config_without_old_tags_unchanged_except_the_version() {
 	let input =
 		"version = 29\ndefault = \"assistant:general\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
-	let migration = plan()
-		.migrate(input, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.unwrap();
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	// Later steps may append root keys; what v30 could have rewritten stays as written.
 	assert!(migration.content.starts_with(&format!(
 		"version = {CURRENT_CONFIG_VERSION}\ndefault = \"assistant:general\"\n"

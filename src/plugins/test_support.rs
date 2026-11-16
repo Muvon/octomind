@@ -20,9 +20,9 @@
 //! plugin name for the same reason.
 
 use super::protocol::{InitializeResult, ProgramInfo, PROTOCOL_VERSION};
-use super::transport::{Connector, ProcessConnector, Transport};
+use super::transport::{Connector, ProcessConnector, Transport, WaitLimit};
 use crate::config::PluginConfig;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -116,7 +116,7 @@ impl StubPlugin {
 		self
 	}
 
-	/// Wait this long before answering an event.
+	/// Wait this long before answering an event or taking a notification.
 	pub fn delay(mut self, delay: Duration) -> Self {
 		self.configure().delay = delay;
 		self
@@ -143,16 +143,19 @@ impl StubPlugin {
 		self.inner.log.lock().clone()
 	}
 
-	/// The connection is gone: the host connects again for the next session.
+	/// The connection is gone: the host connects again before the next event.
 	pub fn disconnect(&self) {
 		self.inner.connected.store(false, Ordering::SeqCst);
 	}
+
+	/// A connector hands the stub out again: it is connected once more.
+	pub fn reopen(&self) {
+		self.inner.connected.store(true, Ordering::SeqCst);
+	}
 }
 
-#[async_trait]
-impl Transport for StubPlugin {
-	async fn request(&self, method: &str, params: Value, _timeout: Duration) -> Result<Value> {
-		self.inner.log.lock().push((method.to_string(), params.clone()));
+impl StubPlugin {
+	async fn reply_after_delay(&self, method: &str, params: &Value) -> Result<Value> {
 		if !self.inner.delay.is_zero() {
 			tokio::time::sleep(self.inner.delay).await;
 		}
@@ -162,11 +165,25 @@ impl Transport for StubPlugin {
 		if let Some(answer) = self.inner.queue.lock().pop_front() {
 			return Ok(answer);
 		}
-		(self.inner.responder)(method, &params)
+		(self.inner.responder)(method, params)
+	}
+}
+
+#[async_trait]
+impl Transport for StubPlugin {
+	// The stub never sends `progress`, so only the silence limit applies.
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value> {
+		self.inner.log.lock().push((method.to_string(), params.clone()));
+		tokio::time::timeout(limit.silence, self.reply_after_delay(method, &params))
+			.await
+			.map_err(|_| anyhow!("no answer within {}s", limit.silence.as_secs()))?
 	}
 
 	async fn notify(&self, method: &str, params: Value) -> Result<()> {
 		self.inner.log.lock().push((method.to_string(), params));
+		if !self.inner.delay.is_zero() {
+			tokio::time::sleep(self.inner.delay).await;
+		}
 		Ok(())
 	}
 

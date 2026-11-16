@@ -199,3 +199,7 @@ pub async fn still_needed(session_id: &str, kept: Value, units: Vec<JudgeItem>) 
 			.collect(),
 	})
 }
+
+#[cfg(test)]
+#[path = "judgement_tests.rs"]
+mod tests;

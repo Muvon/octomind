@@ -302,10 +302,16 @@ async fn a_result_note_is_queued_apart_from_a_note_and_both_get_the_plan_checkli
 		result_notes: vec!["Right after the results:\n{plan_checklist}".into()],
 		plan: Some(PlanUpdate::Start {
 			title: "Ship it".into(),
-			tasks: vec![PlanTaskSpec {
-				title: "implement".into(),
-				done_when: "the code is written".into(),
-			}],
+			tasks: vec![
+				PlanTaskSpec {
+					title: "implement".into(),
+					done_when: "the code is written".into(),
+				},
+				PlanTaskSpec {
+					title: "verify".into(),
+					done_when: "the tests pass".into(),
+				},
+			],
 		}),
 	};
 

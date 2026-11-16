@@ -2008,24 +2008,32 @@ async fn events_that_run_at_the_same_time_count_their_union() {
 
 #[tokio::test]
 async fn an_event_that_is_dropped_still_stops_the_clock() {
-	let slow = FakePlugin::new(&[event::REQUEST_BEFORE]).delay(Duration::from_secs(600));
-	let rig = rig(vec![plugin("a", slow)]).await;
+	// The stub delays `initialize` too and would fail the handshake; this one answers it at once.
+	let fake = FakePlugin::new(&[event::REQUEST_BEFORE]);
+	let host = Host::new(Arc::new(FixedConnector(Arc::new(SlowAnswers(fake)))));
+	let dir = tempfile::tempdir().unwrap();
+	host.start_session(SESSION, ROLE, dir.path(), &[config("a")]).await;
+	let ctx = EventContext {
+		session_id: SESSION,
+		parent_session_id: None,
+		role: ROLE,
+		workdir: dir.path(),
+		project: "proj",
+		messages: &[],
+		detached: false,
+		status: None,
+		plan: None,
+		tools: None,
+		active_skills: Vec::new(),
+	};
 
-	let cancelled = tokio::time::timeout(
-		Duration::from_millis(100),
-		rig.host.request_before(&rig.ctx(&[]), request_before()),
-	)
-	.await;
+	let cancelled = tokio::time::timeout(Duration::from_millis(100), host.request_before(&ctx, request_before())).await;
 	assert!(cancelled.is_err());
-	let waited = rig.host.take_waited_ms(SESSION);
+	let waited = host.take_waited_ms(SESSION);
 	assert!(waited >= 100, "{waited}");
 
 	tokio::time::sleep(Duration::from_millis(200)).await;
-	assert_eq!(
-		rig.host.take_waited_ms(SESSION),
-		0,
-		"the clock kept running after the drop"
-	);
+	assert_eq!(host.take_waited_ms(SESSION), 0, "the clock kept running after the drop");
 }
 
 #[tokio::test]

@@ -698,8 +698,15 @@ impl Session {
 		if let Some(session_file) = &self.session_file {
 			// Append-only design: individual messages are persisted when added.
 			// This just appends an updated SUMMARY snapshot of the current session state.
-			let summary_entry = persistence::summary_log_entry(&self.info);
+			let mut logged_info = self.info.clone();
+			logged_info.capture_agent_runs();
+			// Only runs that changed since the last snapshot: the loader folds every
+			// snapshot's runs back into the full history, so repeating the whole
+			// list in each SUMMARY bloats the log.
+			logged_info.agent_runs = tap_runs::runs_to_log(&logged_info.name, &logged_info.agent_runs);
+			let summary_entry = persistence::summary_entry_of(&logged_info);
 			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
+			tap_runs::mark_logged(&logged_info.name, &logged_info.agent_runs);
 			Ok(())
 		} else {
 			Err(anyhow::anyhow!("No session file specified"))

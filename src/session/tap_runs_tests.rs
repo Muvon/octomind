@@ -546,3 +546,112 @@ async fn concurrent_same_id_resume_claims_exactly_one_run() {
 	.await;
 	clear_for_session(&parent);
 }
+
+fn run_info(id: &str, status: TapJobStatus, usage_cost: Option<f64>, last_action: Option<&str>) -> TapJobInfo {
+	TapJobInfo {
+		id: id.to_string(),
+		role: "developer:general".to_string(),
+		workdir: "/tmp".to_string(),
+		started_at: UNIX_EPOCH,
+		status,
+		error: None,
+		live: TapLiveState {
+			last_action: last_action.map(str::to_string),
+			usage: usage_cost.map(|cost| TapLiveUsage {
+				input_tokens: cost as u64,
+				output_tokens: cost as u64,
+				cache_read_tokens: cost as u64,
+				cost,
+			}),
+		},
+	}
+}
+
+#[test]
+fn merge_history_keeps_order_larger_usage_and_last_action_over_a_long_history() {
+	const RUNS: usize = 300;
+	let mut history: Vec<TapJobInfo> = (0..RUNS)
+		.map(|index| {
+			run_info(
+				&format!("run-{index}"),
+				TapJobStatus::Running,
+				Some(10.0),
+				Some("read file"),
+			)
+		})
+		.collect();
+
+	// Lower usage and no last_action must not erase what history knows; a higher
+	// usage wins; an unknown id appends after the existing runs.
+	let updates = vec![
+		run_info("run-7", TapJobStatus::Done, Some(3.0), None),
+		run_info("run-250", TapJobStatus::Done, Some(20.0), Some("write file")),
+		run_info("run-new", TapJobStatus::Running, None, None),
+		run_info("run-0", TapJobStatus::Failed, None, None),
+	];
+	merge_history(&mut history, updates);
+
+	assert_eq!(history.len(), RUNS + 1);
+	assert!(history[..RUNS]
+		.iter()
+		.enumerate()
+		.all(|(index, run)| run.id == format!("run-{index}")));
+	assert_eq!(history[RUNS].id, "run-new");
+
+	let seven = &history[7];
+	assert_eq!(seven.status, TapJobStatus::Done);
+	assert_eq!(seven.live.usage.unwrap().cost, 10.0);
+	assert_eq!(seven.live.last_action.as_deref(), Some("read file"));
+
+	let late = &history[250];
+	assert_eq!(late.live.usage.unwrap().cost, 20.0);
+	assert_eq!(late.live.last_action.as_deref(), Some("write file"));
+
+	let zero = &history[0];
+	assert_eq!(zero.status, TapJobStatus::Failed);
+	assert_eq!(zero.live.usage.unwrap().cost, 10.0);
+}
+
+#[test]
+fn merge_history_folds_a_repeated_id_within_one_call() {
+	let mut history = Vec::new();
+	merge_history(
+		&mut history,
+		vec![
+			run_info("twice", TapJobStatus::Running, Some(5.0), None),
+			run_info("twice", TapJobStatus::Done, Some(2.0), None),
+		],
+	);
+	assert_eq!(history.len(), 1);
+	assert_eq!(history[0].status, TapJobStatus::Done);
+	assert_eq!(history[0].live.usage.unwrap().cost, 5.0);
+}
+
+#[test]
+fn runs_to_log_returns_only_new_or_changed_runs_and_only_after_marking() {
+	let session = "runs-to-log-delta";
+	let mut runs = vec![
+		run_info("a", TapJobStatus::Running, Some(1.0), None),
+		run_info("b", TapJobStatus::Running, Some(1.0), None),
+	];
+
+	let first = runs_to_log(session, &runs);
+	assert_eq!(first, runs);
+	// A failed append never marks, so the next snapshot carries them again.
+	assert_eq!(runs_to_log(session, &runs), runs);
+
+	mark_logged(session, &first);
+	assert!(runs_to_log(session, &runs).is_empty());
+
+	runs[1].status = TapJobStatus::Done;
+	runs.push(run_info("c", TapJobStatus::Running, None, None));
+	let changed = runs_to_log(session, &runs);
+	assert_eq!(changed, vec![runs[1].clone(), runs[2].clone()]);
+
+	mark_logged(session, &changed);
+	assert!(runs_to_log(session, &runs).is_empty());
+	assert_eq!(runs_to_log("another-session", &runs), runs);
+
+	clear_for_session(&session.to_string());
+	assert_eq!(runs_to_log(session, &runs), runs);
+}

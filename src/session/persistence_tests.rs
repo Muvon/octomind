@@ -668,3 +668,92 @@ fn unknown_main_cost_checkpoint_cannot_be_replaced_with_a_partial_known_cost() {
 	.unwrap();
 	assert!(load_session(&path).unwrap().info.main_cost.is_none());
 }
+
+#[test]
+fn entry_kind_reads_the_type_without_regard_to_key_order_or_other_fields() {
+	assert_eq!(entry_kind(r#"{"type":"STATS","total_cost":1.5}"#), Some("STATS"));
+	assert_eq!(
+		entry_kind(r#"{"timestamp":5,"session_info":{"type":"nested"},"type":"SUMMARY"}"#),
+		Some("SUMMARY")
+	);
+	let message = serde_json::to_string(&msg("user", "hi")).unwrap();
+	assert_eq!(entry_kind(&message), None, "a message line has no type");
+	assert_eq!(entry_kind("SUMMARY: {\"name\":\"legacy\"}"), None);
+	assert_eq!(entry_kind("[1,2]"), None);
+}
+
+#[test]
+fn snapshot_entry_with_type_not_first_still_loads() {
+	let info = SessionInfo {
+		name: "type-last".into(),
+		total_cost: 2.0,
+		..Default::default()
+	};
+	let summary = json!({"timestamp": 100, "session_info": info, "type": "SUMMARY"}).to_string();
+	let stats = json!({"total_cost": 3.0, "timestamp": 101, "type": "STATS"}).to_string();
+	let file = write_session(&[&summary, &stats]);
+	let loaded = load_session(&file.path().to_path_buf()).expect("load");
+	assert_eq!(loaded.info.name, "type-last");
+	assert_eq!(loaded.info.total_cost, 3.0);
+}
+
+#[test]
+fn one_load_yields_the_runtime_state_the_log_replay_computes() {
+	let info = SessionInfo {
+		name: "one-pass".into(),
+		model: "ollama:saved".into(),
+		role: "developer:general".into(),
+		..Default::default()
+	};
+	let lines = [
+		json!({"type": "SUMMARY", "timestamp": 100, "session_info": info}).to_string(),
+		json!({"type": "COMMAND", "command": "/model ollama:latest"}).to_string(),
+		json!({"type": "COMMAND", "command": "/role tester:general"}).to_string(),
+		json!({"type": "RESTORATION_POINT", "timestamp": 101}).to_string(),
+		json!({"type": "KNOWLEDGE_ENTRY", "content": "kept"}).to_string(),
+		json!({"type": "COMMAND", "command": "/model ollama:after"}).to_string(),
+		json!({"type": "COMMAND", "command": "/effort high"}).to_string(),
+	];
+	let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+	let path = file.path().to_path_buf();
+
+	let loaded = load_session_with_runtime_state(&path).expect("load");
+	let replayed = extract_runtime_state_from_log(&path).expect("replay");
+
+	assert_eq!(loaded.runtime_state.model, replayed.model);
+	assert_eq!(loaded.runtime_state.role, replayed.role);
+	assert_eq!(loaded.runtime_state.reasoning_effort, replayed.reasoning_effort);
+	assert_eq!(loaded.runtime_state.critical_knowledge, replayed.critical_knowledge);
+	assert_eq!(replayed.model.as_deref(), Some("ollama:after"));
+	assert_eq!(replayed.role, None, "role predates the restoration point");
+	assert_eq!(replayed.critical_knowledge, vec!["kept".to_string()]);
+	assert_eq!(loaded.session.info.model, "ollama:after");
+}
+
+#[test]
+fn snapshot_without_main_cost_leaves_a_known_main_cost_while_null_clears_it() {
+	let mut info = serde_json::to_value(SessionInfo {
+		name: "main-cost-presence".into(),
+		main_cost: Some(0.5),
+		..Default::default()
+	})
+	.unwrap();
+	let known = json!({"type": "SUMMARY", "timestamp": 100, "session_info": info.clone()}).to_string();
+	info.as_object_mut().unwrap().remove("main_cost");
+	let absent = json!({"type": "SUMMARY", "timestamp": 101, "session_info": info}).to_string();
+	let absent_stats = json!({"type": "STATS", "timestamp": 102, "total_cost": 0.1}).to_string();
+	let file = write_session(&[&known, &absent, &absent_stats]);
+	assert_eq!(
+		load_session(&file.path().to_path_buf()).unwrap().info.main_cost,
+		Some(0.5)
+	);
+
+	let null_stats = json!({"type": "STATS", "timestamp": 102, "main_cost": null}).to_string();
+	let file = write_session(&[&known, &null_stats]);
+	assert!(load_session(&file.path().to_path_buf())
+		.unwrap()
+		.info
+		.main_cost
+		.is_none());
+}

@@ -1649,14 +1649,6 @@ async fn bind_session(
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
-		// A session still in memory keeps its plan and schedule in the session-scoped
-		// stores (only cleanup_session clears them); re-reading the log would only repeat
-		// a read. Before anything that can fail: a resumed session whose bind fails goes
-		// back to memory, and the next bind trusts those stores.
-		if !from_memory {
-			crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
-			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
-		}
 		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()))?;
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
@@ -1900,10 +1892,6 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 		match setup_and_initialize_session(&args, &config, false).await {
 			Ok((mut session, config_for_role, session_role, _, _)) => {
 				crate::session::context::init_session_services(&session_role);
-				// Every load from disk restores these: a later bind finds the session in
-				// memory and does not read the log again.
-				crate::mcp::core::plan::core::restore_plan_for_session(session_id);
-				crate::mcp::orchestration::schedule::core::restore_schedule_for_session(session_id);
 				crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
 				crate::plugins::lifecycle::connect(
 					session_id,

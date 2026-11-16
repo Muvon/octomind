@@ -268,73 +268,15 @@ pub fn sidecar_finish(summary: &str) -> Result<()> {
 	Ok(())
 }
 
-/// Restore the active plan (if any) from the session log into session-scoped storage.
-/// Called at session startup (all entry points) right after init_session_services.
-/// Safe no-op when the log file doesn't exist or contains no snapshot.
-pub fn restore_plan_for_session(session_name: &str) {
-	let log_file = match crate::session::logger::get_session_log_file(session_name) {
-		Ok(p) => p,
-		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: cannot resolve log file: {}", e);
-			return;
-		}
-	};
-	if !log_file.exists() {
-		return;
-	}
-
-	let log = match crate::session::persistence::SessionLog::open(&log_file) {
-		Ok(log) => log,
-		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: {:#}", e);
-			return;
-		}
-	};
-	let mut latest_plan: Option<super::storage::ExecutionPlan> = None;
-
-	for line in log {
-		// Corruption: the latest plan may sit past it, so restore none.
-		let line = match line {
-			Ok(line) => line,
-			Err(e) => {
-				crate::log_error!("restore_plan_for_session: {:#}", e);
-				return;
-			}
-		};
-		// Typed kind check: a log holds hundreds of MB of entries that are not plan markers.
-		let Some(kind) = crate::session::persistence::entry_kind(&line) else {
-			continue;
-		};
-		match kind {
-			"PLAN_SNAPSHOT" => {
-				#[derive(serde::Deserialize)]
-				struct PlanSnapshot {
-					plan: Option<super::storage::ExecutionPlan>,
-				}
-				match serde_json::from_str::<PlanSnapshot>(&line) {
-					Ok(PlanSnapshot { plan: Some(plan) }) => latest_plan = Some(plan),
-					Ok(PlanSnapshot { plan: None }) => {}
-					Err(e) => {
-						crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
-					}
-				}
-			}
-			"PLAN_CLEARED" => {
-				latest_plan = None;
-			}
-			_ => {}
-		}
-	}
-
-	if let Some(plan) = latest_plan {
-		let session_id = session_name.to_string();
-		let storage = crate::session::context::get_plan_storage(&session_id);
-		let mut storage = storage.lock().unwrap();
-		if let Err(e) = storage.load_plan(plan) {
-			crate::log_debug!("restore_plan_for_session: load_plan failed: {}", e);
-		} else {
-			crate::log_debug!("Restored active plan for session '{}'", session_name);
-		}
+/// Put a plan read back from the session log into session-scoped storage.
+/// Called once, by the session load from disk.
+pub fn restore_plan(session_id: &str, plan: super::storage::ExecutionPlan) {
+	let storage = crate::session::context::get_plan_storage(session_id);
+	let mut storage = storage.lock().unwrap();
+	if let Err(e) = storage.load_plan(plan) {
+		crate::log_debug!("restore_plan: load_plan failed: {}", e);
+	} else {
+		crate::log_debug!("Restored active plan for session '{}'", session_id);
 	}
 }
 

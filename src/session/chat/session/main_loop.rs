@@ -69,8 +69,8 @@ impl SessionRuntimeGuards {
 }
 
 /// Boot the per-session runtime services shared by interactive and
-/// non-interactive paths: session-scoped service registry, plan/schedule
-/// restoration, inject-listener socket, and webhook listeners.
+/// non-interactive paths: session-scoped service registry,
+/// inject-listener socket, and webhook listeners.
 ///
 /// Returns RAII guards the caller MUST hold for the session's lifetime —
 /// dropping them stops the listeners.
@@ -88,8 +88,6 @@ async fn init_session_runtime(
 		config,
 	)
 	.await;
-	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-	crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
 	let inject = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 	Ok(SessionRuntimeGuards {

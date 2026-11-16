@@ -816,3 +816,132 @@ fn stats_with_a_total_cost_that_is_not_a_number_fails_the_load() {
 
 	assert!(load_session(&file.path().to_path_buf()).is_err());
 }
+
+// ---- plan and schedule snapshots read by the load ----
+
+fn plan_snapshot_line(title: &str) -> String {
+	let plan = crate::mcp::core::plan::storage::ExecutionPlan {
+		title: title.to_string(),
+		tasks: Vec::new(),
+		current_task_index: 0,
+		created_at: chrono::Utc::now(),
+		status: crate::mcp::core::plan::storage::PlanStatus::Active,
+	};
+	json!({"type": "PLAN_SNAPSHOT", "plan": plan}).to_string()
+}
+
+fn schedule_snapshot_line(descriptions: &[&str]) -> String {
+	use crate::mcp::orchestration::schedule::storage::{ScheduleAction, ScheduleEntry};
+	let entries: Vec<ScheduleEntry> = descriptions
+		.iter()
+		.map(|description| {
+			ScheduleEntry::new(
+				description.to_string(),
+				ScheduleAction::Message {
+					message: "ping".to_string(),
+				},
+				chrono::Local::now() + chrono::Duration::seconds(60),
+				None,
+			)
+		})
+		.collect();
+	json!({"type": "SCHEDULE_SNAPSHOT", "entries": entries}).to_string()
+}
+
+/// Load a log made of a SUMMARY followed by `lines`.
+fn load_with_lines(lines: &[String]) -> LoadedSession {
+	let mut all = vec![summary_line("snapshot-session", 100)];
+	all.extend_from_slice(lines);
+	let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+	load_session_with_runtime_state(&file.path().to_path_buf()).expect("load")
+}
+
+fn schedule_descriptions(loaded: &LoadedSession) -> Vec<String> {
+	loaded
+		.schedule
+		.as_ref()
+		.expect("schedule restored")
+		.iter()
+		.map(|entry| entry.description.clone())
+		.collect()
+}
+
+#[test]
+fn the_load_returns_the_latest_plan_and_skips_a_malformed_snapshot() {
+	let loaded = load_with_lines(&[
+		plan_snapshot_line("older"),
+		r#"{"type":"PLAN_SNAPSHOT","plan":{"title":123}}"#.to_string(),
+		plan_snapshot_line("newest"),
+	]);
+
+	assert_eq!(loaded.plan.expect("plan restored").title, "newest");
+}
+
+#[test]
+fn a_plan_cleared_marker_leaves_the_load_without_a_plan_until_the_next_snapshot() {
+	let cleared = load_with_lines(&[plan_snapshot_line("gone"), r#"{"type":"PLAN_CLEARED"}"#.to_string()]);
+	assert!(cleared.plan.is_none());
+
+	let replanned = load_with_lines(&[
+		plan_snapshot_line("gone"),
+		r#"{"type":"PLAN_CLEARED"}"#.to_string(),
+		plan_snapshot_line("again"),
+	]);
+	assert_eq!(replanned.plan.expect("plan restored").title, "again");
+}
+
+#[test]
+fn a_null_or_absent_plan_changes_nothing() {
+	let loaded = load_with_lines(&[
+		plan_snapshot_line("kept"),
+		r#"{"type":"PLAN_SNAPSHOT","plan":null}"#.to_string(),
+		r#"{"type":"PLAN_SNAPSHOT"}"#.to_string(),
+		r#"{"type":"OTHER","plan":null}"#.to_string(),
+		"{not json".to_string(),
+	]);
+	assert_eq!(loaded.plan.expect("plan restored").title, "kept");
+
+	let only_null = load_with_lines(&[r#"{"type":"PLAN_SNAPSHOT","plan":null}"#.to_string()]);
+	assert!(only_null.plan.is_none());
+}
+
+#[test]
+fn the_load_returns_the_latest_schedule_and_skips_malformed_snapshots() {
+	let loaded = load_with_lines(&[
+		schedule_snapshot_line(&["older", "also older"]),
+		"this line is not json at all".to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT"}"#.to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT","entries":null}"#.to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT","entries":"not-an-array"}"#.to_string(),
+		schedule_snapshot_line(&["latest"]),
+	]);
+
+	assert_eq!(schedule_descriptions(&loaded), vec!["latest".to_string()]);
+}
+
+#[test]
+fn an_empty_schedule_snapshot_is_the_latest_state() {
+	let loaded = load_with_lines(&[schedule_snapshot_line(&["removed later"]), schedule_snapshot_line(&[])]);
+
+	assert_eq!(schedule_descriptions(&loaded), Vec::<String>::new());
+}
+
+#[test]
+fn a_log_without_snapshots_loads_without_a_plan_or_schedule() {
+	let loaded = load_with_lines(&[]);
+
+	assert!(loaded.plan.is_none());
+	assert!(loaded.schedule.is_none());
+}
+
+#[test]
+fn a_log_that_is_not_zstd_fails_the_load() {
+	let file = tempfile::Builder::new()
+		.suffix(".jsonl.zst")
+		.tempfile()
+		.expect("tempfile");
+	std::fs::write(file.path(), b"definitely not zstd").expect("write garbage");
+
+	assert!(load_session_with_runtime_state(&file.path().to_path_buf()).is_err());
+}

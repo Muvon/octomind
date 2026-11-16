@@ -267,6 +267,8 @@ struct ParsedLogLines {
 	restoration_messages: Vec<Message>,
 	restoration_point_found: bool,
 	runtime_state: SessionRuntimeState,
+	plan: Option<crate::mcp::core::plan::storage::ExecutionPlan>,
+	schedule: Option<Vec<crate::mcp::orchestration::schedule::storage::ScheduleEntry>>,
 }
 
 /// Field value when it has the expected type, `None` otherwise: one odd field
@@ -434,6 +436,8 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	let mut restoration_messages = Vec::new();
 	let mut pending_tool_calls: Vec<serde_json::Value> = Vec::new();
 	let mut runtime_state = SessionRuntimeState::default();
+	let mut plan: Option<crate::mcp::core::plan::storage::ExecutionPlan> = None;
+	let mut schedule: Option<Vec<crate::mcp::orchestration::schedule::storage::ScheduleEntry>> = None;
 
 	// Process the file line by line to avoid loading the entire file into memory
 	for line in lines {
@@ -568,6 +572,30 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 								"arguments": serde_json::to_string(&parameters).unwrap_or_default()
 							}
 						}));
+					}
+				}
+				// Plan and schedule snapshots are small and rare: parsed as they arrive, the latest wins.
+				"PLAN_SNAPSHOT" => {
+					#[derive(Deserialize)]
+					struct PlanSnapshot {
+						plan: Option<crate::mcp::core::plan::storage::ExecutionPlan>,
+					}
+					match serde_json::from_str::<PlanSnapshot>(&line) {
+						Ok(PlanSnapshot { plan: Some(latest) }) => plan = Some(latest),
+						Ok(PlanSnapshot { plan: None }) => {}
+						Err(e) => crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e),
+					}
+				}
+				"PLAN_CLEARED" => plan = None,
+				"SCHEDULE_SNAPSHOT" => {
+					#[derive(Deserialize)]
+					struct ScheduleSnapshot {
+						entries: Option<Vec<crate::mcp::orchestration::schedule::storage::ScheduleEntry>>,
+					}
+					match serde_json::from_str::<ScheduleSnapshot>(&line) {
+						Ok(ScheduleSnapshot { entries: Some(latest) }) => schedule = Some(latest),
+						Ok(ScheduleSnapshot { entries: None }) => {}
+						Err(e) => crate::log_debug!("restore_schedule_for_session: deserialize failed: {}", e),
 					}
 				}
 				// Everything else is irrelevant to message reconstruction: debug log
@@ -718,6 +746,8 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 		restoration_messages,
 		restoration_point_found,
 		runtime_state,
+		plan,
+		schedule,
 	})
 }
 
@@ -847,6 +877,10 @@ fn restore_session_info(
 pub struct LoadedSession {
 	pub session: Session,
 	pub runtime_state: SessionRuntimeState,
+	/// Latest plan snapshot in the log; `None` when absent or cleared.
+	pub plan: Option<crate::mcp::core::plan::storage::ExecutionPlan>,
+	/// Entries of the latest schedule snapshot; `None` when the log has none.
+	pub schedule: Option<Vec<crate::mcp::orchestration::schedule::storage::ScheduleEntry>>,
 }
 
 pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
@@ -899,6 +933,8 @@ pub fn load_session_with_runtime_state(session_file: &PathBuf) -> Result<LoadedS
 	Ok(LoadedSession {
 		session,
 		runtime_state: parsed.runtime_state,
+		plan: parsed.plan,
+		schedule: parsed.schedule,
 	})
 }
 

@@ -513,6 +513,8 @@ impl ChatSession {
 				Ok(LoadedSession {
 					mut session,
 					runtime_state,
+					plan,
+					schedule,
 				}) => {
 					// A session logged before its agent was renamed stores the old tag, while the
 					// config was resolved under the new one. A stored role the config has is kept.
@@ -682,6 +684,18 @@ impl ChatSession {
 						.map(|m| crate::session::output::visible_assistant_content(&m.content))
 						.filter(|content| !content.is_empty())
 						.collect();
+
+					// The one place a session read from disk puts its plan and schedule into the
+					// session-scoped stores. Last, so a resume that fails above leaves none behind.
+					if let Some(plan) = plan {
+						crate::mcp::core::plan::core::restore_plan(&chat_session.session.info.name, plan);
+					}
+					if let Some(entries) = schedule {
+						crate::mcp::orchestration::schedule::core::restore_schedule(
+							&chat_session.session.info.name,
+							entries,
+						);
+					}
 
 					Ok(chat_session)
 				}

@@ -182,20 +182,6 @@ export CLI_CODEX_REASONING_EFFORT="high"
 octomind run --model cli:codex/gpt-5
 ```
 
-## Evaluation variables
-
-The evaluation variables are read only by `octomind evaluate`, which calls the evaluation model named by its `--model`
-flag. Chat models never read them. The Cloudflare evaluation provider uses the same
-`CLOUDFLARE_API_KEY` as the chat provider; the `octohub` evaluation provider reuses `OCTOHUB_API_KEY` and
-`OCTOHUB_API_URL`.
-
-| Variable | When read / effect |
-|---|---|
-| `TYPESAFE_API_KEY` | Required by the TypeSafe evaluation provider. |
-| `TYPESAFE_BASE_URL` | Optional TypeSafe API root; default `https://api.typesafe.ai`. |
-| `CLOUDFLARE_API_KEY` | Required by the Cloudflare evaluation provider, together with `CLOUDFLARE_ACCOUNT_ID` unless `CLOUDFLARE_EVALUATION_API_URL` is set. |
-| `CLOUDFLARE_EVALUATION_API_URL` | Optional full override of the Cloudflare evaluation run URL; the default is constructed from `CLOUDFLARE_ACCOUNT_ID`. |
-
 ## Octomind Configuration
 
 | Variable | Description |

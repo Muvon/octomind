@@ -161,62 +161,13 @@ fn persist_schedule_snapshot() {
 	}
 }
 
-/// Restore the schedule store (if any) from the session log into session-scoped storage.
-/// Called at session startup (all entry points) right after init_session_services.
-/// Safe no-op when the log file doesn't exist or contains no snapshot.
-pub fn restore_schedule_for_session(session_name: &str) {
-	let log_file = match crate::session::logger::get_session_log_path(session_name) {
-		Ok(p) => p,
-		Err(e) => {
-			crate::log_debug!("restore_schedule_for_session: cannot resolve log file: {}", e);
-			return;
-		}
-	};
-	if !log_file.exists() {
-		return;
-	}
-
-	let log = match crate::session::persistence::SessionLog::open(&log_file) {
-		Ok(log) => log,
-		Err(e) => {
-			crate::log_debug!("restore_schedule_for_session: {:#}", e);
-			return;
-		}
-	};
-	let mut latest_entries: Option<Vec<ScheduleEntry>> = None;
-
-	for line in log {
-		// Corruption: the latest snapshot may sit past it, so restore none.
-		let line = match line {
-			Ok(line) => line,
-			Err(e) => {
-				crate::log_error!("restore_schedule_for_session: {:#}", e);
-				return;
-			}
-		};
-		// Typed kind check: a log holds hundreds of MB of entries that are not schedule snapshots.
-		if crate::session::persistence::entry_kind(&line) != Some("SCHEDULE_SNAPSHOT") {
-			continue;
-		}
-		#[derive(serde::Deserialize)]
-		struct ScheduleSnapshot {
-			entries: Option<Vec<ScheduleEntry>>,
-		}
-		match serde_json::from_str::<ScheduleSnapshot>(&line) {
-			Ok(ScheduleSnapshot { entries: Some(entries) }) => latest_entries = Some(entries),
-			Ok(ScheduleSnapshot { entries: None }) => {}
-			Err(e) => crate::log_debug!("restore_schedule_for_session: deserialize failed: {}", e),
-		}
-	}
-
-	let Some(entries) = latest_entries else {
-		return;
-	};
+/// Put schedule entries read back from the session log into session-scoped storage.
+/// Called once, by the session load from disk.
+pub fn restore_schedule(session_id: &str, entries: Vec<ScheduleEntry>) {
 	let count = entries.len();
-	let session_id = session_name.to_string();
-	let storage = crate::session::context::get_schedule_storage(&session_id);
+	let storage = crate::session::context::get_schedule_storage(session_id);
 	storage.lock().unwrap().seed_entries(entries);
-	crate::log_debug!("Restored {} scheduled entries for session '{}'", count, session_name);
+	crate::log_debug!("Restored {} scheduled entries for session '{}'", count, session_id);
 }
 
 /// Returns true if there are any pending scheduled entries.

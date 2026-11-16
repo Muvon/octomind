@@ -390,7 +390,9 @@ async fn test_restore_schedule_round_trip_through_session_log() {
 	];
 	crate::session::logger::log_schedule_snapshot(&session, &entries).expect("write snapshot");
 
-	restore_schedule_for_session(&session);
+	let log = crate::session::logger::get_session_log_path(&session).expect("log path");
+	let loaded = crate::session::persistence::load_session_with_runtime_state(&log).expect("load");
+	restore_schedule(&session, loaded.schedule.expect("schedule in the log"));
 
 	let storage = crate::session::context::get_schedule_storage(&session);
 	let restored = storage.lock().unwrap().entries().to_vec();
@@ -402,61 +404,6 @@ async fn test_restore_schedule_round_trip_through_session_log() {
 		.iter()
 		.any(|e| e.description == "wrap up" && e.trigger_mode == TriggerMode::Idle));
 
-	crate::session::context::clear_schedule_storage(&session);
-}
-
-#[serial]
-#[tokio::test]
-async fn test_restore_skips_malformed_lines_and_takes_latest_snapshot() {
-	let _data_dir = TempDataDir::new();
-	let session = "sched-restore-malformed".to_string();
-
-	// Hand-craft a zstd session log with every degenerate line shape.
-	let path = crate::session::logger::get_session_log_path(&session).expect("log path");
-	let file = std::fs::File::create(&path).expect("create log file");
-	let mut encoder = zstd::stream::write::Encoder::new(file, 0).expect("zstd encoder");
-	let good_entry = ScheduleEntry::new(
-		"latest".to_string(),
-		ScheduleAction::Message {
-			message: "only this one survives".to_string(),
-		},
-		chrono::Local::now() + chrono::Duration::seconds(60),
-		None,
-	);
-	for line in [
-		"this line is not json at all".to_string(),
-		serde_json::json!({"type": "PLAN_CLEARED"}).to_string(),
-		serde_json::json!({"type": "SCHEDULE_SNAPSHOT"}).to_string(),
-		serde_json::json!({"type": "SCHEDULE_SNAPSHOT", "entries": "not-an-array"}).to_string(),
-		serde_json::json!({"type": "SCHEDULE_SNAPSHOT", "entries": []}).to_string(),
-		serde_json::json!({"type": "SCHEDULE_SNAPSHOT", "entries": [good_entry]}).to_string(),
-	] {
-		use std::io::Write;
-		writeln!(encoder, "{line}").expect("write log line");
-	}
-	encoder.finish().expect("finish zstd encoder");
-
-	restore_schedule_for_session(&session);
-
-	let storage = crate::session::context::get_schedule_storage(&session);
-	let restored = storage.lock().unwrap().entries().to_vec();
-	assert_eq!(restored.len(), 1, "latest valid snapshot must win");
-	assert_eq!(restored[0].description, "latest");
-
-	crate::session::context::clear_schedule_storage(&session);
-}
-
-#[serial]
-#[tokio::test]
-async fn test_restore_is_noop_without_log_file() {
-	let _data_dir = TempDataDir::new();
-	let session = "sched-restore-absent".to_string();
-	restore_schedule_for_session(&session);
-	let storage = crate::session::context::get_schedule_storage(&session);
-	assert!(
-		storage.lock().unwrap().is_empty(),
-		"no log file must leave the store empty"
-	);
 	crate::session::context::clear_schedule_storage(&session);
 }
 

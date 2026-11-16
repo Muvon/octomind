@@ -627,31 +627,88 @@ fn merge_history_folds_a_repeated_id_within_one_call() {
 	assert_eq!(history[0].live.usage.unwrap().cost, 5.0);
 }
 
+fn info_with(session: &str, runs: &[TapJobInfo], background_ids: &[&str]) -> crate::session::SessionInfo {
+	let mut info = crate::session::SessionInfo {
+		name: session.to_string(),
+		..Default::default()
+	};
+	info.agent_runs = runs.to_vec();
+	info.supervisor_accounting.background_runs = background_ids.iter().map(|id| id.to_string()).collect();
+	info
+}
+
 #[test]
-fn runs_to_log_returns_only_new_or_changed_runs_and_only_after_marking() {
-	let session = "runs-to-log-delta";
+fn keep_unlogged_keeps_only_new_or_changed_runs_and_only_after_marking() {
+	let session = "keep-unlogged-runs";
 	let mut runs = vec![
 		run_info("a", TapJobStatus::Running, Some(1.0), None),
 		run_info("b", TapJobStatus::Running, Some(1.0), None),
 	];
 
-	let first = runs_to_log(session, &runs);
-	assert_eq!(first, runs);
+	let mut first = info_with(session, &runs, &[]);
+	keep_unlogged(&mut first);
+	assert_eq!(first.agent_runs, runs);
 	// A failed append never marks, so the next snapshot carries them again.
-	assert_eq!(runs_to_log(session, &runs), runs);
+	let mut repeated = info_with(session, &runs, &[]);
+	keep_unlogged(&mut repeated);
+	assert_eq!(repeated.agent_runs, runs);
 
-	mark_logged(session, &first);
-	assert!(runs_to_log(session, &runs).is_empty());
+	mark_logged(&first);
+	let mut unchanged = info_with(session, &runs, &[]);
+	keep_unlogged(&mut unchanged);
+	assert!(unchanged.agent_runs.is_empty());
 
 	runs[1].status = TapJobStatus::Done;
 	runs.push(run_info("c", TapJobStatus::Running, None, None));
-	let changed = runs_to_log(session, &runs);
-	assert_eq!(changed, vec![runs[1].clone(), runs[2].clone()]);
+	let mut changed = info_with(session, &runs, &[]);
+	keep_unlogged(&mut changed);
+	assert_eq!(changed.agent_runs, vec![runs[1].clone(), runs[2].clone()]);
 
-	mark_logged(session, &changed);
-	assert!(runs_to_log(session, &runs).is_empty());
-	assert_eq!(runs_to_log("another-session", &runs), runs);
+	mark_logged(&changed);
+	let mut settled = info_with(session, &runs, &[]);
+	keep_unlogged(&mut settled);
+	assert!(settled.agent_runs.is_empty());
+	let mut other = info_with("another-session", &runs, &[]);
+	keep_unlogged(&mut other);
+	assert_eq!(other.agent_runs, runs);
 
 	clear_for_session(&session.to_string());
-	assert_eq!(runs_to_log(session, &runs), runs);
+	let mut forgotten = info_with(session, &runs, &[]);
+	keep_unlogged(&mut forgotten);
+	assert_eq!(forgotten.agent_runs, runs);
+}
+
+#[test]
+fn keep_unlogged_keeps_only_background_ids_not_yet_logged() {
+	let session = "keep-unlogged-background";
+	let ids = ["bg-1", "bg-2"];
+
+	let mut first = info_with(session, &[], &ids);
+	keep_unlogged(&mut first);
+	assert_eq!(first.supervisor_accounting.background_runs.len(), ids.len());
+	// A failed append never marks, so the next snapshot carries them again.
+	let mut repeated = info_with(session, &[], &ids);
+	keep_unlogged(&mut repeated);
+	assert_eq!(repeated.supervisor_accounting.background_runs.len(), ids.len());
+
+	mark_logged(&first);
+	let mut unchanged = info_with(session, &[], &ids);
+	keep_unlogged(&mut unchanged);
+	assert!(unchanged.supervisor_accounting.background_runs.is_empty());
+
+	let mut grown = info_with(session, &[], &["bg-1", "bg-2", "bg-3"]);
+	keep_unlogged(&mut grown);
+	assert_eq!(
+		grown.supervisor_accounting.background_runs.iter().collect::<Vec<_>>(),
+		vec!["bg-3"]
+	);
+
+	let mut other = info_with("another-session", &[], &ids);
+	keep_unlogged(&mut other);
+	assert_eq!(other.supervisor_accounting.background_runs.len(), ids.len());
+
+	clear_for_session(&session.to_string());
+	let mut forgotten = info_with(session, &[], &ids);
+	keep_unlogged(&mut forgotten);
+	assert_eq!(forgotten.supervisor_accounting.background_runs.len(), ids.len());
 }

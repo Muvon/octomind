@@ -700,13 +700,13 @@ impl Session {
 			// This just appends an updated SUMMARY snapshot of the current session state.
 			let mut logged_info = self.info.clone();
 			logged_info.capture_agent_runs();
-			// Only runs that changed since the last snapshot: the loader folds every
-			// snapshot's runs back into the full history, so repeating the whole
-			// list in each SUMMARY bloats the log.
-			logged_info.agent_runs = tap_runs::runs_to_log(&logged_info.name, &logged_info.agent_runs);
+			// Only what changed since the last snapshot: the loader folds every
+			// snapshot back into the full lists, so repeating them in each SUMMARY
+			// bloats the log.
+			tap_runs::keep_unlogged(&mut logged_info);
 			let summary_entry = persistence::summary_entry_of(&logged_info);
 			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
-			tap_runs::mark_logged(&logged_info.name, &logged_info.agent_runs);
+			tap_runs::mark_logged(&logged_info);
 			Ok(())
 		} else {
 			Err(anyhow::anyhow!("No session file specified"))

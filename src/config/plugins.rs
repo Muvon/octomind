@@ -38,7 +38,7 @@ pub const DEFAULT_PLUGIN_NAME: &str = "besydr";
 /// An inline table, so the key stays above the first `[table]` header of the
 /// configuration file.
 pub const DEFAULT_PLUGINS_TOML: &str = r#"[
-	{ name = "besydr", type = "stdio", command = "besydr", args = ["connect"], install_manifest = "https://dl.besydr.com/latest.json", install_key = "NP/qvbvD3tG3vqBlp+m6aMIzjM4U0p2QdWdpok15v9Y=" },
+	{ name = "besydr", type = "stdio", command = "besydr", args = ["connect"], install_manifest = "https://cdn.besydr.com/latest.json", install_key = "uU5IoojVdfJZj5/fU4JQE8CXnmYXNBGo5nyLgWcNNrw=" },
 ]"#;
 
 /// The embedded default configuration. Its `plugins` list is empty, so that a

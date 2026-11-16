@@ -31,7 +31,7 @@ A new configuration has one entry in the root key `plugins`. It is an inline tab
 
 ```toml
 plugins = [
-	{ name = "besydr", type = "stdio", command = "besydr", args = ["connect"], install_manifest = "https://dl.besydr.com/latest.json", install_key = "NP/qvbvD3tG3vqBlp+m6aMIzjM4U0p2QdWdpok15v9Y=" },
+	{ name = "besydr", type = "stdio", command = "besydr", args = ["connect"], install_manifest = "https://cdn.besydr.com/latest.json", install_key = "uU5IoojVdfJZj5/fU4JQE8CXnmYXNBGo5nyLgWcNNrw=" },
 ]
 ```
 

@@ -235,7 +235,10 @@ impl Highlighter for ReedlineAdapter {
 
 		let is_valid_command = crate::session::chat::COMMANDS
 			.iter()
-			.any(|cmd| *cmd == command || cmd.starts_with(command));
+			.any(|cmd| *cmd == command || cmd.starts_with(command))
+			|| crate::session::chat_helper::plugin_command_names()
+				.iter()
+				.any(|cmd| cmd == command || cmd.starts_with(command));
 		let command_style = if is_valid_command {
 			Style::new().fg(Color::Green)
 		} else {

@@ -43,7 +43,7 @@ uname -m
 
 ### Default OctoHub Sign-In
 
-The shipped main, supervisor, and compression model profiles all default to
+The shipped main and compression model profiles both default to
 `octohub:auto`. Authenticate them with the device flow:
 
 ```bash

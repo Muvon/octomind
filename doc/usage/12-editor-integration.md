@@ -244,7 +244,7 @@ the client prepends it when displaying:
 
 Notes:
 
-- The menu omits some registered commands and also includes two unsupported names. Commands such as `/learning`,
+- The menu omits some registered commands and also includes two unsupported names. Commands such as
   `/share`, `/analyze`, `/rename`, `/reply`, and `/status` are not advertised over ACP. `/reply` still runs when typed,
   but returns the quote as JSON text instead of filling the editor's input.
 - `/done` is handled specially in ACP: it compresses the conversation and reports the result. If you pass trailing
@@ -270,7 +270,7 @@ For clients accepting arbitrary slash input:
 /done Review the next requirement.
 ```
 
-The advertised `/done` description mentions auto-commit, but its handler compresses and runs learning; it does not
+The advertised `/done` description mentions auto-commit, but its handler compresses the conversation (and, with a plugin that learns from sessions, starts lesson extraction); it does not
 commit changes. `/done` with trailing instructions is special to the prompt path.
 
 ### Programmatic command execution

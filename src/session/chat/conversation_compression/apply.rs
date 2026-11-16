@@ -805,14 +805,6 @@ pub(super) async fn apply_compression(
 	session.session.info.current_non_cached_tokens = 0;
 	session.session.info.current_total_tokens = 0;
 
-	// Compression replaced the live frontier: the continuation wrapper's
-	// <task> is now what every consumer (recall query, recitation signature)
-	// sees. The active memory pack is still keyed to the pre-compression
-	// request, so re-arm pending_recall — the next provider request
-	// re-retrieves against the post-compression task instead of carrying the
-	// stale pack until the next real user message.
-	session.pending_recall = true;
-
 	// Reset cache checkpoint time
 	session.session.info.last_cache_checkpoint_time = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)

@@ -17,7 +17,7 @@ octomind configure          # interactive provider, credentials, and model setup
 ```
 
 On the first interactive `octomind` or `octomind run` launch with a missing config, setup offers the hub, your own
-provider, or skip before writing the template. `octomind configure` edits only the main, supervisor, and compression
+provider, or skip before writing the template. `octomind configure` edits only the main and compression
 model names while preserving comments and other settings; credentials are stored separately in the user `.env`.
 
 The default template is embedded in the binary from `config-templates/default.toml`. Older configurations are upgraded
@@ -31,7 +31,7 @@ automatically during load; a migration writes a versioned backup beside the orig
 | Linux | `~/.local/share/octomind/` | `~/.local/share/octomind/config/config.toml` |
 | Windows | `%LOCALAPPDATA%/octomind/` | `%LOCALAPPDATA%/octomind/config/config.toml` |
 
-The data directory also contains saved sessions, logs, cache data, taps, and learning records. Two environment variables
+The data directory also contains saved sessions, logs, cache data, and taps. Two environment variables
 relocate configuration and state:
 
 | Variable | Effect |
@@ -95,12 +95,11 @@ For every root field and validation rule, see the [Configuration Reference](../r
 
 ## Model Profiles and Purposes
 
-Octomind has exactly three request purposes:
+Octomind makes requests for exactly two purposes of its own:
 
 | Purpose | Configuration | Used for |
 |---------|---------------|----------|
 | `main` | `[model]` | The active session conversation and its cache keepalive |
-| `supervisor` | `[supervisor.model]` | Gate, resolution, planning, condensation, and learning calls |
 | `compression` | `[compression.model]` | Conversation-compression decisions and summaries |
 
 The main profile is complete and is the inheritance baseline:
@@ -118,9 +117,9 @@ retry_timeout = 30
 request_timeout_seconds = 300
 ```
 
-`[supervisor.model]`, `[compression.model]`, and `[roles.model]` accept the same fields as partial overrides; omitted
-values inherit from `[model]`. The shipped template gives supervisor and compression their own complete profiles, both
-named `octohub:auto`.
+`[compression.model]` and `[roles.model]` accept the same fields as partial overrides; omitted values inherit from
+`[model]`. The shipped template gives compression its own complete profile, named `octohub:auto`. A plugin such as
+Besydr chooses its own models in its own configuration, not here.
 
 Model names must use `provider:model`. For the interactive CLI, model-name precedence is:
 
@@ -134,7 +133,7 @@ For example, after configuring the provider credential:
 octomind run -m 'openai:gpt-5.6-sol'
 ```
 
-This changes the session model name. Supervisor and compression keep their own model profiles; configure those too when
+This changes the session model name. Compression keeps its own model profile; configure it too when
 moving away from OctoHub. See [AI Providers](04-providers.md#bring-your-own-keys).
 
 ## Roles and Tags
@@ -148,7 +147,7 @@ The default registry declares four built-in MCP servers:
 
 | Server | Tool group |
 |--------|------------|
-| `core` | `recall` when compression attention or its governance is enabled; planning is supervisor-internal |
+| `core` | `recall` when compression attention or its governance is enabled |
 | `orchestration` | Tap, schedule, and monitor tools |
 | `runtime` | MCP, agent, skill, and capability management |
 | `agent` | Tools generated from configured `[[agents]]` entries |
@@ -305,5 +304,5 @@ Providers](04-providers.md#environment-file-precedence) for examples.
 - [Environment Variables](../reference/04-environment-variables.md) — runtime and credential variables
 - [AI Providers](04-providers.md) — model gateways and provider setup
 - [Compression](08-compression.md) — compression behavior and configuration
-- [Supervisor](14-supervisor.md) — supervisor behavior and configuration
+- [Plugins and the Supervisor](14-supervisor.md) — the `plugins` list and what Besydr does for octomind
 - [Workflows](09-workflows.md) — external workflow configuration

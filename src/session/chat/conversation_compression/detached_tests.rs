@@ -273,7 +273,6 @@ async fn detached_spend_is_not_billed_twice() {
 	let mut config = fold_config();
 	config.compression.attention.enabled = false;
 	config.compression.attention.telemetry = false;
-	config.supervisor.learning.enabled = false;
 	session.session.info.total_cost = 0.25;
 	assert!(collect_fold_job(&mut session, &config, job, false, false)
 		.await

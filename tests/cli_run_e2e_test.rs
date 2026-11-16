@@ -94,7 +94,6 @@ fn write_sandbox_config(home: &std::path::Path) {
 		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
-	config.supervisor.enabled = false;
 	config.telemetry = false;
 	config.auto_capabilities = false;
 	config.skills.auto_activation = false;
@@ -547,62 +546,6 @@ async fn test_workflow_dry_run_prints_plan() {
 	assert!(stdout.contains("only"), "plan missing step name:\n{stdout}");
 }
 
-/// Supervisor fully enabled, with the supervisor model pointed at the same
-/// stub. Every supervisor mechanic (task classify, gate, plan reconcile)
-/// receives a nonsense-but-valid completion; the control plane must degrade
-/// to observe-only and NEVER break the user turn.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_run_with_supervisor_enabled_survives_garbage_verdicts() {
-	let stub_url = spawn_openai_stub().await;
-	let home = tempfile::tempdir().expect("temp home");
-	{
-		let mut config: octomind::config::Config =
-			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
-		config.model = "ollama:fake-model".to_string();
-		config.default = "assistant".to_string();
-		config.supervisor.enabled = true;
-		config.supervisor.model.model = Some("ollama:fake-model".to_string());
-		config.telemetry = false;
-		config.auto_capabilities = false;
-		config.skills.auto_activation = false;
-		config.skills.auto_validation = false;
-
-		let config_dir = home.path().join(".local/share/octomind/config");
-		std::fs::create_dir_all(&config_dir).expect("create config dir");
-		std::fs::write(
-			config_dir.join("config.toml"),
-			toml::to_string(&config).expect("serialize config"),
-		)
-		.expect("write config");
-	}
-
-	let mut child = octomind_cmd(home.path(), &stub_url)
-		.args(["run", "--format", "plain"])
-		.stdin(Stdio::piped())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.spawn()
-		.expect("spawn octomind run");
-	child
-		.stdin
-		.take()
-		.expect("stdin")
-		.write_all(b"do a thing and finish\n")
-		.expect("write prompt");
-
-	let output = child.wait_with_output().expect("octomind exits");
-	let stdout = String::from_utf8_lossy(&output.stdout);
-	let stderr = String::from_utf8_lossy(&output.stderr);
-	assert!(
-		output.status.success(),
-		"supervised run failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-	);
-	assert!(
-		stdout.contains(MARKER),
-		"answer missing under supervision.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-	);
-}
-
 /// Named session, then resume: the second run must load the persisted
 /// session (restore path) instead of starting fresh.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -775,106 +718,6 @@ async fn test_complete_run_lists_roles() {
 	);
 }
 
-/// Full lesson-distillation pipeline against scripted verdicts: extraction
-/// call returns LEARN + one lesson (whose evidence is verbatim in a user
-/// turn) + one orientation; the orientation grounding verifier supports it
-/// and lesson verification keeps everything. Both must land in the sandbox
-/// learning store.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_distill_stores_lessons() {
-	let extraction = completion_body(concat!(
-		"<decision>LEARN</decision>\n",
-		"<lesson scope=\"scoped\" confidence=\"high\" tags=\"testing\" ",
-		"evidence=\"always run the tests on the box\">",
-		"Run the tests on the box, never locally",
-		"</lesson>\n",
-		"<orientation tags=\"arch\" confidence=\"high\" evidence=\"M3\">",
-		"The project is a Rust CLI with a workspace build",
-		"</orientation>"
-	));
-	let orientation_verdict = completion_body("{\"supported\": true, \"issues\": []}");
-	let verification = completion_body("{\"unsupported\": []}");
-	let stub_url = spawn_scripted_stub(vec![extraction, orientation_verdict, verification]).await;
-
-	let home = tempfile::tempdir().expect("temp home");
-	{
-		let mut config: octomind::config::Config =
-			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
-		config.model = "ollama:fake-model".to_string();
-		config.default = "assistant".to_string();
-		config.supervisor.enabled = false;
-		config.supervisor.model.model = Some("ollama:fake-model".to_string());
-		config.telemetry = false;
-		config.auto_capabilities = false;
-		config.skills.auto_activation = false;
-		config.skills.auto_validation = false;
-
-		let config_dir = home.path().join(".local/share/octomind/config");
-		std::fs::create_dir_all(&config_dir).expect("create config dir");
-		std::fs::write(
-			config_dir.join("config.toml"),
-			toml::to_string(&config).expect("serialize config"),
-		)
-		.expect("write config");
-	}
-
-	// Transcript snapshot exactly as an exiting session writes it. The user
-	// turn carries the lesson quote verbatim, while the tool observation is
-	// addressable grounding for the orientation.
-	let transcript = serde_json::json!([
-		{"role": "user", "content": "for this repo, always run the tests on the box please", "timestamp": 1},
-		{"role": "assistant", "content": "Understood — running everything on the box.", "timestamp": 2},
-		{"role": "tool", "content": "Cargo.toml defines the Rust CLI workspace build", "timestamp": 3, "tool_call_id": "call-1", "name": "read"}
-	]);
-	let transcript_path = home.path().join("transcript.json");
-	std::fs::write(&transcript_path, transcript.to_string()).expect("write transcript");
-
-	let output = octomind_cmd(home.path(), &stub_url)
-		.args([
-			"distill",
-			"--messages",
-			transcript_path.to_str().expect("utf8 path"),
-			"--role",
-			"assistant",
-			"--project",
-			"e2eproj",
-			"--session",
-			"e2esess",
-		])
-		.output()
-		.expect("distill runs");
-	assert!(
-		output.status.success(),
-		"distill failed.\nstdout:\n{}\nstderr:\n{}",
-		String::from_utf8_lossy(&output.stdout),
-		String::from_utf8_lossy(&output.stderr)
-	);
-
-	// The snapshot is consumed on read
-	assert!(
-		!transcript_path.exists(),
-		"transcript snapshot must be deleted after distillation"
-	);
-
-	// Lesson + orientation landed in the scoped learning store
-	let learning_dir = home.path().join(".local/share/octomind/learning/e2eproj/assistant");
-	let mut stored = String::new();
-	for entry in std::fs::read_dir(&learning_dir).expect("learning dir exists") {
-		let path = entry.expect("dir entry").path();
-		if path.is_file() {
-			stored.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
-		}
-	}
-	assert!(
-		stored.contains("Run the tests on the box"),
-		"lesson missing from store:\n{stored}"
-	);
-	assert!(
-		stored.contains("Rust CLI with a workspace build"),
-		"orientation missing from store:\n{stored}"
-	);
-}
-
 #[test]
 fn test_version_flag() {
 	let output = Command::new(env!("CARGO_BIN_EXE_octomind"))
@@ -1002,7 +845,6 @@ async fn test_run_jsonl_budget_stop_keeps_stdout_json() {
 			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
-		config.supervisor.enabled = false;
 		config.telemetry = false;
 		config.auto_capabilities = false;
 		config.skills.auto_activation = false;

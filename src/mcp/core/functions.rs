@@ -17,7 +17,7 @@
 use super::super::McpFunction;
 use super::recall::get_recall_function;
 
-// Core builtin tool surface. Planning is owned by `supervisor::plan` and is
+// Core builtin tool surface. Planning is owned by the plugins and is
 // deliberately absent here: the specialist sees injected execution state but
 // cannot spend model rounds mutating it. Delegation (`tap`) and session control (`schedule`) are the
 // `orchestration` builtin server; tool-surface controls (`mcp`, `agent`,

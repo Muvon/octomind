@@ -16,14 +16,12 @@
 //!
 //! The calling agent sends only the task. The candidates are the agents it may
 //! reach (`resolver::reachable_specialists`); cosine similarity between the task
-//! and each candidate's title and description ranks them. With the `taps`
-//! decision seam on, that ranking is a shortlist and the seam picks from it;
-//! with it off, the best match gets the task when it is clearly ahead. No match is
+//! and each candidate's title and description ranks them. The best match gets
+//! the task when it is clearly ahead. No match is
 //! an error that names the closest specialists; the caller may send the task
 //! again with one of them as `role`, which starts it without matching.
 
 use crate::agent::taps::{TapAgentHeader, ORCHESTRATOR_SPEC};
-use crate::config::Config;
 
 /// Lowest cosine between the task and a specialist's title and description
 /// for the cosine stage alone to hand the task over. Calibrated 2026-11 with
@@ -57,7 +55,7 @@ const NO_MATCH_RECOVERY: &str =
 /// Choose the specialist for `task`, or the tool error to return. A `role` the
 /// caller may reach gets the task without matching: a full tag names that
 /// agent, a bare domain its `chief`.
-pub async fn route_task(task: &str, role: Option<&str>, config: &Config) -> Result<TapAgentHeader, String> {
+pub async fn route_task(task: &str, role: Option<&str>) -> Result<TapAgentHeader, String> {
 	let agents = crate::agent::taps::list_agent_headers()
 		.map_err(|error| format!("Failed to enumerate tap agents: {error:#}"))?;
 	let caller = crate::session::context::current_session_id()
@@ -104,7 +102,7 @@ pub async fn route_task(task: &str, role: Option<&str>, config: &Config) -> Resu
 	}
 
 	let cosine = crate::mcp::runtime::capability::select_with_margin(ranked.clone(), ROUTE_THRESHOLD, ROUTE_MARGIN);
-	match evaluate_pick(config, task, cosine, &ranked).await {
+	match cosine {
 		Some((score, agent)) => {
 			crate::log_debug!("tap route: picked '{}' (score {:.2})", agent.tag, score);
 			Ok(agent.clone())
@@ -154,7 +152,7 @@ async fn rank_specialists<'a>(
 	Ok(ranked)
 }
 
-/// The text a specialist is matched on and the decision seam reads.
+/// The text a specialist is matched on.
 fn describe(agent: &TapAgentHeader) -> String {
 	let parts: Vec<&str> = [agent.header.title.as_deref(), agent.header.description.as_deref()]
 		.into_iter()
@@ -165,100 +163,6 @@ fn describe(agent: &TapAgentHeader) -> String {
 	} else {
 		parts.join(". ")
 	}
-}
-
-/// The decision seam picks among the best cosine matches: cosine only
-/// shortlists, the Choice decides. The specialist it names gets the task,
-/// whatever cosine ranked first; `none` starts nothing. Off or unavailable,
-/// the cosine decision stands.
-async fn evaluate_pick<'a>(
-	config: &Config,
-	task: &str,
-	cosine: Option<(f32, &'a TapAgentHeader)>,
-	ranked: &[(f32, &'a TapAgentHeader)],
-) -> Option<(f32, &'a TapAgentHeader)> {
-	use crate::supervisor::evaluate::{self, Seam};
-
-	if !evaluate::enabled(config, Seam::Taps) {
-		return cosine;
-	}
-	let candidates = &ranked[..ranked.len().min(evaluate::TAP_TOP_K)];
-	let descriptions: Vec<String> = candidates.iter().map(|(_, agent)| describe(agent)).collect();
-	let question = evaluate::tap_question(
-		candidates
-			.iter()
-			.zip(descriptions.iter())
-			.map(|((_, agent), description)| (agent.tag.as_str(), description.as_str())),
-	);
-	let questions = std::collections::BTreeMap::from([(evaluate::TAP_QUESTION_ID.to_string(), question)]);
-	let Some(answers) = evaluate::run(
-		config,
-		Seam::Taps,
-		serde_json::Value::String(task.to_string()),
-		questions,
-	)
-	.await
-	else {
-		return cosine;
-	};
-	// The runner answers every asked id with its own type or a refusal.
-	let Some(octolib::evaluation::Answer::Choice {
-		choice, probabilities, ..
-	}) = answers.get(evaluate::TAP_QUESTION_ID)
-	else {
-		evaluate::unavailable(Seam::Taps, "refused");
-		return cosine;
-	};
-	let cosine_tag = cosine.map(|(_, agent)| agent.tag.as_str());
-	let tags: Vec<&str> = candidates.iter().map(|(_, agent)| agent.tag.as_str()).collect();
-	let verdict = match apply_tap_answer(&tags, choice) {
-		Ok(verdict) => verdict,
-		Err(reason) => {
-			evaluate::unavailable(Seam::Taps, reason);
-			return cosine;
-		}
-	};
-	let probability = |tag: &str| probabilities.get(tag).copied().unwrap_or(0.0);
-	let picked = match verdict {
-		Some(tag) if cosine_tag == Some(tag) => cosine,
-		Some(tag) => candidates
-			.iter()
-			.find(|(_, agent)| agent.tag == tag)
-			.map(|(_, agent)| (probability(tag) as f32, *agent)),
-		None => None,
-	};
-	if picked.map(|(_, agent)| agent.tag.as_str()) != cosine_tag {
-		crate::log_debug!(
-			"tap evaluate: {} → {} (choice '{}' p={:.2})",
-			cosine_tag.unwrap_or("none"),
-			picked.map(|(_, agent)| agent.tag.as_str()).unwrap_or("none"),
-			choice,
-			probability(choice)
-		);
-		crate::supervisor::stats::evaluate_applied(Seam::Taps, 1);
-	}
-	picked
-}
-
-/// Apply the seam's rule to one Choice answer: `candidates` are the tags the
-/// Choice listed. `Ok(Some)` is the specialist that gets the task, `Ok(None)`
-/// an abstain; `Err` names a choice that was never offered. No probability
-/// bar: `choice` is already the likeliest option of the list, `none` included,
-/// and that list spreads the mass over up to `TAP_TOP_K` specialists. Measured
-/// 2026-11 with live Jev over the 14 developer specialists: three of four 2 KB
-/// briefs from a real lead got their top option at 0.30 to 0.51, so a 0.6 bar
-/// refused them; on 168 written briefs the bar kept the same 158 right picks
-/// and only turned 2 of 8 wrong picks into refusals.
-fn apply_tap_answer<'a>(candidates: &[&'a str], choice: &str) -> Result<Option<&'a str>, &'static str> {
-	if choice == crate::supervisor::evaluate::TAP_NONE {
-		return Ok(None);
-	}
-	candidates
-		.iter()
-		.copied()
-		.find(|tag| *tag == choice)
-		.map(Some)
-		.ok_or("invalid response")
 }
 
 #[cfg(test)]

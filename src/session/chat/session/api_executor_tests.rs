@@ -143,32 +143,34 @@ async fn spawn_recording_stub(
 	(format!("http://{}/v1/chat/completions", addr), requests)
 }
 
-/// A queued supervisor steer note is consumed at the safe pre-request point
-/// and lands as a system-managed user-role message BEFORE the provider
-/// request is built — so the one request the stub serves already contains
-/// it, ahead of the assistant reply.
+/// A note a plugin queued is written at the safe pre-request point and lands
+/// as a system-managed user-role message BEFORE the provider request is
+/// built — so the one request the stub serves already contains it, ahead of
+/// the assistant reply.
 #[tokio::test]
-async fn steer_note_injected_as_system_managed_user_message() {
+async fn a_queued_plugin_note_is_injected_as_a_system_managed_user_message() {
 	let _guard = ENV_LOCK.lock().await;
 	let (url, requests) = spawn_recording_stub(vec![final_response("steer acknowledged")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = fake_provider_config();
 	let mut session = fake_session("do the task");
-	session.steer_pending = Some("<pay-attention>change approach: use the indexed lookup</pay-attention>".to_string());
+	session.queue_plugin_notes(vec![
+		"<pay-attention>change approach: use the indexed lookup</pay-attention>".to_string(),
+	]);
 
-	run_turn(&mut session, &config).await.expect("steered turn succeeds");
+	run_turn(&mut session, &config).await.expect("the turn succeeds");
 
 	// The queued note was consumed, not left pending for a later turn
-	assert!(session.steer_pending.is_none());
+	assert!(session.plugin_notes.is_empty());
 
 	let messages = &session.session.messages;
-	let steer_pos = messages
+	let note_pos = messages
 		.iter()
 		.position(|m| m.role == "user" && m.content.contains("use the indexed lookup"))
-		.expect("steer note injected as a user-role message");
+		.expect("the note is injected as a user-role message");
 	assert!(crate::session::is_system_managed_user_content(
-		&messages[steer_pos].content
+		&messages[note_pos].content
 	));
 	// Injected before the request: it precedes the stub-served assistant
 	// reply in the same conversation that was sent to the provider.
@@ -177,8 +179,8 @@ async fn steer_note_injected_as_system_managed_user_message() {
 		.position(|m| m.role == "assistant")
 		.expect("assistant reply recorded");
 	assert!(
-		steer_pos < assistant_pos,
-		"steer note must precede the API request, got roles: {:?}",
+		note_pos < assistant_pos,
+		"the note must precede the API request, got roles: {:?}",
 		messages.iter().map(|m| m.role.as_str()).collect::<Vec<_>>()
 	);
 	assert!(messages[assistant_pos].content.contains("steer acknowledged"));
@@ -198,11 +200,7 @@ async fn steer_note_injected_as_system_managed_user_message() {
 					.as_str()
 					.is_some_and(|c| c.contains("use the indexed lookup"))
 		});
-	assert!(
-		carried,
-		"steer note must be inside the request payload: {}",
-		captured[0]
-	);
+	assert!(carried, "the note must be inside the request payload: {}", captured[0]);
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
@@ -246,36 +244,6 @@ async fn request_spending_threshold_stops_turn_before_api_call() {
 	assert!(session.turn_answers.is_empty());
 
 	std::env::remove_var("OLLAMA_API_URL");
-}
-
-#[tokio::test]
-async fn pending_async_work_allows_progressing_handback() {
-	let _guard = ENV_LOCK.lock().await;
-	let response = r#"Waiting for the background job.
-<sup>{"state":"progressing","focus":"waiting for the background job","next":"report its result","carry":[],"plan":null,"memories":[]}</sup>"#;
-	let url = spawn_stub(vec![final_response(response)]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let mut config = fake_provider_config();
-	config.supervisor.enabled = true;
-	config.supervisor.gate.enabled = true;
-	let mut session = fake_session("start the background job");
-	session.completion_gate_eligible = true;
-	let session_id = "pending-work-handback-test".to_string();
-
-	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		crate::session::shell_jobs::register_for_session(&session_id, "test-mcp", "job://test", "cargo test --lib");
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("pending work is a valid progressing handback");
-
-		assert_eq!(session.session.info.total_api_calls, 1);
-		assert_eq!(session.last_response, "Waiting for the background job.");
-		crate::session::context::cleanup_session(&session_id);
-	})
-	.await;
 }
 
 #[tokio::test]
@@ -687,239 +655,10 @@ async fn test_large_tool_result_truncation_and_dedup() {
 	.await;
 }
 
-/// Full supervised turn at the unit level: task classification, orientation,
-/// and gate calls all go to the same scripted stub. Whatever nonsense the
-/// control plane reads back, the user turn must complete and the answer must
-/// be recorded.
-#[tokio::test]
-async fn test_supervised_turn_survives_scripted_control_plane() {
-	let _guard = ENV_LOCK.lock().await;
-	// Enough valid completions for the agent answer plus every supervisor
-	// side-call; the queue-exhausted fallback stays valid after these.
-	// Identical bodies: the supervisor's side-calls interleave with the agent
-	// call in no guaranteed order, so every consumer must see the same text.
-	let url = spawn_stub(vec![final_response("SUPERVISED-TURN-ANSWER ok"); 5]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let mut config = fake_provider_config();
-	config.supervisor.enabled = true;
-	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.learning.enabled = false;
-	config.compression.model.model = Some("ollama:fake-model".to_string());
-
-	let mut session = fake_session("do the supervised thing and finish");
-	run_turn(&mut session, &config).await.expect("supervised turn");
-
-	let assistant = session
-		.session
-		.messages
-		.iter()
-		.find(|m| m.role == "assistant")
-		.expect("assistant reply recorded");
-	assert!(
-		assistant.content.contains("SUPERVISED-TURN-ANSWER"),
-		"got: {}",
-		assistant.content
-	);
-
-	std::env::remove_var("OLLAMA_API_URL");
-}
-
-// ── Supervisor gate / plan / learning paths ──────────────────────────────────
-// All against the same scripted stub: the agent call and every supervisor
-// side-call (verifier, planner, keyword extraction) hit the queue in order.
-
-/// `fake_provider_config` plus the supervisor control plane wired to the
-/// stub: gate on, learning off, compression decision model stubbed so no
-/// side-call can reach a real provider.
-fn supervised_config() -> Config {
-	let mut config = fake_provider_config();
-	config.supervisor.enabled = true;
-	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.gate.enabled = true;
-	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.learning.enabled = false;
-	config.compression.model.model = Some("ollama:fake-model".to_string());
-	config
-}
-
-fn sup_tag(state: &str) -> String {
-	format!(
-		"\n<sup>{{\"state\":\"{state}\",\"focus\":\"unit test focus\",\"next\":null,\"carry\":[],\"plan\":null,\"memories\":[]}}</sup>"
-	)
-}
-
-fn done_response(text: &str) -> serde_json::Value {
-	final_response(&format!("{text}{}", sup_tag("done")))
-}
-
-fn progressing_response(text: &str) -> serde_json::Value {
-	final_response(&format!("{text}{}", sup_tag("progressing")))
-}
-
-#[tokio::test]
-async fn unsettled_advisory_continues_and_regates_once_without_spending_gap_budget() {
-	let _guard = ENV_LOCK.lock().await;
-	for (enabled, settled, expected_calls) in [(true, false, 2), (false, false, 1), (true, true, 1)] {
-		let sid = format!("unsettled-advisory-{enabled}-{settled}");
-		crate::session::context::with_session_id(sid.clone(), async {
-			crate::session::context::init_session_services("assistant");
-			let answer = "The protocol preserves the original request.";
-			let condition = if settled {
-				format!(r#"<condition n="1" status="matched">"{answer}"</condition>"#)
-			} else {
-				String::from(
-					r#"<condition n="1" status="unknown">The requested observation is unavailable.</condition>"#,
-				)
-			};
-			let verifier = final_response(&format!("{CLEAN_SHAPES}{condition}<verdict>PASS</verdict>"));
-			let mut responses = vec![done_response(answer), verifier.clone()];
-			if expected_calls == 2 {
-				responses.extend([done_response(answer), verifier]);
-			}
-			let (url, requests) = spawn_recording_stub(responses).await;
-			std::env::set_var("OLLAMA_API_URL", url);
-			let mut config = supervised_config();
-			config.supervisor.plan.enabled = false;
-			config.decision.supervisor = false;
-			config.supervisor.gate.unsettled_advisory = enabled;
-			let task = "Explain how the protocol preserves the original request.";
-			let mut session = fake_session(task);
-			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
-			resolved.evidence_conditions = vec![task.into()];
-			session.gate_task = Some(resolved);
-			session.completion_gate_eligible = true;
-			run_turn(&mut session, &config)
-				.await
-				.expect("bounded advisory completes");
-			assert_eq!(session.session.info.total_api_calls, expected_calls);
-			assert_eq!(requests.lock().expect("requests").len(), expected_calls * 2);
-			assert_eq!(session.gate_iterations, 0, "advisory does not spend hard-gap retries");
-			assert_eq!(session.evidence.unsettled_advisory_sent, expected_calls == 2);
-			assert_eq!(session.gate_failed, !settled);
-			assert_eq!(
-				session
-					.session
-					.messages
-					.iter()
-					.filter(|m| m.content.contains("Completion check (not a failure or a block)"))
-					.count(),
-				expected_calls - 1
-			);
-			// A genuine new user turn starts a new cycle, unlike the managed advisory.
-			session
-				.add_user_message("Explain the next protocol step.")
-				.expect("new task");
-			assert!(!session.evidence.unsettled_advisory_sent);
-			std::env::remove_var("OLLAMA_API_URL");
-			crate::session::context::cleanup_session(&sid);
-		})
-		.await;
-	}
-}
-
-/// The four clean-shape declarations the verifier parser expects alongside a
-/// verdict (see gate.rs's own parser tests).
-const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
-<shape name="context-stripped" found="no">representative context</shape>
-<shape name="acceptance-only" found="no">not applicable</shape>
-<shape name="unenumerated-category" found="no">bounded scope</shape>"#;
-
-fn verifier_pass() -> serde_json::Value {
-	final_response(&format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>"))
-}
-
-fn verifier_gap() -> serde_json::Value {
-	final_response(&format!(
-		"{CLEAN_SHAPES}\n<gap sources=\"output:0\" settles=\"the counter increments to 2\">The requirement 'verify the counter' conflicts with 'counter increment: expected 2, observed 1'</gap>"
-	))
-}
-
-/// A `progressing` final message with no pending background work is a promise,
-/// not a result: the pre-gate nudges the turn back to work until the free
-/// budget (MAX_ITERATIONS) is spent, then lets the turn end.
-#[tokio::test]
-async fn test_unfinished_progressing_handback_is_continued_until_budget() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-unfinished-handback".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			progressing_response("Still working on it."),
-			progressing_response("Still working, pass two."),
-			progressing_response("Third pass."),
-			// Budget spent, so the third stop reaches the verify-gate: it needs a
-			// verdict entry like every other user-owned stop.
-			verifier_pass(),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("finish the report");
-		session.completion_gate_eligible = true;
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("turn completes after nudges");
-
-		// Two nudges spent the budget, then the third stop reached the verify-gate
-		// and PASSED — which resets both iteration counters to zero.
-		assert_eq!(session.nudge_iterations, 0, "final PASS resets the nudge budget");
-		assert_eq!(session.session.info.total_api_calls, 3);
-		let continuations = session
-			.session
-			.messages
-			.iter()
-			.filter(|m| m.content.contains("octomind:pre_gate_unfinished_handback"))
-			.count();
-		assert_eq!(continuations, 2, "one CONTINUE note per nudge");
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// `supervisor.enabled = false` is a master switch: even with the gate
-/// sub-switch left on from the template, the turn must end with no verifier
-/// side-call. The script has no spare entry, so any gate run would surface as
-/// SCRIPT EXHAUSTED or an extra billed call.
-#[tokio::test]
-async fn test_gate_silent_when_supervisor_master_switch_off() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-master-off".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![done_response("Finished without the control plane.")]).await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let mut config = supervised_config();
-		config.supervisor.enabled = false;
-		let mut session = fake_session("finish quietly");
-		session.completion_gate_eligible = true;
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("master-off turn completes");
-
-		assert_eq!(session.session.info.total_api_calls, 1);
-		assert_eq!(session.gate_iterations, 0, "gate must not run");
-		assert!(!session.gate_failed);
-		assert_eq!(session.nudge_iterations, 0, "pre-gate must not run");
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
 /// The loop hard stop is the turn's last word: the same call returning the same
-/// result `max_identical_rounds` times ends the turn on the stop notice, and
-/// neither the unfinished-hand-back pre-gate nor the verify-gate re-runs it back
-/// into the loop. The script has a spare entry that only such a re-run (or a
-/// verifier call) would consume.
+/// result `max_identical_rounds` times ends the turn on the stop notice and the
+/// turn is not requested again. The script has a spare entry that only such a
+/// re-request would consume.
 #[tokio::test]
 #[cfg(unix)]
 async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
@@ -945,13 +684,13 @@ async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
 			tool_call_response("probe", serde_json::json!({})),
 			tool_call_response("probe", serde_json::json!({})),
 			tool_call_response("probe", serde_json::json!({})),
-			progressing_response("never requested"),
+			final_response("never requested"),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 
-		let mut config = supervised_config();
-		config.supervisor.max_identical_rounds = 3;
+		let mut config = fake_provider_config();
+		config.max_identical_rounds = 3;
 		// The tool loop needs at least one configured MCP server.
 		config.mcp.servers.push(crate::config::McpServerConfig::Builtin {
 			name: "core".to_string(),
@@ -976,507 +715,11 @@ async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
 			.messages
 			.iter()
 			.any(|m| m.content.contains("never requested")));
-		assert_eq!(session.gate_iterations, crate::supervisor::gate::MAX_GATE_ITERATIONS);
-		assert_eq!(session.nudge_iterations, crate::supervisor::gate::MAX_ITERATIONS);
-		assert!(session.gate_failed, "a stopped loop is never a verified trajectory");
 
 		std::env::remove_var("OLLAMA_API_URL");
 		crate::session::context::cleanup_session(&sid);
 	})
 	.await;
-}
-
-/// A `done` claim the verifier accepts: gate state resets and exactly one agent
-/// exchange was billed. Nothing was changed or checked, so the pass rests on
-/// the verifier's reading alone and learning labels the trajectory Unknown.
-#[tokio::test]
-async fn test_verify_gate_pass_accepts_claim_and_clears_gate_state() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-gate-pass".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			done_response("Everything is finished and verified."),
-			verifier_pass(),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("ship the feature");
-		session.completion_gate_eligible = true;
-
-		run_turn(&mut session, &config).await.expect("gated turn passes");
-
-		assert!(!session.gate_failed);
-		assert!(matches!(
-			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Unknown
-		));
-		assert_eq!(session.gate_iterations, 0);
-		assert_eq!(session.nudge_iterations, 0);
-		// The verifier call is an out-of-band supervisor side-call: only the
-		// agent exchange lands in the session's own bookkeeping.
-		assert_eq!(session.session.info.total_api_calls, 1);
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// A pass on a turn that changed state and then ran a recognized check on the
-/// result is execution evidence: learning labels it Verified.
-#[tokio::test]
-async fn test_verify_gate_pass_with_a_recognized_check_labels_verified() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-gate-pass-executed".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			done_response("Fixed the counter; the test suite passes."),
-			verifier_pass(),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("fix the counter");
-		session.completion_gate_eligible = true;
-		let dir = tempfile::tempdir().expect("edit directory");
-		let path = dir.path().join("stats.rs");
-		std::fs::write(&path, "pub fn counter() -> u32 { 1 }").expect("write edit fixture");
-		let edit = serde_json::json!({"command": "str_replace", "path": path});
-		session.evidence.record("text_editor", &edit, true, false, 12);
-		// The edit round moved the tree; the next round ran a check on it.
-		session
-			.detectors
-			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
-		session
-			.detectors
-			.note_round_verification(Some(11), Some(11), true, false, false, false, true);
-
-		run_turn(&mut session, &config).await.expect("gated turn passes");
-
-		assert!(!session.gate_failed);
-		assert!(matches!(
-			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Verified
-		));
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// Conditions still unknown after a recognized check passed on the changed
-/// state are a limit of the verifier's view: the stop is accepted with no
-/// note to the agent, and learning earns no correctness credit for it.
-#[tokio::test]
-async fn unsettled_after_a_recognized_check_is_accepted_without_an_advisory() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-unsettled-after-check".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let verifier = final_response(&format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">The summary does not name the counter case.</condition><verdict>PASS</verdict>"#
-		));
-		let url = spawn_stub(vec![
-			done_response("Fixed the counter; the test suite passes."),
-			verifier,
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let mut config = supervised_config();
-		config.supervisor.plan.enabled = false;
-		config.decision.supervisor = false;
-		let task = "fix the counter";
-		let mut session = fake_session(task);
-		let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
-		resolved.evidence_conditions = vec![task.into()];
-		session.gate_task = Some(resolved);
-		session.completion_gate_eligible = true;
-		let dir = tempfile::tempdir().expect("edit directory");
-		let path = dir.path().join("stats.rs");
-		std::fs::write(&path, "pub fn counter() -> u32 { 1 }").expect("write edit fixture");
-		let edit = serde_json::json!({"command": "str_replace", "path": path});
-		session.evidence.record("text_editor", &edit, true, false, 12);
-		// The edit round moved the tree; the next round ran a check on it.
-		session
-			.detectors
-			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
-		session
-			.detectors
-			.note_round_verification(Some(11), Some(11), true, false, false, false, true);
-
-		run_turn(&mut session, &config).await.expect("gated turn is accepted");
-
-		assert_eq!(session.session.info.total_api_calls, 1, "no advisory re-run");
-		assert!(!session.evidence.unsettled_advisory_sent);
-		assert!(!session.gate_failed);
-		assert!(matches!(
-			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Unknown
-		));
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// A `done` claim the verifier rejects with a charged gap: the advisory lands
-/// in the conversation, the turn re-runs once, and the re-run's stop is
-/// verified too — its PASS clears the retained gap.
-#[tokio::test]
-async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-gate-gaps".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			done_response("Trust me, it is complete."),
-			verifier_gap(),
-			// Refutation pass (if the verifier asks for one) sees no refutation.
-			final_response("no finding was refuted"),
-			// The re-run answers without a completion claim; its stop is still
-			// verified (every-stop contract) and the second pass accepts.
-			final_response("The gap is closed now: counter verified."),
-			verifier_pass(),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("verify the counter");
-		session.completion_gate_eligible = true;
-		let seq = session
-			.evidence
-			.record("shell", &serde_json::json!({"command":"counter-test"}), false, true, 44);
-		session
-			.evidence
-			.record_ground(seq, "counter increment: expected 2, observed 1");
-		// Missing detector clearance must neither bypass nor replace a real gap.
-		session
-			.detectors
-			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
-
-		run_turn(&mut session, &config).await.expect("gaps re-run completes");
-
-		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
-		assert!(session.last_gate_gaps.is_empty(), "PASS clears retained gaps");
-		assert!(!session.gate_failed, "re-run without a new claim ends the turn cleanly");
-		let advisory = session
-			.session
-			.messages
-			.iter()
-			.find(|m| m.content.contains("evidence-backed review findings"))
-			.expect("gap advisory injected");
-		assert!(advisory.content.contains("counter increment: expected 2, observed 1"));
-		assert_eq!(session.session.info.total_api_calls, 2);
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// The first pass's re-run also carries the once-per-turn evidence requests, so a
-/// violation the re-verify then observes still gets a re-run of its own instead
-/// of ending the turn on a completion the recorded evidence contradicts.
-#[tokio::test]
-async fn test_verify_gate_second_finding_gets_its_own_rerun() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-gate-second-finding".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			done_response("Trust me, it is complete."),
-			verifier_gap(),
-			final_response("no finding was refuted"),
-			final_response("The counter is verified now."),
-			final_response(&format!(
-				"{CLEAN_SHAPES}\n<gap sources=\"output:1\" settles=\"the suite passes\">The requirement 'verify the counter' conflicts with 'counter overflow: expected error, observed wraparound'</gap>"
-			)),
-			final_response("no finding was refuted"),
-			final_response("Fixed the failing suite."),
-			verifier_pass(),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("verify the counter");
-		session.completion_gate_eligible = true;
-		let seq = session.evidence.record("shell", &serde_json::json!({"command":"counter-test"}), false, true, 44);
-		session.evidence.record_ground(seq, "counter increment: expected 2, observed 1");
-		let seq = session.evidence.record("shell", &serde_json::json!({"command":"counter-overflow-test"}), false, true, 57);
-		session.evidence.record_ground(seq, "counter overflow: expected error, observed wraparound");
-
-		run_turn(&mut session, &config).await.expect("second re-run completes");
-
-		assert!(!session.gate_failed, "the third pass verified the fix");
-		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
-		assert_eq!(session.session.info.total_api_calls, 3, "one answer and two re-runs");
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// An unavailable verdict must preserve the answer without creating correction work.
-#[tokio::test]
-async fn test_verify_gate_indeterminate_ends_turn_unverified() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-gate-indeterminate".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let (url, requests) = spawn_recording_stub(vec![
-			done_response("Done, the artifact is saved."),
-			final_response("no verdict was provided"),
-			final_response("still no verdict"),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-		let config = supervised_config();
-		let mut session = fake_session("save the artifact");
-		session.completion_gate_eligible = true;
-		run_turn(&mut session, &config).await.expect("unverified stop");
-		assert!(session.gate_failed);
-		assert_eq!(
-			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Unknown
-		);
-		assert_eq!(session.session.info.total_api_calls, 1, "no correction turn");
-		assert_eq!(
-			requests.lock().unwrap().len(),
-			3,
-			"agent, verifier and its bounded retry only"
-		);
-		assert!(!session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content.contains("not accepted yet")));
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// Missing heuristic clearance must reach the independent verifier. The first
-/// fixture is a saved artifact followed by a memory write; the second includes
-/// a command that tests behavior and creates a record in the same execution.
-/// These fixtures test routing and the evidence sent on the wire, not the
-/// quality of the scripted model's judgment.
-#[tokio::test]
-async fn test_unrecognized_verification_reaches_gate_with_evidence() {
-	let _guard = ENV_LOCK.lock().await;
-	for mixed_command in [false, true] {
-		let sid = format!("api-exec-heuristic-evidence-{mixed_command}");
-		crate::session::context::with_session_id(sid.clone(), async {
-			crate::session::context::init_session_services("assistant");
-			let (url, requests) =
-				spawn_recording_stub(vec![done_response("Requested artifact saved."), verifier_pass()]).await;
-			std::env::set_var("OLLAMA_API_URL", &url);
-
-			let config = supervised_config();
-			let mut session = fake_session("save the requested artifact");
-			session.completion_gate_eligible = true;
-			let dir = tempfile::tempdir().expect("artifact directory");
-			let path = dir.path().join("artifact.txt");
-			let content = "requested-artifact-content-from-disk";
-			std::fs::write(&path, content).expect("write artifact fixture");
-			let write = serde_json::json!({"command": "create", "path": path});
-			let seq = session.evidence.record("text_editor", &write, true, false, 25);
-			session.evidence.record_ground(seq, "File created successfully");
-			session.evidence.record(
-				"memorize",
-				&serde_json::json!({"related_files": [path], "content": "artifact saved"}),
-				true,
-				false,
-				13,
-			);
-			if mixed_command {
-				let command = "bin/test --filter=coupons && manage-coupons --cmd=create";
-				let output = "PASS coupons; 1 test, 0 failures; https://example.test/c/TEST";
-				let seq = session.evidence.record(
-					"shell",
-					&serde_json::json!({"command": command}),
-					true,
-					false,
-					output.len(),
-				);
-				session.evidence.record_ground(seq, output);
-				session.evidence.record_command_output(command, output);
-			}
-			// Model the detector's conservative verdict even though evidence exists.
-			session
-				.detectors
-				.note_round_verification(Some(10), Some(11), false, false, true, false, true);
-
-			run_turn(&mut session, &config).await.expect("independent verification");
-
-			assert!(!session.gate_failed);
-			// The verifier passed, but no check was recognized after the change:
-			// a judge-only pass is not execution evidence for learning.
-			assert!(matches!(
-				session.learning_outcome,
-				crate::supervisor::learning::TrajectoryOutcome::Unknown
-			));
-			assert_eq!(session.nudge_iterations, 0);
-			assert_eq!(session.session.info.total_api_calls, 1, "no agent re-run");
-			let captured = requests.lock().expect("captured requests");
-			assert_eq!(captured.len(), 2, "agent response then independent verifier");
-			let payload: serde_json::Value = serde_json::from_str(&captured[1]).expect("JSON");
-			let evidence = payload["messages"]
-				.as_array()
-				.expect("messages")
-				.iter()
-				.filter(|m| m["role"] == "user")
-				.filter_map(|m| m["content"].as_str())
-				.collect::<Vec<_>>()
-				.join("\n");
-			assert!(evidence.contains(content), "verifier receives the saved content");
-			assert!(evidence.contains("This heuristic does not establish"));
-			assert!(!evidence.contains("NO check of any kind has succeeded"));
-			if mixed_command {
-				assert!(evidence.contains("PASS coupons; 1 test, 0 failures"));
-				assert!(evidence.contains("https://example.test/c/TEST"));
-			}
-			assert!(!session
-				.session
-				.messages
-				.iter()
-				.any(|m| m.content.contains("octomind:pre_gate_unverified_mutation")));
-
-			std::env::remove_var("OLLAMA_API_URL");
-			crate::session::context::cleanup_session(&sid);
-		})
-		.await;
-	}
-}
-
-/// Gate disabled: a `done` claim with a `phase_complete` plan signal drives
-/// the full external-plan lifecycle inside one turn — pre-request reconcile
-/// creates the plan, the post-response reconcile advances it, and the
-/// no-gate completion block retires it.
-#[tokio::test]
-async fn test_plan_lifecycle_without_gate_reconciles_and_retires_plan() {
-	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-plan-retire".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			// Pre-request reconcile: Request signal -> create a two-phase plan.
-			final_response(
-				"{\"decision\":\"create\",\"title\":\"Ship the widget\",\"tasks\":[{\"title\":\"build it\",\"done_when\":\"it compiles\"},{\"title\":\"test it\",\"done_when\":\"tests pass\"}]}",
-			),
-			// Agent turn: claims done AND emits a phase_complete plan signal.
-			final_response(
-				"Widget shipped.\n<sup>{\"state\":\"done\",\"focus\":\"shipped\",\"next\":null,\"carry\":[],\"plan\":\"phase_complete\",\"memories\":[]}</sup>",
-			),
-			// Post-response reconcile: phase_complete -> advance the first phase.
-			final_response("{\"decision\":\"advance\",\"summary\":\"widget built\"}"),
-		])
-		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let mut config = supervised_config();
-		config.supervisor.gate.enabled = false;
-		config.supervisor.plan.enabled = true;
-		config.supervisor.model.model = Some("ollama:fake-model".to_string());
-
-		let mut session = fake_session("build the widget end to end");
-		session.completion_gate_eligible = true;
-		session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
-		session.plan_evaluated = false;
-		session.planner_failed = false;
-		// Admission-time task resolution: the turn owns whatever plan it is
-		// about to create (plan_at_turn_start stays empty).
-		session.gate_task = Some(
-			crate::supervisor::resolve::ResolvedTask::self_contained("build the widget end to end"),
-		);
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("plan-supervised turn");
-
-		assert!(
-			!crate::mcp::core::plan::has_active_plan(),
-			"done without gate must retire the plan"
-		);
-		assert!(session.pending_plan_signal.is_none(), "signal consumed");
-		assert_eq!(session.session.info.total_api_calls, 1);
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-}
-
-/// Learning enabled: the first call of a session materializes the runtime-only
-/// active memory pack. A stored GLOBAL lesson lands in the pack unconditionally
-/// (global tier has no relevance gating), so the assertion does not depend on
-/// the keyword-extraction side-call's output. `recalled_refs` is consumed by
-/// `reinforce_recalled` when the turn completes — the durable trace is the
-/// learning_stats pack counters.
-#[serial_test::serial]
-#[tokio::test]
-async fn test_learning_injection_builds_active_memory_pack() {
-	let _guard = ENV_LOCK.lock().await;
-	let data = tempfile::tempdir().unwrap();
-	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
-	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
-
-	let backend = crate::supervisor::learning::backend::FileBackend;
-	backend
-		.store(&crate::supervisor::learning::Lesson {
-			content: "Prefer interactive rebase before pushing to shared branches.".to_string(),
-			title: "rebase policy".to_string(),
-			scope: "global".to_string(),
-			created: chrono::Utc::now().to_rfc3339(),
-			..Default::default()
-		})
-		.await
-		.unwrap();
-
-	let sid = "api-exec-learning-pack".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		// Identical bodies: the keyword-extraction side call and the agent call
-		// interleave in no guaranteed order, so every consumer must see the
-		// same valid completion.
-		let url = spawn_stub(vec![final_response("rebase\npolicy"); 3]).await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let mut config = supervised_config();
-		config.supervisor.learning.enabled = true;
-		config.supervisor.model.model = Some("ollama:fake-model".to_string());
-
-		let mut session = fake_session("push my branch safely");
-		run_turn(&mut session, &config).await.expect("turn with recall");
-
-		assert!(session.learning_injected, "first call must mark learning injected");
-		assert!(
-			session.active_memory_pack.is_some(),
-			"global lesson must land in the pack"
-		);
-		assert!(session.session.info.learning_stats.packs >= 1);
-		assert!(session.session.info.learning_stats.items >= 1);
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
-
-	match previous {
-		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
-		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1595,11 +838,8 @@ async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
 	let url = spawn_stub(vec![final_response("Hello from stub")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
-	// Learning has its own switch, independent of `supervisor.enabled`, so a
-	// pack left over from a previous configuration must be dropped before the
-	// request once that switch is off.
-	let mut config = fake_provider_config();
-	config.supervisor.learning.enabled = false;
+	// A pack left over from an earlier round must be dropped before the request.
+	let config = fake_provider_config();
 	let mut session = fake_session("hi there");
 	session.active_memory_pack = Some("stale pack content".to_string());
 
@@ -1613,307 +853,299 @@ async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-fn structured_verifier_response(value: serde_json::Value) -> serde_json::Value {
-	serde_json::json!({
-		"id": format!("resp_{}", uuid::Uuid::new_v4()),
-		"output": [{"type":"message", "content":[{"type":"output_text", "text":value.to_string()}]}],
-		"usage":{"input_tokens":20,"output_tokens":20,"total_tokens":40}
-	})
+// ---------------------------------------------------------------------------
+// Plugin events around a turn
+// ---------------------------------------------------------------------------
+
+use crate::plugins::test_support::{connect_stub, StubPlugin};
+use serde_json::json;
+
+/// A session under its own id: stubs attach to the process-wide plugin host by
+/// session id, and tests run in parallel.
+fn plugin_session(id: &str) -> ChatSession {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	session.session.info.name = id.to_string();
+	session
 }
 
-fn clean_structured_shapes() -> serde_json::Value {
-	serde_json::json!([
-		"circular",
-		"context-stripped",
-		"acceptance-only",
-		"unenumerated-category"
-	])
-	.as_array()
-	.expect("shape names")
-	.iter()
-	.map(|name| {
-		serde_json::json!({
-			"name":name,"found":"no","reason":"No observed violation","settles":null,"sources":null
-		})
-	})
-	.collect()
+/// Connect `stub` to the session and add the user's prompt as the real loop does.
+async fn start_plugin_turn(session: &mut ChatSession, stub: &StubPlugin, input: &str) {
+	connect_stub(&session.session.info.name, "assistant", std::path::Path::new("."), stub).await;
+	let prompt = session
+		.submit_prompt(input.to_string(), input)
+		.await
+		.expect("prompt accepted");
+	session.add_user_message(&prompt).expect("user message added");
 }
 
-/// The real HTTP/provider/session stack receives a schema-constrained verdict
-/// after a recorded successful suite. Missing proof must not start another agent turn.
+/// The events the stub was sent, in order, without the handshake.
+fn events_heard(stub: &StubPlugin) -> Vec<String> {
+	stub.received()
+		.into_iter()
+		.map(|(method, _)| method)
+		.filter(|method| event::ALL.contains(&method.as_str()))
+		.collect()
+}
+
 #[tokio::test]
-async fn strict_json_uncertainty_preserves_the_answer_without_an_agent_rerun() {
+async fn plugin_hears_prompt_request_and_turn_end_in_order() {
 	let _guard = ENV_LOCK.lock().await;
-	let previous_url = std::env::var_os("OPENAI_API_URL");
-	let previous_key = std::env::var_os("OPENAI_API_KEY");
-	std::env::set_var("OPENAI_API_KEY", "test-key");
-	for (status, basis, observation, sources) in [
-		("unknown", None, "The output does not enumerate hydration cases", None),
-		("matched", None, "All requested behavior should work", None),
-		(
-			"unmatched",
-			Some("recorded_output"),
-			"The run printed 'FAIL invented hydration failure'",
-			Some("output:0"),
-		),
-	] {
-		let sid = format!("strict-json-no-false-correction-{status}");
-		crate::session::context::with_session_id(sid.clone(), async {
-			crate::session::context::init_session_services("assistant");
-			let answer = "Implemented transitions. Unit suite: 281 files and 7,935 tests passed.";
-			let (agent_url, agent_requests) = spawn_recording_stub(vec![done_response(answer)]).await;
-			std::env::set_var("OLLAMA_API_URL", agent_url);
-			let report = serde_json::json!({
-				"conditions":[{"n":1,"status":status,"basis":basis,"observation":observation,"sources":sources}],
-				"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]
-			});
-			let (supervisor_url, supervisor_requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
-				structured_verifier_response(report.clone()),
-				structured_verifier_response(report),
-			])
-			.await;
-			std::env::set_var("OPENAI_API_URL", supervisor_url);
-			let mut config = supervised_config();
-			config.supervisor.model.model = Some("openai:gpt-4.1".to_string());
-			config.supervisor.gate.unsettled_advisory = false;
-			config.decision.supervisor = false;
-			let task = "Preserve transition behavior after server rendering and hydration";
-			let mut session = fake_session(task);
-			session.completion_gate_eligible = true;
-			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task);
-			resolved.evidence_conditions = vec![task.to_string()];
-			session.gate_task = Some(resolved);
-			let seq = session.evidence.record(
-				"shell",
-				&serde_json::json!({"command":"pnpm test --project unit"}),
-				false,
-				false,
-				50,
-			);
-			session
-				.evidence
-				.record_ground(seq, "Test Files 281 passed; Tests 7935 passed");
-			session
-				.evidence
-				.record_command_output("pnpm test --project unit", "Test Files 281 passed; Tests 7935 passed");
-			run_turn(&mut session, &config)
-				.await
-				.expect("uncertainty ends the turn");
-			assert_eq!(session.session.info.total_api_calls, 1);
-			assert_eq!(
-				agent_requests.lock().unwrap().len(),
-				1,
-				"no generic follow-up, edits or test reruns"
-			);
-			assert!(session.last_response.contains(answer));
-			assert!(matches!(
-				session.learning_outcome,
-				crate::supervisor::learning::TrajectoryOutcome::Unknown
-			));
-			let requests = supervisor_requests.lock().unwrap();
-			assert_eq!(
-				requests.len(),
-				if status == "matched" { 2 } else { 1 },
-				"only uncitable matches need format repair"
-			);
-			assert_eq!(requests[0]["text"]["format"]["type"], "json_schema");
-			let wire = requests[0].to_string();
-			assert!(
-				wire.contains("7935 passed"),
-				"the verifier sees the actual successful output"
-			);
-			assert!(!session
-				.session
-				.messages
-				.iter()
-				.any(|m| m.content.contains("not accepted yet")));
-			crate::session::context::cleanup_session(&sid);
-		})
-		.await;
-	}
+	let (url, _requests) = spawn_recording_stub(vec![final_response("All done")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let stub = StubPlugin::new(&[event::PROMPT_SUBMIT, event::REQUEST_BEFORE, event::TURN_END]);
+	let mut session = plugin_session("o5-order");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	assert_eq!(events_heard(&stub), ["prompt.submit", "request.before", "turn.end"]);
+	let request = &stub.sent(event::REQUEST_BEFORE)[0];
+	assert_eq!(request["phase"], "turn_start");
+	assert_eq!(request["turn"], "user");
+	assert!(
+		request["tools"].is_array(),
+		"the first request of a turn carries the tool list"
+	);
+	let end = &stub.sent(event::TURN_END)[0];
+	assert_eq!(end["turn"], "user");
+	assert_eq!(end["requests"], 1);
+	assert!(end["answers"][0].as_str().unwrap().contains("All done"));
+	assert!(end["changes"].as_array().unwrap().is_empty());
+	assert!(end.get("stopped").is_none());
+
+	crate::plugins::end_session("o5-order");
 	std::env::remove_var("OLLAMA_API_URL");
-	for (name, previous) in [("OPENAI_API_URL", previous_url), ("OPENAI_API_KEY", previous_key)] {
-		match previous {
-			Some(value) => std::env::set_var(name, value),
-			None => std::env::remove_var(name),
-		}
-	}
 }
 
-/// A grounded observation can still be misinterpreted. The coding agent may
-/// rebut the finding without edits or rerunning the command it already observed.
 #[tokio::test]
-async fn strict_json_review_allows_rebuttal_without_repeating_unchanged_findings() {
+async fn continue_effect_reruns_the_request_once_as_continuation() {
 	let _guard = ENV_LOCK.lock().await;
-	let previous_url = std::env::var_os("OPENAI_API_URL");
-	let previous_key = std::env::var_os("OPENAI_API_KEY");
-	std::env::set_var("OPENAI_API_KEY", "test-key");
-	for repeated in [false, true] {
-		let sid = format!("strict-json-evidence-rebuttal-{repeated}");
-		crate::session::context::with_session_id(sid.clone(),async {
-		crate::session::context::init_session_services("assistant");
-		let (agent_url,agent_requests) = spawn_recording_stub(vec![
-			done_response("The counter test fails: expected 2, observed 1. No code changed."),
-			done_response("The request was to report whether the test passes. The existing failing output answers that request; no fix or rerun is required."),
-		]).await;
-		std::env::set_var("OLLAMA_API_URL",agent_url);
-		let gap = serde_json::json!({"conditions":[],"shapes":clean_structured_shapes(),"readback":[],"verdict":"GAPS",
-			"gaps":[{"gap":"The requirement 'Report whether the counter test passes' conflicts with 'counter increment: expected 2, observed 1'", "sources":"output:0", "settles":"a passing counter test"}]});
-		let pass = serde_json::json!({"conditions":[],"shapes":clean_structured_shapes(),"gaps":[],"verdict":"PASS","readback":[]});
-		let refutation = serde_json::json!({"findings":[{"n":1,"verdict":"stands","citation":"The counter test failed"}]});
-		let mut responses = vec![structured_verifier_response(gap.clone()), structured_verifier_response(refutation.clone()),
-			structured_verifier_response(if repeated { gap } else { pass })];
-		if repeated { responses.push(structured_verifier_response(refutation)); }
-		let (supervisor_url,_) = crate::session::chat::test_support::spawn_recording_stub(responses).await;
-		std::env::set_var("OPENAI_API_URL",supervisor_url);
-		let mut config = supervised_config();
-		config.supervisor.model.model=Some("openai:gpt-4.1".to_string());
-		config.decision.supervisor=false;
-		let mut session=fake_session("Report whether the counter test passes. Do not change code.");
-		session.completion_gate_eligible=true;
-		let seq=session.evidence.record("shell",&serde_json::json!({"command":"counter-test"}),false,true,44);
-		session.evidence.record_ground(seq,"counter increment: expected 2, observed 1");
-		run_turn(&mut session,&config).await.expect("rebuttal is accepted");
-		assert_eq!(session.session.info.total_api_calls,2);
-		assert_eq!(session.gate_failed, repeated);
-		assert!(matches!(session.learning_outcome, crate::supervisor::learning::TrajectoryOutcome::Unknown));
-		assert!(session.evidence.mutated_paths().is_empty());
-		let requests=agent_requests.lock().unwrap();
-		assert_eq!(requests.len(),2,"answer and evidence-based rebuttal only");
-		let request:serde_json::Value=serde_json::from_str(&requests[1]).expect("agent request");
-		let wire=request.to_string();
-		assert!(wire.contains("If already satisfied, stale, or outside scope"));
-		assert!(!wire.contains("not accepted yet"));
-		crate::session::context::cleanup_session(&sid);
-	}).await;
-	}
+	let (url, requests) = spawn_recording_stub(vec![final_response("first"), final_response("second")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let turn_ends = std::sync::atomic::AtomicUsize::new(0);
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE, event::TURN_END]).respond(move |method, _| {
+		let first_turn_end =
+			method == event::TURN_END && turn_ends.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+		Ok(if first_turn_end {
+			json!({"continue": "keep going"})
+		} else {
+			json!({})
+		})
+	});
+	let mut session = plugin_session("o5-continue");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	let phases: Vec<_> = stub
+		.sent(event::REQUEST_BEFORE)
+		.iter()
+		.map(|params| params["phase"].clone())
+		.collect();
+	assert_eq!(phases, [json!("turn_start"), json!("continuation")]);
+	assert!(
+		stub.sent(event::REQUEST_BEFORE)[1].get("tools").is_none(),
+		"only the first request of a turn carries the tool list"
+	);
+	let ends = stub.sent(event::TURN_END);
+	assert_eq!(ends.len(), 2);
+	assert_eq!(ends[1]["answers"].as_array().unwrap().len(), 2);
+	assert_eq!(requests.lock().unwrap().len(), 2);
+	assert_eq!(session.plugin_continuations, 1);
+	let text = session
+		.session
+		.messages
+		.iter()
+		.find(|message| message.role == "user" && message.content.contains("keep going"))
+		.expect("the continue text is written as a system note");
+	assert!(crate::session::is_system_managed_user_content(&text.content));
+
+	crate::plugins::end_session("o5-continue");
 	std::env::remove_var("OLLAMA_API_URL");
-	for (name, previous) in [("OPENAI_API_URL", previous_url), ("OPENAI_API_KEY", previous_key)] {
-		match previous {
-			Some(value) => std::env::set_var(name, value),
-			None => std::env::remove_var(name),
-		}
-	}
 }
 
 #[tokio::test]
-async fn context_pressure_keeps_user_rules_on_the_provider_request() {
+async fn continuations_stop_at_the_cap() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = spawn_recording_stub(Vec::new()).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let stub = StubPlugin::new(&[event::TURN_END]).answer(json!({"continue": "again"}));
+	let mut session = plugin_session("o5-cap");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	// The first request plus five re-runs; the sixth `continue` is not followed.
+	assert_eq!(requests.lock().unwrap().len(), 6);
+	assert_eq!(stub.sent(event::TURN_END).len(), 6);
+	assert_eq!(session.plugin_continuations, MAX_PLUGIN_CONTINUATIONS);
+
+	crate::plugins::end_session("o5-cap");
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn context_blocks_reach_the_provider_and_never_the_history() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = spawn_recording_stub(vec![final_response("ok")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE])
+		.respond(|_, _| Ok(json!({"context": [{"name": "one", "text": "ALPHA"}, {"name": "two", "text": "BETA"}]})));
+	let mut session = plugin_session("o5-context");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	let sent = requests.lock().unwrap();
+	assert_eq!(sent.len(), 1);
+	assert!(
+		sent[0].contains("ALPHABETA"),
+		"blocks of one plugin are joined with nothing between"
+	);
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.all(|message| !message.content.contains("ALPHA") && message.name.as_deref() != Some("__active_memory_pack")));
+	drop(sent);
+
+	crate::plugins::end_session("o5-context");
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn blocks_marked_keep_survive_the_ceiling_fallback() {
 	let _guard = ENV_LOCK.lock().await;
 	let (url, requests) = spawn_recording_stub(vec![final_response("Done")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.enabled = true;
 	config.compression.threshold = 0;
-	let lesson = crate::supervisor::learning::Lesson {
-		content: "Build remotely".into(),
-		role: "assistant".into(),
-		project: "project".into(),
-		..Default::default()
-	};
-	let rule =
-		crate::supervisor::learning::mod_tests::user_rule(&lesson, "When building this project, use the dev box.");
-	let required = crate::supervisor::learning::inject::format_user_rules([("M1", &rule)]);
-	let mut session = fake_session("Explain this code");
-	session.learning_injected = true;
-	session.pending_recall = false;
-	session.active_user_rules = vec![("M1".into(), rule.clone())];
-	session.set_active_memory_pack(Some(required.clone()));
+	let optional = "OPTIONAL_CONTEXT ".repeat(4_000);
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE, event::TURN_END]).respond(move |method, _| {
+		Ok(if method == event::REQUEST_BEFORE {
+			json!({"context": [
+				{"name": "rules", "text": "KEEP_RULES", "keep": true},
+				{"name": "extra", "text": optional},
+			]})
+		} else {
+			json!({})
+		})
+	});
+	let mut session = plugin_session("o5-keep");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
 	config.max_session_tokens_threshold = session.get_full_context_tokens(&config).await + 256;
-	session.set_active_memory_pack(Some(format!("{required}{}", "OPTIONAL_CONTEXT ".repeat(4_000))));
-	run_turn(&mut session, &config).await.unwrap();
-	assert_eq!(session.active_memory_pack.as_deref(), Some(required.as_str()));
-	assert_eq!(session.active_user_rules, vec![("M1".into(), rule.clone())]);
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
 	let sent = requests.lock().unwrap();
 	assert_eq!(sent.len(), 1);
-	assert!(sent[0].contains(&rule.quote));
+	assert!(sent[0].contains("KEEP_RULES"));
 	assert!(!sent[0].contains("OPTIONAL_CONTEXT"));
 	drop(sent);
+	assert_eq!(session.active_memory_pack.as_deref(), Some("KEEP_RULES"));
+	assert_eq!(stub.sent(event::TURN_END)[0]["dropped_context"], json!(["extra"]));
+
+	crate::plugins::end_session("o5-keep");
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
 #[tokio::test]
-async fn required_rules_that_exceed_context_prevent_the_provider_request() {
+async fn notes_land_before_the_request_and_at_turn_end() {
 	let _guard = ENV_LOCK.lock().await;
-	let (url, requests) = spawn_recording_stub(Vec::new()).await;
+	let (url, requests) = spawn_recording_stub(vec![final_response("ok")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE, event::TURN_END]).respond(|method, _| {
+		Ok(if method == event::REQUEST_BEFORE {
+			json!({"note": ["NOTE-BEFORE"]})
+		} else {
+			json!({"note": ["NOTE-AT-END"]})
+		})
+	});
+	let mut session = plugin_session("o5-notes");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	let order: Vec<_> = session
+		.session
+		.messages
+		.iter()
+		.map(|message| {
+			if message.content.contains("NOTE-BEFORE") {
+				"before"
+			} else if message.content.contains("NOTE-AT-END") {
+				"end"
+			} else {
+				message.role.as_str()
+			}
+		})
+		.collect();
+	assert_eq!(order, ["user", "before", "assistant", "end"]);
+	let sent = requests.lock().unwrap();
+	assert!(sent[0].contains("NOTE-BEFORE"));
+	assert!(!sent[0].contains("NOTE-AT-END"));
+	drop(sent);
+
+	crate::plugins::end_session("o5-notes");
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn turn_end_reports_the_hard_stop_on_repeated_rounds() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, _requests) = spawn_recording_stub(vec![final_response("stopped")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.enabled = true;
-	config.compression.threshold = 0;
-	let mut session = fake_session("Explain this code");
-	session.learning_injected = true;
-	session.pending_recall = false;
-	config.max_session_tokens_threshold = session.get_full_context_tokens(&config).await + 32;
-	let lesson = crate::supervisor::learning::Lesson {
-		content: "Build remotely".into(),
-		..Default::default()
-	};
-	let rule = crate::supervisor::learning::mod_tests::user_rule(&lesson, "When building, use the dev box.");
-	let required = crate::supervisor::learning::inject::format_user_rules([("M1", &rule)]);
-	session.active_user_rules = vec![("M1".into(), rule)];
-	session.set_active_memory_pack(Some(required.clone()));
-	let error = run_turn(&mut session, &config).await.unwrap_err();
-	assert!(error.to_string().contains("context remains above the usable ceiling"));
-	assert_eq!(session.active_memory_pack.as_deref(), Some(required.as_str()));
-	assert!(requests.lock().unwrap().is_empty());
+	config.max_identical_rounds = 3;
+	let stub = StubPlugin::new(&[event::TURN_END]);
+	let mut session = plugin_session("o5-loop");
+	start_plugin_turn(&mut session, &stub, "fix the bug").await;
+	let parameters = json!({"path": "a.rs"});
+	for _ in 0..3 {
+		session
+			.repeat_guard
+			.note_round(&[crate::session::repeat_guard::RoundCall {
+				tool: "view",
+				parameters: &parameters,
+				result: "same",
+				is_error: false,
+				is_mutation: false,
+				free_form: false,
+			}]);
+	}
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	assert_eq!(stub.sent(event::TURN_END)[0]["stopped"], "loop");
+
+	crate::plugins::end_session("o5-loop");
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-#[serial_test::serial]
 #[tokio::test]
-async fn many_verified_rules_do_not_block_successive_turns_and_bad_records_are_isolated() {
+async fn nothing_is_sent_for_a_session_without_a_plugin() {
 	let _guard = ENV_LOCK.lock().await;
-	let data = tempfile::tempdir().unwrap();
-	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
-	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
-	let backend = crate::supervisor::learning::backend::FileBackend;
-	for index in 0..24 {
-		let mut rule = crate::supervisor::learning::Lesson {
-			content: format!(
-				"Rule {index}: {}",
-				"Keep the documented condition and use the project build host. ".repeat(12)
-			),
-			scope: "global".into(),
-			created: format!("2026-01-01T00:00:{index:02}Z"),
-			..Default::default()
-		};
-		rule.user_rule = Some(crate::supervisor::learning::mod_tests::user_rule(&rule, &rule.content));
-		backend.store(&rule).await.unwrap();
-	}
-	let directory = crate::directories::get_global_learning_dir().unwrap();
-	let broken = directory.join("broken.md");
-	let malformed = "---\ncontent: \"untrusted instruction\"\nuser_rule: {broken\n---\n";
-	std::fs::write(&broken, malformed).unwrap();
-	let (url, requests) =
-		spawn_recording_stub(vec![final_response("First answer"), final_response("Second answer")]).await;
-	std::env::set_var("OLLAMA_API_URL", url);
-	let mut config = fake_provider_config();
-	config.supervisor.learning.enabled = true;
-	let mut session = fake_session("Explain a database query");
-	for turn in 0..2 {
-		if turn > 0 {
-			session.add_user_message("Now explain its index").unwrap();
-		}
-		run_turn(&mut session, &config).await.unwrap();
-		assert!(!session.active_user_rules.is_empty());
-		assert!(session.active_user_rules.len() < 24);
-		assert_eq!(backend.retrieve_global().await.unwrap().len(), 24);
-		assert!(
-			crate::session::estimate_tokens(session.active_memory_pack.as_ref().unwrap())
-				<= crate::supervisor::learning::inject::MAX_MEMORY_PACK_TOKENS
-		);
-	}
-	assert_eq!(requests.lock().unwrap().len(), 2);
-	assert!(!broken.exists());
-	let isolated = std::fs::read_dir(directory.join(".invalid"))
-		.unwrap()
-		.next()
-		.unwrap()
-		.unwrap()
-		.path();
-	assert_eq!(std::fs::read_to_string(isolated).unwrap(), malformed);
+	let (url, _requests) = spawn_recording_stub(vec![final_response("ok")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	// A plugin that is on for another session hears nothing of this one.
+	let stub = StubPlugin::new(&event::ALL);
+	connect_stub("o5-elsewhere", "assistant", std::path::Path::new("."), &stub).await;
+	let mut session = plugin_session("o5-alone");
+	session.add_user_message("fix the bug").unwrap();
+
+	run_turn(&mut session, &config).await.expect("turn succeeds");
+
+	assert!(events_heard(&stub).is_empty());
+	assert!(session.active_memory_pack.is_none());
+
+	crate::plugins::end_session("o5-elsewhere");
 	std::env::remove_var("OLLAMA_API_URL");
-	match previous {
-		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
-		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
-	}
 }

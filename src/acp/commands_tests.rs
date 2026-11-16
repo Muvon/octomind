@@ -259,6 +259,32 @@ async fn handle_ext_method_end_to_end_through_the_dispatcher() {
 	assert_eq!(decoded["output"], serde_json::json!({"action": "exit"}));
 }
 
+#[tokio::test]
+async fn plugin_commands_are_advertised_without_slash_and_with_their_hint() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let stub = StubPlugin::new(&[event::COMMAND]).init_field(
+		"commands",
+		serde_json::json!([
+			{"name": "recall", "hint": "[topic]", "description": "Recall lessons"},
+			{"name": "forget", "hint": "", "description": "Forget"},
+		]),
+	);
+	let session_id = uuid::Uuid::new_v4().to_string();
+	connect_stub(&session_id, "assistant", std::path::Path::new("."), &stub).await;
+
+	let advertised = serde_json::to_value(plugin_available_commands(&session_id)).expect("serialise");
+	assert_eq!(advertised[0]["name"], "recall");
+	assert_eq!(advertised[0]["description"], "Recall lessons");
+	assert_eq!(advertised[0]["input"]["hint"], "[topic]");
+	assert_eq!(advertised[1]["name"], "forget");
+	assert!(advertised[1].get("input").is_none());
+
+	crate::plugins::end_session(&session_id);
+	assert!(plugin_available_commands(&session_id).is_empty());
+}
+
 // ---- execute_command against the real dispatcher ----
 
 use crate::session::context;
@@ -332,52 +358,9 @@ async fn execute_command_done_is_handled_and_wakes_the_inbox_monitor() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
-	let _data = TestDataDirGuard::new();
-	let (sessions, locks, config, cancellations) = harness();
-	let response = context::with_session_id("s1".to_string(), async {
-		context::init_session_services("assistant");
-		execute_command(
-			&CommandRequest {
-				session_id: "s1".to_string(),
-				command: "/learning".to_string(),
-				args: vec![
-					"evolution".to_string(),
-					"show".to_string(),
-					"no-such-record".to_string(),
-				],
-			},
-			&sessions,
-			&locks,
-			&config,
-			"assistant",
-			&cancellations,
-			None,
-		)
-		.await
-	})
-	.await;
-
-	assert!(!response.success, "the dispatcher error must fail the response");
-	let error = response.error.as_ref().expect("error message present");
-	assert!(error.contains("not found"), "got: {error}");
-	assert!(response.output.is_none(), "a failed command must not report output");
-	assert!(
-		sessions.borrow().contains_key("s1"),
-		"the session is returned to the map even on error"
-	);
-
-	context::cleanup_session(&"s1".to_string());
-}
-
-#[tokio::test]
-#[serial_test::serial]
 async fn info_extension_folds_the_owned_supervisor_bank_into_structured_output() {
-	crate::supervisor::accounting::isolated(async {
-		use crate::supervisor::{
-			accounting,
-			stats::{record_call, CallKind},
-		};
+	crate::session::accounting::isolated(async {
+		use crate::session::accounting::{self, record_call, CallKind};
 		accounting::take();
 		let (sessions, locks, config, cancellations) = harness();
 		let owner = sessions.borrow()["s1"].0.session.info.name.clone();

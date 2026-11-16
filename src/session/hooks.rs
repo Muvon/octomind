@@ -80,11 +80,11 @@ pub async fn run_hooks(
 				continue;
 			}
 			if let Some(binding) = &hook.evolution {
-				if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
-					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+				if binding.shadow {
+					crate::session::guardrails::mark_shadow_match(session_id, &binding.id);
 					continue;
 				}
-				crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+				crate::session::guardrails::mark_behavior_used(session_id, &binding.id);
 			}
 			let script = hook.script.clone();
 			let snapshot = hook.snapshot.clone();
@@ -285,16 +285,24 @@ pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_t
 		}
 
 		// 3. `match` regex on assistant message text
-		if let Some(re) = &v.match_regex {
-			if !re.is_match(assistant_text) {
-				continue;
-			}
-			if let Some(binding) = &v.evolution {
-				if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
-					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+		let matched = match &v.match_regex {
+			Some(re) => {
+				if !re.is_match(assistant_text) {
 					continue;
 				}
-				crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+				true
+			}
+			None => false,
+		};
+		// Evolution's rules are gated only after a `match` hit, as before plugins
+		// existed; a plugin's rule without a `match` is a trigger on every message.
+		if let Some(binding) = &v.evolution {
+			if matched || crate::session::guardrails::plugin_of_rule(session_id, &binding.id).is_some() {
+				if binding.shadow {
+					crate::session::guardrails::mark_shadow_match(session_id, &binding.id);
+					continue;
+				}
+				crate::session::guardrails::mark_behavior_used(session_id, &binding.id);
 			}
 		}
 

@@ -690,8 +690,8 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 	}
 
-	// 4. Generated user-owned skills — always lowest authority.
-	for skill_dir in crate::supervisor::learning::evolution::active_skill_dirs() {
+	// 4. Skill directories plugins registered — always lowest authority.
+	for skill_dir in super::skill_auto::plugin_skill_dirs() {
 		let skill_md = skill_dir.join("SKILL.md");
 		let Ok(content) = std::fs::read_to_string(&skill_md) else {
 			continue;
@@ -788,8 +788,8 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		}
 	}
 
-	// 4. Generated user-owned skills — never shadow authored sources.
-	for skill_dir in crate::supervisor::learning::evolution::active_skill_dirs() {
+	// 4. Skill directories plugins registered — never shadow authored sources.
+	for skill_dir in super::skill_auto::plugin_skill_dirs() {
 		let skill_md = skill_dir.join("SKILL.md");
 		let Ok(content) = std::fs::read_to_string(&skill_md) else {
 			continue;

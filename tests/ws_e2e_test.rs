@@ -94,7 +94,6 @@ fn sandbox_config() -> octomind::config::Config {
 		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
-	config.supervisor.enabled = false;
 	config.telemetry = false;
 	config.auto_capabilities = false;
 	config.skills.auto_activation = false;

@@ -18,15 +18,6 @@ fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }
 
-#[test]
-fn enabled_supervisor_requires_a_model() {
-	let mut config = template_config();
-	config.supervisor.model.model = Some(String::new());
-	assert!(config.validate_model_profiles().is_err());
-
-	config.supervisor.enabled = false;
-	assert!(config.validate_model_profiles().is_ok());
-}
 use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
 
 fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
@@ -250,14 +241,4 @@ fn compression_model_check_requires_a_resolvable_model() {
 	config
 		.validate_model_profiles()
 		.expect("the shipped decision model must resolve");
-}
-
-#[test]
-fn supervisor_model_is_not_required_when_the_supervisor_is_off() {
-	let mut config = template_config();
-	config.supervisor.model.model = Some(String::new());
-	config.supervisor.enabled = false;
-	config
-		.validate_model_profiles()
-		.expect("a disabled supervisor never runs the planner");
 }

@@ -54,15 +54,9 @@ terminal(command="echo 'Refactor the auth module' | octomind run developer --for
 
 Restrict file writes to the working directory with `--sandbox`.
 
-Completion verification may offer one evidence advisory per user turn and then check completion again. Configure
-`[supervisor.gate] unsettled_advisory` (default `true`). The advisory is skipped when a recognized check passed after
-the agent's last change (hand-back stops excepted); the unknown conditions are then only reported to the user. With gate evaluation enabled, a
-calibrated check removes conditions whose specific case recorded actions exercised; otherwise every condition the
-verifier left unknown remains eligible.
-The advisory is not a failure or a block.
-With `[supervisor.advise] enabled = true` (default `false`), a loop or recovery alarm note is written by the supervisor
-model and cites one tool receipt (`#N`); it is an observation, never a command, and one alarm in four keeps the plain
-note as a control. Records land in `advise.jsonl` in the data directory.
+The optional Besydr plugin checks completion before a turn may end, plans, condenses tool output and learns lessons. It is
+listed in a new config and downloaded on first use; set `enabled = false` on its `[[plugins]]` entry (or remove the entry)
+to run a plain agent loop. Its settings live in Besydr's own config file; see https://besydr.com/docs.
 
 ## Iterative Work (Daemon + send)
 
@@ -157,15 +151,6 @@ Success criteria:
 3. Always scope Octomind sessions to a single repo/workdir.
 4. For long tasks, provide progress updates from `process` logs.
 5. Report concrete outcomes (files changed, tests, remaining risks).
-
-
-## Local inference lifecycle
-
-Hindsight uses an automatically started local worker shared by Octomind processes in the
-same runtime directory. It may remain alive for up to 15 idle minutes. Use normal Octomind
-commands; `hindsight-worker` is an internal process entry point, not an agent command.
-CoreML compiled-model cache reuse is macOS-only; Linux and Windows keep their existing
-execution-provider selection.
 
 Model profiles accept `request_timeout_seconds` (total deadline per HTTP/WebSocket attempt) and `stream_timeout_seconds` (SSE/WebSocket response inactivity, default `0` = disabled). Stream activity never extends the total deadline; WebSocket ping/pong does not reset response inactivity.
 

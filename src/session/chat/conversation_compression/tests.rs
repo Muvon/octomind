@@ -3792,3 +3792,56 @@ async fn a_user_turn_clears_the_fold_cooldown_and_folds() {
 		"asking must not rewrite the prompt"
 	);
 }
+
+async fn session_with_stub(
+	name: &str,
+	subscribe: &[&str],
+) -> (
+	crate::session::chat::session::ChatSession,
+	crate::plugins::test_support::StubPlugin,
+) {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![msg("system"), msg("user")]);
+	session.session.info.name = name.to_string();
+	let stub = crate::plugins::test_support::StubPlugin::new(subscribe);
+	crate::plugins::test_support::connect_stub(name, "developer", std::path::Path::new("/tmp"), &stub).await;
+	(session, stub)
+}
+
+#[tokio::test]
+async fn compact_before_tells_the_plugin_whether_the_user_asked() {
+	let (mut session, stub) = session_with_stub("compact-before-unit", &["compact.before"]).await;
+	super::send_compact_before(&mut session, true).await.unwrap();
+	super::send_compact_before(&mut session, false).await.unwrap();
+	let forced: Vec<bool> = stub
+		.sent("compact.before")
+		.iter()
+		.map(|params| params["forced"].as_bool().unwrap_or(false))
+		.collect();
+	assert_eq!(forced, vec![true, false]);
+	crate::plugins::end_session("compact-before-unit");
+}
+
+#[tokio::test]
+async fn compact_after_carries_the_anchor_and_resets_the_history() {
+	let (mut session, stub) = session_with_stub("compact-after-unit", &["compact.after", "compact.before"]).await;
+	session.session.info.anchor.intent = "Ship the feature".to_string();
+	super::send_compact_after(&session).await;
+	let sent = stub.sent("compact.after");
+	assert_eq!(sent.len(), 1);
+	assert_eq!(sent[0]["goal"], "Ship the feature");
+	assert_eq!(sent[0]["carried_summary"], "<intent>Ship the feature</intent>\n");
+
+	// The next event carries the full list again.
+	super::send_compact_before(&mut session, false).await.unwrap();
+	assert_eq!(stub.sent("compact.before")[0]["messages_reset"], true);
+	crate::plugins::end_session("compact-after-unit");
+}
+
+#[tokio::test]
+async fn compaction_sends_nothing_without_a_plugin() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![msg("system"), msg("user")]);
+	session.session.info.name = "compact-no-plugin-unit".to_string();
+	super::send_compact_before(&mut session, true).await.unwrap();
+	super::send_compact_after(&session).await;
+	assert!(!crate::plugins::active("compact-no-plugin-unit"));
+}

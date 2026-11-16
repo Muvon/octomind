@@ -37,6 +37,14 @@ fn template_version_matches_constant() {
 }
 
 #[test]
+fn v31_template_version_matches_the_last_supervisor_era_version() {
+	assert_eq!(
+		supervisor_era_plan().target_version(V31_CONFIG_TEMPLATE).unwrap(),
+		SUPERVISOR_ERA_LAST_VERSION
+	);
+}
+
+#[test]
 fn current_template_needs_no_migration() {
 	assert!(plan()
 		.migrate(DEFAULT_CONFIG_TEMPLATE, DEFAULT_CONFIG_TEMPLATE)
@@ -46,23 +54,23 @@ fn current_template_needs_no_migration() {
 
 #[test]
 fn config_without_version_is_treated_as_v0() {
-	assert_eq!(plan().version_of("log_level = \"info\"\n").unwrap(), 0);
+	assert_eq!(supervisor_era_plan().version_of("log_level = \"info\"\n").unwrap(), 0);
 }
 
 #[test]
 fn v0_config_gets_stamped_and_upgraded() {
-	let migration = plan()
-		.migrate("log_level = \"info\"\n", DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate("log_level = \"info\"\n", V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v0 must migrate");
 
 	assert_eq!(migration.from_version, 0);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(
 		migrated["version"].as_integer(),
-		Some(i64::from(CURRENT_CONFIG_VERSION))
+		Some(i64::from(SUPERVISOR_ERA_LAST_VERSION))
 	);
 	assert_eq!(migrated["log_level"].as_str(), Some("info"));
 	assert_eq!(
@@ -91,11 +99,11 @@ hints_enabled = true
 enabled = true
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v2 must migrate");
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migrated["compression"]["attention"]["enabled"].as_bool(), Some(true));
 	assert_eq!(migrated["compression"]["attention"]["validator"].as_bool(), Some(true));
@@ -137,19 +145,19 @@ model = "openrouter:custom/model"
 max_revisions = 9
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v1 must migrate");
 
 	assert_eq!(migration.from_version, 1);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert!(migration.content.contains("# keep me"));
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(
 		migrated["version"].as_integer(),
-		Some(i64::from(CURRENT_CONFIG_VERSION))
+		Some(i64::from(SUPERVISOR_ERA_LAST_VERSION))
 	);
 	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 	assert_eq!(
@@ -177,14 +185,14 @@ knowledge_retention = 17
 sequential_threshold = 3
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v2 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 	assert_eq!(migration.from_version, 2);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert!(migration.content.contains("# keep compression notes"));
 	assert!(migrated["compression"].get("hints_enabled").is_none());
 	assert!(migrated["compression"].get("hints_pressure_threshold").is_none());
@@ -214,13 +222,13 @@ threshold = 120000
 target_ratio = 4.0
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v3 must migrate");
 
 	assert_eq!(migration.from_version, 3);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert!(migration.content.contains("# keep my notes"));
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -247,12 +255,12 @@ max_tokens = 1536
 trajectory_max_tokens = 3072
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v4 must migrate");
 	assert_eq!(migration.from_version, 4);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
@@ -268,8 +276,8 @@ trajectory_max_tokens = 3072
 fn v3_without_pressure_levels_takes_template_threshold() {
 	let existing = "version = 3\n\n[compression]\nhints_enabled = true\n";
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v3 must migrate");
 
@@ -292,12 +300,12 @@ knowledge_retention = 17
 threshold = 12345
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v5 must migrate");
 	assert_eq!(migration.from_version, 5);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let compression = migrated["compression"].as_table().unwrap();
@@ -320,12 +328,12 @@ model = "openai:gpt-5-mini"
 max_tokens = 16000
 ignore_cost = true
 "#;
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v7 must migrate");
 	assert_eq!(migration.from_version, 7);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let model = migrated["compression"]["model"].as_table().unwrap();
 	assert!(!model.contains_key("ignore_cost"));
@@ -342,12 +350,12 @@ enabled = true
 tokens_threshold = 4321
 model = "anthropic:custom"
 "#;
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v8 must migrate");
 	assert_eq!(migration.from_version, 8);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let condense = &migrated["supervisor"]["condense"];
 	assert_eq!(condense["adaptive"].as_bool(), Some(false));
@@ -372,8 +380,8 @@ content = "content"
 [supervisor.learning.retrieve]
 tool = "remember"
 "#;
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v9 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -393,11 +401,11 @@ fn v10_adds_disabled_required_learning_evolution_table() {
 enabled = true
 model = "openai:gpt-5-mini"
 "#;
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v10 must migrate");
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(
 		migrated["supervisor"]["learning"]["evolution"]["enabled"].as_bool(),
@@ -409,22 +417,18 @@ model = "openai:gpt-5-mini"
 #[test]
 fn future_version_is_rejected_rather_than_downgraded() {
 	let future = DEFAULT_CONFIG_TEMPLATE.replacen(&format!("version = {CURRENT_CONFIG_VERSION}"), "version = 99", 1);
-	let error = plan()
-		.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
-		.expect_err("a newer config must not be rewritten");
+	let error = upgrade(&future).err().expect("a newer config must not be rewritten");
 	assert!(error.to_string().contains("newer than this octomind"));
 }
 
 #[test]
 fn invalid_toml_fails_before_any_write() {
-	assert!(plan()
-		.migrate("version = 1\n[unclosed\n", DEFAULT_CONFIG_TEMPLATE)
-		.is_err());
+	assert!(upgrade("version = 1\n[unclosed\n").is_err());
 }
 
 #[test]
 fn non_integer_version_is_rejected() {
-	assert!(plan().migrate("version = \"1\"\n", DEFAULT_CONFIG_TEMPLATE).is_err());
+	assert!(upgrade("version = \"1\"\n").is_err());
 }
 
 #[test]
@@ -461,7 +465,7 @@ fn force_upgrade_errors_when_config_is_missing() {
 	let missing = std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
 	assert!(force_upgrade_config(&missing).is_err());
 }
-// --- plan() structure -------------------------------------------------
+// --- supervisor_era_plan() structure -------------------------------------------------
 
 /// The chain must be walkable from every declared version up to the
 /// current one. A missing step, a non-advancing step, or an overshooting
@@ -472,10 +476,10 @@ fn force_upgrade_errors_when_config_is_missing() {
 fn every_declared_version_migrates_up_to_current() {
 	for version in 0..CURRENT_CONFIG_VERSION {
 		let existing = format!("version = {version}\n");
-		let migration = plan()
-			.migrate(&existing, DEFAULT_CONFIG_TEMPLATE)
+		let migration = upgrade(&existing)
 			.unwrap_or_else(|e| panic!("version {version} must migrate: {e}"))
-			.unwrap_or_else(|| panic!("version {version} must not already be current"));
+			.unwrap_or_else(|| panic!("version {version} must not already be current"))
+			.migration;
 		assert_eq!(migration.from_version, version);
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 	}
@@ -485,11 +489,7 @@ fn every_declared_version_migrates_up_to_current() {
 fn a_sparse_config_at_the_current_version_is_left_untouched() {
 	// At the target version migrate short-circuits before any step runs,
 	// so even a document missing every migrated field is not rewritten.
-	assert!(plan()
-		.migrate(
-			&format!("version = {}\n", CURRENT_CONFIG_VERSION),
-			DEFAULT_CONFIG_TEMPLATE
-		)
+	assert!(upgrade(&format!("version = {}\n", CURRENT_CONFIG_VERSION))
 		.unwrap()
 		.is_none());
 }
@@ -497,7 +497,7 @@ fn a_sparse_config_at_the_current_version_is_left_untouched() {
 // --- individual steps, called directly on DocumentMut -----------------
 
 fn template_document() -> toml_edit::DocumentMut {
-	DEFAULT_CONFIG_TEMPLATE.parse().expect("embedded template must parse")
+	V31_CONFIG_TEMPLATE.parse().expect("embedded template must parse")
 }
 
 fn user_document(content: &str) -> toml_edit::DocumentMut {
@@ -866,8 +866,8 @@ fn v17_gains_evolution_control_thresholds_and_keeps_enabled() {
 enabled = true
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v17 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -889,15 +889,15 @@ model = "typesafe:jev-latest"
 gate = true
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v18 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let decision = &migrated["decision"];
 
 	assert_eq!(migration.from_version, 18);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert!(!decision.as_table().unwrap().contains_key("evolution"));
 	assert_eq!(decision["supervisor"].as_bool(), Some(true));
 	assert_eq!(decision["model"].as_str(), Some("typesafe:jev-latest"));
@@ -915,15 +915,15 @@ model = "typesafe:jev-latest"
 gate = true
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v20 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let hindsight = &migrated["supervisor"]["hindsight"];
 
 	assert_eq!(migration.from_version, 20);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert_eq!(hindsight["enabled"].as_bool(), Some(false));
 	assert_eq!(hindsight["model"].as_str(), Some("muvon/hindsight"));
 	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(true));
@@ -941,14 +941,14 @@ enabled = true
 enabled = true
 "#;
 
-	let migration = plan()
-		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(existing, V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.expect("v26 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 	assert_eq!(migration.from_version, 26);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert_eq!(migrated["supervisor"]["advise"]["enabled"].as_bool(), Some(false));
 	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(true));
 	assert_eq!(migrated["supervisor"]["hindsight"]["enabled"].as_bool(), Some(true));
@@ -957,12 +957,12 @@ enabled = true
 #[test]
 fn v27_gains_idle_compaction_on_and_keeps_an_explicit_choice() {
 	let migrate = |existing: &str| -> toml::Value {
-		let migration = plan()
-			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		let migration = supervisor_era_plan()
+			.migrate(existing, V31_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v27 must migrate");
 		assert_eq!(migration.from_version, 27);
-		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+		assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 		toml::from_str(&migration.content).unwrap()
 	};
 
@@ -981,18 +981,24 @@ fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 			.map(|key| format!("# {key} preference\n{key} = {} # {key} rationale\n", key == enabled))
 			.concat();
 		let original = format!("version = 21\n# custom decision settings\n[supervisor.evaluate]\n# custom decision model\nmodel = \"typesafe:jev-latest\" # preserve me\nrecall = true\nskills = true\ncapabilities = true\ncompression = true\n{flags}");
-		let migration = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+		let migration = supervisor_era_plan()
+			.migrate(&original, V31_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(value["version"].as_integer(), Some(i64::from(CURRENT_CONFIG_VERSION)));
+		assert_eq!(
+			value["version"].as_integer(),
+			Some(i64::from(SUPERVISOR_ERA_LAST_VERSION))
+		);
 		assert!(value
 			.get("supervisor")
 			.and_then(|supervisor| supervisor.get("evaluate"))
 			.is_none());
-		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
-		assert_eq!(decision.model.as_deref(), Some("typesafe:jev-latest"));
-		assert!(
-			decision.supervisor && decision.recall && decision.skills && decision.capabilities && decision.compression
-		);
+		let decision = &value["decision"];
+		assert_eq!(decision["model"].as_str(), Some("typesafe:jev-latest"));
+		for key in ["supervisor", "recall", "skills", "capabilities", "compression"] {
+			assert_eq!(decision[key].as_bool(), Some(true), "decision.{key} after {enabled}");
+		}
 		assert!(migration.content.contains("# preserve me"));
 		assert!(migration.content.contains("# custom decision model"));
 		assert!(migration.content.contains("# custom decision settings"));
@@ -1006,27 +1012,32 @@ fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 #[test]
 fn v22_fills_missing_flags_and_preserves_absent_or_empty_new_model() {
 	for existing in ["version = 21\n", "version = 21\n[supervisor.evaluate]\ngate = false\n"] {
-		let migration = plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+		let migration = supervisor_era_plan()
+			.migrate(existing, V31_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
-		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
-		assert!(
-			!decision.supervisor
-				&& !decision.recall
-				&& !decision.skills
-				&& !decision.capabilities
-				&& !decision.compression
-		);
+		for key in ["supervisor", "recall", "skills", "capabilities", "compression"] {
+			assert_eq!(
+				value["decision"][key].as_bool(),
+				Some(false),
+				"decision.{key} in {existing:?}"
+			);
+		}
 	}
 	for model in ["", "model = \"\"\n"] {
 		let original = format!("version = 21\n[decision]\n{model}supervisor = true\n");
-		let migration = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+		let migration = supervisor_era_plan()
+			.migrate(&original, V31_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
-		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
+		let decision = &value["decision"];
 		assert_eq!(
-			decision.model.as_deref(),
+			decision.get("model").and_then(toml::Value::as_str),
 			if model.is_empty() { None } else { Some("") }
 		);
-		assert!(decision.supervisor);
+		assert_eq!(decision["supervisor"].as_bool(), Some(true));
 	}
 }
 
@@ -1050,14 +1061,17 @@ fn v22_rejects_malformed_values_and_conflicting_tables() {
 		"[decision]\nsupervisor = true\n[supervisor.evaluate]\ngate = false",
 	] {
 		assert!(
-			plan()
-				.migrate(&format!("version = 21\n{body}\n"), DEFAULT_CONFIG_TEMPLATE)
+			supervisor_era_plan()
+				.migrate(&format!("version = 21\n{body}\n"), V31_CONFIG_TEMPLATE)
 				.is_err(),
 			"{body}"
 		);
 	}
 	let original = "version = 21\n[decision]\nrecall = true\nsupervisor = true\n[supervisor.evaluate]\nrecall = true\ngate = true\n";
-	let migration = plan().migrate(original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let migration = supervisor_era_plan()
+		.migrate(original, V31_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
 	assert_eq!(value["decision"]["supervisor"].as_bool(), Some(true));
@@ -1065,8 +1079,8 @@ fn v22_rejects_malformed_values_and_conflicting_tables() {
 
 #[test]
 fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
-	let migration = plan()
-		.migrate("version = 22\n", DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate("version = 22\n", V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -1076,8 +1090,8 @@ fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
 		Some("Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>")
 	);
 
-	let migration = plan()
-		.migrate("version = 22\ncommit_attribution = \"\"\n", DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate("version = 22\ncommit_attribution = \"\"\n", V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -1086,8 +1100,8 @@ fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
 
 #[test]
 fn v24_adds_the_loop_stop_and_keeps_existing_supervisor_values() {
-	let migration = plan()
-		.migrate("version = 23\n[supervisor]\nenabled = false\n", DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate("version = 23\n[supervisor]\nenabled = false\n", V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -1095,10 +1109,10 @@ fn v24_adds_the_loop_stop_and_keeps_existing_supervisor_values() {
 	assert_eq!(value["supervisor"]["enabled"].as_bool(), Some(false));
 	assert_eq!(value["supervisor"]["max_identical_rounds"].as_integer(), Some(10));
 
-	let migration = plan()
+	let migration = supervisor_era_plan()
 		.migrate(
 			"version = 23\n[supervisor]\nenabled = true\nmax_identical_rounds = 0\n",
-			DEFAULT_CONFIG_TEMPLATE,
+			V31_CONFIG_TEMPLATE,
 		)
 		.unwrap()
 		.unwrap();
@@ -1108,10 +1122,10 @@ fn v24_adds_the_loop_stop_and_keeps_existing_supervisor_values() {
 
 #[test]
 fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
-	let migration = plan()
+	let migration = supervisor_era_plan()
 		.migrate(
 			"version = 24\n[supervisor.gate]\nenabled = false\n",
-			DEFAULT_CONFIG_TEMPLATE,
+			V31_CONFIG_TEMPLATE,
 		)
 		.unwrap()
 		.unwrap();
@@ -1122,10 +1136,10 @@ fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
 	assert_eq!(gate["unsettled_advisory"].as_bool(), Some(true));
 	assert!(gate.get("unsettled_confidence_threshold").is_none());
 
-	let migration = plan()
+	let migration = supervisor_era_plan()
 		.migrate(
 			"version = 24\n[supervisor.gate]\nenabled = true\nunsettled_advisory = false\nunsettled_confidence_threshold = 0.9\n",
-			DEFAULT_CONFIG_TEMPLATE,
+			V31_CONFIG_TEMPLATE,
 		)
 		.unwrap()
 		.unwrap();
@@ -1137,22 +1151,26 @@ fn v25_adds_the_unsettled_advisory_and_keeps_existing_gate_values() {
 
 #[test]
 fn v29_removes_unsettled_confidence_threshold_and_preserves_the_switch() {
-	let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+	let mut document: toml_edit::DocumentMut = V31_CONFIG_TEMPLATE.parse().unwrap();
 	document["version"] = toml_edit::value(28);
 	document["supervisor"]["gate"]["unsettled_advisory"] = toml_edit::value(false);
 	document["supervisor"]["gate"]["unsettled_confidence_threshold"] = toml_edit::value(0.9);
-	let migration = plan()
-		.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
+	let migration = supervisor_era_plan()
+		.migrate(&document.to_string(), V31_CONFIG_TEMPLATE)
 		.unwrap()
 		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 28);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert!(value["supervisor"]["gate"]
 		.get("unsettled_confidence_threshold")
 		.is_none());
-	let (config, ignored) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
-	assert!(!config.supervisor.gate.unsettled_advisory);
+	assert_eq!(value["supervisor"]["gate"]["unsettled_advisory"].as_bool(), Some(false));
+
+	// The whole upgrade of the same document leaves nothing the current schema ignores.
+	let current: toml::Value =
+		toml::from_str(&upgrade(&document.to_string()).unwrap().unwrap().migration.content).unwrap();
+	let (config, ignored) = crate::config::validation::deserialize_with_ignored_keys(current).unwrap();
 	assert!(ignored.is_empty());
 	config.validate().expect("migrated config validates");
 }
@@ -1160,10 +1178,13 @@ fn v29_removes_unsettled_confidence_threshold_and_preserves_the_switch() {
 #[test]
 fn v30_renames_old_agent_tags_in_taps_and_default() {
 	let input = "version = 29\ndefault = \"developer:cto\" # lead\nlog_level = \"info\"\n\n[taps]\n\"developer:cto\" = \"openai:gpt-5\"\n\"travel:planner\" = \"openai:gpt-4o\"\n\"assistant:concierge\" = \"openai:gpt-4.1\"\n\"developer:general\" = \"openai:o3\"\ndoctor = \"openai:o3-mini\"\n";
-	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let migration = supervisor_era_plan()
+		.migrate(input, V31_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 29);
-	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(migration.to_version, SUPERVISOR_ERA_LAST_VERSION);
 	assert_eq!(value["default"].as_str(), Some("developer:chief"));
 	assert!(migration.content.contains("default = \"developer:chief\" # lead"));
 	let taps = value["taps"].as_table().unwrap();
@@ -1179,7 +1200,10 @@ fn v30_renames_old_agent_tags_in_taps_and_default() {
 #[test]
 fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
 	let input = "version = 29\n[taps]\n\"video:producer\" = \"old-model\"\n\"video:chief\" = \"new-model\"\n";
-	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let migration = supervisor_era_plan()
+		.migrate(input, V31_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	let taps = value["taps"].as_table().unwrap();
 	assert_eq!(taps.len(), 1);
@@ -1190,17 +1214,20 @@ fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
 fn v30_leaves_a_config_without_old_tags_unchanged_except_the_version() {
 	let input =
 		"version = 29\ndefault = \"assistant:general\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
-	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let migration = supervisor_era_plan()
+		.migrate(input, V31_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
 	// Later steps may append sections; what v30 could have rewritten stays as written.
 	assert!(migration
 		.content
-		.starts_with(&input.replace("version = 29", &format!("version = {CURRENT_CONFIG_VERSION}"))));
+		.starts_with(&input.replace("version = 29", &format!("version = {SUPERVISOR_ERA_LAST_VERSION}"))));
 }
 
 #[test]
 fn v26_adds_disabled_stream_timeout_and_preserves_explicit_limits() {
 	for stream_setting in [None, Some(0), Some(90)] {
-		let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+		let mut document: toml_edit::DocumentMut = V31_CONFIG_TEMPLATE.parse().unwrap();
 		document["version"] = toml_edit::value(25);
 		document["model"]["request_timeout_seconds"] = toml_edit::value(600);
 		match stream_setting {
@@ -1212,14 +1239,138 @@ fn v26_adds_disabled_stream_timeout_and_preserves_explicit_limits() {
 					.remove("stream_timeout_seconds");
 			}
 		}
-		let migration = plan()
-			.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.unwrap();
+		let migration = upgrade(&document.to_string()).unwrap().unwrap().migration;
 		let config: crate::config::Config = toml::from_str(&migration.content).unwrap();
 		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
 		assert_eq!(config.request_timeout_seconds, 600);
 		assert_eq!(config.stream_timeout_seconds, stream_setting.unwrap_or(0) as u64);
+	}
+}
+
+#[test]
+fn v32_removes_the_supervisor_and_decision_tables_and_keeps_everything_else() {
+	let existing = "# my config\nversion = 31\nlog_level = \"info\" # quiet\n\n[decision]\nrecall = true\n\n[supervisor]\nenabled = true\n\n# keep this table\n[my_custom_section]\nflag = true\n";
+	let migration = plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+
+	assert_eq!(migration.from_version, 31);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(value["version"].as_integer(), Some(i64::from(CURRENT_CONFIG_VERSION)));
+	assert!(value.get("supervisor").is_none());
+	assert!(value.get("decision").is_none());
+	assert_eq!(value["log_level"].as_str(), Some("info"));
+	assert_eq!(value["my_custom_section"]["flag"].as_bool(), Some(true));
+	for comment in ["# my config", "# quiet", "# keep this table"] {
+		assert!(migration.content.contains(comment), "{comment} must survive");
+	}
+}
+
+/// Version 31 -> 32 on its own, against the current template.
+fn migrate_v32(existing: &str) -> toml::Value {
+	let migration = plan()
+		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.expect("a version 31 fixture must migrate");
+	toml::from_str(&migration.content).unwrap()
+}
+
+fn template_max_identical_rounds() -> i64 {
+	toml::from_str::<toml::Value>(DEFAULT_CONFIG_TEMPLATE).unwrap()["max_identical_rounds"]
+		.as_integer()
+		.unwrap()
+}
+
+/// The `besydr` entry of the default plugin list, as the step must add it.
+fn default_plugin_value() -> toml::Value {
+	let defaults: toml::Value = toml::from_str(&format!("plugins = {DEFAULT_PLUGINS_TOML}\n")).unwrap();
+	defaults["plugins"][0].clone()
+}
+
+#[test]
+fn v32_moves_the_users_max_identical_rounds_to_the_root() {
+	for (existing, expected) in [
+		("version = 31\n\n[supervisor]\nmax_identical_rounds = 4\n", 4),
+		("version = 31\n\n[supervisor]\nmax_identical_rounds = 0\n", 0),
+	] {
+		let value = migrate_v32(existing);
+		assert_eq!(value["max_identical_rounds"].as_integer(), Some(expected), "{existing}");
+		assert!(value.get("supervisor").is_none());
+	}
+}
+
+#[test]
+fn v32_gives_max_identical_rounds_the_template_value_when_the_user_had_none() {
+	for existing in ["version = 31\n", "version = 31\n\n[supervisor]\nenabled = true\n"] {
+		let value = migrate_v32(existing);
+		assert_eq!(
+			value["max_identical_rounds"].as_integer(),
+			Some(template_max_identical_rounds()),
+			"{existing}"
+		);
+	}
+}
+
+#[test]
+fn v32_adds_the_default_plugin_entry_when_plugins_is_absent() {
+	let value = migrate_v32("version = 31\n");
+	assert_eq!(value["plugins"], toml::Value::Array(vec![default_plugin_value()]));
+}
+
+#[test]
+fn v32_appends_the_default_plugin_entry_to_an_inline_plugins_array() {
+	let existing = "version = 31\nplugins = [{ name = \"mine\", type = \"stdio\", command = \"prog\" }]\n";
+	let mine = toml::from_str::<toml::Value>(existing).unwrap()["plugins"][0].clone();
+	let value = migrate_v32(existing);
+	assert_eq!(value["plugins"], toml::Value::Array(vec![mine, default_plugin_value()]));
+}
+
+#[test]
+fn v32_appends_the_default_plugin_entry_to_plugins_tables() {
+	let existing = "version = 31\n\n[[plugins]]\nname = \"mine\"\ntype = \"stdio\"\ncommand = \"prog\"\n";
+	let mine = toml::from_str::<toml::Value>(existing).unwrap()["plugins"][0].clone();
+	let value = migrate_v32(existing);
+	assert_eq!(value["plugins"], toml::Value::Array(vec![mine, default_plugin_value()]));
+}
+
+#[test]
+fn v32_leaves_an_existing_besydr_entry_alone_even_when_the_supervisor_was_off() {
+	for existing in [
+		"version = 31\nplugins = [{ name = \"besydr\", type = \"stdio\", command = \"my-besydr\" }]\n\n[supervisor]\nenabled = false\n",
+		"version = 31\n\n[supervisor]\nenabled = false\n\n[[plugins]]\nname = \"besydr\"\ntype = \"stdio\"\ncommand = \"my-besydr\"\n",
+	] {
+		let users_plugins = toml::from_str::<toml::Value>(existing).unwrap()["plugins"].clone();
+		let value = migrate_v32(existing);
+		assert_eq!(value["plugins"], users_plugins, "{existing}");
+	}
+}
+
+#[test]
+fn v32_rejects_plugins_of_another_type() {
+	for existing in [
+		"version = 31\nplugins = 5\n",
+		"version = 31\nplugins = \"besydr\"\n",
+		"version = 31\n\n[plugins]\nname = \"besydr\"\n",
+	] {
+		assert!(plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE).is_err(), "{existing}");
+	}
+}
+
+#[test]
+fn v32_switches_the_added_entry_off_only_when_the_supervisor_was_off() {
+	for (supervisor_table, expected) in [
+		("[supervisor]\nenabled = false\n", Some(false)),
+		("[supervisor]\nenabled = true\n", None),
+		("[supervisor]\nmax_identical_rounds = 3\n", None),
+		("", None),
+	] {
+		let value = migrate_v32(&format!("version = 31\n\n{supervisor_table}"));
+		let entry = &value["plugins"][0];
+		assert_eq!(entry["name"].as_str(), Some("besydr"));
+		assert_eq!(
+			entry.get("enabled").and_then(toml::Value::as_bool),
+			expected,
+			"{supervisor_table:?}"
+		);
 	}
 }
 
@@ -1232,7 +1383,7 @@ fn v26_adds_websocket_request_transport_and_preserves_explicit_choice() {
 		(Some("websocket"), RequestTransportConfig::WebSocket),
 		(Some("http"), RequestTransportConfig::Http),
 	] {
-		let mut document: toml_edit::DocumentMut = DEFAULT_CONFIG_TEMPLATE.parse().unwrap();
+		let mut document: toml_edit::DocumentMut = V31_CONFIG_TEMPLATE.parse().unwrap();
 		document["version"] = toml_edit::value(25);
 		match transport_setting {
 			Some(value) => document["model"]["request_transport"] = toml_edit::value(value),
@@ -1240,14 +1391,10 @@ fn v26_adds_websocket_request_transport_and_preserves_explicit_choice() {
 				document["model"].as_table_mut().unwrap().remove("request_transport");
 			}
 		}
-		let migration = plan()
-			.migrate(&document.to_string(), DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.unwrap();
+		let migration = upgrade(&document.to_string()).unwrap().unwrap().migration;
 		let config: crate::config::Config = toml::from_str(&migration.content).unwrap();
 		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
 		assert_eq!(config.request_transport, expected);
-		assert_eq!(config.get_supervisor_model_profile().request_transport, expected);
 		assert_eq!(config.get_compression_model_profile().request_transport, expected);
 	}
 }

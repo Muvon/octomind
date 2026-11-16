@@ -44,7 +44,6 @@ Set `OPENROUTER_API_KEY` in your environment, then run:
 ```bash
 octomind run developer:general \
   --model openrouter:openai/gpt-4.1-mini \
-  --config 'supervisor.model.name="openrouter:openai/gpt-4.1-mini"' \
   --config 'compression.model.name="openrouter:openai/gpt-4.1-mini"' \
   --config 'max_request_spending_threshold=0.25'
 ```

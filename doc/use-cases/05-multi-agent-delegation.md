@@ -328,8 +328,8 @@ name = "anthropic:claude-sonnet-4-6"
 temperature = 0.1
 ```
 
-Octomind has exactly three model purposes: main, supervisor, and compression. Agent role overrides belong to the main
-purpose; they do not introduce another purpose. The shipped default for all three is `octohub:auto` after `octomind
+Octomind has two model purposes: main and compression. Agent role overrides belong to the main
+purpose; they do not introduce another purpose. The shipped default for both is `octohub:auto` after `octomind
 login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the specialist roles above do. The
 `filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_editor` for
 edits. Verify the complete effective tool surface before relying on a restricted role.

@@ -72,18 +72,18 @@ octomind run architecture_reader
 
 ### Model Purposes
 
-There are exactly three model purposes, represented by `ModelPurpose` in `src/providers.rs`:
+Octomind makes model requests for two purposes, represented by `ModelPurpose` in `src/providers.rs`. The enum still has a
+`Supervisor` variant, which is part of the contract with the Octomind hub; no octomind code sends it now.
 
 | Purpose | Configuration owner | Typical callers |
 |---------|---------------------|-----------------|
 | Main | `[model]`, with role profile and runtime name overrides | normal session and workflow-step requests |
-| Supervisor | `[supervisor.model]` | gate, plan, learning, condense, and other supervisor work |
 | Compression | `[compression.model]` | conversation compression |
 
-The complete `[model]` profile is the inheritance baseline. Role, `[supervisor.model]`, and `[compression.model]` tables
-are partial overrides. The shipped default for every purpose is `octohub:auto`, authenticated through `octomind login`
-as shown above. `src/config/model.rs` resolves missing override fields against the main profile; the explicit supervisor
-and compression defaults come from `config-templates/default.toml`.
+The complete `[model]` profile is the inheritance baseline. Role and `[compression.model]` tables
+are partial overrides. The shipped default for both purposes is `octohub:auto`, authenticated through `octomind login`
+as shown above. `src/config/model.rs` resolves missing override fields against the main profile; the explicit
+compression default comes from `config-templates/default.toml`. A plugin such as Besydr uses its own model settings.
 
 ## MCP Activation and Tool Routing
 
@@ -91,7 +91,7 @@ The default config declares four builtin servers:
 
 | Server | Tool surface |
 |--------|--------------|
-| `core` | `recall` when attention or attention governance is enabled; plans are supervisor-internal |
+| `core` | `recall` when attention or attention governance is enabled; planning is done by a plugin, not a tool |
 | `orchestration` | `tap`, `schedule`, `monitor` |
 | `runtime` | `mcp`, `agent`, `skill`, `capability` management |
 | `agent` | generated `agent_<name>` execution tools |
@@ -112,8 +112,8 @@ servers, and other runtime services by session ID. This keeps concurrent ACP and
 logical queues even though some underlying process registries and the global tool map are process-wide.
 
 Asynchronous external input enters `src/session/inbox.rs` as an `InboxMessage` with a typed source such as schedule,
-monitor, background agent/job, tap run, skill, inject, webhook, guardrail hook, or validator. Supervisor continuation
-notes have separate paths; they are not all inbox messages. CLI daemon, ACP, and WebSocket loops drain the queue and run
+monitor, background agent/job, tap run, skill, inject, webhook, guardrail hook, or validator. Plugin notes have separate
+paths; they are not all inbox messages. CLI daemon, ACP, and WebSocket loops drain the queue and run
 the same AI response pipeline for each injected turn.
 
 For a CLI daemon, leave the first command running and send from another terminal:
@@ -168,21 +168,22 @@ octomind run --resume architecture-notes
 `/done` has both CLI/ACP prompt interception and a shared command handler for ACP extension and WebSocket command
 messages. See [Compression](../usage/08-compression.md) for the user-facing behavior.
 
-### Learning and observability
+### Plugins and observability
 
-Learning lives in `src/supervisor/learning/`. Detached extraction writes file records, and recall constructs one bounded
-Active Memory Pack per genuine user turn. `src/session/chat/session/api_executor.rs` materializes it for requests and
-removes it afterward; exposure alone earns no outcome credit. Evolution is disabled by default. See [Learning
-Benchmarks](05-learning-benchmark.md) for evaluation scope, and [Learning](../usage/13-learning.md) for storage and
-inspection.
+Supervising and learning are not part of octomind. A plugin is a separate program that octomind sends events to (session
+start, each prompt, before and after tool calls, the end of a turn) and whose answers it applies; the host is
+`src/plugins/` and the config entry is `src/config/plugins.rs`. A new config lists one plugin, Besydr. The pieces octomind
+kept from the old built-in supervisor are `src/session/accounting/`, `src/session/self_report.rs`,
+`src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`,
+`src/mcp/agent/handback.rs`, and `src/plugins/workdir.rs`. See [Besydr plugin](../usage/14-supervisor.md) and
+[Learning](../usage/13-learning.md) for the user-facing side.
 
-`src/supervisor/stats.rs` holds process-global, non-persisted counters shown in `/info`. These can mix concurrent
-sessions. Persisted session accounting lives in `SessionInfo`; anonymous telemetry has its own explicit schema in
+`src/session/accounting/` holds what plugins and background folds spent on a session's behalf, shown in `/info`. Persisted
+session accounting lives in `SessionInfo`; anonymous telemetry has its own explicit schema in
 `src/telemetry.rs`. Do not infer one sink's contents from another.
 
 ```text
 /info
-/learning
 ```
 
 ## Troubleshooting and Error Boundaries
@@ -223,7 +224,7 @@ src/
     tool_map.rs                   process-global tool-to-server map
     process.rs                    external process state and notification bridges
     server.rs                     stdio and HTTP MCP clients
-    core/                         recall, plans, local project tools
+    core/                         recall, plan state, local project tools
     orchestration/                tap, schedule, monitor
     runtime/                      mcp, agent, skill, capability management
     agent/                        generated agent_<name> execution tools
@@ -240,11 +241,7 @@ src/
       response.rs                 response and tool-call processing
       conversation_compression/   compression gate, summary, archive, knowledge
       session/                     setup, loops, commands, API preparation/execution
-  supervisor/
-    gate.rs                       completion gate
-    plan.rs                       external plan controller
-    condense.rs                   oversized tool-result condenser
-    learning/                     extraction, retrieval, retention, evolution
+  plugins/                        plugin host: protocol, transports, install, per-session state
   sandbox/                        Linux Landlock and macOS Seatbelt policies
   logging/                        CLI/ACP/WebSocket tracing and ACP error sink
   providers.rs                    octolib adapter and model-purpose tagging

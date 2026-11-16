@@ -332,7 +332,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `build`, `style`
 
-Scopes match top-level modules or subsystems: `mcp`, `session`, `supervisor`, `compression`, `config`, `acp`, `websocket`, `agent`, `learning`, `chat`, `commands`, `schedule`, `sandbox`, `deps`, `release`
+Scopes match top-level modules or subsystems: `mcp`, `session`, `plugins`, `compression`, `config`, `acp`, `websocket`, `agent`, `chat`, `commands`, `schedule`, `sandbox`, `deps`, `release`
 
 Append `!` after the scope for breaking changes (`refactor(config)!: ...`). `CHANGELOG.md` is generated at release time from these messages — the subject line is what users read.
 

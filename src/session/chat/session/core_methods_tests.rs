@@ -907,8 +907,8 @@ fn raw_context_estimate_needs_cached_tools() {
 #[tokio::test]
 #[serial_test::serial]
 async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
+	use crate::session::accounting;
 	use crate::session::context::with_session_id;
-	use crate::supervisor::accounting;
 	accounting::take();
 	with_session_id("turn-split-accounting".into(), async {
 		let mut session = ChatSession::for_tests(Vec::new());

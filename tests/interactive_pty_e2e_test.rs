@@ -86,10 +86,8 @@ fn write_sandbox_config(home: &std::path::Path) {
 		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
-	config.supervisor.enabled = false;
 	// Learning is on by default and its retrieval/distill models point at
 	// octohub — a 401 there kills the interactive turn. Off entirely.
-	config.supervisor.learning.enabled = false;
 	config.telemetry = false;
 	config.auto_capabilities = false;
 	config.skills.auto_activation = false;

@@ -212,8 +212,6 @@ async fn test_process_tool_results_cancelled_returns_none() {
 #[tokio::test]
 async fn test_process_tool_results_request_spending_stop_returns_none() {
 	let mut config = template_config();
-	config.supervisor.enabled = true;
-	config.supervisor.plan.enabled = true;
 	config.max_request_spending_threshold = 0.0001;
 
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
@@ -345,41 +343,6 @@ async fn test_process_tool_results_injects_pending_hints_before_follow_up() {
 }
 
 #[tokio::test]
-async fn test_process_tool_results_injects_supervisor_steer_note() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
-		"steered",
-	)])
-	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let config = crate::session::chat::test_support::fake_provider_config();
-	let mut session = crate::session::chat::test_support::fake_session("do the work");
-	session.steer_pending = Some("<pay-attention>change approach</pay-attention>".to_string());
-	let results = vec![crate::mcp::McpToolResult::success(
-		"view".to_string(),
-		"i1".to_string(),
-		"body".to_string(),
-	)];
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-
-	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
-		.await
-		.expect("follow-up round trip");
-	assert!(outcome.is_some());
-
-	assert!(
-		session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.role == "user" && m.content.contains("change approach")),
-		"steer note injected during the tool loop"
-	);
-	assert!(session.steer_pending.is_none());
-}
-
-#[tokio::test]
 async fn test_process_tool_results_follow_up_error_propagates() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let error_body = serde_json::json!({"error": {"message": "upstream exploded"}});
@@ -476,7 +439,6 @@ async fn test_process_tool_results_delivers_background_results_mid_turn() {
 #[tokio::test]
 async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
 	let mut config = template_config();
-	config.supervisor.enabled = false;
 	config.max_request_spending_threshold = 0.0001;
 	config.mcp_response_tokens_threshold = 32;
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
@@ -514,4 +476,56 @@ async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
 		assert_eq!(images.len(), 1);
 		assert!(matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U="));
 	}
+}
+
+#[tokio::test]
+async fn test_process_tool_results_asks_plugins_before_the_follow_up_request() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"followed up",
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("do the work");
+	session.session.info.name = "o5-follow-up".to_string();
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE]).answer(serde_json::json!({
+		"note": ["FOLLOW-NOTE"],
+		"context": [{"name": "facts", "text": "FOLLOW-CONTEXT"}],
+	}));
+	connect_stub("o5-follow-up", "assistant", std::path::Path::new("."), &stub).await;
+	let results = vec![crate::mcp::McpToolResult::success(
+		"view".to_string(),
+		"i1".to_string(),
+		"body".to_string(),
+	)];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+		.await
+		.expect("follow-up round trip");
+	assert!(outcome.is_some());
+
+	let heard = &stub.sent(event::REQUEST_BEFORE)[0];
+	assert_eq!(heard["phase"], "follow_up");
+	assert_eq!(heard["turn"], "user");
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.role == "user" && m.content.contains("FOLLOW-NOTE")));
+	// The context block rode on the request and left no message behind.
+	assert_eq!(session.active_memory_pack.as_deref(), Some("FOLLOW-CONTEXT"));
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.all(|m| m.name.as_deref() != Some("__active_memory_pack")));
+
+	crate::plugins::end_session("o5-follow-up");
+	std::env::remove_var("OLLAMA_API_URL");
 }

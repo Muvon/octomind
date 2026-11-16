@@ -16,8 +16,7 @@
 //!
 //! Scans the tap skill pool for skills in the current agent's domain.
 //! Evaluates declarative rules on user input to determine which skills
-//! should be active; when every rule abstains, the supervisor's evaluation
-//! gate may choose one skill from the whole pool (rule-less skills included).
+//! should be active.
 //!
 //! When a skill auto-activates, its required capabilities are auto-loaded
 //! (MCP servers enabled) and its content is injected via the inbox.
@@ -25,19 +24,28 @@
 //! Validators run only on the final assistant message (end of turn),
 //! passing the assistant content to each skill's `validate` script.
 
+use crate::config::guardrails::{MODE_APPLY, MODE_OBSERVE};
+use crate::plugins::protocol::{RuleOutcome, SkillDir};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+/// The skill directory a plugin registered a pool entry from: the id the plugin
+/// knows it by, and whether it only observes.
+#[derive(Debug, Clone)]
+struct SkillBinding {
+	id: String,
+	shadow: bool,
+}
+
 /// Cached skill pool entry. `rules` may be empty: such a skill is invisible to
-/// the rule engine and reachable only through the evaluation choice.
+/// the rule engine.
 #[derive(Debug, Clone)]
 struct PoolEntry {
 	name: String,
-	description: String,
 	rules: Vec<Vec<super::skill::ActivateCheck>>,
-	evolution: Option<crate::supervisor::learning::evolution::SkillBinding>,
+	evolution: Option<SkillBinding>,
 }
 
 /// Cached pool of auto-activatable skills, filtered by domain.
@@ -58,6 +66,9 @@ fn current_pool_key() -> String {
 
 pub fn clear_pool_for_session(session_id: &str) {
 	get_pool().write().unwrap().remove(session_id);
+	if let Some(registry) = PLUGIN_SKILLS.write().unwrap().as_mut() {
+		registry.remove(session_id);
+	}
 }
 
 /// Load skills from OCTOMIND_SKILLS env var (if set). Called at session start from all five entry points.
@@ -155,6 +166,116 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 	}
 }
 
+/// Skill directories plugins registered, as last built into each session's pool.
+type PluginSkillDirs = Vec<(String, SkillDir)>;
+
+static PLUGIN_SKILLS: RwLock<Option<std::collections::HashMap<String, PluginSkillDirs>>> = RwLock::new(None);
+
+/// Pool entries for the directories plugins registered. A directory holds one
+/// skill (a `SKILL.md`); one that is unreadable or has an unknown mode is skipped.
+fn plugin_pool_entries(
+	dirs: &[(String, SkillDir)],
+	seen_names: &mut std::collections::HashSet<String>,
+) -> Vec<PoolEntry> {
+	dirs.iter()
+		.filter_map(|(_, dir)| {
+			let shadow = match dir.mode.as_str() {
+				MODE_APPLY => false,
+				MODE_OBSERVE => true,
+				_ => {
+					crate::log_debug!("skill_auto: skill dir '{}' has no known mode; skipped", dir.id);
+					return None;
+				}
+			};
+			let path = std::path::PathBuf::from(&dir.path);
+			let content = std::fs::read_to_string(path.join("SKILL.md")).ok()?;
+			let meta = super::skill::parse_skill_meta(&content)?;
+			seen_names.insert(meta.name.clone()).then(|| PoolEntry {
+				name: meta.name,
+				rules: meta.rules,
+				evolution: Some(SkillBinding {
+					id: dir.id.clone(),
+					shadow,
+				}),
+			})
+		})
+		.collect()
+}
+
+/// Rebuild the skill bindings that come from directories plugins registered.
+/// A later registration replaces the earlier one; nothing accumulates.
+pub fn sync_plugin_skill_dirs(session_id: &str) {
+	let registered = crate::plugins::registered_skill_dirs(session_id);
+	let previous = {
+		let mut guard = PLUGIN_SKILLS.write().unwrap();
+		let registry = guard.get_or_insert_with(std::collections::HashMap::new);
+		let known = registry.get(session_id).map_or(&[][..], Vec::as_slice);
+		if known == registered.as_slice() {
+			return;
+		}
+		registry
+			.insert(session_id.to_string(), registered.clone())
+			.unwrap_or_default()
+	};
+	// A session whose pool is not built yet gets these directories from `init_pool`.
+	let mut pools = get_pool().write().unwrap();
+	let Some(pool) = pools.get_mut(session_id) else {
+		return;
+	};
+	pool.entries.retain(|entry| {
+		entry
+			.evolution
+			.as_ref()
+			.is_none_or(|binding| !previous.iter().any(|(_, dir)| dir.id == binding.id))
+	});
+	let mut seen_names = pool.entries.iter().map(|entry| entry.name.clone()).collect();
+	pool.entries.extend(plugin_pool_entries(&registered, &mut seen_names));
+}
+
+fn plugin_of_skill(session_id: &str, id: &str) -> Option<String> {
+	PLUGIN_SKILLS
+		.read()
+		.unwrap()
+		.as_ref()?
+		.get(session_id)?
+		.iter()
+		.find(|(_, dir)| dir.id == id)
+		.map(|(plugin, _)| plugin.clone())
+}
+
+/// Directories of the skills plugins registered in `apply` mode, for the current session.
+pub fn plugin_skill_dirs() -> Vec<std::path::PathBuf> {
+	let session_id = current_pool_key();
+	PLUGIN_SKILLS
+		.read()
+		.unwrap()
+		.as_ref()
+		.and_then(|registry| registry.get(&session_id))
+		.map(|dirs| {
+			dirs.iter()
+				.filter(|(_, dir)| dir.mode == MODE_APPLY)
+				.map(|(_, dir)| std::path::PathBuf::from(&dir.path))
+				.collect()
+		})
+		.unwrap_or_default()
+}
+
+/// A plugin-registered skill's trigger matched. True when the skill is observe-only and
+/// must stay out of the session; the match is reported to the plugin that owns the skill.
+fn observed_only(binding: &SkillBinding) -> bool {
+	let session_id = current_pool_key();
+	if let Some(plugin) = plugin_of_skill(&session_id, &binding.id) {
+		let outcome = if binding.shadow {
+			RuleOutcome::Observed
+		} else {
+			RuleOutcome::Applied
+		};
+		crate::plugins::record_rule_match(&session_id, &plugin, &binding.id, outcome);
+		return binding.shadow;
+	}
+	false
+}
+
 /// Initialize the skill pool for the given agent domain (e.g., "developer").
 /// Scans all taps for skills with declarative rules whose `domains` field
 /// includes the given domain.
@@ -208,7 +329,6 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
-					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -248,7 +368,6 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
-					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -256,30 +375,14 @@ pub fn init_pool(domain: &str) {
 		}
 	}
 
-	// Generated skills are lowest authority and include shadow entries so the
-	// native activation engine can measure trigger precision without injection.
-	for (expected_name, binding) in crate::supervisor::learning::evolution::all_skill_bindings() {
-		let Ok(content) = std::fs::read_to_string(binding.path.join("SKILL.md")) else {
-			continue;
-		};
-		let Some(meta) = super::skill::parse_skill_meta(&content) else {
-			continue;
-		};
-		if meta.name != expected_name {
-			continue;
-		}
-		if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
-			continue;
-		}
-		if seen_names.insert(meta.name.clone()) {
-			entries.push(PoolEntry {
-				name: meta.name,
-				description: meta.description,
-				rules: meta.rules,
-				evolution: Some(binding),
-			});
-		}
-	}
+	// Skills plugins registered come last of all, observe-only ones included.
+	let plugin_dirs = crate::plugins::registered_skill_dirs(&current_pool_key());
+	entries.extend(plugin_pool_entries(&plugin_dirs, &mut seen_names));
+	PLUGIN_SKILLS
+		.write()
+		.unwrap()
+		.get_or_insert_with(std::collections::HashMap::new)
+		.insert(current_pool_key(), plugin_dirs);
 
 	crate::log_debug!(
 		"skill_auto: initialized pool with {} skills for domain '{}'",
@@ -383,10 +486,6 @@ pub async fn run_activation(
 	workdir: &std::path::Path,
 	session: &mut crate::session::chat::session::ChatSession,
 ) {
-	// Evolution's own gate decides guidance, not the skill settings or this
-	// input's length; only the session's first pass delivers anything.
-	crate::supervisor::learning::evolution::deliver_guidance(session);
-
 	let skills_config = get_skills_config();
 
 	if !skills_config.auto_activation {
@@ -462,21 +561,11 @@ pub async fn run_activation(
 	//     where ambiguous prompts ("rewrite my landing page text") clear
 	//     the floor for many marketing/copy skills at once.
 	//   - no match: skipped silently.
-	let mut deterministic: Vec<(
-		String,
-		String,
-		Option<crate::supervisor::learning::evolution::SkillBinding>,
-	)> = Vec::new();
-	let mut semantic_candidates: Vec<(
-		f32,
-		String,
-		String,
-		Option<crate::supervisor::learning::evolution::SkillBinding>,
-	)> = Vec::new();
+	let mut deterministic: Vec<(String, String, Option<SkillBinding>)> = Vec::new();
+	let mut semantic_candidates: Vec<(f32, String, String, Option<SkillBinding>)> = Vec::new();
 
 	for entry in &entries {
-		// Rule-less skills never meet the rule engine; only the evaluation
-		// choice below can reach them.
+		// Rule-less skills never meet the rule engine.
 		if active_skills.contains(&entry.name) || entry.rules.is_empty() {
 			continue;
 		}
@@ -531,25 +620,17 @@ pub async fn run_activation(
 	}
 
 	for (name, trigger, evolution) in &deterministic {
-		if let Some(binding) = evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
-				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
-				continue;
-			}
+		if evolution.as_ref().is_some_and(observed_only) {
+			continue;
 		}
 		crate::log_debug!("skill_auto: activated '{}' via [{}]", name, trigger);
 		auto_activate_skill(name, trigger, session).await;
 	}
 
-	// The evaluation choice runs only when the rules abstained: no deterministic
-	// group matched and no semantic candidate cleared the margin.
-	let mut rules_decided = !deterministic.is_empty();
-
 	semantic_candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	if let Some((top1, name, trigger, evolution)) = semantic_candidates.first().cloned() {
 		let top2 = semantic_candidates.get(1).map(|x| x.0).unwrap_or(0.0);
 		if top1 - top2 >= super::skill::SEMANTIC_MARGIN {
-			rules_decided = true;
 			crate::log_debug!(
 				"skill_auto: activated '{}' via [{}] (semantic top1={:.3}, top2={:.3}, margin ok)",
 				name,
@@ -557,11 +638,7 @@ pub async fn run_activation(
 				top1,
 				top2
 			);
-			if let Some(binding) = evolution.filter(|binding| {
-				crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow)
-			}) {
-				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
-			} else {
+			if !evolution.as_ref().is_some_and(observed_only) {
 				auto_activate_skill(&name, &trigger, session).await;
 			}
 		} else {
@@ -576,94 +653,6 @@ pub async fn run_activation(
 			);
 		}
 	}
-
-	if !rules_decided {
-		run_evaluation_choice(content, &entries, &active_skills, session).await;
-	}
-}
-
-/// Evaluation gate for the skill seam: one Choice over every inactive pool
-/// entry plus `none`. Activates the chosen skill only above the confidence
-/// floor; a shadow evolution binding records a match instead, as the rule
-/// engine does. Any unavailable outcome leaves the turn without a skill.
-async fn run_evaluation_choice(
-	content: &str,
-	entries: &[PoolEntry],
-	active_skills: &[String],
-	session: &mut crate::session::chat::session::ChatSession,
-) {
-	use crate::supervisor::evaluate::{self, Seam};
-
-	let Some(config) =
-		crate::session::context::current_session_id().and_then(|sid| crate::session::context::get_session_config(&sid))
-	else {
-		return;
-	};
-	if !evaluate::enabled(&config, Seam::Skills) {
-		return;
-	}
-	let inactive: Vec<&PoolEntry> = entries
-		.iter()
-		.filter(|entry| !active_skills.contains(&entry.name))
-		.collect();
-	if inactive.is_empty() {
-		return;
-	}
-	if inactive.len() > evaluate::MAX_SKILL_ROSTER {
-		evaluate::unavailable(Seam::Skills, "roster too large");
-		return;
-	}
-	let question = evaluate::skill_question(
-		inactive
-			.iter()
-			.map(|entry| (entry.name.as_str(), entry.description.as_str())),
-	);
-	let questions = std::collections::BTreeMap::from([(evaluate::SKILL_QUESTION_ID.to_string(), question)]);
-	let Some(answers) = evaluate::run(
-		&config,
-		Seam::Skills,
-		serde_json::Value::String(content.to_string()),
-		questions,
-	)
-	.await
-	else {
-		return;
-	};
-	// The runner answers every asked id with its own type or a refusal.
-	let Some(octolib::evaluation::Answer::Choice {
-		choice, probabilities, ..
-	}) = answers.get(evaluate::SKILL_QUESTION_ID)
-	else {
-		evaluate::unavailable(Seam::Skills, "refused");
-		return;
-	};
-	let probability = probabilities.get(choice).copied().unwrap_or(0.0);
-	if choice == evaluate::SKILL_NONE || probability < evaluate::SKILL_ACTIVATE_AT {
-		crate::log_debug!(
-			"skill_auto: evaluate chose '{}' at p={:.2} — not activating",
-			choice,
-			probability
-		);
-		return;
-	}
-	let Some(entry) = inactive.iter().find(|entry| &entry.name == choice) else {
-		evaluate::unavailable(Seam::Skills, "invalid response");
-		return;
-	};
-	if let Some(binding) = &entry.evolution {
-		if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
-			crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
-			return;
-		}
-	}
-	crate::log_debug!(
-		"skill_auto: activated '{}' via [{}] (p={:.2})",
-		entry.name,
-		evaluate::SKILL_TRIGGER,
-		probability
-	);
-	auto_activate_skill(&entry.name, evaluate::SKILL_TRIGGER, session).await;
-	crate::supervisor::stats::evaluate_applied(Seam::Skills, 1);
 }
 
 /// Pre-compute cosine similarity for every `semantic(phrase)` rule across
@@ -756,11 +745,6 @@ async fn auto_activate_skill(name: &str, trigger: &str, session: &mut crate::ses
 
 			// Emit structured event for JSONL/WebSocket consumers
 			if let Some(sid) = crate::session::context::current_session_id() {
-				// Callers never reach here for a shadow binding, so this is the
-				// treatment arm's exposure: activation by the skill's own trigger.
-				if let Some(binding) = crate::supervisor::learning::evolution::skill_binding(name) {
-					crate::supervisor::learning::evolution::mark_skill_activated(&sid, &binding.id);
-				}
 				crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
 					"activate",
 					name,

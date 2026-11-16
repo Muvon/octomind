@@ -226,7 +226,7 @@ pub async fn run_detached_fold(fold: &Path, session_file: &Path, config: &Config
 	crate::config::set_thread_config(config);
 	let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
 	let (summary, usage) =
-		crate::supervisor::accounting::run_background(request.session_name, Some(session_file.to_path_buf()), async {
+		crate::session::accounting::run_background(request.session_name, Some(session_file.to_path_buf()), async {
 			let (summary, usage) = super::ai::run_decision_call(
 				config,
 				request.prepared.system_content,
@@ -236,15 +236,15 @@ pub async fn run_detached_fold(fold: &Path, session_file: &Path, config: &Config
 			)
 			.await?;
 			if let Some(usage) = &usage {
-				crate::supervisor::stats::record_call(
-					crate::supervisor::stats::CallKind::Compression,
+				crate::session::accounting::record_call(
+					crate::session::accounting::CallKind::Compression,
 					usage.input_tokens,
 					usage.output_tokens,
 					usage.reasoning_tokens,
 					usage.request_time_ms.unwrap_or(0),
 					usage.cost.unwrap_or(0.0),
 				);
-				crate::supervisor::accounting::checkpoint()?;
+				crate::session::accounting::checkpoint()?;
 			}
 			Ok((summary, usage))
 		})

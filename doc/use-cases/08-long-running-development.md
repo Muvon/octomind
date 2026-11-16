@@ -193,28 +193,26 @@ See [Multi-Agent Delegation](05-multi-agent-delegation.md) for agent setup, tool
 
 ### Carry Knowledge Across Separate Sessions
 
-Compression summarizes one session. Learning stores selected grounded memories for later retrieval across sessions,
-including project/role-scoped records and global user rules. The default is:
+Compression summarizes one session. The Besydr plugin, which a new configuration lists by default, stores selected
+grounded lessons for later retrieval across sessions, including project and role records and global user rules.
+Octomind does not do this itself: without the plugin there is no learning, and its settings are in Besydr's
+configuration, not in `config.toml`.
 
-```toml
-[supervisor.learning]
-enabled = true
-```
+`/done` tells the plugin about the conversation before it is folded, so lesson extraction can start from the original
+messages. Besydr also extracts when a session ends normally; closing the terminal abruptly can end the client before it
+reports the end of its session, and then nothing is extracted from that session.
 
-`/done` captures the pre-compression transcript and starts extraction in the background. Eligible automatic compressions
-can also extract memories. Normal interactive exits and finished one-shot runs launch a separate background distillation
-process; this does not guarantee that an abrupt terminal close will finish extraction.
-
-Recall selects a bounded memory pack for the current user turn. It does not copy another session's full history into the
-new one or guarantee that every lesson is recalled. Inspect stored records after extraction:
+Recall adds a bounded set of lessons to the context for the current request. It does not copy another session's full
+history into the new one or guarantee that every lesson is recalled. With the plugin connected, inspect stored lessons
+after extraction:
 
 ```text
 /learning
 /learning show 1
 ```
 
-Use an index returned by `/learning`. See [Adaptive Learning](../usage/13-learning.md) for memory formation, recall, and
-retention.
+Use an index returned by `/learning`. See [Cross-session learning](../usage/13-learning.md) and
+[Besydr's learning page](https://besydr.com/docs/learning) for how lessons are formed, recalled and retired.
 
 ## Troubleshoot Resume and Compression
 

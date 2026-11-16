@@ -779,7 +779,6 @@ fn ws_fake_config() -> Config {
 	let mut config = fake_provider_config();
 	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.compression.model.max_retries = Some(0);
-	config.supervisor.learning.enabled = false;
 	config
 }
 
@@ -2168,40 +2167,6 @@ async fn exit_command_ends_the_session() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
-async fn failing_command_reports_the_error_and_keeps_the_session() {
-	let _data = TestDataDirGuard::new();
-	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
-	let mut ws = connect_ws(server.addr).await;
-	let _welcome = read_json(&mut ws).await;
-
-	let session_id = create_session(&mut ws, None).await;
-	send_json(
-		&mut ws,
-		serde_json::json!({
-			"type": "command",
-			"session_id": session_id,
-			"command": "learning",
-			"args": ["evolution", "show", "no-such-record"]
-		}),
-	)
-	.await;
-	let _ack = read_json(&mut ws).await;
-	let error = read_json(&mut ws).await;
-	assert_eq!(error["type"], "error");
-	assert!(
-		error["message"].as_str().unwrap_or_default().contains("Command failed"),
-		"got: {error}"
-	);
-	assert!(
-		server.sessions.lock().await.contains_key(&session_id),
-		"the session is stored back even when the command fails"
-	);
-
-	crate::session::context::cleanup_session(&session_id);
-}
-
-#[tokio::test]
 async fn command_save_failure_is_reported_for_memory_only_sessions() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;
 	server
@@ -3252,78 +3217,6 @@ async fn a_session_loaded_lazily_by_a_command_gets_its_monitor() {
 	crate::session::context::cleanup_session(&session_id);
 }
 
-#[tokio::test]
-#[serial_test::serial]
-async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
-	for inbox in [false, true] {
-		let _data = TestDataDirGuard::new();
-		let _env = StubEnv::new(vec![
-			final_response(r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#),
-			final_response("WS-GATE-TIMING: finished"),
-			final_response(r#"<shape name="circular" found="no">independent evidence</shape>
-<shape name="context-stripped" found="no">representative context</shape>
-<shape name="acceptance-only" found="no">not applicable</shape>
-<shape name="unenumerated-category" found="no">bounded scope</shape>
-<verdict>PASS</verdict>"#),
-		]).await;
-		let mut config = ws_fake_config();
-		config.supervisor.enabled = true;
-		config.supervisor.model.model = Some("ollama:fake-model".into());
-		config.supervisor.gate.enabled = true;
-		config.supervisor.plan.enabled = false;
-		config.decision.model = None;
-		let server = LoopbackServer::start(Arc::new(config)).await;
-		let mut ws = connect_ws(server.addr).await;
-		let _welcome = read_json(&mut ws).await;
-		let session_id = create_session(&mut ws, None).await;
-		if inbox {
-			push_inbox_message_for_session(
-				&session_id,
-				InboxMessage {
-					source: InboxSource::Inject,
-					content: "Explain what this session does.".into(),
-				},
-			);
-		} else {
-			send_json(
-				&mut ws,
-				serde_json::json!({"type":"message", "session_id":session_id, "content":"Explain what this session does."}),
-			)
-			.await;
-		}
-		let cost = read_until(&mut ws, |frame| frame["type"] == "cost" || frame["type"] == "error").await;
-		assert_eq!(cost["type"], "cost", "{cost}");
-		assert!(
-			cost["supervisor_accounting"]["mechanics"]["gate"]["chat_calls"]
-				.as_u64()
-				.unwrap() > 0,
-			"{cost}"
-		);
-		// The session lock becomes available only after the outer executor and save finish.
-		let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
-		drop(lock.lock().await);
-		send_json(
-			&mut ws,
-			serde_json::json!({"type":"command", "session_id":session_id, "command":"info"}),
-		)
-		.await;
-		let info = loop {
-			let frame = read_json(&mut ws).await;
-			assert_ne!(frame["type"], "cost", "only one completion frame per turn: {frame}");
-			assert_ne!(frame["type"], "error", "{frame}");
-			if frame["type"] == "status" && frame["data"].is_object() {
-				break frame["data"].clone();
-			}
-		};
-		assert_eq!(
-			cost["supervisor_accounting"], info["supervisor_accounting"],
-			"inbox={inbox}"
-		);
-		assert_eq!(cost["session_cost"], info["total_cost"]);
-		ws.close(None).await.unwrap();
-		crate::session::context::cleanup_session(&session_id);
-	}
-}
 // ---- spending stop: the front-end must distinguish a budget stop from a finished turn ----
 
 /// A tool-call turn whose result cost crosses `max_request_spending_threshold`

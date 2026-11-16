@@ -244,3 +244,32 @@ async fn fresh_session_interactive_adds_welcome_and_instructions() {
 	assert_eq!(instructions.role, "user");
 	assert!(instructions.content.contains("Project rule: be terse."));
 }
+
+#[tokio::test]
+async fn plugins_compose_the_status_instruction_from_registered_fields() {
+	let mut config = template_config();
+	config
+		.plugins
+		.push(toml::from_str("name = \"a\"\ntype = \"stdio\"\ncommand = \"prog\"\n").expect("plugin entry parses"));
+	let current_dir = crate::mcp::get_thread_working_directory();
+
+	// No plugin registered a field: octomind's base text.
+	let bare = build_system_prompt(&current_dir, &config, "assistant").await;
+	assert!(bare.contains(&crate::session::self_report::status_instruction(&[])));
+	assert!(!bare.contains(crate::session::self_report::tests::SELF_REPORT_INSTRUCTION));
+
+	let session_id = "prompt-setup-status-fields".to_string();
+	let stub = crate::plugins::test_support::StubPlugin::new(&[]).init_field(
+		"status_fields",
+		serde_json::json!([{"name": "risk", "instruction": "Rate the risk.", "default": "low"}]),
+	);
+	crate::plugins::test_support::connect_stub(&session_id, "assistant", &current_dir, &stub).await;
+	let fields = crate::plugins::status_fields(&session_id);
+	let prompt = crate::session::context::with_session_id(session_id.clone(), async {
+		build_system_prompt(&current_dir, &config, "assistant").await
+	})
+	.await;
+	crate::plugins::end_session(&session_id);
+	assert!(prompt.contains(&crate::session::self_report::status_instruction(&fields)));
+	assert!(prompt.contains("Rate the risk."));
+}

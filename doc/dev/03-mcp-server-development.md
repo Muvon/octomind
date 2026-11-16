@@ -19,7 +19,7 @@ script, see [Local Tools](../usage/17-local-tools.md).
 > static definition; "tool" is the callable runtime surface.
 
 > Smallest reference to copy: read `src/mcp/core/functions.rs`, `src/mcp/core/recall.rs`, and how the `core` server is
-> wired into `src/mcp/mod.rs`. Planning is supervisor-internal and is not a tool-definition example.
+> wired into `src/mcp/mod.rs`. Planning is done by a plugin and is not a tool-definition example.
 
 ## Built-in Servers
 

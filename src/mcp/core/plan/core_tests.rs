@@ -20,8 +20,8 @@
 use super::*;
 use crate::mcp::core::plan::storage::{ExecutionPlan, PlanStatus, PlanTask};
 
-fn directive(title: &str) -> crate::supervisor::plan::PlanTaskDirective {
-	crate::supervisor::plan::PlanTaskDirective {
+fn directive(title: &str) -> crate::mcp::core::plan::PlanTaskDirective {
+	crate::mcp::core::plan::PlanTaskDirective {
 		title: title.to_string(),
 		done_when: format!("{title} is verified"),
 	}

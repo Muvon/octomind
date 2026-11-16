@@ -227,10 +227,10 @@ when implementation must depend on a verdict.
 
 ## Model Purpose and Overrides
 
-Octomind has exactly three model purposes: **main**, **supervisor**, and **compression**. Workflow steps are ordinary
+Octomind has two model purposes: **main** and **compression**. Workflow steps are ordinary
 `octomind run` subprocesses, so a step's optional `model` changes only the main-purpose model for that subprocess; it
-does not create a fourth purpose. The shipped default uses OctoHub through `octomind login`, with `octohub:auto` for all
-three purposes; the workflow above intentionally demonstrates a concrete main-purpose override instead.
+does not create a third purpose. The shipped default uses OctoHub through `octomind login`, with `octohub:auto` for both
+purposes; the workflow above intentionally demonstrates a concrete main-purpose override instead.
 
 The main-purpose model name for a workflow step is selected in this priority order (highest wins):
 

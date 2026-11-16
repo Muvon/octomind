@@ -3,9 +3,9 @@
 Use `.agents/guardrails.toml` to set AI agent guardrails: transform session input, deny matching tool calls, and run
 feedback scripts. This guide is for project authors configuring those rules and checking their execution boundaries.
 
-For semantic checks against the user's request, optionally enable the supervisor
-[authorizer](14-supervisor.md#tool-authorization). It runs after native pre-call checks, before tools execute,
-and can feed grounded candidate leads into the existing learning/evolution lifecycle.
+For semantic checks against the user's request, the Besydr plugin offers an optional tool admission check (off by
+default). It runs before tools execute; see [Supervisor](14-supervisor.md) and
+[Besydr mechanics](https://besydr.com/docs/mechanics).
 
 ## Get started
 
@@ -51,8 +51,8 @@ shell command strings with arguments.
 | `[[hook]]` | Post-result | Run a script against the tool result | Non-zero exit → script stdout pushed to the session inbox (delivered as system-managed feedback on a subsequent request) |
 | `[[validator]]` | End-of-turn | Run a script after the assistant's final message | Non-zero exit → `<validation>`-wrapped stdout pushed to the session inbox |
 
-All four live in the same file. Nothing is mandatory; missing file = no authored rules. Opt-in generated evolution rules
-may still be appended.
+All four live in the same file. Nothing is mandatory; missing file = no authored rules. A plugin can register further
+rules for a session; Octomind appends them after the authored ones (see [Common questions](#common-questions)).
 
 **Who can stop vs who can only nudge:** only `[[pipe]]` and `[[guard]]` can *block* — a pipe stops the message before
 the model sees it, a guard stops a tool call before it runs. `[[hook]]` and `[[validator]]` can only *nudge*: their
@@ -64,8 +64,7 @@ feedback does not undo the tool result; they push a message to the inbox that th
 no authored rules; a broken file never crashes the session.
 
 Rules and runtime history are session-scoped. Edits are not hot-reloaded. Start a new session to reload rules and reset
-history. `/done` also reloads authored/generated rules when learning is enabled, but does not reset the call log,
-validator cursors, pipe counts, or message counter.
+history.
 
 The scripts a rule runs are snapshotted together with the rules: their content is read when the rules load, and every
 run executes that content from a private copy in the Octomind data dir (`<data>/guardrails/`), not the file in the
@@ -573,7 +572,7 @@ LLM emits tool calls [t0, t1, …]
   │       evaluate [[hook]] rules
   │       spawn matching scripts in parallel
   │       non-zero exits with non-empty (trimmed) stdout → inbox push
-  ├── truncate large plain-text outputs, then supervisor condensation
+  ├── truncate large plain-text outputs (a plugin may also condense them)
   ├── return results to the LLM
 LLM produces final assistant message (no more tool calls)
   ├── run_turn_validators:
@@ -662,8 +661,9 @@ membership, and literal `developer` role filters match domain prefixes; `develop
 failure does not inject repair feedback. Check executable permissions and the script path. The direct child is killed on
 timeout; descendant process cleanup is not guaranteed.
 
-**Do generated rules overwrite this file?** No. With learning evolution enabled, generated rules are appended after
-authored rules through the same native runtime. Manage them with `/learning evolution`; see [Learning](13-learning.md).
+**Do generated rules overwrite this file?** No. A plugin can register rules for a session, and Octomind appends them
+after the authored rules. The Besydr plugin does this for its generated rules, which are off by default; manage them
+with its `/learning evolution` command. See [Learning](13-learning.md).
 
 ## Source reference
 
@@ -674,7 +674,7 @@ authored rules through the same native runtime. Manage them with `/learning evol
 | Pipe execution | [src/session/pipe.rs](../../src/session/pipe.rs) |
 | Hooks and validators | [src/session/hooks.rs](../../src/session/hooks.rs) |
 | Batch ordering and inbox routing | [src/session/chat/response/tool_execution.rs](../../src/session/chat/response/tool_execution.rs), [src/session/inbox.rs](../../src/session/inbox.rs) |
-| Rule reload and evolution | [src/session/chat/session/commands/done.rs](../../src/session/chat/session/commands/done.rs), [src/supervisor/learning/evolution/runtime.rs](../../src/supervisor/learning/evolution/runtime.rs) |
+| Rules registered by plugins | [src/session/guardrails.rs](../../src/session/guardrails.rs) (`sync_plugin_rules`) |
 
 ## See also
 

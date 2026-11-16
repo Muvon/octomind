@@ -368,8 +368,8 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
 
 #### Provider retries
 
-A `retry` frame identifies a failed model request while the turn waits to try again. `purpose` is `main`,
-`supervisor`, or `compression` (compression decisions and summaries). `provider` and `model` identify the request
+A `retry` frame identifies a failed model request while the turn waits to try again. `purpose` is `main` or
+`compression` (compression decisions and summaries). `provider` and `model` identify the request
 sent by Octomind; proxy aliases such as `octohub:auto` are resolved upstream. `attempt` counts retries, starting
 at 1, and `max_retries` excludes the original request. `reason` is a short cause such as `HTTP 503`,
 `connection error`, or the generic `request failed`; it contains no response body or credentials.
@@ -618,7 +618,7 @@ status frames.
 }
 ```
 
-**Grounded behavior evolution lifecycle:**
+**Grounded behavior evolution lifecycle** (the frame is still defined, but the current octomind code does not produce it):
 
 ```json
 {

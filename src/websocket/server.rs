@@ -1088,6 +1088,7 @@ async fn handle_close_message(
 				log_error!("Failed to save session {} after its keepalive: {}", session_id, e);
 			}
 		}
+		crate::plugins::lifecycle::session_ended(&mut chat_session, crate::plugins::lifecycle::REASON_EXIT).await;
 	}
 	server.role_configs.lock().await.remove(&session_id);
 	server.residents.lock().unwrap().remove(&session_id);
@@ -1367,7 +1368,7 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 
 					// Per-request spending boundary (see handle_user_message).
 					chat_session.start_request_spending_tracking();
-					if let Err(e) = crate::supervisor::accounting::background(prepare_for_api_call(
+					if let Err(e) = crate::session::accounting::background(prepare_for_api_call(
 						&mut chat_session,
 						&config_for_role,
 						op_rx.clone(),
@@ -1388,7 +1389,7 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					};
 					crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_sink.clone());
 
-					let result = crate::supervisor::accounting::background(execute_api_call_and_process_response(
+					let result = crate::session::accounting::background(execute_api_call_and_process_response(
 						&mut chat_session,
 						&config_for_role,
 						&server.role,
@@ -1566,7 +1567,7 @@ async fn bind_session(
 	ctx: &ConnCtx,
 	active_session_ids: &mut HashSet<String>,
 ) -> Result<()> {
-	let (mut chat_session, config_for_role, session_role, is_new) = {
+	let (mut chat_session, config_for_role, session_role, is_new, from_memory) = {
 		let session_id = &requested_id;
 		// session_id present: create-or-resume
 		// Check memory first
@@ -1575,7 +1576,7 @@ async fn bind_session(
 			log_debug!("Resumed session from memory: {}", session_id);
 			let cfg = session_config(&ctx.server.config, &ctx.server.role_configs, &session).await;
 			let role = session.role.clone();
-			(session, cfg, role, false)
+			(session, cfg, role, false, true)
 		} else {
 			// Try disk: resume if exists, create with this name if not
 			let (args, config) = if crate::session::get_sessions_dir()
@@ -1625,7 +1626,7 @@ async fn bind_session(
 			match setup_and_initialize_session(&args, &config, false).await {
 				Ok((session, cfg, role_name, _, _)) => {
 					let is_new = !session.was_resumed;
-					(session, cfg, role_name, is_new)
+					(session, cfg, role_name, is_new, false)
 				}
 				Err(e) => {
 					let error = ServerMessage::error(format!("Failed to initialize session: {}", e));
@@ -1654,7 +1655,27 @@ async fn bind_session(
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 
+		// Plugins connect once per load, before the system prompt: its status-line
+		// instruction lists the fields they registered. A session still in memory
+		// is connected already.
+		if !from_memory {
+			crate::plugins::lifecycle::connect(
+				&session_id,
+				&session_role,
+				&crate::mcp::get_thread_working_directory(),
+				&config_for_role,
+			)
+			.await;
+		}
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false).await?;
+		if !from_memory {
+			let source = if is_new { "startup" } else { "resume" };
+			if let Err(error) =
+				crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, source).await
+			{
+				log_error!("Plugin session start failed for {}: {:#}", session_id, error);
+			}
+		}
 
 		let status_msg = if is_new {
 			format!("Session created: {}", session_id)
@@ -1742,7 +1763,7 @@ fn bind_stream(
 ) -> Result<()> {
 	let answers_elicitation = msg.capabilities.iter().any(|c| c == ELICITATION_CAPABILITY);
 	if msg.capabilities.iter().any(|c| c == COMMANDS_CAPABILITY) {
-		ack.commands = Some(session_commands(config_for_role));
+		ack.commands = Some(session_commands(config_for_role, session_id));
 	}
 	ctx.server
 		.streams
@@ -1752,8 +1773,9 @@ fn bind_stream(
 
 /// What a `commands_v1` client's `/` menu lists, in `/help` order: the built-ins
 /// a session can run, then the custom commands, named as `/help` lists them
-/// under `/run`. Built per bind: custom commands follow the config it runs under.
-fn session_commands(config: &Config) -> Vec<CommandInfo> {
+/// under `/run`, then the commands plugins provide for the session. Built per
+/// bind: custom commands follow the config it runs under.
+fn session_commands(config: &Config, session_id: &str) -> Vec<CommandInfo> {
 	let bare = |name: &str| name.trim_start_matches('/').to_string();
 	let builtins = BUILTIN_COMMANDS
 		.iter()
@@ -1769,7 +1791,14 @@ fn session_commands(config: &Config) -> Vec<CommandInfo> {
 		description: c.description.clone(),
 		hint: Some("[input]".to_string()),
 	});
-	builtins.chain(custom).collect()
+	let plugin = crate::plugins::commands(session_id)
+		.into_iter()
+		.map(|command| CommandInfo {
+			name: command.spec.name,
+			description: command.spec.description,
+			hint: (!command.spec.hint.is_empty()).then_some(command.spec.hint),
+		});
+	builtins.chain(custom).chain(plugin).collect()
 }
 
 /// A bind that fails is acknowledged like any frame — without a stream, as
@@ -1866,10 +1895,22 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 			Ok((mut session, config_for_role, session_role, _, _)) => {
 				crate::session::context::init_session_services(&session_role);
 				crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
+				crate::plugins::lifecycle::connect(
+					session_id,
+					&session_role,
+					&crate::mcp::get_thread_working_directory(),
+					&config_for_role,
+				)
+				.await;
 				if let Err(e) =
 					setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await
 				{
 					return Err(format!("Failed to setup session {}: {}", session_id, e));
+				}
+				if let Err(error) =
+					crate::plugins::lifecycle::session_started(&mut session, &config_for_role, "resume").await
+				{
+					log_error!("Plugin session start failed for {}: {:#}", session_id, error);
 				}
 				log_info!("Session loaded from disk: {}", session_id);
 				Ok(session)
@@ -1941,9 +1982,8 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 	// Handle /done specially — it hits unreachable!() in process_command
 	// because the CLI intercepts it before routing. We handle it here directly.
 	if command_name == "done" {
-		use crate::session::chat::session::commands::{handle_done, DoneOutcome, LessonHandoff};
-		let status_msg = match handle_done(&mut chat_session, &config_for_role, operation_rx, LessonHandoff::Task).await
-		{
+		use crate::session::chat::session::commands::{handle_done, DoneOutcome};
+		let status_msg = match handle_done(&mut chat_session, &config_for_role, operation_rx).await {
 			Ok(DoneOutcome::Compressed) => "Conversation compressed".to_string(),
 			Ok(DoneOutcome::NothingToCompress) => "Nothing to compress".to_string(),
 			Ok(DoneOutcome::Failed(e)) => {
@@ -2052,6 +2092,7 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 	// session's cache expires unpinged. It runs under the config the next turn
 	// uses: a `/role` switch pinned a new one.
 	let restarts_keepalive = !matches!(command_result, CommandResult::Exit | CommandResult::SwitchSession(_));
+	let switched = matches!(command_result, CommandResult::SwitchSession(_));
 	let terminal = match command_result {
 		CommandResult::Handled => {
 			log_debug!("Command '{}' executed successfully", slash_command);
@@ -2085,6 +2126,12 @@ async fn handle_command_message(msg: CommandMessage, ws_sender: &WsSender, serve
 				return Ok(());
 			}
 			stream.emit(&status)?;
+			let reason = if switched {
+				crate::plugins::lifecycle::REASON_SWITCH
+			} else {
+				crate::plugins::lifecycle::REASON_EXIT
+			};
+			crate::plugins::lifecycle::session_ended(&mut chat_session, reason).await;
 			server.role_configs.lock().await.remove(&session_id);
 			server.residents.lock().unwrap().remove(&session_id);
 			server.streams.close(&session_id);
@@ -2384,6 +2431,21 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		Err(e) => {
 			server.sessions.lock().await.insert(session_id.clone(), chat_session);
 			stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
+			return Ok(());
+		}
+	};
+
+	// A plugin may rewrite the prompt or refuse it; a refusal carries the plugin's message.
+	let processed_input = match chat_session.submit_prompt(processed_input, &input).await {
+		Ok(input) => input,
+		Err(e) => {
+			server.sessions.lock().await.insert(session_id.clone(), chat_session);
+			let text = if e.is::<crate::plugins::PromptBlocked>() {
+				e.to_string()
+			} else {
+				format!("Error: {}", e)
+			};
+			stream.emit(&ServerMessage::error(text))?;
 			return Ok(());
 		}
 	};

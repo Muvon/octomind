@@ -841,7 +841,7 @@ fn summary_log_entry_snapshots_type_timestamp_and_session_info() {
 
 #[test]
 fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sessions() {
-	use crate::supervisor::{accounting::Usage, evaluate::Seam, stats::CallKind};
+	use crate::session::accounting::{CallKind, Seam, Usage};
 	let mut info = test_session_info("supervisor-resume");
 	info.supervisor_accounting.kinds.insert(
 		CallKind::Resolve,
@@ -868,7 +868,7 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 		.get_mut(&CallKind::Resolve)
 		.unwrap()
 		.outcome
-		.insert(crate::supervisor::report::Outcome::Runs, 2);
+		.insert(crate::session::accounting::report::Outcome::Runs, 2);
 	let mut later = info.supervisor_accounting.clone();
 	later.kinds.get_mut(&CallKind::Resolve).unwrap().calls = 3;
 	later.kinds.get_mut(&CallKind::Resolve).unwrap().input_tokens = 50;
@@ -879,7 +879,7 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 		.get_mut(&CallKind::Resolve)
 		.unwrap()
 		.outcome
-		.insert(crate::supervisor::report::Outcome::Runs, 3);
+		.insert(crate::session::accounting::report::Outcome::Runs, 3);
 	let parsed = parse(&[
 		summary_json_line(&info, 10),
 		json!({"type":"STATS", "timestamp":11, "supervisor_accounting": later}).to_string(),
@@ -893,7 +893,8 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 	assert_eq!(restored.supervisor_accounting.seams[&Seam::Plan].calls, 1);
 	assert_eq!(restored.supervisor_accounting.blocking_wall_time_ms, 150);
 	assert_eq!(
-		restored.supervisor_accounting.kinds[&CallKind::Resolve].outcome[&crate::supervisor::report::Outcome::Runs],
+		restored.supervisor_accounting.kinds[&CallKind::Resolve].outcome
+			[&crate::session::accounting::report::Outcome::Runs],
 		3
 	);
 	let mut legacy = serde_json::to_value(&info).unwrap();
@@ -904,10 +905,7 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 
 #[test]
 fn detached_supervisor_usage_survives_resume_and_is_not_replayed_after_save() {
-	use crate::supervisor::{
-		accounting::{SupervisorAccounting, Usage},
-		stats::CallKind,
-	};
+	use crate::session::accounting::{CallKind, SupervisorAccounting, Usage};
 	let dir = tempfile::tempdir().unwrap();
 	let file = dir.path().join("supervisor-resume.jsonl.zst");
 	let info = test_session_info("supervisor-resume");

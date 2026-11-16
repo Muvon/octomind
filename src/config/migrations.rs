@@ -19,25 +19,46 @@
 //! atomic replace — live in `octolib::utils`; this module only declares
 //! octomind's version steps and the CLI-facing entry points.
 
+use super::plugins::{DEFAULT_PLUGINS_TOML, DEFAULT_PLUGIN_NAME};
 use anyhow::{Context, Result};
 use octolib::utils::config_file;
 // `toml_edit` comes from octolib's re-export: the migration `apply` signature
 // is a function pointer, so both sides must see the exact same crate.
 use octolib::utils::config_migration::{
-	copy_item, ensure_table, merge_missing, required_table, toml_edit, MigrationPlan, VersionMigration,
+	copy_item, ensure_table, merge_missing, required_table, toml_edit, Migration, MigrationPlan, VersionMigration,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Schema source of truth: the version stamped here is what every config is
 /// migrated up to.
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
 
-/// Octomind's version chain.
+/// The default configuration as it was at version 31, the last one with the
+/// built-in supervisor's `[supervisor]` and `[decision]` tables. The steps up
+/// to 31 take missing keys from it: the current template no longer has them.
+const V31_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/migrations/default-v31.toml");
+
+/// Last version whose configuration held the built-in supervisor's tables.
+const SUPERVISOR_ERA_LAST_VERSION: u32 = 31;
+
+/// Tables of a version 31 configuration that belonged to the built-in supervisor.
+const SUPERVISOR_TABLES: [&str; 2] = ["decision", "supervisor"];
+
+/// Where the upgrade to version 32 saves the supervisor's tables, relative to
+/// the configuration directory. A directory of its own, because octomind
+/// merges every `*.toml` file that sits beside `config.toml`.
+const CARRY_DIR_NAME: &str = "besydr-carry";
+const CARRY_FILE_NAME: &str = "supervisor.toml";
+const CARRY_FILE_HEADER: &str = "# Written by octomind when it upgraded config.toml to version 32.\n\
+# These are the settings of the supervisor that was built into octomind, unchanged.\n\
+# Besydr, the plugin that took over that work, reads this file once, on its first run.\n";
+
+/// The version steps up to 31, which run against [`V31_CONFIG_TEMPLATE`].
 ///
 /// `with_missing_version(0)` because configs written before the version stamp
 /// existed are a real, migratable state rather than a corrupt file.
-fn plan() -> MigrationPlan {
+fn supervisor_era_plan() -> MigrationPlan {
 	MigrationPlan::new(
 		"octomind",
 		vec![
@@ -202,6 +223,156 @@ fn plan() -> MigrationPlan {
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// The version steps from 31 on, which run against the current template.
+fn plan() -> MigrationPlan {
+	MigrationPlan::new(
+		"octomind",
+		vec![VersionMigration {
+			from: 31,
+			to: 32,
+			apply: replace_v32_supervisor_with_plugin,
+		}],
+	)
+}
+
+/// A whole upgrade: the rewritten configuration, and the supervisor's tables
+/// to save for the plugin when the configuration still had them.
+struct Upgrade {
+	migration: Migration,
+	carried_supervisor_settings: Option<String>,
+}
+
+/// Upgrade `existing` to the current version: the supervisor-era steps first,
+/// then the steps since. `None` when `existing` is already current.
+fn upgrade(existing: &str) -> Result<Option<Upgrade>> {
+	let from_version = supervisor_era_plan().version_of(existing)?;
+	let at_v31 = if from_version < SUPERVISOR_ERA_LAST_VERSION {
+		supervisor_era_plan()
+			.migrate(existing, V31_CONFIG_TEMPLATE)?
+			.context("a configuration below version 31 must migrate to 31")?
+			.content
+	} else {
+		existing.to_string()
+	};
+	let Some(migration) = plan().migrate(&at_v31, DEFAULT_CONFIG_TEMPLATE)? else {
+		return Ok(None);
+	};
+	let carried_supervisor_settings = if from_version <= SUPERVISOR_ERA_LAST_VERSION {
+		carried_supervisor_settings(&at_v31)?
+	} else {
+		None
+	};
+	Ok(Some(Upgrade {
+		migration: Migration {
+			from_version,
+			..migration
+		},
+		carried_supervisor_settings,
+	}))
+}
+
+/// The `[decision]` and `[supervisor]` tables of a version 31 configuration as
+/// the text of the file the plugin reads, comments included. `None` when the
+/// configuration has neither table.
+fn carried_supervisor_settings(at_v31: &str) -> Result<Option<String>> {
+	let mut document: toml_edit::DocumentMut =
+		at_v31.parse().context("Failed to parse the version 31 configuration")?;
+	let mut carried = toml_edit::DocumentMut::new();
+	for table in SUPERVISOR_TABLES {
+		if let Some(item) = document.remove(table) {
+			carried.insert(table, item);
+		}
+	}
+	if carried.is_empty() {
+		return Ok(None);
+	}
+	Ok(Some(format!("{CARRY_FILE_HEADER}{carried}")))
+}
+
+/// Version 32: the built-in supervisor is gone, a plugin does its work.
+/// `[supervisor]` and `[decision]` are removed (the upgrade saves them for the
+/// plugin first), `max_identical_rounds` moves to the root, and the default
+/// plugin entry is added unless the user already has a plugin of that name.
+/// A user who had the supervisor switched off gets the entry switched off.
+fn replace_v32_supervisor_with_plugin(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let supervisor = document.remove("supervisor");
+	document.remove("decision");
+	let supervisor = supervisor.as_ref().and_then(toml_edit::Item::as_table_like);
+
+	// The template's key first, for its comment; then the user's value over it.
+	merge_missing(document.as_table_mut(), template.as_table(), "max_identical_rounds")?;
+	if let Some(rounds) = supervisor.and_then(|table| table.get("max_identical_rounds")) {
+		document["max_identical_rounds"] = rounds.clone();
+	}
+
+	let supervisor_was_on = supervisor
+		.and_then(|table| table.get("enabled"))
+		.and_then(toml_edit::Item::as_bool)
+		.unwrap_or(true);
+	add_default_plugin(document, supervisor_was_on)
+}
+
+fn is_default_plugin(entry: &dyn toml_edit::TableLike) -> bool {
+	entry.get("name").and_then(toml_edit::Item::as_str) == Some(DEFAULT_PLUGIN_NAME)
+}
+
+/// The entry of [`DEFAULT_PLUGINS_TOML`] as an inline table.
+fn default_plugin_entry() -> Result<toml_edit::InlineTable> {
+	let defaults: toml_edit::DocumentMut = format!("plugins = {DEFAULT_PLUGINS_TOML}\n")
+		.parse()
+		.context("The default plugin list does not parse")?;
+	let mut entry = defaults
+		.get("plugins")
+		.and_then(toml_edit::Item::as_array)
+		.and_then(|plugins| {
+			plugins
+				.iter()
+				.filter_map(toml_edit::Value::as_inline_table)
+				.find(|entry| is_default_plugin(*entry))
+		})
+		.with_context(|| format!("The default plugin list must have the '{DEFAULT_PLUGIN_NAME}' entry"))?
+		.clone();
+	// Its line breaks belong to the default list's layout, not to the user's.
+	entry.decor_mut().clear();
+	Ok(entry)
+}
+
+/// Add the default plugin entry to the user's `plugins`, which may be absent,
+/// an inline array or `[[plugins]]` tables.
+fn add_default_plugin(document: &mut toml_edit::DocumentMut, enabled: bool) -> Result<()> {
+	let mut entry = default_plugin_entry()?;
+	if !enabled {
+		entry.insert("enabled", false.into());
+	}
+
+	match document.get_mut("plugins") {
+		None => {
+			let mut plugins = toml_edit::Array::new();
+			plugins.push(entry);
+			document["plugins"] = toml_edit::value(plugins);
+		}
+		Some(toml_edit::Item::Value(toml_edit::Value::Array(plugins))) => {
+			let listed = plugins
+				.iter()
+				.filter_map(toml_edit::Value::as_inline_table)
+				.any(|entry| is_default_plugin(entry));
+			if !listed {
+				plugins.push(entry);
+			}
+		}
+		Some(toml_edit::Item::ArrayOfTables(plugins)) => {
+			if !plugins.iter().any(|entry| is_default_plugin(entry)) {
+				plugins.push(entry.into_table());
+			}
+		}
+		Some(_) => anyhow::bail!("plugins: an array is required"),
+	}
+	Ok(())
 }
 
 /// Add the required `decision.taps` switch (off); an existing value is kept.
@@ -889,8 +1060,8 @@ fn collapse_pressure_levels(document: &mut toml_edit::DocumentMut, template: &to
 pub fn check_and_upgrade_config(config_path: &Path) -> Result<bool> {
 	let content = fs::read_to_string(config_path).context("Failed to read config file for version check")?;
 
-	// Cheap pre-check outside the lock; the authoritative one runs under it.
-	if plan().migrate(&content, DEFAULT_CONFIG_TEMPLATE)?.is_none() {
+	// Pre-check outside the lock; the authoritative one runs under it.
+	if upgrade(&content)?.is_none() {
 		return Ok(false);
 	}
 
@@ -914,13 +1085,14 @@ pub fn force_upgrade_config(config_path: &Path) -> Result<()> {
 fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	let original = fs::read_to_string(config_path).context("Failed to read config file")?;
 
-	let Some(migration) = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE)? else {
+	let Some(upgrade) = upgrade(&original)? else {
 		if report_up_to_date {
 			let version = plan().version_of(&original)?;
 			eprintln!("✅ Config is already at the latest version ({version})");
 		}
 		return Ok(false);
 	};
+	let migration = upgrade.migration;
 
 	// stderr, never stdout: an outdated config is upgraded during startup, and
 	// ACP/MCP stdio modes carry JSON-RPC on stdout.
@@ -933,6 +1105,16 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	toml::from_str::<toml::Value>(&migration.content)
 		.context("Migrated config is not valid TOML - aborting upgrade")?;
 
+	// Before the config is replaced: if the process dies in between, the old
+	// config is still there and the next start writes the same file again.
+	if let Some(settings) = &upgrade.carried_supervisor_settings {
+		let carry_path = save_supervisor_settings(config_path, settings)?;
+		eprintln!(
+			"ℹ️ The built-in supervisor's settings were saved to {} for the Besydr plugin",
+			carry_path.display()
+		);
+	}
+
 	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
 
 	eprintln!(
@@ -941,6 +1123,18 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	);
 
 	Ok(true)
+}
+
+/// Write the supervisor's tables where the plugin looks for them on its first run.
+fn save_supervisor_settings(config_path: &Path, settings: &str) -> Result<PathBuf> {
+	let carry_dir = config_path
+		.parent()
+		.context("The config file has no parent directory")?
+		.join(CARRY_DIR_NAME);
+	fs::create_dir_all(&carry_dir).with_context(|| format!("Failed to create {}", carry_dir.display()))?;
+	let carry_path = carry_dir.join(CARRY_FILE_NAME);
+	fs::write(&carry_path, settings).with_context(|| format!("Failed to write {}", carry_path.display()))?;
+	Ok(carry_path)
 }
 
 #[cfg(test)]

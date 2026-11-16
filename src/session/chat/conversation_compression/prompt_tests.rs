@@ -200,8 +200,8 @@ fn prior_knowledge_block_numbers_retained_entries() {
 #[test]
 fn agent_state_hint_renders_handoff_fields_and_reason_fallback() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.last_self_report = Some(crate::supervisor::detect::SelfReport::Progressing);
-	session.last_self_report_handoff = Some(crate::supervisor::detect::SelfReportHandoff {
+	session.last_self_report = Some(crate::session::self_report::SelfReport::Progressing);
+	session.last_self_report_handoff = Some(crate::session::self_report::SelfReportHandoff {
 		focus: "stabilising the flaky retry test".to_string(),
 		next: "re-run the suite once".to_string(),
 		carry: vec!["retry count lives in config".to_string()],
@@ -343,7 +343,7 @@ async fn pact_mode_swaps_transcript_for_evidence_set_and_durable_rule() {
 	];
 	let mut session = ChatSession::for_tests(messages);
 	session.session.info.name = "prompt-pact-unit".to_string();
-	session.last_self_report = Some(crate::supervisor::detect::SelfReport::Progressing);
+	session.last_self_report = Some(crate::session::self_report::SelfReport::Progressing);
 	let pact = super::super::attention::build(&session, 1, 2, 2.0, true, false)
 		.await
 		.expect("pact context builds");

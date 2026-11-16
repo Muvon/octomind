@@ -15,16 +15,16 @@
 // Info command handler
 
 use super::super::core::ChatSession;
-use super::{CommandOutput, CommandResult, InfoTiming};
+use super::{CommandOutput, CommandResult, InfoTiming, PluginRows};
 use crate::config::Config;
 use anyhow::Result;
 
-pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<CommandResult> {
+pub async fn handle_info(session: &mut ChatSession, config: &Config) -> Result<CommandResult> {
 	// Pick up subagent/supervisor spend banked since the last API call so the
 	// session line is the real total, not just the main agent's share.
 	session.session.fold_external_spend();
 	super::agents::sync_history(&mut session.session.info);
-	crate::supervisor::authorizer::sync(session);
+	let plugins = plugin_rows(session).await;
 	let info = &session.session.info;
 
 	let tokens_used = info.total_tokens();
@@ -132,6 +132,21 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 		agents_stats: super::agents::get_agents_stats(&info.agent_runs),
 		keepalive: session.wait_history.report(),
-		supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
+		supervisor_accounting: crate::session::accounting::report::SupervisorReport::for_session(info),
+		plugins,
 	})))
+}
+
+/// What each plugin that is on for the session reports for `/info`.
+async fn plugin_rows(session: &mut ChatSession) -> Vec<PluginRows> {
+	if !crate::plugins::active(&session.session.info.name) {
+		return Vec::new();
+	}
+	let parts = crate::plugins::payload::ContextParts::of(session);
+	let answers = crate::plugins::status(&parts.context(&session.session.messages, None)).await;
+	crate::plugins::apply::settle(&parts.session_id, Some(&mut session.session));
+	answers
+		.into_iter()
+		.map(|(plugin, rows)| PluginRows { plugin, rows })
+		.collect()
 }

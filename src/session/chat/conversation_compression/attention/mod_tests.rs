@@ -54,6 +54,7 @@ pub(super) fn pact_with(packet: EvidencePacket) -> PactContext {
 		pinned: PinnedState {
 			task: PinnedItem {
 				text: "continue the task".into(),
+				label: None,
 				source: None,
 			},
 			constraints: Vec::new(),
@@ -141,6 +142,7 @@ fn untrusted_compaction_text_cannot_change_runtime_governance_hash() {
 	let baseline = vec![system.clone(), user.clone()];
 	let constraints = vec![PinnedItem {
 		text: "Never publish or weaken the evidence requirement.".into(),
+		label: None,
 		source: None,
 	}];
 	let expected = governance_hash(
@@ -305,6 +307,7 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "monitor the active operation through completion".into(),
+			label: None,
 			source: Some(packets[1].id.clone()),
 		},
 		constraints: Vec::new(),
@@ -746,6 +749,7 @@ async fn active_frontier_allocation_obeys_total_token_budget() {
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "continue".into(),
+			label: None,
 			source: None,
 		},
 		constraints: Vec::new(),
@@ -821,6 +825,7 @@ async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "do the thing".into(),
+			label: None,
 			source: None,
 		},
 		constraints: Vec::new(),
@@ -855,6 +860,7 @@ async fn tight_budget_keeps_recoverable_spans_for_late_small_frontier_packets() 
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "continue".into(),
+			label: None,
 			source: None,
 		},
 		constraints: Vec::new(),
@@ -913,6 +919,7 @@ fn selected_packets_require_live_dependency_closure() {
 		pinned: PinnedState {
 			task: PinnedItem {
 				text: "continue".into(),
+				label: None,
 				source: None,
 			},
 			constraints: Vec::new(),
@@ -1021,6 +1028,7 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "keep monitoring the benchmark run".into(),
+			label: None,
 			source: None,
 		},
 		constraints: Vec::new(),
@@ -1098,6 +1106,7 @@ fn pinned_task(text: &str) -> PinnedState {
 	PinnedState {
 		task: PinnedItem {
 			text: text.into(),
+			label: None,
 			source: None,
 		},
 		constraints: Vec::new(),
@@ -1872,10 +1881,12 @@ fn render_pinned_lines_covers_sources() {
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "ship the release".to_string(),
+			label: None,
 			source: Some("b:task".to_string()),
 		},
 		constraints: vec![PinnedItem {
 			text: "no force pushes".to_string(),
+			label: None,
 			source: None,
 		}],
 		governance_hash: "abc".to_string(),
@@ -2073,4 +2084,431 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 	assert!(recall.is_empty());
 	let (_, attended_recall) = attended.render_live_bands(None, None, "");
 	assert!(!attended_recall.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// What a fold is told to keep: the plugins' pinned items
+// ---------------------------------------------------------------------------
+
+const PINNED_TASK: &str = "write the briefing. Do not touch the main branch.";
+
+/// A fold over a session whose plugin pinned `items` (none: the plugin pinned
+/// nothing at all).
+async fn fold_with_pins(name: &str, items: Vec<PinItem>) -> PactContext {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", PINNED_TASK),
+		message("assistant", "drafted section one"),
+	]);
+	session.session.info.name = name.to_string();
+	let stub = crate::plugins::test_support::StubPlugin::new(&[]);
+	crate::plugins::test_support::connect_stub(name, "developer", std::path::Path::new("/tmp"), &stub).await;
+	if !items.is_empty() {
+		crate::plugins::restore_pinned_blocks(
+			name,
+			vec![crate::plugins::PluginBlock {
+				plugin: stub.name().to_string(),
+				name: "rules".to_string(),
+				text: "section text".to_string(),
+				keep: false,
+				items,
+			}],
+		);
+	}
+	let pact = build(&session, 1, 2, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	crate::plugins::end_session(name);
+	pact
+}
+
+fn pin_item(text: &str, label: Option<&str>, from_request: bool) -> PinItem {
+	PinItem {
+		text: text.to_string(),
+		label: label.map(str::to_string),
+		from_request,
+	}
+}
+
+#[tokio::test]
+async fn a_pinned_item_with_a_label_is_printed_under_its_label() {
+	let pact = fold_with_pins(
+		"pins-label-unit",
+		vec![pin_item(
+			"allowed; verification is permitted, not required",
+			Some("verification_policy"),
+			false,
+		)],
+	)
+	.await;
+
+	let lines = render_pinned_lines(&pact.pinned, false);
+	assert!(
+		lines.contains("verification_policy: allowed; verification is permitted, not required\n"),
+		"{lines}"
+	);
+	assert!(!lines.contains("constraint:"), "{lines}");
+}
+
+#[tokio::test]
+async fn a_pinned_item_from_the_request_cites_the_task_only_when_the_task_contains_it() {
+	let pact = fold_with_pins(
+		"pins-source-unit",
+		vec![
+			pin_item("write the briefing", None, true),
+			pin_item("a line the task does not hold", None, true),
+			pin_item("Do not touch the main branch.", None, false),
+		],
+	)
+	.await;
+
+	let task_source = pact.pinned.task.source.clone().expect("the task is inside the fold");
+	let sources: Vec<Option<&str>> = pact
+		.pinned
+		.constraints
+		.iter()
+		.map(|item| item.source.as_deref())
+		.collect();
+	assert_eq!(sources, vec![Some(task_source.as_str()), None, None]);
+	let lines = render_pinned_lines(&pact.pinned, false);
+	assert!(lines.contains(&format!("constraint (source: {task_source}): write the briefing\n")));
+	assert!(lines.contains("\nconstraint: a line the task does not hold\n"));
+	assert!(lines.contains("\nconstraint: Do not touch the main branch.\n"));
+}
+
+#[tokio::test]
+async fn when_the_plugins_pinned_nothing_the_fold_keeps_the_requests_own_lines() {
+	let pact = fold_with_pins("pins-own-lines-unit", Vec::new()).await;
+
+	let task_source = pact.pinned.task.source.clone().expect("the task is inside the fold");
+	assert_eq!(pact.pinned.constraints.len(), 1);
+	assert_eq!(pact.pinned.constraints[0].text, "Do not touch the main branch.");
+	assert_eq!(pact.pinned.constraints[0].source, Some(task_source.clone()));
+	assert!(render_pinned_lines(&pact.pinned, false).contains(&format!(
+		"constraint (source: {task_source}): Do not touch the main branch."
+	)));
+}
+
+#[test]
+fn the_governance_hash_changes_with_a_pinned_label_or_text() {
+	let messages = [message("system", "system prompt")];
+	let item = |label: Option<&str>, text: &str| PinnedItem {
+		text: text.to_string(),
+		label: label.map(str::to_string),
+		source: None,
+	};
+	let hash = |item: PinnedItem| governance_hash(&messages, "the task", &[item]);
+
+	let forbidden = hash(item(Some("verification_policy"), "forbidden for this turn"));
+	assert_eq!(
+		forbidden,
+		hash(item(Some("verification_policy"), "forbidden for this turn"))
+	);
+	assert_ne!(forbidden, hash(item(Some("verification_policy"), "allowed")));
+	assert_ne!(forbidden, hash(item(None, "forbidden for this turn")));
+	assert_ne!(forbidden, hash(item(Some("other_policy"), "forbidden for this turn")));
+}
+
+// ---------------------------------------------------------------------------
+// Pre-fold pruning through the plugins' judgement
+// ---------------------------------------------------------------------------
+
+use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+fn long_output(label: &str, lines: usize) -> String {
+	(1..=lines)
+		.map(|i| format!("{label} output line {i} with some tool text"))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+/// A plugin that answers every `judge` event with the probability `yes` gives
+/// for each unit id; a unit `yes` returns `None` for is left out of the answer.
+async fn judging_plugin(sid: &str, yes: impl Fn(&str) -> Option<f64> + Send + Sync + 'static) -> StubPlugin {
+	let stub = StubPlugin::new(&["judge"]).respond(move |_, params| {
+		let judgements: serde_json::Map<String, serde_json::Value> = params["items"]["items"]
+			.as_array()
+			.into_iter()
+			.flatten()
+			.filter_map(|item| {
+				let id = item["id"].as_str()?;
+				let yes = yes(id)?;
+				Some((id.to_string(), serde_json::json!({"type": "yes_no", "yes": yes})))
+			})
+			.collect();
+		Ok(serde_json::json!({ "judgements": judgements }))
+	});
+	connect_stub(sid, "developer", std::path::Path::new("/tmp"), &stub).await;
+	stub
+}
+
+#[tokio::test]
+async fn prune_without_a_plugin_that_judges_keeps_the_view_byte_identical() {
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
+	]);
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets("prune-absent").await;
+	assert_eq!(pact.prompt_view(), before);
+}
+
+#[tokio::test]
+async fn prune_asks_about_summarize_tool_packets_only_with_bounded_samples() {
+	let sid = "prune-asks";
+	let stub = judging_plugin(sid, |_| Some(0.9)).await;
+	let big = long_output("cargo", 600);
+	let mut user_note = tool_packet("b:user", Lane::Summarize, "never touch main");
+	user_note.kind = PacketKind::UserConstraintOrCorrection;
+	let mut real = tool_packet("b:real", Lane::Summarize, "typed by a person");
+	real.provenance = Provenance::RealUser;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:exact", Lane::KeepExact, &long_output("frontier", 30)),
+		tool_packet("b:s1", Lane::Summarize, &big),
+		user_note,
+		tool_packet("b:ref", Lane::ArchiveReference, ""),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 20)),
+		real,
+	]);
+	pact.plan_focus = "[ ] add retry with backoff".to_string();
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets(sid).await;
+
+	let asked = stub.sent("judge");
+	assert_eq!(asked.len(), 1);
+	assert_eq!(asked[0]["purpose"], "compression");
+	let subject = asked[0]["subject"].as_object().expect("object subject");
+	let mut keys: Vec<&str> = subject.keys().map(String::as_str).collect();
+	keys.sort_unstable();
+	assert_eq!(keys, ["constraints", "plan", "task"]);
+	assert_eq!(subject["task"], "continue the task");
+	assert_eq!(subject["plan"], "[ ] add retry with backoff");
+	assert_eq!(asked[0]["items"]["key"], "units");
+	let units = asked[0]["items"]["items"].as_array().expect("units");
+	let ids: Vec<&str> = units.iter().map(|unit| unit["id"].as_str().unwrap()).collect();
+	assert_eq!(ids, ["b:s1", "b:s2"]);
+	assert_eq!(units[0]["data"]["id"], "b:s1");
+	let sample = units[0]["data"]["sample"].as_str().unwrap();
+	assert!(crate::session::estimate_tokens(sample) <= judgement::COMPRESSION_SAMPLE_TOKENS);
+	assert!(sample.starts_with("cargo output line 1 with"));
+	assert!(sample.ends_with("cargo output line 600 with some tool text"));
+	assert!(!asked[0].to_string().contains("frontier output"));
+	assert!(!asked[0].to_string().contains("typed by a person"));
+	// Every unit judged as needed: nothing changes.
+	assert_eq!(pact.prompt_view(), before);
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+async fn prune_demotes_below_the_threshold_with_the_unadmitted_shape() {
+	let sid = "prune-demotes";
+	let stub = judging_plugin(sid, |id| Some(if id == "b:dead" { 0.1 } else { 0.9 })).await;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:dead", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:live", Lane::Summarize, &long_output("view", 40)),
+	]);
+	let live_before = pact.packets[1].clone();
+	let dead_before = pact.packets[0].clone();
+	pact.prune_dead_tool_packets(sid).await;
+
+	let dead = &pact.packets[0];
+	assert_eq!(dead.lane, Lane::ArchiveReference);
+	assert!(dead.prompt_content.is_empty());
+	assert!(dead.exact_spans.is_empty());
+	assert_eq!(dead.descriptor, dead_before.descriptor);
+	assert_eq!(dead.depends_on, dead_before.depends_on);
+	assert_eq!(dead.tokens, dead_before.tokens);
+	assert_eq!(
+		serde_json::to_value(dead.lane).unwrap(),
+		serde_json::json!("archive_reference")
+	);
+	let live = &pact.packets[1];
+	assert_eq!(live.lane, live_before.lane);
+	assert_eq!(live.prompt_content, live_before.prompt_content);
+	assert_eq!(live.exact_spans, live_before.exact_spans);
+
+	let view = pact.prompt_view();
+	let dead_header = view.find("[b:dead archive_reference").expect("demoted header");
+	let descriptor = view.find(&format!("descriptor: {}", dead.descriptor)).unwrap();
+	let live_header = view.find("[b:live summarize").expect("kept header");
+	assert!(dead_header < descriptor && descriptor < live_header);
+	assert!(!view.contains("build output line 1 with"));
+	assert!(view.contains("view output line 1 with"));
+
+	// One packet was demoted: the plugin hears of it with its next event.
+	let mut next = pact_with_packets(vec![tool_packet("b:next", Lane::Summarize, &long_output("x", 5))]);
+	next.prune_dead_tool_packets(sid).await;
+	assert_eq!(stub.sent("judge")[1]["judged"]["compression"], 1);
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+async fn prune_keeps_a_unit_the_plugin_left_out_of_its_answer() {
+	let sid = "prune-left-out";
+	judging_plugin(sid, |id| (id == "b:s1").then_some(0.1)).await;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
+	]);
+	pact.prune_dead_tool_packets(sid).await;
+	assert_eq!(pact.packets[0].lane, Lane::ArchiveReference);
+	assert_eq!(pact.packets[1].lane, Lane::Summarize);
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
+	let sid = "prune-depends";
+	judging_plugin(sid, |_| Some(0.1)).await;
+	let mut checkpoint = packet("b:check", Provenance::AssistantReported, Lane::Summarize);
+	checkpoint.kind = PacketKind::AssistantCheckpoint;
+	checkpoint.depends_on = vec!["b:tool".to_string()];
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
+		checkpoint.clone(),
+		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
+	]);
+	pact.packets[2].depends_on = vec!["b:tool".to_string()];
+	pact.prune_dead_tool_packets(sid).await;
+	// b:chain is dead and unreferenced: demoted. b:tool is dead but the live
+	// checkpoint depends on it: kept, so the validator's dependency rule holds.
+	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
+	assert_eq!(pact.packets[0].lane, Lane::Summarize);
+	assert!(!pact.packets[0].prompt_content.is_empty());
+	pact.validate_summary(&CompressionSummary {
+		should_compress: true,
+		current_task: "continue the task".to_string(),
+		folded_units: vec![FoldedUnit {
+			text: "build finished".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: vec!["b:tool".to_string(), "b:check".to_string()],
+		}],
+		..Default::default()
+	})
+	.expect("dependency rule intact after pruning");
+
+	// Once the dependent is itself a recall pointer, the unit can go.
+	checkpoint.lane = Lane::ArchiveReference;
+	checkpoint.prompt_content.clear();
+	checkpoint.exact_spans.clear();
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
+		checkpoint,
+		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
+	]);
+	pact.prune_dead_tool_packets(sid).await;
+	assert_eq!(pact.packets[0].lane, Lane::ArchiveReference);
+	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+async fn prune_sends_every_unit_in_one_request_in_packet_order() {
+	let sid = "prune-one-request";
+	let stub = judging_plugin(sid, |_| Some(0.9)).await;
+	let packets: Vec<EvidencePacket> = (0..130)
+		.map(|i| tool_packet(&format!("b:u{i}"), Lane::Summarize, &format!("unit {i} output")))
+		.collect();
+	let mut pact = pact_with_packets(packets);
+	pact.prune_dead_tool_packets(sid).await;
+
+	let asked = stub.sent("judge");
+	assert_eq!(asked.len(), 1, "the plugin packs units into model calls, not the host");
+	let ids: Vec<String> = asked[0]["items"]["items"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|unit| unit["id"].as_str().unwrap().to_string())
+		.collect();
+	assert_eq!(ids, (0..130).map(|i| format!("b:u{i}")).collect::<Vec<_>>());
+	assert!(pact.packets.iter().all(|p| p.lane == Lane::Summarize));
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+async fn prune_without_summarize_tool_packets_asks_nothing() {
+	let sid = "prune-nothing";
+	let stub = judging_plugin(sid, |_| Some(0.1)).await;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:exact", Lane::KeepExact, "frontier"),
+		tool_packet("b:ref", Lane::ArchiveReference, ""),
+	]);
+	pact.prune_dead_tool_packets(sid).await;
+	assert!(stub.sent("judge").is_empty());
+	crate::plugins::end_session(sid);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn prune_leaves_archive_verification_and_validation_intact() {
+	let _data = crate::session::chat::test_support::DataDirGuard::new();
+	let sid = "prune-archive-unit";
+	judging_plugin(sid, |_| Some(0.1)).await;
+	// A user turn right after the tool round keeps the checkpoint from
+	// depending on it, and a trailing user turn empties the exact frontier,
+	// so the tool round is a summarize unit nothing selected depends on.
+	let mut session = tool_session(sid);
+	session
+		.session
+		.messages
+		.insert(4, message("user", "ok, what did you find?"));
+	session
+		.session
+		.messages
+		.push(message("user", "keep going with the race fix"));
+	let end = session.session.messages.len() - 1;
+	let mut pact = build(&session, 1, end, 1.0, true, false)
+		.await
+		.expect("pact context builds");
+	let tool_id = pact
+		.packets
+		.iter()
+		.find(|p| p.kind == PacketKind::ToolInteraction && p.lane == Lane::Summarize)
+		.map(|p| p.id.clone())
+		.expect("fixture has a summarize tool packet");
+	pact.prune_dead_tool_packets(sid).await;
+	let demoted = pact.packets.iter().find(|p| p.id == tool_id).unwrap();
+	assert_eq!(demoted.lane, Lane::ArchiveReference);
+
+	let drained = &session.session.messages[1..=end];
+	let bundle = super::super::archive::archive_messages_with_index(
+		&session.session.info.name,
+		"prune-archive-cid",
+		drained,
+		&pact.packets,
+	)
+	.expect("archive writes");
+	pact.verify_archive(&bundle, drained).expect("archive verifies");
+	let archived = std::fs::read_to_string(&bundle.path).expect("archive readable");
+	assert!(archived.contains("thread panicked at src/deploy.rs:42"));
+
+	// Every packet still in the summarize lane must be cited; the demoted
+	// tool round must not be.
+	let cited: Vec<String> = pact
+		.packets
+		.iter()
+		.filter(|p| p.lane == Lane::Summarize)
+		.map(|p| p.id.clone())
+		.collect();
+	assert!(!cited.contains(&tool_id));
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: pact.pinned.task.text.clone(),
+		// Only assistant checkpoints remain in the summarize lane (real-user
+		// packets are never admitted), so the unit cannot claim established.
+		folded_units: vec![FoldedUnit {
+			text: "the race was found in src/deploy.rs".to_string(),
+			kind: "observation".to_string(),
+			status: "pending".to_string(),
+			refs: cited,
+		}],
+		..Default::default()
+	};
+	pact.validate_summary(&summary)
+		.expect("a summary that omits the demoted id validates");
+	crate::plugins::end_session(sid);
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("archive").join(sid));
+	}
 }

@@ -1094,3 +1094,40 @@ async fn capability_routing_diversity_fixtures() {
 		);
 	}
 }
+
+#[test]
+fn apply_capability_answer_confirms_vetoes_and_promotes() {
+	let names = ["a", "b"];
+	let probability = |pairs: &'static [(&str, f64)]| {
+		move |name: &str| {
+			pairs
+				.iter()
+				.find(|(candidate, _)| *candidate == name)
+				.map_or(0.0, |(_, probability)| *probability)
+		}
+	};
+
+	// Cosine winner: kept at the confirm floor, vetoed below it, whatever was chosen.
+	assert_eq!(
+		apply_capability_answer(Some("a"), &names, "b", probability(&[("a", 0.05), ("b", 0.95)])),
+		Some("a")
+	);
+	assert_eq!(
+		apply_capability_answer(Some("a"), &names, "none", probability(&[("a", 0.04), ("none", 0.96)])),
+		None
+	);
+
+	// No winner: the choice activates at the floor, not below, and `none` is inert.
+	assert_eq!(
+		apply_capability_answer(None, &names, "b", probability(&[("b", 0.6)])),
+		Some("b")
+	);
+	assert_eq!(
+		apply_capability_answer(None, &names, "b", probability(&[("b", 0.59)])),
+		None
+	);
+	assert_eq!(
+		apply_capability_answer(None, &names, "none", probability(&[("none", 1.0)])),
+		None
+	);
+}

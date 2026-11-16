@@ -269,6 +269,7 @@ async fn run_activation_disabled_in_config_activates_nothing() {
 
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -298,6 +299,7 @@ async fn run_activation_skips_system_managed_content() {
 	let sid = "__skillauto_sysmgd".to_string();
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -330,6 +332,7 @@ async fn run_activation_rejects_low_intent_input() {
 	let sid = "__skillauto_lowintent".to_string();
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("try"),
 		evolution: None,
 	}]);
@@ -381,6 +384,7 @@ async fn run_activation_deterministic_match_injects_skill() {
 	let sid = "__skillauto_match".to_string();
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -410,6 +414,7 @@ async fn run_activation_no_matching_rule_is_silent() {
 	let sid = "__skillauto_nomatch".to_string();
 	set_pool(vec![PoolEntry {
 		name: "py-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("python"),
 		evolution: None,
 	}]);
@@ -437,6 +442,7 @@ async fn run_activation_skips_already_active_skills() {
 	add_active_skill(&sid, "rust-helper");
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -464,11 +470,13 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 	set_pool(vec![
 		PoolEntry {
 			name: "rust-a".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: None,
 		},
 		PoolEntry {
 			name: "rust-b".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: None,
 		},
@@ -485,6 +493,168 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 	assert!(has_active_skill(&sid, "rust-b"));
 	cleanup_session(&sid);
 	clear_pool();
+}
+
+// ---------------------------------------------------------------------------
+// Judgement by a plugin when the rules abstain
+// ---------------------------------------------------------------------------
+
+fn skill_choice(choice: &str, probability: f64) -> serde_json::Value {
+	serde_json::json!({"judgements": {"skill": {
+		"type": "choice",
+		"choice": choice,
+		"probabilities": {choice: probability},
+	}}})
+}
+
+/// A pool entry with no rules: only a judgement can activate it.
+fn rule_less_entry(name: &str) -> PoolEntry {
+	PoolEntry {
+		name: name.to_string(),
+		description: format!("Test skill {name}"),
+		rules: Vec::new(),
+		evolution: None,
+	}
+}
+
+/// Run an activation for `content` in session `sid` with a plugin that answers
+/// every `judge` event with `answer`.
+async fn activate_with_judging_plugin(
+	sid: &str,
+	answer: serde_json::Value,
+	entries: Vec<PoolEntry>,
+	content: &str,
+) -> crate::plugins::test_support::StubPlugin {
+	let stub = crate::plugins::test_support::StubPlugin::new(&["judge"]).answer(answer);
+	crate::plugins::test_support::connect_stub(sid, "developer", Path::new("/tmp"), &stub).await;
+	set_pool(entries);
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.to_string(), async {
+		run_activation(content, Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+	stub
+}
+
+fn finish_judging_test(sid: &str) {
+	crate::plugins::end_session(sid);
+	cleanup_session(&sid.to_string());
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn a_skill_the_plugin_picks_with_enough_confidence_is_activated() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+	install_tap_skill("other", "developer", &[]);
+
+	let sid = "__skillauto_judge_pick".to_string();
+	let entries = vec![rule_less_entry("fits"), rule_less_entry("other")];
+	let stub = activate_with_judging_plugin(
+		&sid,
+		skill_choice("fits", 0.9),
+		entries,
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(has_active_skill(&sid, "fits"));
+	assert!(!has_active_skill(&sid, "other"));
+	let asked = stub.sent("judge");
+	assert_eq!(asked.len(), 1);
+	assert_eq!(asked[0]["purpose"], "skills");
+	assert_eq!(asked[0]["subject"], "please write the release notes");
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_skill_the_plugin_picks_below_the_floor_is_not_activated() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_low".to_string();
+	let answer = skill_choice("fits", crate::plugins::judgement::SKILL_ACTIVATE_AT - 0.01);
+	activate_with_judging_plugin(
+		&sid,
+		answer,
+		vec![rule_less_entry("fits")],
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_plugin_that_picks_none_activates_no_skill() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_none".to_string();
+	let answer = skill_choice(crate::plugins::judgement::NONE, 0.99);
+	activate_with_judging_plugin(
+		&sid,
+		answer,
+		vec![rule_less_entry("fits")],
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_rule_that_decided_keeps_the_plugin_from_being_asked() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("rust-helper", "developer", &["content(rust)"]);
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_rules".to_string();
+	let mut ruled = rule_less_entry("rust-helper");
+	ruled.rules = content_rule("rust");
+	let entries = vec![ruled, rule_less_entry("fits")];
+	let stub = activate_with_judging_plugin(
+		&sid,
+		skill_choice("fits", 0.9),
+		entries,
+		"please help with rust development",
+	)
+	.await;
+
+	assert!(has_active_skill(&sid, "rust-helper"));
+	assert!(!has_active_skill(&sid, "fits"));
+	assert!(stub.sent("judge").is_empty());
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn without_a_plugin_that_judges_the_rules_abstaining_activates_nothing() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_absent".to_string();
+	set_pool(vec![rule_less_entry("fits")]);
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation("please write the release notes", Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+
+	assert!(session.session.messages.is_empty());
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
 }
 
 // ---------------------------------------------------------------------------

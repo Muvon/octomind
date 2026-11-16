@@ -19,7 +19,9 @@ use crate::config::Config;
 use crate::log_info;
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::plugins::payload::{self, ContextParts};
-use crate::plugins::protocol::{event, BackgroundOutput, SubagentRuns, ToolAfter, ToolBefore, ToolOutcome, TreeChange};
+use crate::plugins::protocol::{
+	event, BackgroundOutput, Returned, SubagentRuns, ToolAfter, ToolBefore, ToolOutcome, TreeChange,
+};
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::ToolProcessor;
 use crate::session::output::OutputMode;
@@ -32,6 +34,34 @@ const STOPPING_LOOP: &str = "loop";
 
 /// What a plugin writes where the path of the saved original belongs.
 const ORIGINAL_PATH_PLACEHOLDER: &str = "{original_path}";
+
+/// What a tool itself returned for a call, kept until the round's results are
+/// finished: the repeat check and the size cap change what the agent is shown.
+struct OwnAnswer {
+	error: bool,
+	/// Fingerprint of the whole text, for the repeat stop.
+	digest: String,
+	/// Its error flag and first characters, kept only when a plugin asked.
+	returned: Option<Returned>,
+}
+
+impl OwnAnswer {
+	fn of(result: &McpToolResult, returned_chars: Option<usize>) -> Self {
+		Self {
+			error: result.is_error(),
+			digest: payload::result_hash(&result.extract_content()),
+			returned: returned_chars.map(|limit| payload::returned_by_tool(result, limit)),
+		}
+	}
+}
+
+/// The calls of a finished round with what is known about each besides its result.
+struct RoundCalls<'a> {
+	calls: &'a [McpToolCall],
+	/// Per call: a rule denied it, so its result is the reason.
+	denied: &'a [bool],
+	own_answers: &'a HashMap<String, OwnAnswer>,
+}
 
 /// Why a tool round ends the turn instead of asking the model again.
 pub enum RoundStop {
@@ -199,8 +229,11 @@ pub async fn execute_tools_parallel(
 		let round_stop = plugin_round(
 			chat_session,
 			config,
-			&current_tool_calls,
-			&[false],
+			&RoundCalls {
+				calls: &current_tool_calls,
+				denied: &[false],
+				own_answers: &HashMap::new(),
+			},
 			&mut results,
 			tool_round_intent,
 			tree_before,
@@ -561,6 +594,12 @@ async fn execute_tools_with_context(
 
 	// FIXED: Proper parallel awaiting with immediate cancellation support
 	let mut tool_results = Vec::new();
+	// The longest start of a tool's own text any plugin asked to see.
+	let returned_chars = crate::plugins::options(&session_id_for_guardrails)
+		.into_iter()
+		.filter_map(|(_, options)| options.returned_chars)
+		.max();
+	let mut own_answers: HashMap<String, OwnAnswer> = HashMap::new();
 	let mut _has_error = false;
 	let mut total_tool_time_ms = 0; // Track cumulative tool execution time
 
@@ -646,6 +685,9 @@ async fn execute_tools_with_context(
 						// Lifecycle identity belongs to the raw result, before deduplication or output caps.
 						if let Some(call) = stored_tool_call.as_ref() {
 							context.capture_tap_run(call, &res);
+						}
+						if matches!(context, ToolExecutionContext::MainSession { .. }) {
+							own_answers.insert(tool_id.clone(), OwnAnswer::of(&res, returned_chars));
 						}
 						// Deduplication runs HERE, before display — so the terminal block,
 						// the sink emission (response.rs), and the AI's session message all
@@ -905,8 +947,11 @@ async fn execute_tools_with_context(
 		*round_stop = plugin_round(
 			chat_session,
 			config,
-			&current_tool_calls,
-			&blocked_flags,
+			&RoundCalls {
+				calls: &current_tool_calls,
+				denied: &blocked_flags,
+				own_answers: &own_answers,
+			},
 			&mut tool_results,
 			tool_round_intent,
 			tree_before,
@@ -1010,12 +1055,16 @@ fn apply_replace(result: &mut crate::mcp::McpToolResult, replace: crate::plugins
 async fn plugin_round(
 	chat_session: &mut ChatSession,
 	config: &Config,
-	calls: &[McpToolCall],
-	denied: &[bool],
+	round: &RoundCalls<'_>,
 	results: &mut [McpToolResult],
 	intent: &str,
 	tree_before: Option<u64>,
 ) -> Option<RoundStop> {
+	let RoundCalls {
+		calls,
+		denied,
+		own_answers,
+	} = *round;
 	let session_id = chat_session.session.info.name.clone();
 	let workdir = crate::mcp::get_thread_working_directory();
 
@@ -1026,7 +1075,15 @@ async fn plugin_round(
 			let result = results.iter().find(|result| result.tool_id == call.tool_id)?;
 			let was_denied = denied.get(index).copied().unwrap_or(false);
 			let replaceable = !was_denied && is_replaceable(call, result);
-			Some(payload::tool_outcome(call, result, &workdir, was_denied, replaceable))
+			let returned = own_answers.get(&call.tool_id).and_then(|own| own.returned.as_ref());
+			Some(payload::tool_outcome(
+				call,
+				result,
+				&workdir,
+				was_denied,
+				replaceable,
+				returned,
+			))
 		})
 		.collect();
 	let replaceable_ids: std::collections::HashSet<String> = outcomes
@@ -1039,22 +1096,34 @@ async fn plugin_round(
 		chat_session.turn_mutated_paths.extend(outcome.paths.iter().cloned());
 	}
 
-	// Counted on the text as the cap left it, before any replacement.
-	let round: Vec<_> = calls
+	// Counted on the text as the cap left it, before any replacement, and on
+	// what the tools themselves returned.
+	let (shown_round, returned_round): (Vec<_>, Vec<_>) = calls
 		.iter()
 		.filter_map(|call| {
 			let outcome = outcomes.iter().find(|outcome| outcome.id == call.tool_id)?;
-			Some(crate::session::repeat_guard::RoundCall {
+			let shown = crate::session::repeat_guard::RoundCall {
 				tool: &call.tool_name,
 				parameters: &call.parameters,
 				result: outcome.result.as_deref().unwrap_or_default(),
 				is_error: outcome.error,
 				is_mutation: outcome.mutation,
 				free_form: outcome.free_form,
-			})
+			};
+			let returned = match own_answers.get(&call.tool_id) {
+				Some(own) => crate::session::repeat_guard::RoundCall {
+					result: &own.digest,
+					is_error: own.error,
+					..shown
+				},
+				None => shown,
+			};
+			Some((shown, returned))
 		})
-		.collect();
-	chat_session.repeat_guard.note_round(&round);
+		.unzip();
+	chat_session
+		.repeat_guard
+		.note_round_returned(&shown_round, &returned_round);
 	let tree_after = plugin_tree_fingerprint(config);
 	let write_capable = calls
 		.iter()

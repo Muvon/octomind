@@ -2392,6 +2392,34 @@ async fn finish_keepalives_drops_a_handle_whose_session_is_gone() {
 
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
+async fn the_end_of_the_connection_sends_session_end_once_per_session_and_keeps_the_sessions() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let _data = TestDataDirGuard::new();
+	let agent = Rc::new(OctomindAgent::new(
+		keepalive_config(),
+		"assistant".to_string(),
+		Default::default(),
+	));
+	let cwd = std::env::current_dir().expect("cwd");
+	let session_id = format!("acp-end-{}", uuid::Uuid::new_v4());
+	let stub = StubPlugin::new(&[event::SESSION_END]);
+	connect_stub(&session_id, "assistant", &cwd, &stub).await;
+	let mut session = ChatSession::for_tests(vec![msg("user", "hello")]);
+	session.session.info.name = session_id.clone();
+	agent.sessions.borrow_mut().insert(session_id.clone(), (session, cwd));
+
+	agent.end_plugin_sessions().await;
+
+	let sent = stub.sent(event::SESSION_END);
+	assert_eq!(sent.len(), 1);
+	assert_eq!(sent[0]["reason"], "exit");
+	assert!(agent.sessions.borrow().contains_key(&session_id));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
 async fn prompt_registers_no_keepalive_without_a_provider_policy() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![final_response("NO-KEEPALIVE")]).await;

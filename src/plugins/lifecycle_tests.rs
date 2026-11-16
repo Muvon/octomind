@@ -157,6 +157,61 @@ async fn session_end_is_sent_once_and_drops_the_plugin_state() {
 }
 
 #[tokio::test]
+async fn what_the_plugin_answers_to_session_end_is_booked_and_saved_with_the_session() {
+	let id = unique("life-end-saved");
+	let dir = tempfile::tempdir().unwrap();
+	let stub = StubPlugin::new(&[event::SESSION_END]).answer(json!({
+		"usage": [{"label": "learn", "calls": 1, "input_tokens": 5, "output_tokens": 1, "cost": 0.25}],
+	}));
+	connect_stub(&id, ROLE, dir.path(), &stub).await;
+	let file = tempfile::Builder::new().suffix(".jsonl.zst").tempfile().unwrap();
+	let mut chat = chat(&id);
+	chat.session.session_file = Some(file.path().to_path_buf());
+
+	session_ended(&mut chat, REASON_EXIT).await;
+
+	let resumed = crate::session::load_session(&file.path().to_path_buf()).unwrap();
+	let learn = &resumed.info.supervisor_accounting.plugin_usage["learn"];
+	assert_eq!((learn.calls, learn.cost), (1, 0.25));
+	assert_eq!(resumed.info.total_cost, 0.25);
+}
+
+#[tokio::test]
+async fn usage_a_child_plugin_reports_when_it_ends_reaches_the_parents_books() {
+	let parent = unique("life-usage-parent");
+	let child = unique("life-usage-child");
+	let dir = tempfile::tempdir().unwrap();
+	let stub =
+		StubPlugin::new(&[event::SUBAGENT_START, event::SESSION_START, event::SESSION_END]).respond(|method, _| {
+			Ok(if method == event::SESSION_END {
+				json!({"usage": [{"label": "learn", "calls": 1, "input_tokens": 5, "output_tokens": 1, "cost": 0.5}]})
+			} else {
+				json!({})
+			})
+		});
+	connect_stub(&parent, ROLE, dir.path(), &stub).await;
+	let config = config_for(&stub);
+
+	crate::session::context::with_session_id(parent.clone(), async {
+		crate::mcp::set_session_working_directory(dir.path().to_path_buf());
+		let running = start_in_process_child(&parent, &child, "find it", "You search.", &config)
+			.await
+			.expect("a plugin is on for the parent");
+		end_in_process_child(running).await;
+	})
+	.await;
+
+	let usage = crate::plugins::take_usage(&parent);
+	assert_eq!(usage.len(), 1);
+	assert_eq!(
+		(usage[0].0.as_str(), usage[0].1.label.as_str(), usage[0].1.cost),
+		(stub.name(), "learn", 0.5)
+	);
+	assert!(crate::plugins::take_usage(&child).is_empty());
+	crate::plugins::end_session(&parent);
+}
+
+#[tokio::test]
 async fn a_subagent_is_announced_before_its_session_starts_and_inherits_the_answer() {
 	let parent = unique("life-parent");
 	let child = unique("life-child");

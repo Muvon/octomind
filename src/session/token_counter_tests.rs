@@ -353,3 +353,65 @@ fn sent_estimate_counts_thinking_only_where_the_provider_replays_it() {
 			< estimate_full_context_tokens(&messages, None)
 	);
 }
+
+#[test]
+fn tiny_budgets_fall_back_to_plain_prefix_truncation() {
+	let text = "word ".repeat(1_000);
+	assert_eq!(truncate_preserving_edges(&text, 0), "");
+	assert_eq!(truncate_preserving_edges("", 100), "");
+
+	// A budget that cannot fit head, marker and tail keeps a plain prefix
+	// instead of a marker with nothing around it.
+	let out = truncate_preserving_edges(&text, 3);
+	assert!(!out.contains("middle omitted"));
+	assert_eq!(out, truncate_to_tokens(&text, 3));
+	assert!(estimate_tokens(&out) <= 3);
+}
+
+#[test]
+fn suffix_to_tokens_returns_whole_text_under_budget_and_a_suffix_over() {
+	let text = "HEAD middle TAIL";
+	assert_eq!(suffix_to_tokens(text, 0), "");
+	assert_eq!(suffix_to_tokens(text, 10_000), text);
+
+	let long = "token ".repeat(500);
+	let suffix = suffix_to_tokens(&long, 5);
+	assert!(!suffix.is_empty());
+	assert!(long.ends_with(suffix), "the suffix is a real tail of the text");
+	assert!(estimate_tokens(suffix) <= 5);
+}
+
+#[test]
+fn edge_truncation_keeps_both_ends_behind_one_marker() {
+	let text = format!("HEAD {} TAIL", "middle ".repeat(2_000));
+	let bounded = truncate_preserving_edges(&text, 100);
+	assert!(bounded.starts_with("HEAD"));
+	assert!(bounded.ends_with("TAIL"));
+	assert!(bounded.contains("middle omitted"));
+	assert!(estimate_tokens(&bounded) <= 100);
+}
+
+#[test]
+fn edge_truncation_shrinks_the_tail_until_the_combined_text_fits() {
+	let text: String = (1..=120)
+		.map(|i| format!("token-heavy line {i} with padding words"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	assert!(estimate_tokens(&text) > 60);
+
+	for max_tokens in 14..=40 {
+		let out = truncate_preserving_edges(&text, max_tokens);
+		assert!(
+			out.contains("middle omitted"),
+			"both ends are kept behind one marker at budget {max_tokens}"
+		);
+		assert!(
+			estimate_tokens(&out) <= max_tokens,
+			"budget {max_tokens} exceeded: {}",
+			estimate_tokens(&out)
+		);
+		assert!(out.starts_with("token"), "the start survives at budget {max_tokens}");
+	}
+	let roomy = truncate_preserving_edges(&text, 40);
+	assert!(roomy.contains("line 120"), "the end survives: {roomy}");
+}

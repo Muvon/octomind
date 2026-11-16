@@ -25,6 +25,7 @@
 //! passing the assistant content to each skill's `validate` script.
 
 use crate::config::guardrails::{MODE_APPLY, MODE_OBSERVE};
+use crate::plugins::judgement;
 use crate::plugins::protocol::{RuleOutcome, SkillDir};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -44,6 +45,7 @@ struct SkillBinding {
 #[derive(Debug, Clone)]
 struct PoolEntry {
 	name: String,
+	description: String,
 	rules: Vec<Vec<super::skill::ActivateCheck>>,
 	evolution: Option<SkillBinding>,
 }
@@ -192,6 +194,7 @@ fn plugin_pool_entries(
 			let meta = super::skill::parse_skill_meta(&content)?;
 			seen_names.insert(meta.name.clone()).then(|| PoolEntry {
 				name: meta.name,
+				description: meta.description,
 				rules: meta.rules,
 				evolution: Some(SkillBinding {
 					id: dir.id.clone(),
@@ -329,6 +332,7 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
+					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -368,6 +372,7 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
+					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -627,10 +632,15 @@ pub async fn run_activation(
 		auto_activate_skill(name, trigger, session).await;
 	}
 
+	// The judgement runs only when the rules abstained: no deterministic group
+	// matched and no semantic candidate cleared the margin.
+	let mut rules_decided = !deterministic.is_empty();
+
 	semantic_candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	if let Some((top1, name, trigger, evolution)) = semantic_candidates.first().cloned() {
 		let top2 = semantic_candidates.get(1).map(|x| x.0).unwrap_or(0.0);
 		if top1 - top2 >= super::skill::SEMANTIC_MARGIN {
+			rules_decided = true;
 			crate::log_debug!(
 				"skill_auto: activated '{}' via [{}] (semantic top1={:.3}, top2={:.3}, margin ok)",
 				name,
@@ -653,6 +663,64 @@ pub async fn run_activation(
 			);
 		}
 	}
+
+	if !rules_decided {
+		run_judgement_choice(&session_id, content, &entries, &active_skills, session).await;
+	}
+}
+
+/// Ask the plugins which inactive skill fits the request, once the rules have
+/// abstained. Activates the chosen skill only above the confidence floor; an
+/// observe-only plugin skill is left out. With no answer the turn has no skill.
+async fn run_judgement_choice(
+	session_id: &str,
+	content: &str,
+	entries: &[PoolEntry],
+	active_skills: &[String],
+	session: &mut crate::session::chat::session::ChatSession,
+) {
+	let inactive: Vec<&PoolEntry> = entries
+		.iter()
+		.filter(|entry| !active_skills.contains(&entry.name))
+		.collect();
+	if inactive.is_empty() {
+		return;
+	}
+	let Some(pick) = judgement::SKILLS
+		.pick(
+			session_id,
+			content,
+			inactive
+				.iter()
+				.map(|entry| (entry.name.as_str(), entry.description.as_str())),
+		)
+		.await
+	else {
+		return;
+	};
+	let probability = pick.probability(&pick.choice);
+	if pick.choice == judgement::NONE || probability < judgement::SKILL_ACTIVATE_AT {
+		crate::log_debug!(
+			"skill_auto: judgement chose '{}' at p={:.2} — not activating",
+			pick.choice,
+			probability
+		);
+		return;
+	}
+	let Some(entry) = inactive.iter().find(|entry| entry.name == pick.choice) else {
+		return;
+	};
+	if entry.evolution.as_ref().is_some_and(observed_only) {
+		return;
+	}
+	crate::log_debug!(
+		"skill_auto: activated '{}' via [{}] (p={:.2})",
+		entry.name,
+		judgement::SKILL_TRIGGER,
+		probability
+	);
+	auto_activate_skill(&entry.name, judgement::SKILL_TRIGGER, session).await;
+	pick.applied(session_id);
 }
 
 /// Pre-compute cosine similarity for every `semantic(phrase)` rule across

@@ -16,7 +16,7 @@
 //! protocol.
 
 use super::host::EventContext;
-use super::protocol::{PlanState, PlanTask, Status, ToolCall, ToolInfo, ToolOutcome};
+use super::protocol::{PlanState, PlanTask, Returned, Status, ToolCall, ToolInfo, ToolOutcome};
 use crate::config::Config;
 use crate::mcp::core::plan::{broken_plan_conditions, get_current_task_start_index, has_active_plan, PlanStorage};
 use crate::mcp::tool_shape;
@@ -193,16 +193,33 @@ pub fn tool_call(
 	}
 }
 
-/// A call after it ran. `result` is the text after octomind's own size cap;
-/// the host drops small texts per plugin when it sends the event.
+/// What the tool itself returned, as far as a plugin asked to see it: its
+/// error flag and the first `limit` characters of its text. Taken before the
+/// host's repeat check and size cap change what the agent is shown.
+pub fn returned_by_tool(result: &McpToolResult, limit: usize) -> Returned {
+	Returned {
+		error: result.is_error(),
+		text: result.extract_content().chars().take(limit).collect(),
+	}
+}
+
+/// A call after it ran. `result` is the text the agent sees, after octomind's
+/// own size cap; the host drops small texts per plugin when it sends the event.
+/// `returned` is what the tool returned when that differs from it: another
+/// error flag, or a text that does not start the way the tool's did. An
+/// ordinary result carries none.
 pub fn tool_outcome(
 	call: &McpToolCall,
 	result: &McpToolResult,
 	workdir: &Path,
 	denied: bool,
 	replaceable: bool,
+	tool_returned: Option<&Returned>,
 ) -> ToolOutcome {
 	let text = result.extract_content();
+	let returned = tool_returned
+		.filter(|returned| returned.error != result.is_error() || !text.starts_with(&returned.text))
+		.cloned();
 	ToolOutcome {
 		id: call.tool_id.clone(),
 		tool: call.tool_name.clone(),
@@ -222,7 +239,7 @@ pub fn tool_outcome(
 			.map(|path| workdir.join(path).to_string_lossy().into_owned())
 			.collect(),
 		replaceable,
-		returned: None,
+		returned,
 	}
 }
 

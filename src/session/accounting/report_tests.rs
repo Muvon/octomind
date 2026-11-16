@@ -266,7 +266,8 @@ fn plugin_rows_appear_unchanged_under_their_names_and_totals_add_up() {
 	assert_eq!(report.totals.chat_calls, 4);
 	assert_eq!(report.totals.input_tokens, 100);
 	assert_eq!(report.totals.cost, 0.75);
-	assert_eq!(report.totals.wall_blocking_ms, 800);
+	// The report's 700 ms describe the wait octomind measured as its own 100 ms: not added.
+	assert_eq!(report.totals.wall_blocking_ms, 100);
 	assert_eq!(report.totals.wall_background_ms, Some(50));
 
 	// One side that cannot tell its background time makes the sum unknown.
@@ -317,7 +318,7 @@ fn usage_alone_makes_rows_only_when_no_report_exists() {
 	assert_eq!((checks.wall_blocking_ms, checks.wall_background_ms), (100, 40));
 	assert_eq!(report.totals.chat_calls, 3);
 	assert_eq!(report.totals.cost, 0.375);
-	// The blocking time of plugin usage is already in the session's own total.
+	// The total blocking time is the session's own measurement, not the sum of the rows.
 	assert_eq!(report.totals.wall_blocking_ms, 100);
 	assert_eq!(report.totals.wall_background_ms, Some(40));
 
@@ -328,7 +329,7 @@ fn usage_alone_makes_rows_only_when_no_report_exists() {
 }
 
 #[test]
-fn a_report_replaces_the_blocking_time_booked_from_the_plugins_usage() {
+fn the_total_blocking_time_is_the_measured_one_with_and_without_a_plugin_report() {
 	let mut info = info_with_gate_row();
 	info.supervisor_accounting.plugin_usage.insert(
 		"checks".to_string(),
@@ -337,14 +338,14 @@ fn a_report_replaces_the_blocking_time_booked_from_the_plugins_usage() {
 			..Default::default()
 		},
 	);
-	// Booking a plugin's usage adds its blocking time to the session's own total.
-	info.supervisor_accounting.blocking_wall_time_ms += 600;
+	let measured = info.supervisor_accounting.blocking_wall_time_ms;
+	assert_eq!(SupervisorReport::for_session(&info).totals.wall_blocking_ms, measured);
+
 	info.supervisor_accounting
 		.plugin_reports
 		.insert("besydr".to_string(), plugin_report());
 
-	// 100 of octomind's own and the report's 700; the 600 is part of the 700.
-	assert_eq!(SupervisorReport::for_session(&info).totals.wall_blocking_ms, 800);
+	assert_eq!(SupervisorReport::for_session(&info).totals.wall_blocking_ms, measured);
 }
 
 #[test]

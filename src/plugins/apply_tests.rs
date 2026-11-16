@@ -17,8 +17,11 @@ use crate::plugins::protocol::{event, RequestBefore, RequestPhase, TurnKind};
 use crate::plugins::test_support::{connect_stub, StubPlugin};
 use crate::plugins::EventContext;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 const ROLE: &str = "developer";
+/// How long a slow stub plugin takes to answer.
+const SLOW_ANSWER: Duration = Duration::from_millis(150);
 
 /// The sums of a report; a plugin must send every one of them.
 fn totals(chat_calls: u64, cost: f64) -> Value {
@@ -36,8 +39,11 @@ struct Rig {
 }
 
 async fn rig(answers: Vec<Value>) -> Rig {
+	rig_with(StubPlugin::new(&[event::REQUEST_BEFORE]).queue(answers)).await
+}
+
+async fn rig_with(stub: StubPlugin) -> Rig {
 	let id = format!("apply-{}", uuid::Uuid::new_v4());
-	let stub = StubPlugin::new(&[event::REQUEST_BEFORE]).queue(answers);
 	let dir = tempfile::tempdir().unwrap();
 	connect_stub(&id, ROLE, dir.path(), &stub).await;
 	let mut chat = ChatSession::for_tests(Vec::new());
@@ -285,4 +291,104 @@ async fn settle_without_a_session_keeps_the_report() {
 	settle(&rig.id, None);
 	assert_eq!(crate::plugins::take_reports(&rig.id).len(), 1);
 	crate::plugins::end_session(&rig.id);
+}
+
+#[tokio::test]
+async fn a_result_note_is_queued_apart_from_a_note_and_both_get_the_plan_checklist() {
+	let mut rig = rig(Vec::new()).await;
+	let id = rig.id.clone();
+	let effects = Effects {
+		notes: vec!["Next:\n{plan_checklist}".into()],
+		result_notes: vec!["Right after the results:\n{plan_checklist}".into()],
+		plan: Some(PlanUpdate::Start {
+			title: "Ship it".into(),
+			tasks: vec![PlanTaskSpec {
+				title: "implement".into(),
+				done_when: "the code is written".into(),
+			}],
+		}),
+	};
+
+	crate::session::context::with_session_id(id.clone(), async {
+		apply(&mut rig.chat, effects).await.unwrap();
+	})
+	.await;
+
+	assert_eq!(rig.chat.plugin_notes.len(), 1);
+	assert_eq!(rig.chat.plugin_result_notes.len(), 1);
+	assert!(rig.chat.plugin_notes[0].starts_with("Next:\n"));
+	assert!(rig.chat.plugin_result_notes[0].starts_with("Right after the results:\n"));
+	for note in rig.chat.plugin_notes.iter().chain(&rig.chat.plugin_result_notes) {
+		assert!(
+			!note.contains(PLAN_CHECKLIST_PLACEHOLDER) && note.contains("implement"),
+			"{note}"
+		);
+	}
+	crate::plugins::end_session(&id);
+}
+
+#[test]
+fn result_notes_are_written_alone_by_their_own_call() {
+	let mut chat = ChatSession::for_tests(Vec::new());
+	chat.queue_plugin_notes(vec!["a note".into()]);
+	chat.queue_plugin_result_notes(vec!["a result note".into()]);
+
+	chat.deliver_plugin_result_notes().unwrap();
+
+	let written: Vec<&str> = chat.session.messages.iter().map(|m| m.content.as_str()).collect();
+	assert_eq!(written.len(), 1);
+	assert!(written[0].contains("a result note"));
+	assert_eq!(chat.plugin_notes, vec!["a note".to_string()], "the note still waits");
+	assert!(chat.plugin_result_notes.is_empty());
+}
+
+#[test]
+fn result_notes_that_are_still_waiting_are_written_before_the_notes() {
+	let mut chat = ChatSession::for_tests(Vec::new());
+	chat.queue_plugin_notes(vec!["a note".into()]);
+	chat.queue_plugin_result_notes(vec!["a result note".into()]);
+
+	chat.deliver_plugin_notes().unwrap();
+
+	let written: Vec<&str> = chat.session.messages.iter().map(|m| m.content.as_str()).collect();
+	assert_eq!(written.len(), 2);
+	assert!(
+		written[0].contains("a result note") && written[1].contains("a note"),
+		"{written:?}"
+	);
+}
+
+#[tokio::test]
+async fn the_time_the_agent_waited_is_booked_by_settle_once() {
+	let mut rig = rig_with(StubPlugin::new(&[event::REQUEST_BEFORE]).delay(SLOW_ANSWER)).await;
+	let id = rig.id.clone();
+
+	rig.answered_event().await;
+
+	let booked = rig.chat.session.info.supervisor_accounting.blocking_wall_time_ms;
+	assert!(booked >= SLOW_ANSWER.as_millis() as u64, "{booked}");
+	settle(&id, Some(&mut rig.chat.session));
+	assert_eq!(
+		rig.chat.session.info.supervisor_accounting.blocking_wall_time_ms,
+		booked
+	);
+	crate::plugins::end_session(&id);
+}
+
+#[tokio::test]
+async fn a_turn_counts_the_time_waited_even_when_nothing_settled_it_before_the_turn_ended() {
+	let mut rig = rig_with(StubPlugin::new(&[event::REQUEST_BEFORE]).delay(SLOW_ANSWER)).await;
+	let id = rig.id.clone();
+
+	rig.chat.begin_turn_timing();
+	rig.send().await;
+	rig.chat.finish_turn_timing();
+
+	let turn = &rig.chat.session.info.supervisor_accounting.turn_time;
+	assert_eq!(turn.completed, 1);
+	assert!(
+		turn.blocking_supervisor_time_ms >= SLOW_ANSWER.as_millis() as u64,
+		"{turn:?}"
+	);
+	crate::plugins::end_session(&id);
 }

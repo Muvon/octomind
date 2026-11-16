@@ -135,6 +135,38 @@ fn edit_list_reports_one_diff_per_item() {
 }
 
 #[test]
+fn edit_list_without_top_level_path_reports_locations_and_diffs() {
+	register_editor("acpTestsItemPathEditor");
+
+	let call = tool_call(
+		"acpTestsItemPathEditor",
+		serde_json::json!({
+			"edits": [
+				{"path": "a.rs", "old_text": "x", "new_text": "y"},
+				{"path": "a.rs", "old_text": "1", "new_text": "2"},
+				{"path": "b.rs", "old_text": "3", "new_text": ""}
+			]
+		}),
+		NO_WORKDIR_SESSION,
+	);
+
+	assert_eq!(
+		call.kind,
+		ToolKind::Edit,
+		"a write naming files in its edit items is an edit"
+	);
+	assert_eq!(
+		call.locations,
+		vec![ToolCallLocation::new("a.rs"), ToolCallLocation::new("b.rs")],
+		"item paths are collected and de-duplicated"
+	);
+	assert_eq!(
+		call.content,
+		vec![diff("a.rs", "x", "y"), diff("a.rs", "1", "2"), diff("b.rs", "3", "")]
+	);
+}
+
+#[test]
 fn edit_without_old_text_reports_no_diff() {
 	register_editor("acpTestsWholeFileWriter");
 

@@ -29,26 +29,6 @@ fn migrate_once(content: &str) -> String {
 		.content
 }
 
-/// Only the supervisor-era steps: the output is a version 31 configuration.
-fn migrate_to_v31(content: &str) -> String {
-	supervisor_era_plan()
-		.migrate(content, V31_CONFIG_TEMPLATE)
-		.expect("fixture must parse")
-		.expect("fixture must not already be at version 31")
-		.content
-}
-
-fn assert_is_settled_at_v31(migrated: &str) {
-	assert_eq!(
-		parse(migrated)["version"].as_integer(),
-		Some(i64::from(SUPERVISOR_ERA_LAST_VERSION))
-	);
-	assert!(supervisor_era_plan()
-		.migrate(migrated, V31_CONFIG_TEMPLATE)
-		.unwrap()
-		.is_none());
-}
-
 fn parse(content: &str) -> toml::Value {
 	toml::from_str(content).expect("migrated output must be valid TOML")
 }
@@ -59,10 +39,6 @@ fn user_document(content: &str) -> toml_edit::DocumentMut {
 
 fn template_document() -> toml_edit::DocumentMut {
 	DEFAULT_CONFIG_TEMPLATE.parse().expect("embedded template must parse")
-}
-
-fn v31_template_document() -> toml_edit::DocumentMut {
-	V31_CONFIG_TEMPLATE.parse().expect("version 31 template must parse")
 }
 
 #[test]
@@ -76,26 +52,6 @@ fn version_of_reports_the_embedded_template_as_current() {
 #[test]
 fn the_default_template_needs_no_upgrade() {
 	assert!(upgrade(DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
-}
-
-#[test]
-fn v12_authorizer_migration_defaults_off_and_preserves_explicit_choice() {
-	for choice in [None, Some(true), Some(false)] {
-		let mut document = v31_template_document();
-		document["version"] = toml_edit::value(12);
-		let supervisor = document["supervisor"].as_table_mut().unwrap();
-		if let Some(enabled) = choice {
-			supervisor["authorizer"]["enabled"] = toml_edit::value(enabled);
-		} else {
-			supervisor.remove("authorizer");
-		}
-		let migrated = migrate_to_v31(&document.to_string());
-		assert_eq!(
-			parse(&migrated)["supervisor"]["authorizer"]["enabled"].as_bool(),
-			Some(choice.unwrap_or(false))
-		);
-		assert_is_settled_at_v31(&migrated);
-	}
 }
 
 #[test]
@@ -134,12 +90,13 @@ fn every_version_chain_output_parses_and_keeps_unknown_user_keys() {
 
 #[test]
 fn every_start_version_migrates_to_a_current_config_without_the_supervisor_tables() {
-	for version in 0..=SUPERVISOR_ERA_LAST_VERSION {
+	let current = plan().target_version(DEFAULT_CONFIG_TEMPLATE).unwrap();
+	for version in 0..current {
 		let migrated = migrate_once(&format!("version = {version}\n"));
 		let value = parse(&migrated);
 		assert_eq!(
 			value["version"].as_integer(),
-			Some(i64::from(CURRENT_CONFIG_VERSION)),
+			Some(i64::from(current)),
 			"version {version}"
 		);
 		for table in SUPERVISOR_TABLES {
@@ -218,57 +175,20 @@ top_k = 0
 max_retries = 1
 retry_timeout = 30
 "#;
-	let migrated = parse(&migrate_to_v31(old));
+	let migrated = parse(&migrate_once(old));
 	assert_eq!(migrated["model"]["name"].as_str(), Some("openai:main"));
 	assert_eq!(migrated["model"]["reasoning_effort"].as_str(), Some("high"));
 	assert_eq!(migrated["roles"][0]["model"]["name"].as_str(), Some("anthropic:worker"));
 	assert_eq!(
-		migrated["supervisor"]["model"]["name"].as_str(),
-		Some("google:supervisor")
-	);
-	assert_eq!(
 		migrated["compression"]["model"]["name"].as_str(),
 		Some("openai:compression")
 	);
-	assert!(migrated["supervisor"]["learning"].get("model").is_none());
-	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
-	assert!(migrated["supervisor"]["plan"].get("model").is_none());
-	assert!(migrated["supervisor"]["condense"].get("model").is_none());
-}
-
-#[test]
-fn an_empty_document_migrates_to_the_template_supervisor_defaults() {
-	let migrated = parse(&migrate_to_v31(""));
-	assert_eq!(
-		migrated["version"].as_integer(),
-		Some(i64::from(SUPERVISOR_ERA_LAST_VERSION))
-	);
-	assert_eq!(migrated["supervisor"]["model"]["max_tokens"].as_integer(), Some(8192));
-}
-
-#[test]
-fn remove_v10_learning_backends_tolerates_a_non_table_learning_value() {
-	let template = v31_template_document();
-	let mut document = user_document("[supervisor]\nenabled = true\nlearning = 5\n");
-	remove_v10_learning_backends(&mut document, &template).unwrap();
-	let supervisor = parse(&document.to_string())["supervisor"].clone();
-	assert_eq!(supervisor["enabled"].as_bool(), Some(true));
-	assert_eq!(supervisor["learning"].as_integer(), Some(5));
-}
-
-#[test]
-fn add_v9_adaptive_condense_creates_condense_inside_an_existing_supervisor() {
-	let template = v31_template_document();
-	let mut document = user_document("[supervisor]\nenabled = true\n");
-	add_v9_adaptive_condense(&mut document, &template).unwrap();
-	let supervisor = parse(&document.to_string())["supervisor"].clone();
-	assert_eq!(supervisor["enabled"].as_bool(), Some(true));
-	assert_eq!(supervisor["condense"]["adaptive"].as_bool(), Some(false));
+	assert!(migrated.get("supervisor").is_none());
 }
 
 #[test]
 fn collapse_pressure_levels_carries_a_single_level_threshold() {
-	let template = v31_template_document();
+	let template = template_document();
 	let mut document =
 		user_document("[compression]\n\n[[compression.pressure_levels]]\nthreshold = 45000\ntarget_ratio = 2.0\n");
 	collapse_pressure_levels(&mut document, &template).unwrap();
@@ -357,99 +277,6 @@ fn v19_timing_migration_adds_the_section_and_keeps_calibrated_values() {
 	assert_eq!(config.timing.review_weight, 2.0);
 }
 
-#[test]
-fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
-	let mut document = v31_template_document();
-	document["version"] = toml_edit::value(13);
-	document.remove("decision");
-	let supervisor = document["supervisor"].as_table_mut().unwrap();
-	supervisor.remove("evaluate");
-	supervisor["enabled"] = toml_edit::value(true);
-	supervisor["model"]["name"] = toml_edit::value("openai:custom-supervisor");
-	supervisor["authorizer"]["enabled"] = toml_edit::value(true);
-	let migrated = migrate_to_v31(&document.to_string());
-	let value = parse(&migrated);
-	assert_is_settled_at_v31(&migrated);
-	let decision = &value["decision"];
-	assert_eq!(decision["model"].as_str(), Some("cloudflare:typesafe/jev"));
-	for key in ["recall", "skills", "supervisor"] {
-		assert_eq!(decision[key].as_bool(), Some(false), "decision.{key}");
-	}
-	assert_eq!(value["supervisor"]["enabled"].as_bool(), Some(true));
-	assert_eq!(
-		value["supervisor"]["model"]["name"].as_str(),
-		Some("openai:custom-supervisor")
-	);
-	assert_eq!(value["supervisor"]["authorizer"]["enabled"].as_bool(), Some(true));
-}
-
-#[test]
-fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserves_evaluate_values() {
-	let mut document = v31_template_document();
-	document["version"] = toml_edit::value(14);
-	document.remove("decision");
-	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
-	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
-	evaluate.remove("condense");
-	evaluate.remove("compression");
-	evaluate["model"] = toml_edit::value("typesafe:jev-latest");
-	evaluate["recall"] = toml_edit::value(true);
-	evaluate["authorizer"] = toml_edit::value(true);
-	let migrated = migrate_to_v31(&document.to_string());
-	let value = parse(&migrated);
-	assert_is_settled_at_v31(&migrated);
-	let decision = &value["decision"];
-	assert_eq!(decision["compression"].as_bool(), Some(false));
-	assert_eq!(decision["model"].as_str(), Some("typesafe:jev-latest"));
-	assert_eq!(decision["recall"].as_bool(), Some(true));
-	assert_eq!(decision["skills"].as_bool(), Some(false));
-	assert_eq!(decision["supervisor"].as_bool(), Some(true));
-}
-
-#[test]
-fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_evaluate_values() {
-	let mut document = v31_template_document();
-	document["version"] = toml_edit::value(15);
-	document.remove("decision");
-	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
-	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
-	evaluate.remove("distill");
-	evaluate.remove("plan");
-	evaluate.remove("gate");
-	evaluate["model"] = toml_edit::value("typesafe:jev-latest");
-	evaluate["recall"] = toml_edit::value(true);
-	evaluate["condense"] = toml_edit::value(true);
-	let migrated = migrate_to_v31(&document.to_string());
-	let value = parse(&migrated);
-	assert_is_settled_at_v31(&migrated);
-	let decision = &value["decision"];
-	assert_eq!(decision["model"].as_str(), Some("typesafe:jev-latest"));
-	assert_eq!(decision["recall"].as_bool(), Some(true));
-	assert_eq!(decision["supervisor"].as_bool(), Some(true));
-	assert_eq!(decision["skills"].as_bool(), Some(false));
-	assert_eq!(decision["compression"].as_bool(), Some(false));
-}
-
-#[test]
-fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_values() {
-	let mut document = v31_template_document();
-	document["version"] = toml_edit::value(16);
-	document.remove("decision");
-	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
-	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
-	evaluate.remove("capabilities");
-	evaluate["skills"] = toml_edit::value(true);
-	evaluate["gate"] = toml_edit::value(true);
-	let migrated = migrate_to_v31(&document.to_string());
-	let value = parse(&migrated);
-	assert_is_settled_at_v31(&migrated);
-	let decision = &value["decision"];
-	assert_eq!(decision["capabilities"].as_bool(), Some(false));
-	assert_eq!(decision["skills"].as_bool(), Some(true));
-	assert_eq!(decision["supervisor"].as_bool(), Some(true));
-	assert_eq!(decision["recall"].as_bool(), Some(false));
-}
-
 const V31_WITH_SUPERVISOR_TABLES: &str = "# my config\nversion = 31\nlog_level = \"info\"\n\n# my decision notes\n[decision]\nmodel = \"typesafe:jev-latest\" # my model\nrecall = true\n\n# my supervisor notes\n[supervisor]\nenabled = false # off for now\nmax_identical_rounds = 4\n\n[my_custom_section]\nflag = true\n";
 
 #[test]
@@ -478,7 +305,7 @@ fn carried_settings_of_a_v31_config_hold_both_tables_with_the_users_values_and_c
 }
 
 #[test]
-fn carried_settings_of_an_older_config_are_the_tables_as_they_are_after_the_steps_to_31() {
+fn carried_settings_of_an_older_config_are_the_users_tables_as_they_are_in_the_file() {
 	let upgraded = upgrade("version = 9\n\n[supervisor.learning]\nenabled = true\nbackend = \"mcp\"\n")
 		.unwrap()
 		.expect("a version 9 config must upgrade");
@@ -491,9 +318,9 @@ fn carried_settings_of_an_older_config_are_the_tables_as_they_are_after_the_step
 	let value = parse(&carried);
 	let learning = &value["supervisor"]["learning"];
 	assert_eq!(learning["enabled"].as_bool(), Some(true));
-	assert!(learning.get("backend").is_none(), "step 10 removes the backend");
-	assert_eq!(learning["evolution"]["enabled"].as_bool(), Some(false));
-	assert!(value.get("decision").is_some(), "step 22 adds the decision table");
+	assert_eq!(learning["backend"].as_str(), Some("mcp"), "no step is applied to the carried tables");
+	assert!(learning.get("evolution").is_none());
+	assert!(value.get("decision").is_none());
 	assert!(value.get("version").is_none());
 }
 

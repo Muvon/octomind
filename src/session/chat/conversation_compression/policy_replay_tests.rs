@@ -287,23 +287,28 @@ fn free_tier_avoids_paid_folds_for_oversized_tool_bodies() {
 	let prev = Sim::new(PREVIOUS, FoldEconomics::DEFAULT, &[]).run(&trace);
 	let cur = Sim::new(CURRENT, FoldEconomics::DEFAULT, &[]).run(&trace);
 	report("oversized-tool", &prev, &cur);
-	// Measured: 13% fewer tokens processed, 31% lower weighted cost, one paid
+	// Measured: 7% fewer tokens processed, 19% lower weighted cost, one paid
 	// fold fewer. Pinned with a margin so a timing regression shows as a number.
+	// (Under the doubling ladder the same pair measured 13% and 31%: both
+	// policies now fold at lower lines, so there is less left for the trim to save.)
 	assert!(cur.free_trims > 0);
 	assert!(cur.paid_folds < prev.paid_folds);
-	assert!(pct_less(prev.total_tokens() as f64, cur.total_tokens() as f64) >= 10.0);
-	assert!(pct_less(prev.weighted_cost, cur.weighted_cost) >= 25.0);
+	assert!(pct_less(prev.total_tokens() as f64, cur.total_tokens() as f64) >= 5.0);
+	assert!(pct_less(prev.weighted_cost, cur.weighted_cost) >= 15.0);
 }
 
 #[test]
-fn veto_cooldown_keeps_the_fire_line_instead_of_doubling_it() {
+fn veto_cooldown_costs_about_the_same_as_raising_the_fire_line() {
 	let trace = veto_trace();
 	let prev = Sim::new(PREVIOUS, FoldEconomics::DEFAULT, &[1]).run(&trace);
 	let cur = Sim::new(CURRENT, FoldEconomics::DEFAULT, &[1]).run(&trace);
 	report("veto", &prev, &cur);
-	// Measured: 13% fewer tokens, 17% lower weighted cost, peak 156k -> 134k.
+	// Under the doubling ladder a veto that climbed it doubled the line, and the
+	// cooldown won: 13% fewer tokens, peak 156k -> 134k. A veto that climbs now
+	// adds a quarter of the room left, and the two cost about the same.
+	// Measured: 1% more tokens, 4% higher weighted cost, peak 132k -> 134k.
 	assert_eq!(prev.paid_declines, 1);
 	assert_eq!(cur.paid_declines, 1);
-	assert!(cur.peak_context < prev.peak_context);
-	assert!(pct_less(prev.total_tokens() as f64, cur.total_tokens() as f64) >= 10.0);
+	assert!(pct_less(prev.total_tokens() as f64, cur.total_tokens() as f64).abs() < 5.0);
+	assert!(pct_less(prev.weighted_cost, cur.weighted_cost).abs() < 5.0);
 }

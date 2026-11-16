@@ -43,16 +43,33 @@ fn autonomous_runway_expands_until_a_user_turn_resets_the_counter() {
 }
 
 #[test]
-fn adaptive_fire_line_doubles_per_consecutive_fold() {
-	// Level 0 fires at the configured threshold; each in-turn fold doubles
-	// it; the cap sits one safety margin under the ceiling.
+fn adaptive_fire_line_takes_a_quarter_of_the_room_left_per_consecutive_fold() {
+	// Level 0 fires at the configured threshold; each in-turn fold adds a
+	// quarter of the room still left under the ceiling (130k here); the cap
+	// sits one safety margin under the ceiling.
 	assert_eq!(adaptive_fire_line(70_000, 200_000, 0, 2_000.0, 0), 70_000);
-	assert_eq!(adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1), 140_000);
+	assert_eq!(adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1), 102_500);
+	assert_eq!(adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 2), 126_875);
 	assert_eq!(
-		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 2),
+		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 9),
 		190_000,
-		"level 2 (280k) is capped at ceiling minus safety"
+		"level 9 (190.2k) is capped at ceiling minus safety"
 	);
+	assert_eq!(
+		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, u32::MAX),
+		190_000,
+		"the ladder approaches the ceiling and never passes the cap"
+	);
+}
+
+#[test]
+fn fire_line_steps_scale_with_the_configured_threshold_and_ceiling() {
+	// The step is a share of the room, so any pair of settings climbs the
+	// same way: 100k under a 300k ceiling goes 150k, 187.5k, not 200k, 300k.
+	assert_eq!(adaptive_fire_line(100_000, 300_000, 0, 0.0, 1), 150_000);
+	assert_eq!(adaptive_fire_line(100_000, 300_000, 0, 0.0, 2), 187_500);
+	// A threshold at or above the ceiling leaves no room: the cap decides.
+	assert_eq!(adaptive_fire_line(250_000, 200_000, 0, 2_000.0, 3), 190_000);
 }
 
 #[test]
@@ -65,18 +82,18 @@ fn fire_line_never_sits_inside_the_post_fold_safety_margin() {
 }
 
 #[test]
-fn composed_in_turn_cycles_double_the_fire_line_until_the_cap() {
+fn composed_in_turn_cycles_raise_the_fire_line_toward_the_cap() {
 	// Production wiring: fold → consecutive_compressions += 1 → next check.
-	// One long turn must see 70k → 140k → 190k (cap), never a re-fold at
-	// the same mark; a genuine user turn resets to the threshold.
+	// One long turn must see 70k → 102.5k → 126.9k → 145.2k, never a re-fold
+	// at the same mark; a genuine user turn resets to the threshold.
 	let threshold = 70_000;
 	let ceiling = 200_000;
 	let growth = 2_000.0;
 	let lines: Vec<usize> = (0..4u32)
 		.map(|k| adaptive_fire_line(threshold, ceiling, 45_000, growth, k))
 		.collect();
-	assert_eq!(lines, vec![70_000, 140_000, 190_000, 190_000]);
-	assert!(lines.windows(2).all(|w| w[1] >= w[0]));
+	assert_eq!(lines, vec![70_000, 102_500, 126_875, 145_156]);
+	assert!(lines.windows(2).all(|w| w[1] > w[0]));
 	// User turn resets the level (consecutive_compressions = 0).
 	assert_eq!(adaptive_fire_line(threshold, ceiling, 45_000, growth, 0), 70_000);
 }

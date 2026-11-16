@@ -180,8 +180,8 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (true, MAX_COMPRESSION_RATIO);
 	}
 
-	// ADAPTIVE FIRE LINE: geometric per-turn ladder. Each in-turn fold doubles
-	// the line — threshold, 2x, 4x… capped under the ceiling — so a single long
+	// ADAPTIVE FIRE LINE: per-turn ladder toward the ceiling. Each in-turn fold
+	// adds a quarter of the room still left under the ceiling, so a single long
 	// turn earns growing room; a genuine user turn resets it. The runway still
 	// paces the amortization gate and fold depth.
 	let runway = autonomous_runway(session.session.info.consecutive_compressions);

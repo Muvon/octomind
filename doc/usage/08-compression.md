@@ -239,9 +239,9 @@ fold call itself fails inside the margin, the error surfaces on the request inst
 ### Adaptive Fire Line and Runway
 
 Within one autonomous turn, every successful compression increments `consecutive_compressions`. The soft fire line
-follows `threshold × 2^k` (capped below the hard ceiling), while the desired quiet runway follows `5 × 2^k` API calls:
-5, 10, 20, 40, and so on. A genuine new user turn resets `k`; forced `/done` also resets it after the fold. Paid
-declines set a cooldown without raising the fire line.
+follows `ceiling − (ceiling − threshold) × 0.75^k` (each fold adds a quarter of the room still left under the hard
+ceiling), while the desired quiet runway follows `5 × 2^k` API calls: 5, 10, 20, 40, and so on. A genuine new user turn
+resets `k`; forced `/done` also resets it after the fold. Paid declines set a cooldown without raising the fire line.
 
 Before the ceiling cap is applied, the line is raised to at least the last post-compression watermark plus five calls of
 measured growth. The ceiling cap can pull it below the configured threshold. If the range is empty or even a `16.0x`
@@ -269,9 +269,10 @@ fold iff expected_calls ≥ runway
   number of recorded turns in that bounded history, used as a future-work estimate.
 - `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a
   longer predicted horizon.
-- The fire line itself is a geometric per-turn ladder: the k-th consecutive successful in-turn fold doubles it —
-  `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 120k → 240k → cap of room
-  instead of re-folding at the same mark. A genuine user turn resets the level.
+- The fire line itself is a per-turn ladder toward the ceiling: the k-th consecutive successful in-turn fold leaves it
+  at `ceiling − (ceiling − threshold) × 0.75^k`, capped one safety margin under the ceiling — so a single long turn gets
+  120k → 165k → 199k → 224k of room under a 300k ceiling instead of re-folding at the same mark. A genuine user turn
+  resets the level.
 - The amortization calculation uses provider accounting when available and conservative internal fallback weights
   otherwise.
 - `sent` is estimated as 45% of the compressible range; `summary` is estimated as that range divided by 16, capped by

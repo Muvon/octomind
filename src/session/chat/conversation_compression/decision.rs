@@ -369,14 +369,22 @@ pub(super) fn autonomous_runway(consecutive_compressions: u32) -> f64 {
 	MIN_RUNWAY_TURNS * 2usize.saturating_pow(consecutive_compressions) as f64
 }
 
-/// The soft trigger. Geometric per-turn ladder: the k-th consecutive
-/// autonomous fold in one turn doubles the line —
-/// threshold, 2x, 4x… capped just under the ceiling — so a single long turn
-/// earns progressively more room instead of re-folding at the same mark
-/// (measured failure: 7 folds in 4 turns, each at ~80k). A genuine user turn
-/// resets the level. Two floors keep it sane: never below the configured
-/// threshold, and never inside `MIN_RUNWAY_TURNS × growth` of the last fold's
-/// surviving context (a line the next few calls would re-cross buys nothing).
+/// Share of the room still left under the ceiling that each consecutive
+/// in-turn fold adds to the fire line.
+pub(super) const FIRE_LINE_ROOM_SHARE: f64 = 0.25;
+
+/// The soft trigger. Per-turn ladder toward the ceiling: the k-th consecutive
+/// autonomous fold in one turn leaves the line at
+/// `ceiling − (ceiling − threshold) × (1 − FIRE_LINE_ROOM_SHARE)^k`, so a
+/// single long turn earns progressively more room instead of re-folding at the
+/// same mark (measured failure: 7 folds in 4 turns, each at ~80k) and never
+/// reaches the ceiling. Each step is a share of the room that is left, not a
+/// multiple of the threshold: doubling took a 100k threshold to 200k after one
+/// fold, and a measured single-turn run then sent 139 of its 316 requests
+/// above 100k. A genuine user turn resets the level. Two floors keep it sane:
+/// never below the configured threshold, and never inside
+/// `MIN_RUNWAY_TURNS × growth` of the last fold's surviving context (a line
+/// the next few calls would re-cross buys nothing).
 pub(super) fn adaptive_fire_line(
 	configured_threshold: usize,
 	ceiling: usize,
@@ -386,8 +394,10 @@ pub(super) fn adaptive_fire_line(
 ) -> usize {
 	let safety_tokens = (growth * MIN_RUNWAY_TURNS) as usize;
 	let safe_ceiling = ceiling.saturating_sub(safety_tokens);
-	let level = consecutive_compressions.min(16);
-	let ladder = configured_threshold.saturating_mul(1usize << level);
+	let room = ceiling.saturating_sub(configured_threshold) as f64;
+	let level = i32::try_from(consecutive_compressions).unwrap_or(i32::MAX);
+	let share_taken = 1.0 - (1.0 - FIRE_LINE_ROOM_SHARE).powi(level);
+	let ladder = configured_threshold.saturating_add((room * share_taken) as usize);
 	ladder.max(post_tokens.saturating_add(safety_tokens)).min(safe_ceiling)
 }
 

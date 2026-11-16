@@ -757,3 +757,62 @@ fn snapshot_without_main_cost_leaves_a_known_main_cost_while_null_clears_it() {
 		.main_cost
 		.is_none());
 }
+
+fn snapshot_run(id: &str, status: crate::session::tap_runs::TapJobStatus) -> crate::session::tap_runs::TapJobInfo {
+	crate::session::tap_runs::TapJobInfo {
+		id: id.to_string(),
+		role: "developer:general".to_string(),
+		workdir: "/tmp".to_string(),
+		started_at: std::time::UNIX_EPOCH,
+		status,
+		error: None,
+		live: crate::session::tap_runs::TapLiveState {
+			last_action: None,
+			usage: None,
+		},
+	}
+}
+
+#[test]
+fn full_and_changed_only_snapshots_fold_into_the_whole_run_history() {
+	use crate::session::tap_runs::TapJobStatus::{Done, Running};
+	// Binaries up to 0.72 wrote every run into every snapshot; later ones write only
+	// the runs that changed. One log holds both, and a restoration point between
+	// them must not drop the runs that only earlier snapshots name.
+	let info = |runs| SessionInfo {
+		name: "mixed-snapshots".into(),
+		agent_runs: runs,
+		..Default::default()
+	};
+	let lines = [
+		json!({"type": "SUMMARY", "timestamp": 100, "session_info": info(vec![snapshot_run("a", Done), snapshot_run("b", Running)])})
+			.to_string(),
+		json!({"type": "STATS", "timestamp": 101, "agent_runs": [snapshot_run("a", Done), snapshot_run("b", Running), snapshot_run("c", Running)]})
+			.to_string(),
+		json!({"type": "RESTORATION_POINT", "timestamp": 102}).to_string(),
+		json!({"type": "STATS", "timestamp": 103, "agent_runs": [snapshot_run("b", Done)]}).to_string(),
+		json!({"type": "SUMMARY", "timestamp": 104, "session_info": info(vec![snapshot_run("d", Running)])}).to_string(),
+		json!({"type": "SUMMARY", "timestamp": 105, "session_info": info(Vec::new())}).to_string(),
+	];
+	let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+
+	let runs = load_session(&file.path().to_path_buf()).unwrap().info.agent_runs;
+
+	let seen: Vec<(&str, crate::session::tap_runs::TapJobStatus)> =
+		runs.iter().map(|run| (run.id.as_str(), run.status)).collect();
+	assert_eq!(seen, vec![("a", Done), ("b", Done), ("c", Running), ("d", Running)]);
+}
+
+#[test]
+fn stats_with_a_total_cost_that_is_not_a_number_fails_the_load() {
+	let info = SessionInfo {
+		name: "bad-total-cost".into(),
+		..Default::default()
+	};
+	let summary = json!({"type": "SUMMARY", "timestamp": 100, "session_info": info}).to_string();
+	let stats = json!({"type": "STATS", "timestamp": 101, "total_cost": "lots"}).to_string();
+	let file = write_session(&[&summary, &stats]);
+
+	assert!(load_session(&file.path().to_path_buf()).is_err());
+}

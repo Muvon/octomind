@@ -328,7 +328,7 @@ struct SnapshotPresence {
 struct StatsEntry {
 	#[serde(default, deserialize_with = "lenient")]
 	timestamp: Option<u64>,
-	#[serde(default, deserialize_with = "lenient")]
+	#[serde(default)]
 	total_cost: Option<f64>,
 	#[serde(default)]
 	supervisor_accounting: Option<crate::session::accounting::SupervisorAccounting>,

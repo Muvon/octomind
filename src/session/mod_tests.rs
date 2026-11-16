@@ -899,7 +899,7 @@ fn snapshots_log_only_changed_runs_and_loading_rebuilds_the_full_history() {
 	assert_eq!(session.info.agent_runs.len(), 11);
 
 	let loaded = load_session(&path).unwrap();
-	// The loader keeps the last SUMMARY's runs first, so compare by id.
+	// The loader returns runs in the order the log first names them, so compare by id.
 	let mut loaded_runs = loaded.info.agent_runs;
 	loaded_runs.sort_by(|left, right| left.id.cmp(&right.id));
 	let mut expected = session.info.agent_runs.clone();

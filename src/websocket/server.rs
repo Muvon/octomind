@@ -1650,8 +1650,12 @@ async fn bind_session(
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
 		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()))?;
-		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
-		crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
+		// A session still in memory keeps its plan and schedule in the session-scoped
+		// stores (only cleanup_session clears them); re-reading the log would only repeat a read.
+		if !from_memory {
+			crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
+			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
+		}
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 

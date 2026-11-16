@@ -817,3 +817,93 @@ fn new_session_sets_identity_and_zeroes_counters() {
 	assert_eq!(info.total_cost, 0.0);
 	assert_eq!(info.tool_calls, 0);
 }
+
+fn agent_run(id: &str, status: tap_runs::TapJobStatus, cost: Option<f64>) -> tap_runs::TapJobInfo {
+	tap_runs::TapJobInfo {
+		id: id.to_string(),
+		role: "developer:general".to_string(),
+		workdir: "/tmp".to_string(),
+		started_at: UNIX_EPOCH,
+		status,
+		error: None,
+		live: tap_runs::TapLiveState {
+			last_action: None,
+			usage: cost.map(|cost| tap_runs::TapLiveUsage {
+				input_tokens: 1,
+				output_tokens: 1,
+				cache_read_tokens: 1,
+				cost,
+			}),
+		},
+	}
+}
+
+fn logged_agent_run_ids(path: &std::path::Path, entry_type: &str) -> Vec<Vec<String>> {
+	use std::io::BufRead;
+	let reader = std::io::BufReader::new(zstd::stream::read::Decoder::new(std::fs::File::open(path).unwrap()).unwrap());
+	reader
+		.lines()
+		.map(|line| serde_json::from_str::<serde_json::Value>(&line.unwrap()).unwrap())
+		.filter(|entry| entry["type"] == entry_type)
+		.map(|entry| {
+			let runs = match entry_type {
+				"SUMMARY" => &entry["session_info"]["agent_runs"],
+				_ => &entry["agent_runs"],
+			};
+			runs.as_array()
+				.unwrap()
+				.iter()
+				.map(|run| run["id"].as_str().unwrap().to_string())
+				.collect()
+		})
+		.collect()
+}
+
+#[test]
+fn snapshots_log_only_changed_runs_and_loading_rebuilds_the_full_history() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("delta-round-trip.jsonl.zst");
+	let mut session = Session::new("delta-round-trip".into(), "test/model".into());
+	session.session_file = Some(path.clone());
+	session.info.agent_runs = (0..10)
+		.map(|index| agent_run(&format!("run-{index}"), tap_runs::TapJobStatus::Running, None))
+		.collect();
+
+	session.save().unwrap();
+	// Nothing changed: the second SUMMARY carries no runs.
+	session.save().unwrap();
+
+	session.info.agent_runs[3].status = tap_runs::TapJobStatus::Done;
+	session
+		.info
+		.agent_runs
+		.push(agent_run("run-10", tap_runs::TapJobStatus::Running, None));
+	crate::session::logger::log_stats_checkpoint(&path, &session.info).unwrap();
+
+	session.info.agent_runs[5].live.usage = agent_run("run-5", tap_runs::TapJobStatus::Running, Some(2.0))
+		.live
+		.usage;
+	session.save().unwrap();
+	crate::session::logger::log_stats_checkpoint(&path, &session.info).unwrap();
+
+	let summaries = logged_agent_run_ids(&path, "SUMMARY");
+	assert_eq!(summaries.len(), 3);
+	assert_eq!(summaries[0].len(), 10);
+	assert!(summaries[1].is_empty());
+	assert_eq!(summaries[2], vec!["run-5"]);
+	let checkpoints = logged_agent_run_ids(&path, "STATS");
+	assert_eq!(checkpoints.len(), 2);
+	assert_eq!(checkpoints[0], ["run-3", "run-10"]);
+	assert!(checkpoints[1].is_empty());
+	// The live history is never trimmed by writing deltas.
+	assert_eq!(session.info.agent_runs.len(), 11);
+
+	let loaded = load_session(&path).unwrap();
+	// The loader keeps the last SUMMARY's runs first, so compare by id.
+	let mut loaded_runs = loaded.info.agent_runs;
+	loaded_runs.sort_by(|left, right| left.id.cmp(&right.id));
+	let mut expected = session.info.agent_runs.clone();
+	expected.sort_by(|left, right| left.id.cmp(&right.id));
+	assert_eq!(loaded_runs, expected);
+	tap_runs::clear_for_session(&session.info.name);
+}

@@ -519,9 +519,22 @@ fn extract_locations(params: &serde_json::Value, session_id: &str) -> Vec<ToolCa
 		.filter_map(|key| params.get(*key)?.as_array())
 		.flatten()
 		.filter_map(|item| item.as_str());
+	// Edit lists name their file once per item instead of at the top level, so
+	// the call's locations — and with them its kind — must come from the items.
+	let item_paths = params
+		.as_object()
+		.into_iter()
+		.flat_map(|fields| fields.values())
+		.filter_map(|value| value.as_array())
+		.flatten()
+		.filter_map(|item| item.as_object())
+		.flat_map(|item| PATH_KEYS.iter().filter_map(move |key| item.get(*key)?.as_str()));
+	let mut seen = std::collections::HashSet::new();
 	single
 		.chain(listed)
+		.chain(item_paths)
 		.filter(|path| !path.is_empty())
+		.filter(|path| seen.insert((*path).to_string()))
 		.map(|path| ToolCallLocation::new(absolute_path(path, session_id)).line(line))
 		.collect()
 }

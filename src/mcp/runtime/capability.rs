@@ -1134,7 +1134,6 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 			top1_name
 		);
 	}
-	let top = evaluate_pick(config, &intent, top, &scored).await;
 
 	if let Some((score, cap)) = top {
 		match activate_capability_inline(&cap.name, config).await {
@@ -1154,104 +1153,6 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 	}
 
 	Vec::new()
-}
-
-/// The evaluation seam's say over the cosine decision: a cosine winner the
-/// Choice gives under `CAPABILITY_CONFIRM_AT` is vetoed; with no winner, the
-/// Choice's pick activates at `CAPABILITY_ACTIVATE_AT` or above, carrying its
-/// probability as the score. The Choice lists the `CAPABILITY_TOP_K`
-/// best-scored candidates (name and description) plus `none` over the
-/// stripped intent. Off or unavailable, the cosine decision stands.
-async fn evaluate_pick<'a>(
-	config: &Config,
-	intent: &str,
-	cosine: Option<(f32, &'a crate::agent::registry::ResolvedCapability)>,
-	ranked: &[(f32, &'a crate::agent::registry::ResolvedCapability)],
-) -> Option<(f32, &'a crate::agent::registry::ResolvedCapability)> {
-	use crate::supervisor::evaluate::{self, Seam};
-
-	if !evaluate::enabled(config, Seam::Capabilities) {
-		return cosine;
-	}
-	let candidates = &ranked[..ranked.len().min(evaluate::CAPABILITY_TOP_K)];
-	let question = evaluate::capability_question(
-		candidates
-			.iter()
-			.map(|(_, cap)| (cap.name.as_str(), cap.description.as_str())),
-	);
-	let questions = std::collections::BTreeMap::from([(evaluate::CAPABILITY_QUESTION_ID.to_string(), question)]);
-	let Some(answers) = evaluate::run(
-		config,
-		Seam::Capabilities,
-		serde_json::Value::String(intent.to_string()),
-		questions,
-	)
-	.await
-	else {
-		return cosine;
-	};
-	// The runner answers every asked id with its own type or a refusal.
-	let Some(octolib::evaluation::Answer::Choice {
-		choice, probabilities, ..
-	}) = answers.get(evaluate::CAPABILITY_QUESTION_ID)
-	else {
-		evaluate::unavailable(Seam::Capabilities, "refused");
-		return cosine;
-	};
-	let cosine_name = cosine.map(|(_, cap)| cap.name.as_str());
-	let names: Vec<&str> = candidates.iter().map(|(_, cap)| cap.name.as_str()).collect();
-	let verdict = match apply_capability_answer(cosine_name, &names, choice, probabilities) {
-		Ok(verdict) => verdict,
-		Err(reason) => {
-			evaluate::unavailable(Seam::Capabilities, reason);
-			return cosine;
-		}
-	};
-	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
-	let picked = match verdict {
-		Some(name) if cosine_name == Some(name) => cosine,
-		Some(name) => candidates
-			.iter()
-			.find(|(_, cap)| cap.name == name)
-			.map(|(_, cap)| (probability(name) as f32, *cap)),
-		None => None,
-	};
-	if picked.map(|(_, cap)| cap.name.as_str()) != cosine_name {
-		crate::log_debug!(
-			"capability evaluate: {} → {} (choice '{}' p={:.2})",
-			cosine_name.unwrap_or("none"),
-			picked.map(|(_, cap)| cap.name.as_str()).unwrap_or("none"),
-			choice,
-			probability(choice)
-		);
-		crate::supervisor::stats::evaluate_applied(Seam::Capabilities, 1);
-	}
-	picked
-}
-
-/// Apply the seam's rule to one Choice answer: `cosine` is the cosine
-/// winner's name, `candidates` the names the Choice listed. `Ok(Some)` is the
-/// capability to activate, `Ok(None)` an abstain; `Err` names a choice that
-/// was never offered. Pure, so the two floors are unit-testable.
-fn apply_capability_answer<'a>(
-	cosine: Option<&'a str>,
-	candidates: &[&'a str],
-	choice: &str,
-	probabilities: &std::collections::BTreeMap<String, f64>,
-) -> Result<Option<&'a str>, &'static str> {
-	use crate::supervisor::evaluate::{CAPABILITY_ACTIVATE_AT, CAPABILITY_CONFIRM_AT, CAPABILITY_NONE};
-
-	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
-	if choice != CAPABILITY_NONE && !candidates.contains(&choice) {
-		return Err("invalid response");
-	}
-	Ok(match cosine {
-		Some(winner) => (probability(winner) >= CAPABILITY_CONFIRM_AT).then_some(winner),
-		None => candidates
-			.iter()
-			.copied()
-			.find(|name| *name == choice && probability(name) >= CAPABILITY_ACTIVATE_AT),
-	})
 }
 
 /// Translate capability `allowed_tools` patterns into the bare-name

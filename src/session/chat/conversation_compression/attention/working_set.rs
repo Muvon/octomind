@@ -93,7 +93,7 @@ fn calls(messages: &[Message]) -> BTreeMap<String, (String, Value)> {
 }
 
 fn paths(args: &Value) -> Vec<String> {
-	let mut found = crate::supervisor::detect::param_paths(args);
+	let mut found = crate::mcp::tool_shape::param_paths(args);
 	for key in ["edits", "operations"] {
 		if let Some(items) = args.get(key).and_then(Value::as_array) {
 			for item in items {
@@ -333,7 +333,7 @@ fn invalidate(artifacts: &mut Artifacts, name: &str, args: &Value, content: &str
 		}
 	}
 
-	if !crate::supervisor::detect::is_mutation_call(name, args)
+	if !crate::mcp::tool_shape::is_mutation_call(name, args)
 		&& args.get("new_text").is_none()
 		&& args.get("edits").is_none()
 		&& args.get("operations").is_none()

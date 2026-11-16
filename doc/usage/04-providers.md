@@ -38,31 +38,28 @@ octomind run -m octohub:auto
 
 ### Purpose routing with `octohub:auto`
 
-Octomind attaches `X-Model-Purpose` to provider requests so a gateway can route `octohub:auto` by purpose. It uses
-exactly three values:
+Octomind attaches `X-Model-Purpose` to provider requests so a gateway can route `octohub:auto` by purpose. It sends
+one of two values:
 
 | Purpose | Octomind profile |
 |---------|------------------|
 | `main` | `[model]` |
-| `supervisor` | `[supervisor.model]` |
 | `compression` | `[compression.model]` |
 
-The shipped configuration uses `octohub:auto` for all three. These are edits to existing profiles, not a complete
+The shipped configuration uses `octohub:auto` for both. These are edits to existing profiles, not a complete
 replacement config; preserve their other fields:
 
 ```toml
 [model]
 name = "octohub:auto"
 
-[supervisor.model]
-name = "octohub:auto"
-
 [compression.model]
 name = "octohub:auto"
 ```
 
-All supervisor mechanics, including learning, share the `supervisor` purpose. The gateway controls the routing and model
-availability; Octomind does not implement its routing policy.
+The header's contract also reserves the value `supervisor`, which octomind no longer sends: the supervisor work now
+runs in the Besydr plugin, which makes its own requests with its own settings. The gateway controls the routing and
+model availability; Octomind does not implement its routing policy.
 
 ## Bring Your Own Keys
 
@@ -72,8 +69,8 @@ You can skip the hub. The shortest path is the interactive setup:
 octomind configure
 ```
 
-Pick your provider, enter the key when asked (hidden input), and pick the main model. Setup then asks whether the
-supervisor and compression should use the same model; answer `n` to choose a cheaper one for each. The key is saved to
+Pick your provider, enter the key when asked (hidden input), and pick the main model. Setup then asks whether
+compression should use the same model; answer `n` to choose a cheaper one for it. The key is saved to
 the user-scope `<data-dir>/config/.env` (owner-only permissions on Unix), never to `config.toml`. The same screen
 appears on the first interactive `octomind` launch when no config exists yet.
 
@@ -83,14 +80,11 @@ To set it up by hand instead, export your credential. For example, for OpenAI:
 export OPENAI_API_KEY="your_key"
 ```
 
-Replace `your_key` with your credential. In the generated config, change `name` in all three existing profiles while
-keeping their other settings. A main-model override alone leaves the shipped internal profiles on OctoHub:
+Replace `your_key` with your credential. In the generated config, change `name` in both existing profiles while
+keeping their other settings. A main-model override alone leaves the shipped compression profile on OctoHub:
 
 ```toml
 [model]
-name = "openai:gpt-5.6-sol"
-
-[supervisor.model]
 name = "openai:gpt-5.6-sol"
 
 [compression.model]
@@ -139,8 +133,8 @@ export OLLAMA_API_URL="http://localhost:11434/v1/chat/completions"
 octomind run -m ollama:glm-5.3
 ```
 
-This requires that model to be available on your running server. Configure supervisor and compression too if all model
-requests should stay local. Use the full endpoint path for `LOCAL_API_URL` and `OLLAMA_API_URL`; `OCTOHUB_API_URL` takes
+This requires that model to be available on your running server. Configure compression too if all model
+requests should stay local; a plugin such as Besydr has its own model settings. Use the full endpoint path for `LOCAL_API_URL` and `OLLAMA_API_URL`; `OCTOHUB_API_URL` takes
 a base URL. The `openai:` adapter uses the Responses API; use `local:` for a local Chat Completions-compatible endpoint.
 
 ## Local CLI-Backed Models
@@ -193,7 +187,7 @@ Change the active session:
 /model octohub:auto
 ```
 
-Or edit `[model].name` for the persistent default. Role, supervisor, and compression profiles can override the main
+Or edit `[model].name` for the persistent default. Role and compression profiles can override the main
 profile as described in [Configuration](03-configuration.md#model-profiles-and-purposes).
 
 ## Diagnose Provider Setup

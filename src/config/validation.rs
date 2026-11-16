@@ -29,29 +29,15 @@ impl Config {
 		// Validate webhook hooks - STRICT
 		self.validate_hooks()?;
 
+		// Validate plugins - STRICT
+		self.validate_plugins()?;
+
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
 		self.validate_model_profiles()?;
 
-		self.validate_evaluate_model()?;
-
 		Ok(())
-	}
-
-	/// `decision.model` must be `provider:model` on a provider that
-	/// serves that evaluation model — octolib's evaluation factory is the list,
-	/// and it resolves the pair without touching the network. Checked even when
-	/// the supervisor is off: a typo here is a typo regardless of which switches
-	/// are on. An absent or empty model deliberately disables decision routing.
-	pub(super) fn validate_evaluate_model(&self) -> Result<()> {
-		use octolib::evaluation::EvaluationProviderFactory;
-		let Some(model) = self.decision.model.as_deref().filter(|model| !model.is_empty()) else {
-			return Ok(());
-		};
-		EvaluationProviderFactory::get_provider_for_model(model)
-			.map(|_| ())
-			.map_err(|error| anyhow!("decision.model: {error}"))
 	}
 
 	fn validate_model_profiles(&self) -> Result<()> {
@@ -66,9 +52,6 @@ impl Config {
 			let mut profile = self.model_profile.clone();
 			profile.model = model.clone();
 			profile.validate(&format!("taps.{tag}"))?;
-		}
-		if self.supervisor.enabled {
-			self.get_supervisor_model_profile().validate("supervisor")?;
 		}
 		if self.compression.threshold != 0 {
 			self.get_compression_model_profile().validate("compression.model")?;
@@ -117,6 +100,18 @@ impl Config {
 					hook.name,
 					hook.timeout
 				));
+			}
+		}
+		Ok(())
+	}
+
+	/// Validate plugin entries: unique names, and the fields each type needs
+	fn validate_plugins(&self) -> Result<()> {
+		let mut seen_names = std::collections::HashSet::new();
+		for plugin in &self.plugins {
+			plugin.validate()?;
+			if !seen_names.insert(&plugin.name) {
+				return Err(anyhow!("Duplicate plugin name: '{}'", plugin.name));
 			}
 		}
 		Ok(())

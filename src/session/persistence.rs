@@ -256,10 +256,10 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 /// Intermediate result of parsing a session log file line by line.
 struct ParsedLogLines {
 	total_cost: f64,
-	saved_supervisor: crate::supervisor::accounting::SupervisorAccounting,
+	saved_supervisor: crate::session::accounting::SupervisorAccounting,
 	main_cost: Option<Option<f64>>,
 	agent_runs: Vec<crate::session::tap_runs::TapJobInfo>,
-	background_supervisor: Vec<(String, crate::supervisor::accounting::SupervisorAccounting)>,
+	background_supervisor: Vec<(String, crate::session::accounting::SupervisorAccounting)>,
 	session_info: Option<SessionInfo>,
 	messages: Vec<Message>,
 	restoration_messages: Vec<Message>,
@@ -275,7 +275,7 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	let mut last_summary_timestamp: u64 = 0;
 	let mut background_supervisor = Vec::new();
 	let mut total_cost: f64 = 0.0;
-	let mut saved_supervisor = crate::supervisor::accounting::SupervisorAccounting::default();
+	let mut saved_supervisor = crate::session::accounting::SupervisorAccounting::default();
 	let mut main_cost: Option<Option<f64>> = None;
 	let mut agent_runs = Vec::new();
 	let mut messages: Vec<Message> = Vec::new();

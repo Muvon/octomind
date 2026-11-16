@@ -152,70 +152,6 @@ fn write_session(lines: &[&str]) -> NamedTempFile {
 // ---- tests ----
 
 #[test]
-fn authorizer_user_evidence_and_parent_boundary_survive_actual_session_load() {
-	let mut info = SessionInfo {
-		name: "authorizer-resume".into(),
-		..Default::default()
-	};
-	info.authorization.initialized = true;
-	info.authorization
-		.users
-		.push(crate::supervisor::authorizer::UserInstruction {
-			id: "u1".into(),
-			text: "Inspect only; do not modify files".into(),
-			..Default::default()
-		});
-	info.authorization.parent = Some(Box::new(crate::supervisor::authorizer::AuthorizationContext {
-		users: info.authorization.users.clone(),
-		..Default::default()
-	}));
-	info.authorization.blocked = 3;
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
-	let user = serde_json::to_string(&Message {
-		role: "user".into(),
-		content: "continue".into(),
-		..Default::default()
-	})
-	.unwrap();
-	let file = write_session(&[&summary, &user]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert_eq!(restored.info.authorization.blocked, 3);
-	assert_eq!(
-		restored.info.authorization.users[0].text,
-		"Inspect only; do not modify files"
-	);
-	assert!(restored.info.authorization.parent.is_some());
-}
-
-#[test]
-fn standing_session_rules_survive_session_load() {
-	let info = SessionInfo {
-		name: "session-rules-resume".into(),
-		session_rules: vec!["never push to main".into()],
-		..Default::default()
-	};
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
-	let file = write_session(&[&summary]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert_eq!(restored.info.session_rules, vec!["never push to main"]);
-
-	// A session saved before the field existed loads with no rules.
-	let mut legacy_info = serde_json::to_value(SessionInfo {
-		name: "session-rules-legacy".into(),
-		..Default::default()
-	})
-	.unwrap();
-	legacy_info
-		.as_object_mut()
-		.expect("session info is an object")
-		.remove("session_rules");
-	let legacy = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":legacy_info}).to_string();
-	let file = write_session(&[&legacy]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert!(restored.info.session_rules.is_empty());
-}
-
-#[test]
 fn round_trip_without_compression_preserves_messages() {
 	let s = summary_line("round-trip", 1_700_000_000);
 	let m1 = serde_json::to_string(&msg("user", "hi")).unwrap();
@@ -495,30 +431,33 @@ fn legacy_summary_without_evidence_field_loads() {
 
 	assert_eq!(session.info.name, "legacy-no-evidence");
 	assert_eq!(session.info.input_tokens, 5);
-	assert!(session.info.evidence.render().is_empty());
 }
 
 #[test]
-fn summary_with_evidence_restores_ledger_on_load() {
-	// The still-open turn's recorded actions must survive a restart: a
-	// SUMMARY carrying ledger state restores it instead of default().
-	let mut info = SessionInfo {
-		name: "evidence-restore".to_string(),
-		created_at: 1_700_000_000,
-		model: "test/model".to_string(),
-		..Default::default()
-	};
-	info.evidence.record(
-		"knowledge",
-		&json!({"source":"https://docs.x.ai/developers/pricing"}),
-		false,
-		false,
-		1024,
-	);
+fn summary_with_fields_of_the_removed_supervisor_state_still_loads() {
+	// Session files written before the supervisor was removed carry its state
+	// in `session_info`; the loader must skip it and keep the rest.
 	let s = serde_json::to_string(&json!({
 		"type": "SUMMARY",
 		"timestamp": 1_700_000_000u64,
-		"session_info": info,
+		"session_info": {
+			"name": "old-supervisor-state",
+			"created_at": 1_700_000_000u64,
+			"model": "test/model",
+			"role": "",
+			"input_tokens": 5u64,
+			"output_tokens": 7u64,
+			"cache_read_tokens": 0u64,
+			"cache_write_tokens": 0u64,
+			"total_cost": 0.0,
+			"duration_seconds": 0u64,
+			"layer_stats": [],
+			"learning_stats": {"packs": 1},
+			"verification_policy": "forbidden",
+			"session_rules": ["never push to main"],
+			"authorization": {"blocked": 3},
+			"evidence": {"entries": []},
+		},
 	}))
 	.unwrap();
 	let m = serde_json::to_string(&msg("user", "hi")).unwrap();
@@ -526,8 +465,8 @@ fn summary_with_evidence_restores_ledger_on_load() {
 	let file = write_session(&[&s, &m]);
 	let session = load_session(&file.path().to_path_buf()).expect("load");
 
-	assert_eq!(session.info.evidence.render(), info.evidence.render());
-	assert!(session.info.evidence.render().contains("docs.x.ai"));
+	assert_eq!(session.info.name, "old-supervisor-state");
+	assert_eq!(session.info.input_tokens, 5);
 }
 
 #[test]
@@ -629,32 +568,6 @@ fn stats_checkpoint_restores_all_token_categories_after_summary() {
 	assert_eq!(loaded.info.reasoning_tokens, 5);
 	assert_eq!(loaded.info.prompt_tokens(), 620);
 	assert_eq!(loaded.info.total_tokens(), 665);
-}
-
-#[test]
-fn historical_evidence_restores_through_session_load() {
-	use crate::supervisor::resolve::ResolutionScope::FollowUp;
-	let mut info = SessionInfo::default();
-	let seq = info
-		.evidence
-		.record("view", &json!({"path":"providers"}), false, false, 32);
-	info.evidence.record_ground(seq, "anthropic.rs\nopenai.rs");
-	info.evidence.begin_turn("audit every provider");
-	let summary = serde_json::to_string(&json!({
-		"type": "SUMMARY",
-		"timestamp": 1_700_000_000u64,
-		"session_info": info,
-	}))
-	.unwrap();
-	let user = serde_json::to_string(&msg("user", "so we are good?")).unwrap();
-	let file = write_session(&[&summary, &user]);
-	let restored = load_session(&file.path().to_path_buf()).expect("load");
-	assert!(restored.info.evidence.render().is_empty());
-	assert!(restored.info.evidence.grounds().is_empty());
-	assert_eq!(
-		restored.info.evidence.verification_evidence(FollowUp),
-		info.evidence.verification_evidence(FollowUp)
-	);
 }
 
 #[test]

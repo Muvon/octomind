@@ -30,7 +30,7 @@ mod commands;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Octomind is a smart AI developer assistant with configurable MCP support")]
 struct CliArgs {
-	/// Override a config value for this process using a dotted path and TOML value (e.g. `-c supervisor.enabled=false`).
+	/// Override a config value for this process using a dotted path and TOML value (e.g. `-c max_identical_rounds=0`).
 	#[arg(short = 'c', long = "config", value_name = "KEY=VALUE", global = true)]
 	config_overrides: Vec<String>,
 
@@ -40,13 +40,6 @@ struct CliArgs {
 
 #[derive(Subcommand)]
 enum Commands {
-	/// Internal shared Hindsight inference worker.
-	#[command(hide = true)]
-	HindsightWorker {
-		#[arg(long)]
-		model: String,
-	},
-
 	/// Generate a default configuration file
 	Config(commands::ConfigArgs),
 
@@ -105,11 +98,6 @@ enum Commands {
 	#[command(hide = true)]
 	Complete(commands::CompleteArgs),
 
-	/// Distil lessons from a transcript snapshot. Spawned detached by an exiting
-	/// session so learning never blocks the exit; not meant to be run by hand.
-	#[command(hide = true)]
-	Distill(commands::DistillArgs),
-
 	/// Spawned detached by an exiting one-shot run; not meant to be run by hand.
 	#[command(hide = true)]
 	Compact(commands::CompactArgs),
@@ -121,13 +109,6 @@ async fn main() -> Result<(), anyhow::Error> {
 	// anonymous clients); must run before the first request builds the client.
 	octolib::set_user_agent(concat!("Octomind/", env!("CARGO_PKG_VERSION")));
 	let args = CliArgs::parse();
-	// Internal workers inherit the caller's resolved environment; loading
-	// project config again could redirect their model or runtime paths.
-	if let Some(Commands::HindsightWorker { model }) = &args.command {
-		octomind::proctitle::set_process_title("octomind-hindsight");
-		return octomind::supervisor::hindsight::shared::serve(model).await;
-	}
-
 	// Initialize environment tracker before loading .env
 	let _tracker = octomind::config::get_env_tracker();
 
@@ -220,10 +201,10 @@ async fn main() -> Result<(), anyhow::Error> {
 	// `complete` is excluded: the shell runs it on every TAB press, which would
 	// both flood the ingest endpoint and risk printing the first-run notice into
 	// the middle of a completion. Everything downstream no-ops when uninitialised.
-	// `distill` and `compact` belong to the exiting `run`; recording them would
-	// double-count that session.
+	// `compact` belongs to the exiting `run`; recording it would double-count
+	// that session.
 	let slug = command_name(&command);
-	if slug != "complete" && slug != "distill" && slug != "compact" {
+	if slug != "complete" && slug != "compact" {
 		octomind::telemetry::init(&config);
 		octomind::telemetry::record_start(slug, used_flags(slug));
 	}
@@ -277,9 +258,7 @@ fn command_name(command: &Commands) -> &'static str {
 		Commands::Workflow(_) => "workflow",
 		Commands::Completion { .. } => "completion",
 		Commands::Complete(_) => "complete",
-		Commands::Distill(_) => "distill",
 		Commands::Compact(_) => "compact",
-		Commands::HindsightWorker { .. } => "hindsight-worker",
 	}
 }
 
@@ -338,7 +317,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 		Commands::Untap(untap_args) => commands::untap::execute(&untap_args)?,
 		Commands::Vars(vars_args) => commands::vars::execute(&vars_args, &config).await?,
 		Commands::Send(send_args) => commands::send::execute(&send_args).await?,
-		Commands::Evaluate(eval_args) => commands::evaluate::execute(&eval_args, &config).await?,
+		Commands::Evaluate(eval_args) => commands::evaluate::execute(&eval_args).await?,
 		Commands::Workflow(wf_args) => commands::workflow::execute(&wf_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();
@@ -350,9 +329,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 			print!("{patched}");
 		}
 		Commands::Complete(complete_args) => commands::complete::execute(&complete_args, &config)?,
-		Commands::Distill(distill_args) => commands::distill::execute(&distill_args, &config).await?,
 		Commands::Compact(compact_args) => commands::compact::execute(&compact_args, &config).await?,
-		Commands::HindsightWorker { model } => octomind::supervisor::hindsight::shared::serve(&model).await?,
 	}
 
 	Ok(())

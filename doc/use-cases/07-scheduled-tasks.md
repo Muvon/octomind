@@ -27,7 +27,7 @@ idle. A timed `every`, such as `"10m"`, also requires `when` to specify the firs
 
 The following transcripts illustrate prompts and AI tool arguments, not literal shell commands. A scheduled message
 enters the session inbox and is processed when the response loop can handle it; it does not interrupt an in-flight model
-response. It retains schedule-source metadata and does not replace the supervisor's active human task.
+response. It retains schedule-source metadata and does not replace the active human task.
 
 ### Basic: Fire on Next Idle (default)
 

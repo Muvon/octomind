@@ -74,7 +74,6 @@ fn later_override_wins_field_by_field() {
 fn optional_owner_blocks_inherit_the_complete_main_profile() {
 	let mut value: toml::Value =
 		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
-	value["supervisor"].as_table_mut().unwrap().remove("model");
 	value["compression"].as_table_mut().unwrap().remove("model");
 	value["roles"].as_array_mut().unwrap()[0]
 		.as_table_mut()
@@ -83,7 +82,6 @@ fn optional_owner_blocks_inherit_the_complete_main_profile() {
 
 	let mut config: crate::config::Config = value.try_into().expect("optional profiles parse");
 	config.build_role_map();
-	assert_eq!(config.get_supervisor_model_profile(), config.model_profile);
 	assert_eq!(config.get_compression_model_profile(), config.model_profile);
 	assert_eq!(config.get_model_profile_for_role("assistant"), config.model_profile);
 }
@@ -154,10 +152,6 @@ fn request_transport_defaults_to_websocket_in_the_template() {
 		RequestTransportConfig::WebSocket
 	);
 	assert_eq!(
-		config.get_supervisor_model_profile().request_transport,
-		RequestTransportConfig::WebSocket
-	);
-	assert_eq!(
 		config.get_compression_model_profile().request_transport,
 		RequestTransportConfig::WebSocket
 	);
@@ -174,7 +168,6 @@ fn request_transport_accepts_explicit_choices_and_survives_role_merge() {
 		let mut config: crate::config::Config = value.try_into().expect("valid transport");
 		config.build_role_map();
 		assert_eq!(config.request_transport, expected);
-		assert_eq!(config.get_supervisor_model_profile().request_transport, expected);
 		assert_eq!(config.get_compression_model_profile().request_transport, expected);
 		assert_eq!(
 			config.get_model_profile_for_role("assistant").request_transport,

@@ -113,7 +113,7 @@ pub fn clear_current_session() {
 /// Read every file in `dir` as text, up to `max_total` chars total (files are
 /// appended in directory order until the cap is hit; a partially-read last file
 /// is truncated to fit). Non-text or unreadable entries are skipped. Shared by
-/// the spill and archive readers that re-ground supervisor evidence checks.
+/// the spill and archive readers.
 pub fn read_text_files(dir: &std::path::Path, max_total: usize) -> Vec<String> {
 	let Ok(entries) = std::fs::read_dir(dir) else {
 		return Vec::new();

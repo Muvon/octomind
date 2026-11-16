@@ -25,8 +25,8 @@ use crate::mcp::core::plan::sidecar_start;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 
-fn plan_directive(title: &str) -> crate::supervisor::plan::PlanTaskDirective {
-	crate::supervisor::plan::PlanTaskDirective {
+fn plan_directive(title: &str) -> crate::mcp::core::plan::PlanTaskDirective {
+	crate::mcp::core::plan::PlanTaskDirective {
 		title: title.to_string(),
 		done_when: format!("{title} is verified"),
 	}

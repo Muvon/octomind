@@ -15,7 +15,7 @@
 //! One model configuration contract for every model-bearing boundary.
 //!
 //! The root configuration owns a complete [`ModelProfile`]. Persistent role,
-//! supervisor, and compression configuration expose the same fields through
+//! and compression configuration expose the same fields through
 //! [`ModelProfileOverride`]. Tap and workflow mappings remain name-only.
 
 use serde::{Deserialize, Serialize};

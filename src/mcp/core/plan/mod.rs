@@ -14,9 +14,9 @@
 
 //! Runtime-owned plan storage, rendering, compression, and sidecar transitions.
 //!
-//! Plan mutation is deliberately not an MCP tool surface. The external planner
-//! in [`crate::supervisor::plan`] owns lifecycle decisions; specialists can only
-//! observe injected state and emit sparse hidden signals.
+//! Plan mutation is deliberately not an MCP tool surface. A plugin's answer
+//! owns lifecycle decisions (see the `sidecar_*` functions); the agent can only
+//! observe injected state.
 pub mod compression;
 pub mod core;
 pub mod memory_storage;
@@ -27,7 +27,7 @@ pub use core::{
 	active_step_index, broken_plan_conditions, clear_task_start_index, current_phase, get_current_plan_display,
 	get_current_task_start_index, has_active_plan, plan_staleness_marker, render_plan_checklist,
 	render_plan_checklist_with_staleness, render_plan_details, set_current_task_start_index, sidecar_advance,
-	sidecar_finish, sidecar_revise, sidecar_start,
+	sidecar_finish, sidecar_revise, sidecar_start, PlanTaskDirective,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};

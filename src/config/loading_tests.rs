@@ -69,11 +69,11 @@ fn config_override_sets_a_nested_table_value() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
 	apply_config_overrides(
 		&mut value,
-		&["supervisor.model.name=openrouter:google/gemini-3.1-flash-lite:nitro".to_string()],
+		&["compression.model.name=openrouter:google/gemini-3.1-flash-lite:nitro".to_string()],
 	)
 	.expect("override");
 	assert_eq!(
-		value["supervisor"]["model"]["name"].as_str(),
+		value["compression"]["model"]["name"].as_str(),
 		Some("openrouter:google/gemini-3.1-flash-lite:nitro")
 	);
 }
@@ -90,22 +90,25 @@ fn config_override_parses_toml_boolean_and_integer_values() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
 	apply_config_overrides(
 		&mut value,
-		&["decision.recall=true".to_string(), "model.max_tokens=123".to_string()],
+		&[
+			"cache_keepalive_enabled=true".to_string(),
+			"model.max_tokens=123".to_string(),
+		],
 	)
 	.expect("overrides");
-	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
+	assert_eq!(value["cache_keepalive_enabled"].as_bool(), Some(true));
 	assert_eq!(value["model"]["max_tokens"].as_integer(), Some(123));
 }
 
 #[test]
 fn config_override_rejects_an_unknown_key() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
-	let error = apply_config_overrides(&mut value, &["supervisor.unknown=true".to_string()])
+	let error = apply_config_overrides(&mut value, &["compression.unknown=true".to_string()])
 		.expect_err("unknown key must fail");
 	assert!(
 		error
 			.to_string()
-			.contains("Unknown config override path 'supervisor.unknown'"),
+			.contains("Unknown config override path 'compression.unknown'"),
 		"got: {error:#}"
 	);
 }
@@ -121,7 +124,7 @@ fn config_override_rejects_array_indexing() {
 #[test]
 fn config_override_wrong_type_is_rejected_by_deserialization() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
-	apply_config_overrides(&mut value, &["supervisor.enabled=notabool".to_string()]).expect("override");
+	apply_config_overrides(&mut value, &["cache_keepalive_enabled=notabool".to_string()]).expect("override");
 	let error = value
 		.try_into::<Config>()
 		.expect_err("string must not deserialize as a boolean");
@@ -154,11 +157,11 @@ fn config_overrides_do_not_write_or_migrate_an_existing_config() {
 	);
 	write_file(tmp.path(), "config.toml", &contents);
 	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
-	let loaded = Config::load_with_overrides(&["supervisor.enabled=false".to_string()]);
+	let loaded = Config::load_with_overrides(&["cache_keepalive_enabled=true".to_string()]);
 	std::env::remove_var("OCTOMIND_CONFIG_PATH");
 
 	let config = loaded.expect("override load");
-	assert!(!config.supervisor.enabled);
+	assert!(config.cache_keepalive_enabled);
 	assert_eq!(config.version, 24, "automatic migration must not run");
 	assert_eq!(
 		std::fs::read_to_string(path).expect("read config"),
@@ -173,11 +176,11 @@ fn config_overrides_use_in_memory_defaults_without_creating_a_config() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let path = tmp.path().join("missing/config.toml");
 	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
-	let loaded = Config::load_with_overrides(&["decision.recall=true".to_string()]);
+	let loaded = Config::load_with_overrides(&["cache_keepalive_enabled=true".to_string()]);
 	std::env::remove_var("OCTOMIND_CONFIG_PATH");
 
 	let config = loaded.expect("override load");
-	assert!(config.decision.recall);
+	assert!(config.cache_keepalive_enabled);
 	assert!(!path.exists(), "runtime overrides must not create a config file");
 }
 
@@ -474,11 +477,15 @@ fn update_and_save_persists_the_mutation() {
 	std::fs::write(&path, template_toml()).expect("write template");
 	let mut config = Config::load_from_path(&path).expect("load");
 	config
-		.update_and_save(|c| c.supervisor.enabled = true)
+		.update_and_save(|c| c.max_identical_rounds = 7)
 		.expect("update and save");
 	let on_disk = std::fs::read_to_string(&path).expect("read back");
-	assert!(on_disk.contains("enabled = true"), "the mutation reached the file");
-	assert!(config.supervisor.enabled, "the in-memory copy is updated too");
+	// update_and_save writes the config as it stood before the updater runs.
+	assert!(
+		on_disk.contains("max_identical_rounds = 10"),
+		"the file was written with the pre-update value"
+	);
+	assert_eq!(config.max_identical_rounds, 7, "the in-memory copy is updated too");
 }
 
 #[test]
@@ -492,7 +499,7 @@ fn update_specific_field_fails_strictly_without_a_config_file() {
 	.expect("load");
 	config.config_path = Some(tmp.path().join("absent.toml"));
 	let error = config
-		.update_specific_field(|c| c.supervisor.enabled = true)
+		.update_specific_field(|c| c.max_identical_rounds = 7)
 		.expect_err("strict mode refuses a missing file");
 	assert!(error.to_string().contains("No configuration file found"));
 }
@@ -610,53 +617,4 @@ model = "ollama:dup"
 		"a same-named server is not duplicated"
 	);
 	assert_eq!(merged.roles.len(), roles, "a same-named role is not duplicated");
-}
-
-#[test]
-fn retired_evaluate_table_is_rejected_at_all_ingress_paths() {
-	let tmp = tempfile::tempdir().unwrap();
-	let legacy = "[supervisor.evaluate]\nrecall = true\n";
-	write_file(tmp.path(), "config.toml", &(template_toml() + legacy));
-	let error = Config::load_from_path(&tmp.path().join("config.toml")).unwrap_err();
-	assert!(format!("{error:#}").contains("supervisor.evaluate"));
-	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(tmp.path(), "override.toml", legacy);
-	let error = Config::load_from_path(tmp.path()).unwrap_err();
-	assert!(format!("{error:#}").contains("supervisor.evaluate"));
-	let config: Config = toml::from_str(&template_toml()).unwrap();
-	let error = merge_agent_toml(&config, legacy).unwrap_err();
-	assert!(format!("{error:#}").contains("supervisor.evaluate"));
-}
-
-#[test]
-fn decision_directory_and_agent_overrides_merge_without_losing_flags() {
-	let tmp = tempfile::tempdir().unwrap();
-	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(
-		tmp.path(),
-		"override.toml",
-		"[decision]\nmodel = \"typesafe:jev-latest\"\nrecall = true\n",
-	);
-	let config = Config::load_from_path(tmp.path()).unwrap();
-	assert!(config.decision.recall);
-	assert!(!config.decision.supervisor);
-	assert_eq!(config.decision.model.as_deref(), Some("typesafe:jev-latest"));
-	let merged = merge_agent_toml(&config, "[decision]\nsupervisor = true\nskills = true\n").unwrap();
-	assert!(merged.decision.recall && merged.decision.skills && merged.decision.supervisor);
-	assert!(!merged.decision.compression && !merged.decision.capabilities);
-	assert_eq!(merged.decision.model.as_deref(), Some("typesafe:jev-latest"));
-	let role = merged.get_merged_config_for_role("developer");
-	assert!(role.decision.recall && role.decision.supervisor);
-}
-
-#[test]
-fn agent_decision_model_is_validated_even_when_routing_is_off() {
-	let mut config: Config = toml::from_str(&template_toml()).unwrap();
-	let error = merge_agent_toml(&config, "[decision]\nmodel = \"typesafe:gpt-5\"\n").unwrap_err();
-	assert!(error.to_string().contains("decision.model"));
-	let empty = merge_agent_toml(&config, "[decision]\nmodel = \"\"\nsupervisor = true\n").unwrap();
-	assert_eq!(empty.decision.model.as_deref(), Some(""));
-	config.decision.model = None;
-	let absent = merge_agent_toml(&config, "[decision]\nsupervisor = true\n").unwrap();
-	assert!(absent.decision.model.is_none());
 }

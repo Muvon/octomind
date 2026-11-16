@@ -245,48 +245,6 @@ pub fn get_guardrail_scripts_dir() -> Result<PathBuf> {
 	Ok(dir)
 }
 
-/// Get the learning directory for a project and role.
-/// Structure: `learning/{project}/{role_base}/` — project-first because learning
-/// is project-scoped, role is a secondary filter.
-/// Role uses only the base part before `:` (e.g. "developer" from "developer:general"),
-/// matching how capabilities are sent to MCP servers.
-pub fn get_learning_dir(role: &str, project: &str) -> Result<PathBuf> {
-	let data_dir = get_octomind_data_dir()?;
-	let role_base = role.split(':').next().unwrap_or(role);
-	let learning_dir = data_dir.join("learning").join(project).join(role_base);
-
-	if !learning_dir.exists() {
-		fs::create_dir_all(&learning_dir)?;
-	}
-
-	Ok(learning_dir)
-}
-
-/// Get the global (user-wide) learning directory: `learning/_/`.
-/// Holds cross-project, cross-role lessons — durable user preferences that
-/// apply everywhere. The `_` sentinel cannot collide with a real project name
-/// because project dirs are basenames of working directories.
-pub fn get_global_learning_dir() -> Result<PathBuf> {
-	let data_dir = get_octomind_data_dir()?;
-	let global_dir = data_dir.join("learning").join("_");
-
-	if !global_dir.exists() {
-		fs::create_dir_all(&global_dir)?;
-	}
-
-	Ok(global_dir)
-}
-
-/// Machine-local registry for generated behavior artifacts. Kept beneath the
-/// learning authority but outside project checkouts and ordinary recall dirs.
-pub fn get_learning_evolution_dir() -> Result<PathBuf> {
-	let dir = get_octomind_data_dir()?.join("learning").join(".evolution");
-	if !dir.exists() {
-		fs::create_dir_all(&dir)?;
-	}
-	Ok(dir)
-}
-
 /// Get the default configuration file path
 pub fn get_config_file_path() -> Result<PathBuf> {
 	let config_dir = get_config_dir()?;

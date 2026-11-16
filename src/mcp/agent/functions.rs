@@ -378,7 +378,6 @@ async fn execute_dynamic_agent(
 					};
 				mgr.release_registered(&completion_job_id, CompletedJob { agent_name, output });
 			};
-			let run = crate::supervisor::accounting::background(run);
 			if let Some(sid) = session_id {
 				crate::session::context::with_session_id(sid, run).await;
 			} else {
@@ -471,6 +470,26 @@ fn build_agent_config(
 	merged
 }
 
+/// A unique scope for one in-process agent run. Rules merged into it from the
+/// parent are dropped again when the run ends.
+struct DelegationScope {
+	id: String,
+}
+
+impl DelegationScope {
+	fn new() -> Self {
+		Self {
+			id: format!("delegation-agent-{}", uuid::Uuid::new_v4()),
+		}
+	}
+}
+
+impl Drop for DelegationScope {
+	fn drop(&mut self) {
+		crate::session::guardrails::clear_for_session(&self.id);
+	}
+}
+
 /// Core in-process execution for a dynamic agent.
 ///
 /// Builds messages (system + user task), calls chat_completion_with_validation,
@@ -489,7 +508,7 @@ fn run_dynamic_agent_in_process(
 		let task = task.as_str();
 		let agent_config = &agent_config;
 		use crate::session::{ChatCompletionWithValidationParams, Message};
-		let authorization_scope = crate::supervisor::authorizer::DelegationScope::new(task, &agent.system);
+		let authorization_scope = DelegationScope::new();
 		if let Some(parent_id) = crate::session::context::current_session_id() {
 			if let Some(rules) = crate::session::guardrails::get_rules(&parent_id) {
 				crate::session::guardrails::merge_generated_for_session(
@@ -499,195 +518,218 @@ fn run_dynamic_agent_in_process(
 			}
 		}
 
-		if *operation_cancelled.borrow() {
-			anyhow::bail!(crate::session::cancellation::Cancelled);
-		}
+		// Plugins hear about the in-process child before it runs and get a session of
+		// its own for it, which ends together with the delegation scope.
+		let plugin_child = match crate::session::context::current_session_id() {
+			Some(parent_id) => {
+				crate::plugins::lifecycle::start_in_process_child(
+					&parent_id,
+					&authorization_scope.id,
+					task,
+					&agent.system,
+					agent_config,
+				)
+				.await
+			}
+			None => None,
+		};
+		// A block, so every way out of the run reaches the end of the plugin sessions below.
+		let outcome: Result<String> = async {
+			if *operation_cancelled.borrow() {
+				anyhow::bail!(crate::session::cancellation::Cancelled);
+			}
 
-		let effective_model = agent.model.clone().unwrap_or_else(|| agent_config.model.clone());
+			let effective_model = agent.model.clone().unwrap_or_else(|| agent_config.model.clone());
 
-		let should_cache = crate::session::model_supports_caching(&effective_model);
+			let should_cache = crate::session::model_supports_caching(&effective_model);
 
-		// Build messages: system prompt + user task
-		let now = std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs();
+			// Build messages: system prompt + user task
+			let now = std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs();
 
-		let messages = vec![
-			Message {
-				role: "system".to_string(),
-				content: agent.system.clone(),
-				timestamp: now,
-				cached: should_cache,
-				..Default::default()
-			},
-			Message {
-				role: "user".to_string(),
-				content: task.to_string(),
-				timestamp: now,
-				cached: false,
-				..Default::default()
-			},
-		];
-
-		// Initial API call
-		let validation_params = ChatCompletionWithValidationParams::new(
-			&messages,
-			&effective_model,
-			agent.temperature.unwrap_or(0.7),
-			agent.top_p.unwrap_or(0.9),
-			agent.top_k.unwrap_or(0),
-			agent_config.get_effective_max_tokens(),
-			agent_config,
-		)
-		.with_max_retries(agent_config.max_retries)
-		.with_cancellation_token(operation_cancelled.clone());
-
-		let response = crate::session::chat_completion_with_validation(validation_params).await?;
-
-		if *operation_cancelled.borrow() {
-			anyhow::bail!(crate::session::cancellation::Cancelled);
-		}
-
-		let mut current_content = response.content;
-		let mut current_exchange = response.exchange;
-		let mut current_tool_calls_param = response.tool_calls;
-
-		// Recursive tool call loop
-		if !agent.server_refs.is_empty() {
-			// Accumulate messages for the conversation (system + user + tool rounds)
-			let mut conv_messages = messages.clone();
-
-			loop {
-				if *operation_cancelled.borrow() {
-					anyhow::bail!(crate::session::cancellation::Cancelled);
-				}
-
-				// Resolve tool calls for this iteration. Structured tool_calls from the
-				// API response are authoritative — the legacy fallback to parse them
-				// out of the raw response text never returned anything.
-				let current_tool_calls = current_tool_calls_param.take().unwrap_or_default();
-
-				if current_tool_calls.is_empty() {
-					break;
-				}
-
-				// Add assistant message with tool calls preserved
-				let original_tool_calls =
-					crate::session::chat::MessageHandler::extract_original_tool_calls(&current_exchange);
-				conv_messages.push(Message {
-					role: "assistant".to_string(),
-					content: current_content.clone(),
-					timestamp: std::time::SystemTime::now()
-						.duration_since(std::time::UNIX_EPOCH)
-						.unwrap_or_default()
-						.as_secs(),
-					cached: false,
-					tool_calls: original_tool_calls,
-					provider_items: current_exchange.response.get("output_items").cloned(),
+			let messages = vec![
+				Message {
+					role: "system".to_string(),
+					content: agent.system.clone(),
+					timestamp: now,
+					cached: should_cache,
 					..Default::default()
-				});
+				},
+				Message {
+					role: "user".to_string(),
+					content: task.to_string(),
+					timestamp: now,
+					cached: false,
+					..Default::default()
+				},
+			];
 
-				// Execute tool calls in parallel
-				// Never probe stdin here: ACP keeps a read pending on it, and on Windows
-				// is_terminal() waits for that read. ACP/WebSocket also own stdout, so they
-				// get the same structured mode their parent turns run in.
-				let output_mode = if crate::logging::tracing_setup::is_structured_output_mode() {
-					crate::session::output::OutputMode::WebSocket
-				} else {
-					agent_config.output_mode()
-				};
-				let layer_tool_params = crate::session::chat::response::tool_execution::LayerToolExecutionParams {
-					tool_calls: current_tool_calls,
-					session_name: authorization_scope.id.clone(),
-					layer_name: format!("agent_{}", agent.name),
-					operation_cancelled: Some(operation_cancelled.clone()),
-					mode: output_mode,
-				};
-				let (tool_results, _tool_time) =
-					crate::session::chat::response::tool_execution::execute_layer_tool_calls_parallel(
-						agent_config,
-						layer_tool_params,
-					)
-					.await?;
+			// Initial API call
+			let validation_params = ChatCompletionWithValidationParams::new(
+				&messages,
+				&effective_model,
+				agent.temperature.unwrap_or(0.7),
+				agent.top_p.unwrap_or(0.9),
+				agent.top_k.unwrap_or(0),
+				agent_config.get_effective_max_tokens(),
+				agent_config,
+			)
+			.with_max_retries(agent_config.max_retries)
+			.with_cancellation_token(operation_cancelled.clone());
 
-				if *operation_cancelled.borrow() {
-					anyhow::bail!(crate::session::cancellation::Cancelled);
-				}
+			let response = crate::session::chat_completion_with_validation(validation_params).await?;
 
-				if tool_results.is_empty() {
-					break;
-				}
+			if *operation_cancelled.borrow() {
+				anyhow::bail!(crate::session::cancellation::Cancelled);
+			}
 
-				// Add tool result messages
-				for tool_result in &tool_results {
-					let raw_content = tool_result.extract_content();
+			let mut current_content = response.content;
+			let mut current_exchange = response.exchange;
+			let mut current_tool_calls_param = response.tool_calls;
 
-					let (tool_content, _) = crate::utils::truncation::truncate_mcp_response_global(
-						&raw_content,
-						agent_config.mcp_response_tokens_threshold,
-						&tool_result.tool_name,
-					);
+			// Recursive tool call loop
+			if !agent.server_refs.is_empty() {
+				// Accumulate messages for the conversation (system + user + tool rounds)
+				let mut conv_messages = messages.clone();
 
+				loop {
+					if *operation_cancelled.borrow() {
+						anyhow::bail!(crate::session::cancellation::Cancelled);
+					}
+
+					// Resolve tool calls for this iteration. Structured tool_calls from the
+					// API response are authoritative — the legacy fallback to parse them
+					// out of the raw response text never returned anything.
+					let current_tool_calls = current_tool_calls_param.take().unwrap_or_default();
+
+					if current_tool_calls.is_empty() {
+						break;
+					}
+
+					// Add assistant message with tool calls preserved
+					let original_tool_calls =
+						crate::session::chat::MessageHandler::extract_original_tool_calls(&current_exchange);
 					conv_messages.push(Message {
-						role: "tool".to_string(),
-						content: tool_content,
+						role: "assistant".to_string(),
+						content: current_content.clone(),
 						timestamp: std::time::SystemTime::now()
 							.duration_since(std::time::UNIX_EPOCH)
 							.unwrap_or_default()
 							.as_secs(),
 						cached: false,
-						tool_call_id: Some(tool_result.tool_id.clone()),
-						name: Some(tool_result.tool_name.clone()),
+						tool_calls: original_tool_calls,
+						provider_items: current_exchange.response.get("output_items").cloned(),
 						..Default::default()
 					});
-				}
 
-				// Follow-up API call with tool results
-				let follow_up_params = ChatCompletionWithValidationParams::new(
-					&conv_messages,
-					&effective_model,
-					agent.temperature.unwrap_or(0.7),
-					agent.top_p.unwrap_or(0.9),
-					agent.top_k.unwrap_or(0),
-					agent_config.get_effective_max_tokens(),
-					agent_config,
-				)
-				.with_max_retries(agent_config.max_retries)
-				.with_cancellation_token(operation_cancelled.clone());
+					// Execute tool calls in parallel
+					// Never probe stdin here: ACP keeps a read pending on it, and on Windows
+					// is_terminal() waits for that read. ACP/WebSocket also own stdout, so they
+					// get the same structured mode their parent turns run in.
+					let output_mode = if crate::logging::tracing_setup::is_structured_output_mode() {
+						crate::session::output::OutputMode::WebSocket
+					} else {
+						agent_config.output_mode()
+					};
+					let layer_tool_params = crate::session::chat::response::tool_execution::LayerToolExecutionParams {
+						tool_calls: current_tool_calls,
+						session_name: authorization_scope.id.clone(),
+						layer_name: format!("agent_{}", agent.name),
+						operation_cancelled: Some(operation_cancelled.clone()),
+						mode: output_mode,
+					};
+					let (tool_results, _tool_time) =
+						crate::session::chat::response::tool_execution::execute_layer_tool_calls_parallel(
+							agent_config,
+							layer_tool_params,
+						)
+						.await?;
 
-				match crate::session::chat_completion_with_validation(follow_up_params).await {
-					Ok(follow_up) => {
-						if *operation_cancelled.borrow() {
-							anyhow::bail!(crate::session::cancellation::Cancelled);
-						}
-
-						let has_tool_calls = follow_up.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
-
-						let should_continue =
-							crate::session::chat::response::tool_result_processor::check_should_continue(
-								&follow_up,
-								agent_config,
-								has_tool_calls,
-							);
-
-						current_content = follow_up.content;
-						current_exchange = follow_up.exchange;
-						current_tool_calls_param = follow_up.tool_calls;
-
-						if !should_continue {
-							break;
-						}
+					if *operation_cancelled.borrow() {
+						anyhow::bail!(crate::session::cancellation::Cancelled);
 					}
-					Err(e) => {
-						crate::log_error!("Dynamic agent '{}' follow-up API call failed: {}", agent.name, e);
-						return Err(e);
+
+					if tool_results.is_empty() {
+						break;
+					}
+
+					// Add tool result messages
+					for tool_result in &tool_results {
+						let raw_content = tool_result.extract_content();
+
+						let (tool_content, _) = crate::utils::truncation::truncate_mcp_response_global(
+							&raw_content,
+							agent_config.mcp_response_tokens_threshold,
+							&tool_result.tool_name,
+						);
+
+						conv_messages.push(Message {
+							role: "tool".to_string(),
+							content: tool_content,
+							timestamp: std::time::SystemTime::now()
+								.duration_since(std::time::UNIX_EPOCH)
+								.unwrap_or_default()
+								.as_secs(),
+							cached: false,
+							tool_call_id: Some(tool_result.tool_id.clone()),
+							name: Some(tool_result.tool_name.clone()),
+							..Default::default()
+						});
+					}
+
+					// Follow-up API call with tool results
+					let follow_up_params = ChatCompletionWithValidationParams::new(
+						&conv_messages,
+						&effective_model,
+						agent.temperature.unwrap_or(0.7),
+						agent.top_p.unwrap_or(0.9),
+						agent.top_k.unwrap_or(0),
+						agent_config.get_effective_max_tokens(),
+						agent_config,
+					)
+					.with_max_retries(agent_config.max_retries)
+					.with_cancellation_token(operation_cancelled.clone());
+
+					match crate::session::chat_completion_with_validation(follow_up_params).await {
+						Ok(follow_up) => {
+							if *operation_cancelled.borrow() {
+								anyhow::bail!(crate::session::cancellation::Cancelled);
+							}
+
+							let has_tool_calls = follow_up.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
+
+							let should_continue =
+								crate::session::chat::response::tool_result_processor::check_should_continue(
+									&follow_up,
+									agent_config,
+									has_tool_calls,
+								);
+
+							current_content = follow_up.content;
+							current_exchange = follow_up.exchange;
+							current_tool_calls_param = follow_up.tool_calls;
+
+							if !should_continue {
+								break;
+							}
+						}
+						Err(e) => {
+							crate::log_error!("Dynamic agent '{}' follow-up API call failed: {}", agent.name, e);
+							return Err(e);
+						}
 					}
 				}
 			}
-		}
 
-		Ok(current_content.trim().to_string())
+			Ok(current_content.trim().to_string())
+		}
+		.await;
+		if let Some(child) = plugin_child {
+			crate::plugins::lifecycle::end_in_process_child(child).await;
+		}
+		outcome
 	}) // Box::pin
 }
 
@@ -702,7 +744,7 @@ fn run_dynamic_agent_in_process(
 /// the tap-run live registry so `/status agents` can show them while the run works.
 ///
 /// `handback` marks this run as a SUBAGENT HANDOFF whose verification verdict
-/// the parent folds into its own round (see [`crate::supervisor::delegate`]).
+/// the parent folds into its own round (see [`crate::mcp::agent::handback`]).
 /// Layers pass `false`: they post-process the parent's answer rather than doing
 /// delegated work, so their verdict says nothing about the parent's tree.
 /// Write one newline-terminated JSON-RPC request to the ACP child. A broken
@@ -737,10 +779,21 @@ pub async fn run_acp_command(
 	}
 	impl Drop for Handback {
 		fn drop(&mut self) {
-			crate::supervisor::delegate::note_handback(self.verified);
+			crate::mcp::agent::handback::note_handback(self.verified);
 		}
 	}
 	let mut handback_guard = handback.then(|| Handback { verified: false });
+
+	// Plugins of this session hear about the child before it exists and may hand
+	// it a value; the child's id is known only after `session/new`.
+	let plugin_parent = crate::session::context::current_session_id().filter(|id| crate::plugins::active(id));
+	let plugin_inherited = match &plugin_parent {
+		Some(parent) => crate::plugins::lifecycle::subagent_starting(parent, None, task, None).await,
+		None => Vec::new(),
+	};
+	let mut child_session_id: Option<String> = None;
+	// A block, so every way out of the run reaches `subagent.end` below.
+	let result: Result<String> = async {
 
 	let mut command = Command::new(program);
 	command
@@ -781,6 +834,10 @@ pub async fn run_acp_command(
 		return Err(error);
 	}
 
+	let mut new_session_params = acp_new_session_params(workdir);
+	if let Some(parent) = &plugin_parent {
+		crate::plugins::lifecycle::write_child_meta(&mut new_session_params, parent, &plugin_inherited);
+	}
 	// 2. session/new
 	write_acp_request(
 		stdin.as_mut().expect("child stdin is open during session creation"),
@@ -788,7 +845,7 @@ pub async fn run_acp_command(
 			"jsonrpc": "2.0",
 			"id": 2,
 			"method": "session/new",
-			"params": acp_new_session_params(workdir)
+			"params": new_session_params
 		}),
 	)
 	.await?;
@@ -800,11 +857,6 @@ pub async fn run_acp_command(
 			return Err(error);
 		}
 	};
-	if crate::supervisor::authorizer::inherited_context().is_some()
-		&& session_resp.pointer("/result/_meta/octomind.authorization") != Some(&Value::Bool(true))
-	{
-		crate::log_debug!("Authorizer: delegated peer does not acknowledge inherited context; parent admission still applies, child enforcement unavailable");
-	}
 	let Some(session_id) = session_resp
 		.get("result")
 		.and_then(|r| r.get("sessionId"))
@@ -814,6 +866,7 @@ pub async fn run_acp_command(
 		return Err(anyhow::anyhow!("No sessionId in session/new response"));
 	};
 	let session_id = session_id.to_string();
+	child_session_id = Some(session_id.clone());
 
 	// Tap input stays open for queued prompts and background work. Other callers
 	// close stdin after the prompt and collect the child's remaining updates.
@@ -1051,6 +1104,12 @@ pub async fn run_acp_command(
 	}
 
 	Ok(output.trim().to_string())
+	}
+	.await;
+	if let Some(parent) = &plugin_parent {
+		crate::plugins::lifecycle::subagent_ended(parent, child_session_id.as_deref()).await;
+	}
+	result
 }
 
 pub(crate) fn route_child_update(msg: &Value, tap_run_id: Option<&str>, websocket_tap: bool) {
@@ -1245,11 +1304,7 @@ fn acp_initialize_params() -> Value {
 }
 
 fn acp_new_session_params(workdir: &std::path::Path) -> Value {
-	let mut params = json!({"cwd": workdir.to_string_lossy(), "mcpServers": []});
-	if let Some(context) = crate::supervisor::authorizer::inherited_context() {
-		params["_meta"] = json!({crate::supervisor::authorizer::META_KEY: context});
-	}
-	params
+	json!({"cwd": workdir.to_string_lossy(), "mcpServers": []})
 }
 
 fn acp_prompt_params(session_id: &str, task: &str) -> Value {

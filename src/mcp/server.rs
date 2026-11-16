@@ -72,7 +72,7 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 				);
 				return None;
 			}
-			crate::supervisor::detect::register_tool_read_only_hint(
+			crate::mcp::tool_shape::register_tool_read_only_hint(
 				&name,
 				tool.annotations
 					.as_ref()
@@ -81,15 +81,15 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 			// Whether this tool's `command` executes or selects — the schema
 			// distinction that separates a runner's check from an editor's edit,
 			// both of which arrive as a string under the same parameter name.
-			crate::supervisor::detect::register_tool_command_shape(
+			crate::mcp::tool_shape::register_tool_command_shape(
 				&name,
-				crate::supervisor::detect::command_param_is_free_form(&parameters),
+				crate::mcp::tool_shape::command_param_is_free_form(&parameters),
 			);
 			// Parameters the schema marks as a command the tool executes beside its
 			// own operation (an editor's post-write check).
-			crate::supervisor::detect::register_tool_command_params(
+			crate::mcp::tool_shape::register_tool_command_params(
 				&name,
-				crate::supervisor::detect::declared_command_params(&parameters),
+				crate::mcp::tool_shape::declared_command_params(&parameters),
 			);
 			Some(McpFunction {
 				name,

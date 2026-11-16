@@ -187,6 +187,11 @@ pub(crate) struct TurnStart {
 	blocking_supervisor_time_ms: u64,
 }
 
+/// How often plugins may keep one user turn going after it would have ended.
+/// Today's built-in limits add up to five re-runs: two nudges, one evidence
+/// advisory and two repair rounds.
+pub const MAX_PLUGIN_CONTINUATIONS: u8 = 5;
+
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
 	pub session: Session,
@@ -271,13 +276,9 @@ pub struct ChatSession {
 	/// and keeps it within `compression.analysis_findings_max_tokens` using
 	/// current-task relevance, recency, and diversity.
 	pub analysis_findings: Vec<String>,
-	/// Whether the first hybrid scoped recall has happened. Later genuine turns
-	/// rebuild the active pack with embedding-only scoped recall.
-	pub learning_injected: bool,
 	/// One runtime-only memory pack materialized as a non-persisted, replaceable
 	/// system-managed message before specialist calls in the active user turn.
 	pub active_memory_pack: Option<String>,
-	pub active_user_rules: Vec<(String, crate::supervisor::learning::UserRuleProvenance)>,
 	/// The messages of the latest provider request, as sent. `session.messages`
 	/// holds the stored form; the cache keepalive replays this copy so a ping
 	/// matches the cached prefix without rebuilding the request.
@@ -285,23 +286,11 @@ pub struct ChatSession {
 	/// Pack-local IDs the specialist reported materially using this turn. Unioned
 	/// across tool rounds and consumed by outcome-driven reinforcement.
 	pub used_memory_ids: std::collections::HashSet<String>,
-	/// Set when a new user message arrives; consumed by the API executor to run
-	/// per-message scoped lesson recall (embedding-only) for that turn.
-	pub pending_recall: bool,
-	/// Whether learning extraction already ran for this session (prevents double extraction on exit).
-	pub learning_extracted: bool,
-	/// Completion evidence available to detached learning extraction for the
-	/// active genuine user trajectory.
-	pub learning_outcome: crate::supervisor::learning::TrajectoryOutcome,
 	/// Runtime override for reasoning effort (set via /effort). None = use config default.
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 	/// Supervisor: agent's self-reported state for the latest turn, parsed from
 	/// its `<sup>…</sup>` token. Consumed by the verify-gate and detectors.
-	pub last_self_report: Option<crate::supervisor::detect::SelfReport>,
-	/// Supervisor: deterministic detector state (loop / no-progress streak).
-	pub detectors: crate::supervisor::detect::Detectors,
-	/// Supervisor: verify-gate re-entry counter for the current turn.
-	pub gate_iterations: u8,
+	pub last_self_report: Option<crate::session::self_report::SelfReport>,
 	/// Whether the response currently being produced belongs to a genuine user
 	/// turn and may therefore claim that user's task complete. System-managed
 	/// inbox deliveries (monitor output, schedules, background results, validator
@@ -315,84 +304,33 @@ pub struct ChatSession {
 	/// that resumes the agent continues the same task, so it inherits
 	/// eligibility instead of being treated as a control-plane event.
 	pub gate_deferred: bool,
-	/// Supervisor: re-entry counter for the FREE deterministic checks (pre-gate,
-	/// plan, coverage, evidence). Deliberately separate from `gate_iterations`:
-	/// a zero-cost nudge that the agent then satisfies must not spend the paid
-	/// verifier's repair budget, which would fail an otherwise correct turn on
-	/// the gate's first gap verdict. Same per-turn bound, own counter.
-	pub nudge_iterations: u8,
-	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining.
-	/// Distill may retain it only as an explicitly failed experience; it can never
-	/// be promoted as a verified successful procedure.
-	pub gate_failed: bool,
-	/// Supervisor: gaps the last verify-gate pass found this task, handed to the
-	/// next pass so it confirms each is closed instead of judging from scratch.
-	/// Cleared on PASS and on each genuine user turn.
-	pub last_gate_gaps: Vec<String>,
-	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
-	/// the next request's safe pre-build point. None = nothing to steer.
-	pub steer_pending: Option<String>,
-	/// Supervisor: framing-rotation index for the steer note. When the *same*
-	/// signal re-fires without breakout, this advances so `steer_note` reframes the
-	/// constraint from a new angle instead of repeating identical (habituated) text.
-	/// Reset when the fired signal differs from the last one or on a clean round.
-	pub steer_attempt: usize,
-	/// Supervisor: the signal that drove the last steer, used to decide whether the
-	/// current steer continues the same run (advance framing) or starts fresh (reset).
-	pub steer_last_signal: crate::supervisor::detect::DetectorSignal,
-	/// Supervisor: order-independent hash (tool name + parameters, NOT result) of the
-	/// last round we EMITTED a steer for. An identical hash next round ⇒ the model
-	/// re-issued the same calls ⇒ it is IGNORING the steer (vs. a different call-set =
-	/// trying). Drives the critical-signal adaptive backoff (ignore-vs-trying gate).
-	pub last_steered_calls: Option<u64>,
-	/// Supervisor: advice notes already given this genuine turn (the writer sees its own past advice).
-	pub advise_notes: Vec<String>,
-	/// Supervisor: advisory events awaiting their outcome record (call-set change, gate verdict).
-	pub advise_open: Vec<crate::supervisor::advise::OpenAdvice>,
-	/// Supervisor: eligible advise alarms so far this session; draws the control arm.
-	pub advise_alarms: u64,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
 	/// Supervisor: structured continuation handoff from the main agent. Used as
 	/// an untrusted attention prior by conversation compression, never as evidence.
-	pub last_self_report_handoff: Option<crate::supervisor::detect::SelfReportHandoff>,
-	/// Supervisor: execution signal for the external plan controller. The main
-	/// specialist can request planning or report phase completion, but cannot
-	/// author or mutate the plan itself.
-	pub pending_plan_signal: Option<crate::supervisor::plan::PlanSignal>,
-	/// Supervisor: a create/no-plan decision already ran for this genuine user
-	/// turn. Prevents a declined or unavailable planner from being called again
-	/// after every subsequent action batch.
-	pub plan_evaluated: bool,
-	/// Supervisor: the external planner failed once during this genuine user
-	/// turn. Subsequent plan signals are consumed without a planner call to
-	/// prevent an unbounded re-emit/fail/inject loop. Reset on new user turn.
-	pub planner_failed: bool,
-	/// Evidence-ledger boundary for the active plan phase. Only actions at or
-	/// after this checkpoint may authorize its transition.
-	pub plan_evidence_checkpoint: u64,
+	pub last_self_report_handoff: Option<crate::session::self_report::SelfReportHandoff>,
 	/// Supervisor: entries in the active pack (pack id, content, role, project).
 	/// Only IDs the specialist reports using receive verify-gate outcome credit.
 	pub recalled_refs: Vec<(String, String, String, String)>,
-	/// Supervisor: runtime-recorded tool log for the current task — ground truth
-	/// the verify-gate checks completion claims against. Reset on each genuine
-	/// user turn; gate/steer re-runs (system-managed messages) keep accumulating.
-	pub evidence: crate::supervisor::gate::EvidenceLedger,
-	/// Supervisor: stable turn-start task resolution. Reset on each genuine user
-	/// turn and cached across planning and completion-gate re-runs.
-	pub gate_task: Option<crate::supervisor::resolve::ResolvedTask>,
-	/// Supervisor: the turn's resolution while its call runs in the background;
-	/// settled into `gate_task` at a request boundary or before the gate.
-	pub resolve_job: Option<super::ResolveJob>,
-	/// Supervisor: the standing specialist context compacted for the
-	/// condenser. Session-lived; recompacted only when that context changes.
-	pub specialist_brief: Option<crate::supervisor::condense::SpecialistBrief>,
 	/// Runtime-only, never persisted: the system prompt was built from the
 	/// current role config in this process. A prompt loaded from disk is a
 	/// snapshot of whatever build created the session, so the first setup after
 	/// a load rebuilds it once; later re-binds of the live session keep it.
 	pub system_prompt_built: bool,
+	/// Notes plugins queued for the model, waiting for the next safe point of
+	/// the loop to be written into the history (runtime-only).
+	pub plugin_notes: Vec<String>,
+	/// How often plugins kept the current user turn going; capped by
+	/// [`MAX_PLUGIN_CONTINUATIONS`].
+	pub plugin_continuations: u8,
+	/// Absolute paths changed by successful mutation calls of the current user turn.
+	pub turn_mutated_paths: std::collections::BTreeSet<String>,
+	/// Octomind's own count of repeated tool rounds, behind the hard stop.
+	pub repeat_guard: crate::session::repeat_guard::RepeatGuard,
+	/// The verdict a plugin gave at the last `turn.end`: the turn's work is
+	/// complete (`Some(true)`) or not. `None` when no plugin judged it.
+	pub plugin_verified: Option<bool>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -463,42 +401,22 @@ impl ChatSession {
 			schema: None, // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
-			learning_injected: false,
 			active_memory_pack: None,
-			active_user_rules: Vec::new(),
 			last_sent_messages: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
-			pending_recall: false,
-			learning_extracted: false,
-			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 			reasoning_effort: Some(profile.reasoning_effort),
 			last_self_report: None,
-			detectors: crate::supervisor::detect::Detectors::default(),
-			gate_iterations: 0,
 			completion_gate_eligible: true,
 			gate_deferred: false,
-			nudge_iterations: 0,
-			gate_failed: false,
-			last_gate_gaps: Vec::new(),
-			steer_pending: None,
-			steer_attempt: 0,
-			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
-			last_steered_calls: None,
-			advise_notes: Vec::new(),
-			advise_open: Vec::new(),
-			advise_alarms: 0,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
-			pending_plan_signal: None,
-			plan_evaluated: false,
-			planner_failed: false,
-			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
-			evidence: crate::supervisor::gate::EvidenceLedger::default(),
-			gate_task: None,
-			resolve_job: None,
-			specialist_brief: None,
 			system_prompt_built: false,
+			plugin_notes: Vec::new(),
+			plugin_continuations: 0,
+			turn_mutated_paths: Default::default(),
+			repeat_guard: Default::default(),
+			plugin_verified: None,
 		}
 	}
 
@@ -653,12 +571,6 @@ impl ChatSession {
 
 					// Restore runtime state from session.info
 					let spending_checkpoint = session.info.spending_threshold_checkpoint;
-					// Restore the verify-gate's evidence ledger for the still-open
-					// turn. The gate re-derives its conditions from the persisted
-					// request; the recorded actions that satisfy them must survive
-					// the restart too, or every resumed turn reports false gaps.
-					let restored_evidence = session.info.evidence.clone();
-
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
@@ -694,42 +606,22 @@ impl ChatSession {
 						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
-						learning_injected: false,
 						active_memory_pack: None,
-						active_user_rules: Vec::new(),
 						last_sent_messages: Vec::new(),
 						used_memory_ids: std::collections::HashSet::new(),
-						pending_recall: false,
-						learning_extracted: false,
-						learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 						reasoning_effort: Some(effective_profile.reasoning_effort),
 						last_self_report: None,
-						detectors: crate::supervisor::detect::Detectors::default(),
-						gate_iterations: 0,
 						completion_gate_eligible: true,
 						gate_deferred: false,
-						nudge_iterations: 0,
-						gate_failed: false,
-						last_gate_gaps: Vec::new(),
-						steer_pending: None,
-						steer_attempt: 0,
-						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
-						last_steered_calls: None,
-						advise_notes: Vec::new(),
-						advise_open: Vec::new(),
-						advise_alarms: 0,
 						last_self_report_reason: None,
 						last_self_report_handoff: None,
-						pending_plan_signal: None,
-						plan_evaluated: false,
-						planner_failed: false,
-						plan_evidence_checkpoint: 0,
 						recalled_refs: Vec::new(),
-						evidence: restored_evidence,
-						gate_task: None,
-						resolve_job: None,
-						specialist_brief: None,
 						system_prompt_built: false,
+						plugin_notes: Vec::new(),
+						plugin_continuations: 0,
+						turn_mutated_paths: Default::default(),
+						repeat_guard: Default::default(),
+						plugin_verified: None,
 					};
 					// Restore critical knowledge entries from session log
 					if !runtime_state.critical_knowledge.is_empty() {
@@ -1479,6 +1371,41 @@ impl ChatSession {
 	pub(crate) fn abandon_turn_timing(&mut self) {
 		self.turn_started_at = None;
 	}
+
+	/// Queue notes from plugins for the next safe point of the loop.
+	pub fn queue_plugin_notes(&mut self, notes: Vec<String>) {
+		self.plugin_notes.extend(notes);
+	}
+
+	/// Write the queued notes into the history in the order they came, each as
+	/// feedback managed by the system, and empty the queue.
+	pub fn deliver_plugin_notes(&mut self) -> Result<()> {
+		for note in std::mem::take(&mut self.plugin_notes) {
+			self.add_system_managed_user_message(&note)?;
+		}
+		Ok(())
+	}
+
+	/// Throw the queued notes away without writing them.
+	pub fn drop_plugin_notes(&mut self) {
+		self.plugin_notes.clear();
+	}
+
+	/// What a new user turn starts over with.
+	pub fn reset_plugin_turn_state(&mut self) {
+		self.plugin_continuations = 0;
+		self.turn_mutated_paths.clear();
+		self.repeat_guard.reset_streak();
+		self.plugin_verified = None;
+	}
+
+	/// On resume, hand the pinned blocks and status fields saved with the
+	/// session back to the plugin host.
+	pub fn restore_plugin_state(&self) {
+		let info = &self.session.info;
+		crate::plugins::restore_pinned_blocks(&info.name, info.plugin_pins.clone());
+		crate::plugins::restore_status_fields(&info.name, info.plugin_status_fields.clone());
+	}
 }
 
 #[cfg(test)]
@@ -1532,41 +1459,21 @@ impl ChatSession {
 			schema: None,
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
-			learning_injected: false,
 			active_memory_pack: None,
-			active_user_rules: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
-			pending_recall: false,
-			learning_extracted: false,
-			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 			reasoning_effort: None,
 			last_self_report: None,
-			detectors: crate::supervisor::detect::Detectors::default(),
-			gate_iterations: 0,
 			completion_gate_eligible: true,
 			gate_deferred: false,
-			nudge_iterations: 0,
-			gate_failed: false,
-			last_gate_gaps: Vec::new(),
-			steer_pending: None,
-			steer_attempt: 0,
-			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
-			last_steered_calls: None,
-			advise_notes: Vec::new(),
-			advise_open: Vec::new(),
-			advise_alarms: 0,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
-			pending_plan_signal: None,
-			plan_evaluated: false,
-			planner_failed: false,
-			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
-			evidence: crate::supervisor::gate::EvidenceLedger::default(),
-			gate_task: None,
-			resolve_job: None,
-			specialist_brief: None,
 			system_prompt_built: false,
+			plugin_notes: Vec::new(),
+			plugin_continuations: 0,
+			turn_mutated_paths: Default::default(),
+			repeat_guard: Default::default(),
+			plugin_verified: None,
 		}
 	}
 }

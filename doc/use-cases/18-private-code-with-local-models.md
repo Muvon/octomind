@@ -12,7 +12,8 @@ endpoint, internal model requests, and any later switch to a cloud role all matt
 ## What you will set up
 
 - [Ollama provider routing](../usage/04-providers.md) through an explicit local `OLLAMA_API_URL`.
-- [An isolated configuration](../usage/03-configuration.md) with local main, supervisor, and compression profiles.
+- [An isolated configuration](../usage/03-configuration.md) with local main and compression profiles, and with the Besydr
+  plugin switched off.
 - [Per-role model selection](../usage/06-roles.md) for private and public conversations.
 - [A tap model mapping](../integration/04-tap-system.md) for a locally authored specialist.
 - [Runtime overrides and inspection](../reference/02-session-commands.md) using `-m` and `/info`.
@@ -99,13 +100,16 @@ unset OCTOMIND_CAPABILITIES OCTOMIND_SKILLS
 Save this complete overlay at `octomind-private-lab/settings/privacy.toml`. It merges with the generated `config.toml`.
 The next step replaces the example local name with your actual selection before any conversation begins.
 
-The main baseline and both internal model profiles stay local. The private role has its own model table; the public
-role explicitly uses OctoHub. Empty server references and disabled automatic activation keep this example focused on
-pasted text. Start it in this new directory, without project-local tools or instructions.
+The main baseline and the compression profile stay local. The Besydr plugin is switched off: it makes its own model
+calls, with its own models (`octohub:auto` by default, a cloud gateway), and sends them session text. The private role
+has its own model table; the public role explicitly uses OctoHub. Empty server references and disabled automatic
+activation keep this example focused on pasted text. Start it in this new directory, without project-local tools or
+instructions.
 
 ```toml
 auto_capabilities = false
 telemetry = false
+plugins = [{ name = "besydr", type = "stdio", command = "besydr", enabled = false }]
 
 [model]
 name = "ollama:glm-5.3"
@@ -117,10 +121,6 @@ top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
-
-[supervisor.model]
-name = "ollama:glm-5.3"
-max_tokens = 4096
 
 [compression.model]
 name = "ollama:glm-5.3"
@@ -263,14 +263,19 @@ Reply with the word local.
 ```
 
 Look for your selected `ollama:` model. In a second terminal, `ollama ps` should show the model loaded on your server.
-Check that `settings/privacy.toml` assigns the same local provider to main, supervisor, and compression. `/info` reports
-the main session model; it is not an audit of every internal request or proof of zero network traffic. This setup
+Check that `settings/privacy.toml` assigns the same local provider to main and compression and disables the `besydr`
+plugin entry. `/info` reports the main session model; it is not an audit of every internal request or proof of zero
+network traffic. This setup
 controls model routing, not OS network permissions.
 
 ## Variations
 
-- **Another installed model.** Change the local model names in all five overlay locations. A main-only `-m` change
-  does not update supervisor or compression. Choose a model with the features and context size your work requires.
+- **Another installed model.** Change the local model names in all four overlay locations. A main-only `-m` change
+  does not update compression. Choose a model with the features and context size your work requires.
+- **Besydr with local models.** Besydr's models are set in its own configuration file, not in Octomind's: `[model] name`
+  and `[decision] model` (see [Besydr's configuration](https://besydr.com/docs/configuration)). Point both at `ollama:`
+  models and run `besydr config`, which prints the models Besydr will use, before you remove the `plugins` override.
+  Octomind's own settings do not control where Besydr sends text.
 - **Private-only configuration.** Remove the `public_brief` role declaration and its nested tables to omit the cloud
   example. Keep all internal profiles local.
 - **Return to normal settings.** In a new shell your exported config path is absent. In this shell, use
@@ -283,15 +288,16 @@ controls model routing, not OS network permissions.
 
 **The model is missing or fails during a request.** Compare its exact name with `ollama ls`. Config validation does not
 load model weights or prove API compatibility. Check Ollama's logs, available memory, and the model's supported context
-and structured-output features; internal supervisor requests may need more than basic text completion.
+and structured-output features; compression requests may need more than basic text completion.
 
 **The tap mapping seems ignored.** An explicit manifest role model takes precedence over `[taps]`; `-m` takes precedence
 over both. The example manifest deliberately omits a role model. Check the tag's cached manifest if you edited it after
 its first run, following the tap guide's cache procedure.
 
-**The first local reply works, but later requests use another model.** Inspect the supervisor and compression profile
-names, any role overrides, and the selected config directory. Never use `/model` to switch a private conversation to
-a cloud provider. Start public work in a fresh conversation without private instructions or files in its context.
+**The first local reply works, but later requests use another model.** Inspect the compression profile name, any role
+overrides, the selected config directory, and that the `besydr` plugin entry is disabled. Never use `/model` to switch a
+private conversation to a cloud provider. Start public work in a fresh conversation without private instructions or files
+in its context.
 
 ## See also
 

@@ -77,23 +77,6 @@ fn generated_shadow_guard_observes_without_blocking() {
 }
 
 #[test]
-fn generated_binding_without_registry_fails_closed() {
-	let mut rules = Guardrails::default();
-	let generated = Guardrails::parse(
-		r#"
-			[[guard]]
-			match = "shell"
-			message = "generated block"
-			"#,
-	)
-	.unwrap();
-	rules.append_generated(generated, "evo-trial", false);
-	let evaluation = evaluate_guards(&rules, Some("shell"), &json!({}), &[], &loaded(&[]));
-	assert!(evaluation.blocked.is_none());
-	assert_eq!(evaluation.shadow_ids, vec!["evo-trial"]);
-}
-
-#[test]
 fn has_capability_required() {
 	let g = Guardrails::parse(
 		r#"
@@ -551,4 +534,102 @@ fn a_whole_params_target_matches_the_serialized_object() {
 	assert!(target_matches(&t, Some("shell"), &params));
 	let clean = json!({ "paths": ["a.rs"] });
 	assert!(!target_matches(&t, Some("shell"), &clean));
+}
+
+#[test]
+fn plugin_rules_carry_their_id_and_mode() {
+	let rules = Guardrails::parse_plugin_rules(
+		r#"
+			[[guard]]
+			id = "g-apply"
+			mode = "apply"
+			match = "shell"
+			message = "no"
+
+			[[guard]]
+			id = "g-observe"
+			mode = "observe"
+			match = "shell"
+			message = "no"
+
+			[[hook]]
+			id = "h-observe"
+			mode = "observe"
+			script = "h.sh"
+
+			[[guard]]
+			mode = "apply"
+			match = "shell"
+			message = "no id"
+
+			[[guard]]
+			id = "g-odd"
+			mode = "sometimes"
+			match = "shell"
+			message = "unknown mode"
+			"#,
+	)
+	.unwrap();
+	let bindings: Vec<_> = rules
+		.bindings()
+		.map(|binding| (binding.id.as_str(), binding.shadow, binding.plugin))
+		.collect();
+	assert_eq!(
+		bindings,
+		vec![
+			("g-apply", false, true),
+			("g-observe", true, true),
+			("h-observe", true, true)
+		]
+	);
+}
+
+#[test]
+fn plugin_rules_that_are_not_toml_are_an_error() {
+	assert!(Guardrails::parse_plugin_rules("[[guard").is_err());
+}
+
+#[test]
+fn dropping_plugin_rules_keeps_the_user_and_evolution_rules() {
+	let mut rules = Guardrails::parse("[[pipe]]\nname = \"mine\"\ncommand = \"mine.sh\"\n").unwrap();
+	let generated = Guardrails::parse("[[guard]]\nmatch = \"shell\"\nmessage = \"no\"\n").unwrap();
+	rules.append_generated(generated, "evolved", false);
+	rules.append_compiled(
+		Guardrails::parse_plugin_rules(
+			"[[guard]]\nid = \"p\"\nmode = \"apply\"\nmatch = \"shell\"\nmessage = \"no\"\n",
+		)
+		.unwrap(),
+	);
+	assert!(rules.has_user_pipe());
+
+	rules.drop_plugin_rules();
+
+	let ids: Vec<_> = rules.bindings().map(|binding| binding.id.as_str()).collect();
+	assert_eq!(ids, vec!["evolved"]);
+	assert_eq!(rules.pipes.len(), 1);
+}
+
+#[test]
+fn a_plugin_rule_is_shadow_by_its_mode_alone() {
+	let rules = Guardrails::parse_plugin_rules(
+		"[[guard]]\nid = \"seen\"\nmode = \"observe\"\nmatch = \"shell\"\nmessage = \"no\"\n\n\
+		 [[guard]]\nid = \"live\"\nmode = \"apply\"\nmatch = \"shell\"\nmessage = \"stop\"\n",
+	)
+	.unwrap();
+	let params = json!({});
+
+	// Neither id is in the evolution registry, which would make both shadow.
+	let only_observed = Guardrails {
+		guards: vec![rules.guards[0].clone()],
+		..Default::default()
+	};
+	let evaluation = evaluate_guards(&only_observed, Some("shell"), &params, &[], &loaded(&[]));
+	assert!(evaluation.blocked.is_none());
+	assert_eq!(evaluation.shadow_ids, vec!["seen".to_string()]);
+
+	let evaluation = evaluate_guards(&rules, Some("shell"), &params, &[], &loaded(&[]));
+	let (message, binding) = evaluation.blocked.expect("the apply guard denies");
+	assert_eq!(message, "stop");
+	assert_eq!(binding.unwrap().id, "live");
+	assert_eq!(evaluation.shadow_ids, vec!["seen".to_string()]);
 }

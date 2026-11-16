@@ -74,8 +74,8 @@ pub async fn run_pipe(
 			}
 		}
 		if let Some(binding) = &pipe.evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
-				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+			if binding.shadow {
+				crate::session::guardrails::mark_shadow_match(session_id, &binding.id);
 				continue;
 			}
 		}
@@ -95,7 +95,7 @@ pub async fn run_pipe(
 
 	let pipe = matched[0];
 	if let Some(binding) = &pipe.evolution {
-		crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+		crate::session::guardrails::mark_behavior_used(session_id, &binding.id);
 	}
 	let run_count = crate::session::guardrails::increment_pipe_run_count(session_id, &pipe.name);
 

@@ -35,8 +35,8 @@ server for project scripts:
 Filesystem tools come from external servers such as `octofs`; they are not implemented by Octomind. Use your installed
 capability manifests or an explicit server configuration to enable them.
 
-Planning is supervisor-internal rather than an MCP tool. The specialist sees runtime-owned plan state and emits sparse
-hidden signals alongside normal work; the external planner owns transitions. `/plan` only displays that state.
+Planning is done by a plugin (Besydr, when it is installed and enabled) rather than by an MCP tool. Octomind keeps the plan
+state the plugin writes and shows it with `/plan`. See [Besydr plugin](14-supervisor.md).
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
 
@@ -179,11 +179,10 @@ This server will automatically be available for the `developer:general` tap agen
 
 ## Core Server Tools
 
-### Adaptive external planning
+### Planning by a plugin
 
-There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or
-context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate supervisor call
-updates runtime-owned state from bounded trajectory and evidence. Use this session command to inspect the current
+There is no model-callable `plan` MCP tool. Focused tasks execute directly. The plan comes from a plugin such as
+Besydr, which changes the plan octomind keeps for the session. Use this session command to inspect the current
 checklist:
 
 ```text
@@ -251,8 +250,6 @@ The candidates are the agents the caller may reach. A tap agent reaches the othe
 other domain). A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
-With `[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
-best-ranked candidates or none, and its pick gets the task.
 
 When nothing matches, `run` starts nothing and returns an error that lists the five best-ranked candidates by name,
 title and description. The caller can send the task again with `role` set to one of those names: that agent starts

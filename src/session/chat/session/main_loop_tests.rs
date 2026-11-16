@@ -937,7 +937,6 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 
 	let mut config = fake_provider_config();
 	config.compression.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.learning.enabled = false;
 	let args = super::super::GenericSessionArgs::resume("cov-done-compress".to_string(), "assistant".to_string());
 	run_interactive_session_with_input(&args, &config, "/done wrap up the task")
 		.await
@@ -961,56 +960,12 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-/// A one-shot run ends right after a bare `/done`, and the tokio runtime dies
-/// with it — an in-process extraction task would be aborted at its first await
-/// and the lesson lost. `/done` must hand its pre-compression transcript to the
-/// detached `octomind distill` child, the same path the exit uses.
-#[serial_test::serial]
-#[tokio::test]
-async fn test_run_session_with_input_done_hands_lessons_to_detached_distill() {
-	let _guard = ENV_LOCK.lock().await;
-	let _data = DataDirGuard::new();
-	persisted_compressible_session("done-distill-handoff").await;
-
-	let url = spawn_stub(vec![crate::session::chat::test_support::final_response(
-		"<should_compress>true</should_compress>\n<session_context>DONE-HANDOFF-SUMMARY</session_context>",
-	)])
-	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let mut config = fake_provider_config();
-	config.compression.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.learning.enabled = true;
-	let args = super::super::GenericSessionArgs::resume("done-distill-handoff".to_string(), "assistant".to_string());
-	run_interactive_session_with_input(&args, &config, "/done")
-		.await
-		.expect("bare /done exits cleanly");
-	std::env::remove_var("OLLAMA_API_URL");
-
-	// The child is the test binary itself (unknown subcommand → exits without
-	// reading), so the snapshot the parent wrote for it is still on disk.
-	let snapshot = std::env::temp_dir().join(format!(
-		"octomind-distill-done-distill-handoff-{}.json",
-		std::process::id()
-	));
-	let handed_off = std::fs::read_to_string(&snapshot);
-	let _ = std::fs::remove_file(&snapshot);
-	let handed_off = handed_off.expect("/done must hand its transcript to the detached distill child");
-	assert!(
-		handed_off.contains("build the frobnicator widget"),
-		"the distiller must get the raw pre-compression turns: {handed_off}"
-	);
-}
-
 #[tokio::test]
 #[serial_test::serial]
 async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {
-	crate::supervisor::accounting::isolated(async {
+	crate::session::accounting::isolated(async {
+		use crate::session::accounting::{CallKind, SupervisorAccounting, TurnTime, Usage};
 		use crate::session::chat::session::commands::{process_command, CommandResult};
-		use crate::supervisor::{
-			accounting::{SupervisorAccounting, TurnTime, Usage},
-			stats::CallKind,
-		};
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.info.supervisor_accounting = SupervisorAccounting {
 			kinds: [(
@@ -1199,4 +1154,29 @@ async fn drain_keepalive_on_exit_records_a_cut_short_wait() {
 	let waits = session.wait_history.samples(WaitKind::Reply);
 	assert_eq!(waits.len(), 1, "a cut-short wait still feeds the budget");
 	assert!(!waits[0].answered);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_commands_that_end_the_run_send_session_end_once() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, stub_config, StubPlugin};
+
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let stub = StubPlugin::new(&[event::SESSION_END]);
+	// Registers the stub under its name; the run below connects it for its own session.
+	let registered = "main-loop-session-end-registration";
+	connect_stub(registered, "assistant", std::path::Path::new("."), &stub).await;
+	crate::plugins::end_session(registered);
+	let mut config = fake_provider_config();
+	config.plugins.push(stub_config(&stub));
+
+	for (round, input) in ["/exit", "/info"].into_iter().enumerate() {
+		run_interactive_session_with_input(&session_args(), &config, input)
+			.await
+			.expect("the command ends the run cleanly");
+		assert_eq!(stub.sent(event::SESSION_END).len(), round + 1, "{input}");
+	}
 }

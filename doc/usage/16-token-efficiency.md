@@ -35,8 +35,9 @@ max_session_tokens_threshold = 300000
 | `mcp_response_tokens_threshold` | `20000` | Limit individual tool-result context |
 | `max_session_tokens_threshold` | `300000` | Configured session context ceiling, also bounded by model capacity |
 
-For history compression and recoverable narrowing of large results, see [Compression](08-compression.md) and [Supervisor
-condensation](14-supervisor.md#condense). Capability eviction does not shrink prior conversation text.
+For history compression, see [Compression](08-compression.md). Condensing of oversized tool results is done by the Besydr
+plugin, not by Octomind; see [Supervisor](14-supervisor.md) and [Besydr mechanics](https://besydr.com/docs/mechanics).
+Capability eviction does not shrink prior conversation text.
 
 ### Anatomy of a Capability
 
@@ -99,8 +100,8 @@ project-read = "default"
 ## The `capability` Tool
 
 A built-in `runtime` MCP tool. The `runtime` server hosts `mcp`, `agent`, `skill`, and `capability`; `orchestration`
-hosts `tap`, `schedule`, and `monitor`; `core` conditionally exposes `recall`. Planning is supervisor-internal rather
-than a tool.
+hosts `tap`, `schedule`, and `monitor`; `core` conditionally exposes `recall`. Planning is not a tool: a plugin owns it
+(see [Supervisor](14-supervisor.md)).
 
 | Action | Description |
 |--------|-------------|
@@ -161,9 +162,7 @@ registry with an empty server list.
 
 Asking the model "do you need a database tool?" before every turn would burn a routing turn for every message. Instead,
 Octomind embeds the user's message and matches it against the hand-authored triggers in each capability's `config.toml`.
-No LLM in the routing loop. With `[decision] capabilities = true` the cosine decision gets a second opinion
-from the calibrated evaluation model: one Choice over the five best-scored candidates plus `none` can veto a winner it
-rates near zero or promote one when cosine abstained; see [Evaluation gates](14-supervisor.md#evaluation-gates).
+No LLM in the routing loop.
 
 ### When It Runs
 
@@ -174,7 +173,6 @@ user message arrives
   → skill activation on the CLI input path
   → optional input pipe
   → prepare_for_api_call
-       ├─ supervisor task resolution
        ├─ compression check
        ├─ if config.auto_capabilities:    ← master toggle (default true)
        │     auto_activate_capabilities   ← here

@@ -12,15 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The decision seam's rule over the cosine pick, driven by a fake evaluation
-//! provider: the ranked candidates are the input, so no embedding model runs.
+//! The route's error text and the ranking of a task against a roster of specialists.
 
 use super::*;
 use crate::agent::registry::AgentHeader;
-use crate::session::chat::test_support::{
-	choice, evaluate_counter, install_fake_evaluation, refusals, FakeEvaluationStep,
-};
-use crate::supervisor::evaluate::{Seam, TAP_QUESTION_ID, TAP_TOP_K};
 use serial_test::serial;
 
 fn agent(tag: &str) -> TapAgentHeader {
@@ -33,20 +28,6 @@ fn agent(tag: &str) -> TapAgentHeader {
 			uses: Vec::new(),
 		},
 	}
-}
-
-fn base_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
-	config.build_role_map();
-	config
-}
-
-fn seam_on_config() -> Config {
-	let mut config = base_config();
-	config.supervisor.enabled = true;
-	config.decision.taps = true;
-	config
 }
 
 #[test]
@@ -86,127 +67,6 @@ fn a_no_match_error_names_the_best_ranked_specialists_and_the_recovery_step() {
 	assert_eq!(lines.len(), SHOWN_CANDIDATES + 2);
 	assert_eq!(lines[SHOWN_CANDIDATES + 1], NO_MATCH_RECOVERY);
 	assert!(!error.contains(&format!("d{SHOWN_CANDIDATES}:x")));
-}
-
-#[test]
-fn the_named_specialist_gets_the_task_and_none_starts_nothing() {
-	let candidates = ["a:x", "b:x"];
-	assert_eq!(apply_tap_answer(&candidates, "b:x"), Ok(Some("b:x")));
-	assert_eq!(apply_tap_answer(&candidates, "none"), Ok(None));
-}
-
-#[test]
-fn a_choice_that_was_never_offered_is_rejected() {
-	assert_eq!(apply_tap_answer(&["a:x"], "z:x"), Err("invalid response"));
-}
-
-#[tokio::test]
-#[serial]
-async fn evaluate_pick_makes_no_call_when_the_seam_is_off() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "none", 1.0))]).await;
-	let agents = [agent("a:x"), agent("b:x")];
-	let ranked: Vec<(f32, &TapAgentHeader)> = vec![(0.9, &agents[0]), (0.5, &agents[1])];
-	let calls = evaluate_counter(Seam::Taps, "calls");
-
-	let picked = evaluate_pick(&base_config(), "do the a thing", Some(ranked[0]), &ranked).await;
-
-	assert_eq!(picked.map(|(_, agent)| agent.tag.as_str()), Some("a:x"));
-	assert_eq!(evaluate_counter(Seam::Taps, "calls"), calls);
-	assert!(fake.requests().is_empty());
-}
-
-#[tokio::test]
-#[serial]
-async fn evaluate_pick_asks_over_the_top_candidates_and_can_veto_the_cosine_winner() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "none", 0.99))]).await;
-	let tags: Vec<String> = (0..TAP_TOP_K + 2).map(|i| format!("d{i:02}:x")).collect();
-	let agents: Vec<TapAgentHeader> = tags.iter().map(|tag| agent(tag)).collect();
-	let ranked: Vec<(f32, &TapAgentHeader)> = agents
-		.iter()
-		.enumerate()
-		.map(|(i, agent)| (0.9 - i as f32 * 0.01, agent))
-		.collect();
-	let applied = evaluate_counter(Seam::Taps, "applied");
-
-	let picked = evaluate_pick(&seam_on_config(), "unrelated task", Some(ranked[0]), &ranked).await;
-
-	assert!(picked.is_none());
-	assert_eq!(evaluate_counter(Seam::Taps, "applied"), applied + 1);
-	let requests = fake.requests();
-	assert_eq!(requests.len(), 1);
-	// The task is the whole state: the seam reads what the specialist would.
-	assert_eq!(requests[0].state, serde_json::Value::String("unrelated task".into()));
-	match &requests[0].questions[TAP_QUESTION_ID] {
-		octolib::evaluation::Question::Choice { criteria, .. } => {
-			// The best `TAP_TOP_K` by score plus `none`; the two worst are left out.
-			let mut listed: Vec<String> = tags[..TAP_TOP_K].to_vec();
-			listed.push("none".to_string());
-			assert_eq!(criteria.keys().cloned().collect::<Vec<_>>(), listed);
-			assert_eq!(
-				criteria["d00:x"],
-				Some(serde_json::Value::String("d00:x title. d00:x description".into()))
-			);
-		}
-		other => panic!("expected a choice, got {other:?}"),
-	}
-}
-
-#[tokio::test]
-#[serial]
-async fn evaluate_pick_follows_the_choice_at_any_probability_and_keeps_cosine_when_unavailable() {
-	// 0.3 is a top option of a wide list: the mass is spread over the other candidates.
-	let _fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "b:x", 0.3)),
-		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "b:x", 0.3)),
-		FakeEvaluationStep::MissingKey("TYPESAFE_API_KEY"),
-	])
-	.await;
-	let agents = [agent("a:x"), agent("b:x")];
-	let ranked: Vec<(f32, &TapAgentHeader)> = vec![(0.5, &agents[0]), (0.49, &agents[1])];
-	let config = seam_on_config();
-	let unavailable = evaluate_counter(Seam::Taps, "unavailable");
-
-	// Cosine abstained: the Choice's specialist gets the task.
-	let picked = evaluate_pick(&config, "do the b thing", None, &ranked).await;
-	assert_eq!(
-		picked.map(|(score, agent)| (score, agent.tag.as_str())),
-		Some((0.3, "b:x"))
-	);
-
-	// Cosine picked another one: the Choice's specialist replaces it.
-	let picked = evaluate_pick(&config, "do the b thing", Some(ranked[0]), &ranked).await;
-	assert_eq!(
-		picked.map(|(score, agent)| (score, agent.tag.as_str())),
-		Some((0.3, "b:x"))
-	);
-
-	// A provider failure leaves the cosine winner in place.
-	let picked = evaluate_pick(&config, "do the a thing", Some(ranked[0]), &ranked).await;
-	assert_eq!(
-		picked.map(|(score, agent)| (score, agent.tag.as_str())),
-		Some((0.5, "a:x"))
-	);
-	assert_eq!(evaluate_counter(Seam::Taps, "unavailable"), unavailable + 1);
-}
-
-#[tokio::test]
-#[serial]
-async fn evaluate_pick_keeps_cosine_when_the_question_is_refused_or_the_choice_was_never_offered() {
-	let _fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(refusals(&[TAP_QUESTION_ID])),
-		FakeEvaluationStep::Answers(choice(TAP_QUESTION_ID, "z:x", 0.9)),
-	])
-	.await;
-	let agents = [agent("a:x"), agent("b:x")];
-	let ranked: Vec<(f32, &TapAgentHeader)> = vec![(0.9, &agents[0]), (0.5, &agents[1])];
-	let config = seam_on_config();
-	let unavailable = evaluate_counter(Seam::Taps, "unavailable");
-
-	for expected_unavailable in [unavailable + 1, unavailable + 2] {
-		let picked = evaluate_pick(&config, "do the a thing", Some(ranked[0]), &ranked).await;
-		assert_eq!(picked.map(|(_, agent)| agent.tag.as_str()), Some("a:x"));
-		assert_eq!(evaluate_counter(Seam::Taps, "unavailable"), expected_unavailable);
-	}
 }
 
 // --- matching against a real roster ------------------------------------------

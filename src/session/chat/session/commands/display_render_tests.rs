@@ -181,54 +181,6 @@ fn test_render_skill_variants() {
 }
 
 #[test]
-fn test_render_learning_variants() {
-	display_learning(&CommandOutput::Learning {
-		data: json!({
-			"subcommand": "list",
-			"role": "assistant",
-			"project": "octomind",
-			"total": 2,
-			"page": 1,
-			"total_pages": 2,
-			"storage": {
-				"hot_items": 2, "hot_tokens": 120,
-				"cold_items": 1, "cold_tokens": 40,
-				"scoped_hot": 1, "global_hot": 1,
-				"scoped_cold": 1, "global_cold": 0,
-				"by_type": {"learning": {"hot": 2, "cold": 1}}
-			},
-			"lessons": [
-				{
-					"index": 1,
-					"content": "Run the tests on the box, never locally — the local toolchain drifts and the CI image is the only truth for this repository's builds",
-					"importance": 0.9,
-					"confidence": "high",
-					"scope": "global",
-					"tags": ["testing"],
-					"created": "2026-08-18T10:00:00Z"
-				},
-				{"index": 2, "content": "short one", "importance": 0.2}
-			]
-		}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "list", "role": "a", "project": "p", "total": 0, "lessons": []}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "delete", "index": 1, "content_preview": "Run the tests"}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "clear", "deleted": 3, "errors": ["locked.md"]}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "clear", "deleted": 0}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "error", "message": "store unreadable"}),
-	});
-}
-
-#[test]
 fn test_render_usage_signed_in_and_out() {
 	display_usage(&CommandOutput::Usage {
 		signed_in: true,
@@ -593,8 +545,8 @@ fn test_render_info_full_and_minimal() {
 		supervisor_accounting: {
 			let mut info = crate::session::SessionInfo::default();
 			info.supervisor_accounting.kinds.insert(
-				crate::supervisor::stats::CallKind::Gate,
-				crate::supervisor::accounting::Usage {
+				crate::session::accounting::CallKind::Gate,
+				crate::session::accounting::Usage {
 					calls: 2,
 					input_tokens: 50,
 					output_tokens: 10,
@@ -606,21 +558,22 @@ fn test_render_info_full_and_minimal() {
 				},
 			);
 			info.supervisor_accounting.seams.insert(
-				crate::supervisor::evaluate::Seam::Gate,
-				crate::supervisor::accounting::Usage {
+				crate::session::accounting::Seam::Gate,
+				crate::session::accounting::Usage {
 					calls: 1,
 					background_wall_time_ms: 100,
 					..Default::default()
 				},
 			);
-			info.supervisor_accounting.turn_time = crate::supervisor::accounting::TurnTime {
+			info.supervisor_accounting.turn_time = crate::session::accounting::TurnTime {
 				completed: 3,
 				total_time_ms: 240_000,
 				main_api_time_ms: 180_000,
 				blocking_supervisor_time_ms: 20_000,
 			};
-			crate::supervisor::report::SupervisorReport::for_session(&info)
+			crate::session::accounting::report::SupervisorReport::for_session(&info)
 		},
+		plugins: Vec::new(),
 	});
 
 	// Minimal: fresh session, nothing optional present
@@ -651,6 +604,7 @@ fn test_render_info_full_and_minimal() {
 		keepalive: None,
 		agents_stats: None,
 		supervisor_accounting: Default::default(),
+		plugins: Vec::new(),
 	});
 }
 
@@ -747,66 +701,6 @@ fn test_render_schedule_and_monitor_list_arms() {
 			"max_batch_bytes": 4096, "timeout_ms": null
 		}]}),
 	});
-}
-
-#[test]
-fn test_render_learning_show_and_evolution_arms() {
-	// Show: full metadata, related links, evidence provenance
-	display_learning(&CommandOutput::Learning {
-		data: json!({
-			"subcommand": "show",
-			"index": 3,
-			"memory_type": "experience",
-			"title": "coverage workflow",
-			"content": "line one\nline two",
-			"outcome": "verified",
-			"confidence": "high",
-			"scope": "project",
-			"path": "lessons/testing.md",
-			"related": ["L1", "L2"],
-			"evidence": ["session://abc/message/4"]
-		}),
-	});
-	// Show: bare record without optional metadata
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "show", "index": 1, "content": "only content"}),
-	});
-	// Evolution list: populated and empty
-	display_learning(&CommandOutput::Learning {
-		data: json!({
-			"subcommand": "evolution_list",
-			"project": "octomind",
-			"domain": "testing",
-			"records": [
-				{"id": "evo-1", "name": "run-tests-on-box", "kind": "skill", "state": "trial"},
-				{"id": "evo-2", "name": "verify-before-done", "kind": "rule", "state": "shadow"}
-			]
-		}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "evolution_list", "records": []}),
-	});
-	// Evolution show: with and without the native artifact
-	display_learning(&CommandOutput::Learning {
-		data: json!({
-			"subcommand": "evolution_show",
-			"record": {"name": "run-tests-on-box", "state": "trial"},
-			"native_artifact": "# SKILL.md\nRun tests on the box."
-		}),
-	});
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "evolution_show", "record": {"name": "bare", "state": "shadow"}}),
-	});
-	// Evolution action outcomes
-	for action in ["approve", "reject", "rollback"] {
-		display_learning(&CommandOutput::Learning {
-			data: json!({
-				"subcommand": "evolution_action",
-				"action": action,
-				"record": {"name": "run-tests-on-box", "state": "trial"}
-			}),
-		});
-	}
 }
 
 #[test]
@@ -1043,11 +937,19 @@ fn test_render_help_with_custom_commands() {
 		output_mode: OutputMode::None,
 		output_role: OutputRole::Assistant,
 	}]);
-	display_help(&CommandOutput::Help { commands: Vec::new() }, &config);
+	display_help(
+		&CommandOutput::Help { commands: Vec::new() },
+		&config,
+		"no-plugin-session",
+	);
 
 	// No custom commands configured → builtin listing only
 	let config = test_config();
-	display_help(&CommandOutput::Help { commands: Vec::new() }, &config);
+	display_help(
+		&CommandOutput::Help { commands: Vec::new() },
+		&config,
+		"no-plugin-session",
+	);
 }
 
 #[test]
@@ -1099,6 +1001,7 @@ fn test_render_info_partial_sections() {
 			"tokens_input": 10, "tokens_output": 2, "tokens_cached": 0, "total_cost": 0.01
 		})),
 		supervisor_accounting: Default::default(),
+		plugins: Vec::new(),
 	});
 }
 
@@ -1158,42 +1061,6 @@ fn test_render_mcp_info_empty_tools_map_and_health_stopped() {
 }
 
 #[test]
-fn test_render_learning_list_rich_rows_and_nav() {
-	display_learning(&CommandOutput::Learning {
-		data: json!({
-			"subcommand": "list",
-			"role": "assistant",
-			"project": "octomind",
-			"total": 30,
-			"page": 2,
-			"total_pages": 3,
-			"pattern": "cov*",
-			"lessons": [
-				{
-				"index": 4,
-				"memory_type": "experience",
-				"title": "an experience title long enough to exceed the eighty character display ceiling for the source line so it must be truncated",
-				"content": "backing content",
-				"importance": 0.5,
-				"confidence": "medium",
-				"scope": "project",
-				"tags": ["coverage", "ci"],
-				"created": "2026-08-20T08:15:30Z",
-				"outcome": "verified",
-				"related": ["L1", "L2"],
-				"evidence": ["session://x/message/9"]
-				},
-				{"index": 5, "content": "plain lesson", "importance": 0.1}
-			]
-		}),
-	});
-	// Unknown learning subcommand renders nothing
-	display_learning(&CommandOutput::Learning {
-		data: json!({"subcommand": "bogus"}),
-	});
-}
-
-#[test]
 fn test_render_image_video_usage_and_clipboard() {
 	// clipboard path renders the friendly label instead of a path
 	display_image(&CommandOutput::Image {
@@ -1228,11 +1095,9 @@ fn test_render_schedule_generic_error_close() {
 
 #[test]
 fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background() {
-	use crate::supervisor::{
-		accounting::{TurnTime, Usage},
-		evaluate::Seam,
-		report::{Mechanic, Outcome, SupervisorReport},
-		stats::CallKind,
+	use crate::session::accounting::{
+		report::{Outcome, SupervisorReport},
+		CallKind, Seam, TurnTime, Usage,
 	};
 	let mut info = crate::session::SessionInfo::default();
 	info.supervisor_accounting.kinds.insert(
@@ -1277,8 +1142,8 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 	assert!(!table.contains("resolve"));
 	assert!(!table.contains("background"));
 	assert_eq!(table.lines().filter(|line| line.starts_with("condense")).count(), 1);
-	assert_eq!(report.mechanics[&Mechanic::Condense].chat_calls, 0);
-	assert_eq!(report.mechanics[&Mechanic::Condense].decision_calls, 2);
+	assert_eq!(report.mechanics["condense"]["chat_calls"], 0);
+	assert_eq!(report.mechanics["condense"]["decision_calls"], 2);
 	let timing_rows = info_timing_rows(&super::super::InfoTiming {
 		split_time_ms: report.turn_time.total_time_ms,
 		turn_model_time_ms: report.turn_time.main_api_time_ms,
@@ -1306,7 +1171,7 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 
 #[test]
 fn supervisor_wall_only_and_local_rows_preserve_usage_without_duplicate_outcomes() {
-	use crate::supervisor::{accounting::Usage, report::SupervisorReport, stats::CallKind};
+	use crate::session::accounting::{report::SupervisorReport, CallKind, Usage};
 	let mut info = crate::session::SessionInfo::default();
 	info.supervisor_accounting.kinds.insert(
 		CallKind::Condense,
@@ -1335,11 +1200,9 @@ fn supervisor_wall_only_and_local_rows_preserve_usage_without_duplicate_outcomes
 
 #[test]
 fn supervisor_sample_renders_one_session_table_and_one_timing_split() {
-	use crate::supervisor::{
-		accounting::{TurnTime, Usage},
-		evaluate::Seam,
+	use crate::session::accounting::{
 		report::{Outcome, SupervisorReport},
-		stats::CallKind,
+		CallKind, Seam, TurnTime, Usage,
 	};
 	let mut info = crate::session::SessionInfo::default();
 	for (kind, calls, input, output, wall, api, cost) in [
@@ -1405,7 +1268,6 @@ fn supervisor_sample_renders_one_session_table_and_one_timing_split() {
 		.unwrap()
 		.outcome
 		.insert(Outcome::Items, 9);
-	info.authorization.checked = 11;
 	info.supervisor_accounting.blocking_wall_time_ms = 34_300;
 	info.supervisor_accounting.turn_time = TurnTime {
 		completed: 1,
@@ -1458,8 +1320,21 @@ fn owner_info_timing() -> super::super::InfoTiming {
 	}
 }
 
-fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
-	use crate::supervisor::report::{Mechanic, MechanicUsage, Outcome, SupervisorReport, Totals};
+/// Change one of octomind's own rows of a report.
+fn edit_row(
+	report: &mut crate::session::accounting::report::SupervisorReport,
+	mechanic: crate::session::accounting::report::Mechanic,
+	edit: impl FnOnce(&mut crate::session::accounting::report::MechanicUsage),
+) {
+	let row = report.mechanics.get_mut(mechanic.name()).expect("sample mechanic");
+	let mut usage: crate::session::accounting::report::MechanicUsage =
+		serde_json::from_value(row.clone()).expect("sample row");
+	edit(&mut usage);
+	*row = serde_json::to_value(usage).expect("sample row JSON");
+}
+
+fn owner_supervisor_report() -> crate::session::accounting::report::SupervisorReport {
+	use crate::session::accounting::report::{Mechanic, MechanicUsage, Outcome, SupervisorReport, Totals};
 	let mut report = SupervisorReport::default();
 	for (mechanic, chat, decision, wall, api, input, output, cost) in [
 		(Mechanic::Gate, 2, 0, 3_500, 3_500, 10_000, 268, 0.0018),
@@ -1471,8 +1346,8 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 		(Mechanic::Capabilities, 0, 1, 1_100, 1_100, 527, 67, 0.0),
 	] {
 		report.mechanics.insert(
-			mechanic,
-			MechanicUsage {
+			mechanic.name().to_owned(),
+			serde_json::to_value(MechanicUsage {
 				chat_calls: chat,
 				decision_calls: decision,
 				wall_blocking_ms: wall,
@@ -1481,7 +1356,8 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 				output_tokens: output,
 				cost,
 				..Default::default()
-			},
+			})
+			.expect("sample row JSON"),
 		);
 	}
 	for (mechanic, outcomes) in [
@@ -1506,7 +1382,12 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 		),
 		(Mechanic::Recall, vec![(Outcome::Items, 10), (Outcome::Applied, 9)]),
 	] {
-		report.mechanics.get_mut(&mechanic).expect("sample mechanic").outcome = outcomes.into_iter().collect();
+		edit_row(&mut report, mechanic, |row| {
+			row.outcome = outcomes
+				.into_iter()
+				.map(|(outcome, count)| (outcome.name(), count))
+				.collect();
+		});
 	}
 	report.totals = Totals {
 		chat_calls: 6,
@@ -1518,7 +1399,7 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 		cost: 0.0083,
 		..Default::default()
 	};
-	report.turn_time = crate::supervisor::accounting::TurnTime {
+	report.turn_time = crate::session::accounting::TurnTime {
 		completed: 1,
 		total_time_ms: 135_799,
 		main_api_time_ms: 113_700,
@@ -1610,19 +1491,21 @@ fn info_supervisor_owner_sample_fits_widths_preserves_payload_and_styles_values(
 
 #[test]
 fn info_supervisor_background_long_durations_and_outcomes_fit_without_losing_values() {
-	use crate::supervisor::report::{Mechanic, Outcome};
+	use crate::session::accounting::report::{Mechanic, Outcome};
 	let mut report = owner_supervisor_report();
-	let gate = report.mechanics.get_mut(&Mechanic::Gate).expect("gate");
-	gate.wall_background_ms = 3_661_500;
-	gate.outcome = [
-		(Outcome::Runs, 1),
-		(Outcome::Pass, 2),
-		(Outcome::Fail, 3),
-		(Outcome::RefutedGaps, 4),
-		(Outcome::Unavailable, 5),
-		(Outcome::DecisionUnavailable, 6),
-	]
-	.into();
+	edit_row(&mut report, Mechanic::Gate, |gate| {
+		gate.wall_background_ms = 3_661_500;
+		gate.outcome = [
+			(Outcome::Runs, 1),
+			(Outcome::Pass, 2),
+			(Outcome::Fail, 3),
+			(Outcome::RefutedGaps, 4),
+			(Outcome::Unavailable, 5),
+			(Outcome::DecisionUnavailable, 6),
+		]
+		.map(|(outcome, count)| (outcome.name(), count))
+		.into();
+	});
 	for width in [120, 100, 80] {
 		let table = plain_info_render(&supervisor_table(&report, width));
 		assert!(table.contains("background"));
@@ -1641,7 +1524,7 @@ fn info_supervisor_background_long_durations_and_outcomes_fit_without_losing_val
 
 #[test]
 fn info_supervisor_outcomes_pluralize_counts_and_keep_mechanic_results() {
-	use crate::supervisor::report::{Mechanic, MechanicUsage, Outcome};
+	use crate::session::accounting::report::{Mechanic, MechanicUsage, Outcome};
 	for (outcome, singular, plural) in [
 		(Outcome::Runs, "run", "runs"),
 		(Outcome::Pass, "pass", "passes"),
@@ -1655,10 +1538,13 @@ fn info_supervisor_outcomes_pluralize_counts_and_keep_mechanic_results() {
 	] {
 		for (count, label) in [(1, singular), (2, plural)] {
 			let usage = MechanicUsage {
-				outcome: [(outcome, count)].into(),
+				outcome: [(outcome.name(), count)].into(),
 				..Default::default()
 			};
-			assert_eq!(supervisor_outcome(Mechanic::Gate, &usage), format!("{count} {label}"));
+			assert_eq!(
+				supervisor_outcome(Some(Mechanic::Gate), &usage),
+				format!("{count} {label}")
+			);
 		}
 	}
 	for (mechanic, label) in [
@@ -1668,10 +1554,10 @@ fn info_supervisor_outcomes_pluralize_counts_and_keep_mechanic_results() {
 		(Mechanic::Compression, "demoted"),
 	] {
 		let usage = MechanicUsage {
-			outcome: [(Outcome::Applied, 1)].into(),
+			outcome: [(Outcome::Applied.name(), 1)].into(),
 			..Default::default()
 		};
-		assert_eq!(supervisor_outcome(mechanic, &usage), format!("1 {label}"));
+		assert_eq!(supervisor_outcome(Some(mechanic), &usage), format!("1 {label}"));
 	}
 }
 
@@ -1694,7 +1580,7 @@ fn info_restyle_render_samples() {
 		println!("END INFO SAMPLE");
 	}
 	println!("INFO SAMPLE zero activity");
-	let mut empty_report = crate::supervisor::report::SupervisorReport::default();
+	let mut empty_report = crate::session::accounting::report::SupervisorReport::default();
 	empty_report.turn_time.completed = 1;
 	assert!(supervisor_table(&empty_report, 80).is_empty());
 	display_info(&CommandOutput::Info {
@@ -1724,6 +1610,7 @@ fn info_restyle_render_samples() {
 		keepalive: None,
 		agents_stats: None,
 		supervisor_accounting: empty_report,
+		plugins: Vec::new(),
 	});
 	println!("END INFO SAMPLE");
 }

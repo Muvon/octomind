@@ -35,7 +35,7 @@ static SYSTEM_TAG_REGEX: LazyLock<Regex> =
 /// Project assistant text for display without changing the stored transcript.
 pub(crate) fn visible_assistant_content(content: &str) -> String {
 	let content = SYSTEM_TAG_REGEX.replace_all(content, "\n");
-	crate::supervisor::detect::strip_self_report(content.trim_start_matches(['\r', '\n']))
+	crate::session::self_report::strip_self_report(content.trim_start_matches(['\r', '\n']))
 }
 
 /// Output mode determines behavior and output format

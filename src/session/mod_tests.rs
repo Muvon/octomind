@@ -29,7 +29,7 @@ fn turn_timing_records_completed_turns_and_average() {
 }
 
 #[test]
-fn learning_stats_persist_and_default_for_old_sessions() {
+fn turn_timing_defaults_for_old_sessions() {
 	let old: SessionInfo = serde_json::from_value(json!({
 		"name": "old",
 		"created_at": 1,
@@ -44,17 +44,7 @@ fn learning_stats_persist_and_default_for_old_sessions() {
 		"layer_stats": []
 	}))
 	.unwrap();
-	assert_eq!(old.learning_stats.packs, 0);
 	assert_eq!(old.turn_timing.completed, 0);
-
-	let mut current = SessionInfo::default();
-	current.learning_stats.record_pack(4, 700);
-	current.learning_stats.record_use(0.05);
-	let restored: SessionInfo = serde_json::from_value(serde_json::to_value(current).unwrap()).unwrap();
-	assert_eq!(restored.learning_stats.items, 4);
-	assert_eq!(restored.learning_stats.tokens, 700);
-	assert_eq!(restored.learning_stats.used, 1);
-	assert_eq!(restored.learning_stats.credit_positive, 1);
 }
 
 #[test]

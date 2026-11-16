@@ -53,6 +53,11 @@ use std::time::Duration;
 
 pub const FILE_PATH: &str = ".agents/guardrails.toml";
 
+/// Section names of the rule file, as they appear in a registered rules text.
+const RULE_SECTIONS: [&str; 4] = ["pipe", "guard", "hook", "validator"];
+pub const MODE_APPLY: &str = "apply";
+pub const MODE_OBSERVE: &str = "observe";
+
 /// A freshly written snapshot copy can briefly fail to exec with ETXTBSY while
 /// a child forked concurrently by another thread still holds its write fd (the
 /// fd closes when that child execs). Retry instead of losing the rule run.
@@ -160,6 +165,9 @@ struct RawFile {
 pub struct EvolutionBinding {
 	pub id: String,
 	pub shadow: bool,
+	/// The rule was registered by a plugin. Its `shadow` flag is final: no
+	/// evolution registry record exists to overrule it.
+	pub plugin: bool,
 }
 
 /// Script content captured when rules are installed for a session. Rules are a
@@ -373,24 +381,102 @@ impl Guardrails {
 	/// Append a generated native artifact after user-authored rules. The existing
 	/// runtime remains the sole executor; the binding only carries lifecycle
 	/// attribution and shadow behavior.
-	pub fn append_generated(&mut self, mut generated: Self, id: &str, shadow: bool) {
-		let binding = || EvolutionBinding {
-			id: id.to_string(),
-			shadow,
-		};
+	pub fn append_generated(&mut self, generated: Self, id: &str, shadow: bool) {
+		self.append_bound(
+			generated,
+			EvolutionBinding {
+				id: id.to_string(),
+				shadow,
+				plugin: false,
+			},
+		);
+	}
+
+	/// Like `append_generated`, for a rule a plugin registered.
+	fn append_plugin_rule(&mut self, generated: Self, id: &str, shadow: bool) {
+		self.append_bound(
+			generated,
+			EvolutionBinding {
+				id: id.to_string(),
+				shadow,
+				plugin: true,
+			},
+		);
+	}
+
+	fn append_bound(&mut self, mut generated: Self, binding: EvolutionBinding) {
 		for item in &mut generated.pipes {
-			item.evolution = Some(binding());
+			item.evolution = Some(binding.clone());
 		}
 		for item in &mut generated.guards {
-			item.evolution = Some(binding());
+			item.evolution = Some(binding.clone());
 		}
 		for item in &mut generated.hooks {
-			item.evolution = Some(binding());
+			item.evolution = Some(binding.clone());
 		}
 		for item in &mut generated.validators {
-			item.evolution = Some(binding());
+			item.evolution = Some(binding.clone());
 		}
 		self.append_compiled(generated);
+	}
+
+	/// Compile the rules text a plugin registered: the format of the rule
+	/// file, where every entry also carries an `id` and a `mode` (`apply` or
+	/// `observe`). An entry without an id or with another mode, or one that does
+	/// not compile, is skipped; text that is not TOML is an error.
+	pub fn parse_plugin_rules(text: &str) -> Result<Self> {
+		let table: toml::Table = toml::from_str(text)?;
+		let mut compiled = Self::default();
+		for section in RULE_SECTIONS {
+			let Some(entries) = table.get(section).and_then(toml::Value::as_array) else {
+				continue;
+			};
+			for entry in entries {
+				let Some(id) = entry.get("id").and_then(toml::Value::as_str) else {
+					crate::log_debug!("Registered {} rule has no id; skipped", section);
+					continue;
+				};
+				let shadow = match entry.get("mode").and_then(toml::Value::as_str) {
+					Some(MODE_APPLY) => false,
+					Some(MODE_OBSERVE) => true,
+					_ => {
+						crate::log_debug!("Registered rule '{}' has no known mode; skipped", id);
+						continue;
+					}
+				};
+				let single = toml::Table::from_iter([(section.to_string(), toml::Value::Array(vec![entry.clone()]))]);
+				match Self::parse(&single.to_string()) {
+					Ok(parsed) => compiled.append_plugin_rule(parsed, id, shadow),
+					Err(error) => crate::log_debug!("Registered rule '{}' does not compile: {}", id, error),
+				}
+			}
+		}
+		Ok(compiled)
+	}
+
+	/// Every generated binding in the set, evolution's and plugins' alike.
+	pub fn bindings(&self) -> impl Iterator<Item = &EvolutionBinding> {
+		let pipes = self.pipes.iter().map(|rule| &rule.evolution);
+		let guards = self.guards.iter().map(|rule| &rule.evolution);
+		let hooks = self.hooks.iter().map(|rule| &rule.evolution);
+		let validators = self.validators.iter().map(|rule| &rule.evolution);
+		pipes.chain(guards).chain(hooks).chain(validators).flatten()
+	}
+
+	/// Remove the rules plugins registered, keeping everything else.
+	pub fn drop_plugin_rules(&mut self) {
+		fn from_plugin(binding: &Option<EvolutionBinding>) -> bool {
+			binding.as_ref().is_some_and(|binding| binding.plugin)
+		}
+		self.pipes.retain(|rule| !from_plugin(&rule.evolution));
+		self.guards.retain(|rule| !from_plugin(&rule.evolution));
+		self.hooks.retain(|rule| !from_plugin(&rule.evolution));
+		self.validators.retain(|rule| !from_plugin(&rule.evolution));
+	}
+
+	/// The user's own file defines a pipe (a generated pipe never counts).
+	pub fn has_user_pipe(&self) -> bool {
+		self.pipes.iter().any(|pipe| pipe.evolution.is_none())
 	}
 
 	/// Load `.agents/guardrails.toml` from the given workdir.
@@ -718,7 +804,7 @@ pub fn evaluate_guards(
 			continue;
 		}
 		if let Some(binding) = &rule.evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
+			if binding.shadow {
 				shadow_ids.push(binding.id.clone());
 				continue;
 			}

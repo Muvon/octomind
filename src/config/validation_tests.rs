@@ -91,14 +91,6 @@ fn full_validate_accepts_every_optional_section_at_once() {
 }
 
 #[test]
-fn whitespace_only_supervisor_model_is_rejected_like_an_empty_one() {
-	let mut config = template_config();
-	config.supervisor.model.model = Some("   ".to_string());
-	let error = config.validate_model_profiles().unwrap_err().to_string();
-	assert!(error.contains("cannot be empty"), "got: {error}");
-}
-
-#[test]
 fn an_empty_roles_collection_passes_the_required_field_checks() {
 	let mut config = template_config();
 	config.roles = Vec::new();
@@ -139,162 +131,17 @@ fn compression_model_errors_surface_through_full_validate() {
 }
 
 #[test]
-fn evaluate_model_must_be_a_supported_provider_model_pair() {
-	for bad in [
-		"jev-latest",
-		"openai:gpt",
-		"typesafe:",
-		":jev",
-		"cloudflare:@cf/meta/llama",
-		"typesafe:gpt-5",
-	] {
-		let mut config = template_config();
-		config.decision.model = Some(bad.to_string());
-		let error = config.validate().unwrap_err().to_string();
-		assert!(error.contains("decision.model"), "{bad:?}: {error}");
-	}
-	for good in ["typesafe:jev-latest", "cloudflare:typesafe/jev", "octohub:auto"] {
-		let mut config = template_config();
-		config.decision.model = Some(good.to_string());
-		config.validate().expect(good);
-	}
-}
-
-#[test]
-fn evaluate_section_is_strict_about_seam_keys() {
-	let template = include_str!("../../config-templates/default.toml");
-	let section = "[decision]\nmodel = \"cloudflare:typesafe/jev\"\n";
-	assert!(template.contains(section), "template layout changed");
-	let mistyped = template.replace(
-		&format!(
-			"{section}# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.\nrecall = false\n"
-		),
-		&format!("{section}recall = \"yes\"\n"),
-	);
-	assert_ne!(mistyped, template);
-	let error = toml::from_str::<crate::config::Config>(&mistyped)
-		.unwrap_err()
-		.to_string();
-	assert!(error.contains("recall"), "got: {error}");
-
-	let missing = template.replace("skills = false\n", "");
-	assert_ne!(missing, template);
-	let error = toml::from_str::<crate::config::Config>(&missing)
-		.unwrap_err()
-		.to_string();
-	assert!(error.contains("skills"), "got: {error}");
-}
-
-#[test]
-fn evaluate_condense_and_compression_keys_are_strict_and_default_off() {
+fn max_identical_rounds_is_a_required_root_key() {
 	let template = include_str!("../../config-templates/default.toml");
 	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.decision.supervisor);
-	assert!(!config.decision.compression);
+	assert_eq!(config.max_identical_rounds, 10);
 
-	for key in ["supervisor", "compression"] {
-		let line = format!("{key} = false\n");
-		assert!(template.contains(&line), "template layout changed: {key}");
-		let mistyped = template.replace(&line, &format!("{key} = \"yes\"\n"));
-		let error = toml::from_str::<crate::config::Config>(&mistyped)
-			.unwrap_err()
-			.to_string();
-		assert!(error.contains(key), "{key} mistyped: {error}");
-
-		let missing = template.replace(&line, "");
-		let error = toml::from_str::<crate::config::Config>(&missing)
-			.unwrap_err()
-			.to_string();
-		assert!(error.contains(key), "{key} missing: {error}");
-	}
-}
-
-#[test]
-fn evaluate_distill_plan_and_gate_keys_are_strict_and_default_off() {
-	let template = include_str!("../../config-templates/default.toml");
-	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.decision.supervisor);
-
-	let key = "supervisor";
-	let line = format!("\n{key} = false\n");
-	assert_eq!(template.matches(&line).count(), 1, "template layout changed: {key}");
-	let mistyped = template.replace(&line, &format!("\n{key} = \"yes\"\n"));
-	let error = toml::from_str::<crate::config::Config>(&mistyped)
+	let line = "max_identical_rounds = 10\n";
+	assert!(template.contains(line), "template layout changed");
+	let error = toml::from_str::<crate::config::Config>(&template.replace(line, ""))
 		.unwrap_err()
 		.to_string();
-	assert!(error.contains(key), "{key} mistyped: {error}");
-
-	let missing = template.replace(&line, "\n");
-	let error = toml::from_str::<crate::config::Config>(&missing)
-		.unwrap_err()
-		.to_string();
-	assert!(error.contains(key), "{key} missing: {error}");
-}
-
-#[test]
-fn evaluate_capabilities_key_is_strict_and_default_off() {
-	let template = include_str!("../../config-templates/default.toml");
-	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.decision.capabilities);
-
-	let line = "\ncapabilities = false\n";
-	assert_eq!(template.matches(line).count(), 1, "template layout changed");
-	let mistyped = template.replace(line, "\ncapabilities = \"yes\"\n");
-	let error = toml::from_str::<crate::config::Config>(&mistyped)
-		.unwrap_err()
-		.to_string();
-	assert!(error.contains("capabilities"), "mistyped: {error}");
-
-	let missing = template.replace(line, "\n");
-	let error = toml::from_str::<crate::config::Config>(&missing)
-		.unwrap_err()
-		.to_string();
-	assert!(error.contains("capabilities"), "missing: {error}");
-}
-
-#[test]
-fn absent_and_empty_decision_models_disable_routing_but_keep_flags_required() {
-	for model in [None, Some(String::new())] {
-		let mut config = template_config();
-		config.decision.model = model;
-		config.decision.supervisor = true;
-		config.validate().unwrap();
-		assert!(!crate::supervisor::evaluate::enabled(
-			&config,
-			crate::supervisor::evaluate::Seam::Gate
-		));
-	}
-	let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
-	value["decision"].as_table_mut().unwrap().remove("model");
-	let config: crate::config::Config = value.try_into().unwrap();
-	assert!(config.decision.model.is_none());
-}
-
-#[test]
-fn decision_rejects_unknown_keys_and_requires_the_section() {
-	let template = include_str!("../../config-templates/default.toml");
-	for key in [
-		"unknown",
-		"gate",
-		"authorizer",
-		"distill",
-		"condense",
-		"plan",
-		"evolution",
-	] {
-		let raw = template.replace("[decision]", &format!("[decision]\n{key} = false"));
-		assert!(toml::from_str::<crate::config::Config>(&raw)
-			.unwrap_err()
-			.to_string()
-			.contains(key));
-	}
-	let mut value: toml::Value = toml::from_str(template).unwrap();
-	value.as_table_mut().unwrap().remove("decision");
-	assert!(value
-		.try_into::<crate::config::Config>()
-		.unwrap_err()
-		.to_string()
-		.contains("decision"));
+	assert!(error.contains("max_identical_rounds"), "got: {error}");
 }
 
 #[test]

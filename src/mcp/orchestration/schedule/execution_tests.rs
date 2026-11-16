@@ -30,8 +30,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 fn test_config() -> Config {
 	let mut config: Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default configuration");
-	config.supervisor.enabled = false;
-	config.supervisor.authorizer.enabled = false;
 	config.capabilities.clear();
 	config.mcp.servers = vec![McpServerConfig::builtin(
 		"orchestration",

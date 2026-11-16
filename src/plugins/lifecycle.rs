@@ -308,6 +308,8 @@ fn detached_parts(session_id: &str, parent_session_id: Option<&str>, role: &str)
 		session_id: session_id.to_string(),
 		parent_session_id: parent_session_id.map(str::to_string),
 		role: role.to_string(),
+		// The model of a session without a chat session is not readable here.
+		model: None,
 		status: None,
 		plan: None,
 		workdir,

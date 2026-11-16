@@ -46,6 +46,18 @@ fn outcome(tool: &str, parameters: Value, workdir: &Path) -> ToolOutcome {
 	tool_outcome(&call, &result, workdir, false, false, None)
 }
 
+#[test]
+fn the_context_of_a_chat_session_carries_its_model() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.model = "openrouter:test-model".to_string();
+
+	let parts = ContextParts::of(&session);
+
+	assert_eq!(parts.model.as_deref(), Some("openrouter:test-model"));
+	assert_eq!(parts.context(&[], None).model, Some("openrouter:test-model"));
+	assert_eq!(parts.detached_context(None).model, Some("openrouter:test-model"));
+}
+
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------

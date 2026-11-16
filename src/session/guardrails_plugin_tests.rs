@@ -64,6 +64,7 @@ impl PluginSession {
 			session_id: &self.sid,
 			parent_session_id: None,
 			role: "developer",
+			model: None,
 			workdir: self.dir.path(),
 			project: "proj",
 			messages: &[],

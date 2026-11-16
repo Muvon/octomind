@@ -23,6 +23,7 @@ fn sample_event() -> Event<PromptSubmit> {
 		role: "developer:general".to_string(),
 		workdir: "/work".to_string(),
 		project: "work".to_string(),
+		model: None,
 		git_remote: None,
 		messages: vec![Message {
 			role: "user".to_string(),
@@ -67,7 +68,14 @@ fn event_flattens_its_payload_next_to_the_common_fields() {
 	assert!(value.get("parent_session_id").is_none());
 	assert!(value.get("plan").is_none());
 	assert_eq!(value["project"], "work");
-	for absent in ["plan_error", "tools", "active_skills", "dropped_context", "goal"] {
+	for absent in [
+		"plan_error",
+		"tools",
+		"active_skills",
+		"dropped_context",
+		"goal",
+		"model",
+	] {
 		assert!(value.get(absent).is_none(), "{absent}");
 	}
 }
@@ -88,6 +96,7 @@ fn full_event<P>(payload: P) -> Event<P> {
 	Event {
 		parent_session_id: Some("parent".into()),
 		git_remote: Some("git@example.com:x/y.git".into()),
+		model: Some("anthropic:claude-test".into()),
 		messages_reset: true,
 		status: Some(Status {
 			state: "done".into(),

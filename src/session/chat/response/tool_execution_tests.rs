@@ -1133,6 +1133,7 @@ async fn a_lift_of_a_rule_the_plugin_registered_goes_to_the_admission() {
 		session_id: &rig.id,
 		parent_session_id: None,
 		role: "assistant",
+		model: None,
 		workdir: &dir,
 		project: "proj",
 		messages: &[],
@@ -1564,4 +1565,17 @@ async fn a_plugin_that_did_not_ask_is_sent_no_returned_text() {
 
 	assert_eq!(sent["calls"][1]["error"], true);
 	assert!(sent["calls"][1].get("returned").is_none());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn an_event_of_a_chat_session_tells_the_plugin_its_model() {
+	let rig = PluginRig::new("model", StubPlugin::new(&[event::TOOL_AFTER]), true).await;
+	let mut session = rig.session();
+	session.model = "openrouter:test-model".to_string();
+
+	let (call, result) = greeting("m1");
+	rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+
+	assert_eq!(rig.stub.sent(event::TOOL_AFTER)[0]["model"], "openrouter:test-model");
 }

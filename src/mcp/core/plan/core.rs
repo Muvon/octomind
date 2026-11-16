@@ -301,20 +301,21 @@ pub fn restore_plan_for_session(session_name: &str) {
 				return;
 			}
 		};
-		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+		// Typed kind check: a log holds hundreds of MB of entries that are not plan markers.
+		let Some(kind) = crate::session::persistence::entry_kind(&line) else {
 			continue;
 		};
-		let Some(t) = val.get("type").and_then(|t| t.as_str()) else {
-			continue;
-		};
-		match t {
+		match kind {
 			"PLAN_SNAPSHOT" => {
-				if let Some(plan_val) = val.get("plan") {
-					match serde_json::from_value::<super::storage::ExecutionPlan>(plan_val.clone()) {
-						Ok(plan) => latest_plan = Some(plan),
-						Err(e) => {
-							crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
-						}
+				#[derive(serde::Deserialize)]
+				struct PlanSnapshot {
+					plan: Option<super::storage::ExecutionPlan>,
+				}
+				match serde_json::from_str::<PlanSnapshot>(&line) {
+					Ok(PlanSnapshot { plan: Some(plan) }) => latest_plan = Some(plan),
+					Ok(PlanSnapshot { plan: None }) => {}
+					Err(e) => {
+						crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
 					}
 				}
 			}

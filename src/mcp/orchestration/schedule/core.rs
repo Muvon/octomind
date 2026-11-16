@@ -194,20 +194,17 @@ pub fn restore_schedule_for_session(session_name: &str) {
 				return;
 			}
 		};
-		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
-			continue;
-		};
-		let Some(t) = val.get("type").and_then(|t| t.as_str()) else {
-			continue;
-		};
-		if t != "SCHEDULE_SNAPSHOT" {
+		// Typed kind check: a log holds hundreds of MB of entries that are not schedule snapshots.
+		if crate::session::persistence::entry_kind(&line) != Some("SCHEDULE_SNAPSHOT") {
 			continue;
 		}
-		let Some(entries_val) = val.get("entries") else {
-			continue;
-		};
-		match serde_json::from_value::<Vec<ScheduleEntry>>(entries_val.clone()) {
-			Ok(entries) => latest_entries = Some(entries),
+		#[derive(serde::Deserialize)]
+		struct ScheduleSnapshot {
+			entries: Option<Vec<ScheduleEntry>>,
+		}
+		match serde_json::from_str::<ScheduleSnapshot>(&line) {
+			Ok(ScheduleSnapshot { entries: Some(entries) }) => latest_entries = Some(entries),
+			Ok(ScheduleSnapshot { entries: None }) => {}
 			Err(e) => crate::log_debug!("restore_schedule_for_session: deserialize failed: {}", e),
 		}
 	}

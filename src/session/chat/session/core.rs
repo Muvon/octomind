@@ -16,7 +16,8 @@
 
 use super::utils::format_number;
 use crate::config::Config;
-use crate::session::{get_sessions_dir, load_session, Session};
+use crate::session::persistence::LoadedSession;
+use crate::session::{get_sessions_dir, Session};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -508,10 +509,11 @@ impl ChatSession {
 			use colored::*;
 
 			// Try to load session
-			match load_session(&session_file) {
-				Ok(mut session) => {
-					// Extract runtime state from session log
-					let runtime_state = crate::session::extract_runtime_state_from_log(&session_file)?;
+			match crate::session::persistence::load_session_with_runtime_state(&session_file) {
+				Ok(LoadedSession {
+					mut session,
+					runtime_state,
+				}) => {
 					// A session logged before its agent was renamed stores the old tag, while the
 					// config was resolved under the new one. A stored role the config has is kept.
 					let restored_role = match runtime_state.role.as_deref().filter(|_| !params.role_explicit) {

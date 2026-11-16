@@ -26,7 +26,7 @@
 use crate::mcp::core::plan::storage::ExecutionPlan;
 use crate::mcp::orchestration::schedule::storage::ScheduleEntry;
 use crate::session::persistence::append_to_session_file;
-use crate::session::Message;
+use crate::session::{tap_runs, Message};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -159,12 +159,15 @@ pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> R
 pub fn log_stats_checkpoint(session_file: &std::path::Path, info: &crate::session::SessionInfo) -> Result<()> {
 	let mut info = info.clone();
 	info.capture_agent_runs();
+	// Only runs that changed since the last snapshot: the full list is rebuilt on
+	// load by folding every snapshot, so repeating it here bloats the log.
+	let changed_runs = tap_runs::runs_to_log(&info.name, &info.agent_runs);
 	let entry = serde_json::json!({
 		"type": "STATS",
 		"timestamp": get_timestamp(),
 		"total_cost": info.total_cost,
 		"main_cost": info.main_cost,
-		"agent_runs": info.agent_runs,
+		"agent_runs": changed_runs,
 		"supervisor_accounting": info.supervisor_accounting,
 		"input_tokens": info.input_tokens,
 		"output_tokens": info.output_tokens,
@@ -176,7 +179,9 @@ pub fn log_stats_checkpoint(session_file: &std::path::Path, info: &crate::sessio
 		"total_tool_time_ms": info.total_tool_time_ms,
 		"total_layer_time_ms": info.total_layer_time_ms,
 	});
-	append_to_session_file(&session_file.to_path_buf(), &serde_json::to_string(&entry)?)
+	append_to_session_file(&session_file.to_path_buf(), &serde_json::to_string(&entry)?)?;
+	tap_runs::mark_logged(&info.name, &changed_runs);
+	Ok(())
 }
 
 fn get_timestamp() -> u64 {

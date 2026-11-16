@@ -201,3 +201,72 @@ fn timestamp_is_unix_epoch_seconds() {
 	assert!(now > 1_700_000_000);
 	assert!(now < 4_102_444_800);
 }
+
+fn run_info(id: &str, status: tap_runs::TapJobStatus) -> tap_runs::TapJobInfo {
+	tap_runs::TapJobInfo {
+		id: id.to_string(),
+		role: "developer:general".to_string(),
+		workdir: "/tmp".to_string(),
+		started_at: UNIX_EPOCH,
+		status,
+		error: None,
+		live: tap_runs::TapLiveState::default(),
+	}
+}
+
+fn logged_run_ids(line: &serde_json::Value) -> Vec<&str> {
+	line["agent_runs"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|run| run["id"].as_str().unwrap())
+		.collect()
+}
+
+#[test]
+fn stats_checkpoint_writes_only_runs_that_changed_since_the_last_snapshot() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("stats-delta.jsonl.zst");
+	let mut info = crate::session::SessionInfo {
+		name: "stats-delta-session".to_string(),
+		..Default::default()
+	};
+	info.agent_runs = vec![
+		run_info("a", tap_runs::TapJobStatus::Running),
+		run_info("b", tap_runs::TapJobStatus::Running),
+	];
+
+	log_stats_checkpoint(&file, &info).unwrap();
+	log_stats_checkpoint(&file, &info).unwrap();
+	info.agent_runs[1].status = tap_runs::TapJobStatus::Done;
+	log_stats_checkpoint(&file, &info).unwrap();
+
+	let reader =
+		std::io::BufReader::new(zstd::stream::read::Decoder::new(std::fs::File::open(&file).unwrap()).unwrap());
+	let lines: Vec<serde_json::Value> = reader
+		.lines()
+		.map(|line| serde_json::from_str(&line.unwrap()).unwrap())
+		.collect();
+	assert_eq!(lines.len(), 3);
+	assert_eq!(logged_run_ids(&lines[0]), vec!["a", "b"]);
+	assert!(lines[1]["agent_runs"].as_array().unwrap().is_empty());
+	assert_eq!(logged_run_ids(&lines[2]), vec!["b"]);
+	tap_runs::clear_for_session(&info.name);
+}
+
+#[test]
+fn failed_stats_append_leaves_runs_unwritten_for_the_next_snapshot() {
+	let dir = tempfile::tempdir().unwrap();
+	// A directory cannot be opened as the log file, so the append fails.
+	let unwritable = dir.path().to_path_buf();
+	let mut info = crate::session::SessionInfo {
+		name: "stats-failed-append".to_string(),
+		..Default::default()
+	};
+	info.agent_runs = vec![run_info("a", tap_runs::TapJobStatus::Running)];
+
+	assert!(log_stats_checkpoint(&unwritable, &info).is_err());
+
+	assert_eq!(tap_runs::runs_to_log(&info.name, &info.agent_runs), info.agent_runs);
+	tap_runs::clear_for_session(&info.name);
+}

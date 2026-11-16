@@ -16,6 +16,8 @@
 
 use super::{Message, Session, SessionInfo};
 use anyhow::{Context, Result};
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::{Deserialize, Deserializer};
 use std::collections::VecDeque;
 use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::{BufRead, BufReader, Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
@@ -264,6 +266,155 @@ struct ParsedLogLines {
 	messages: Vec<Message>,
 	restoration_messages: Vec<Message>,
 	restoration_point_found: bool,
+	runtime_state: SessionRuntimeState,
+}
+
+/// Field value when it has the expected type, `None` otherwise: one odd field
+/// in a log entry must not fail the whole resume.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+	D: Deserializer<'de>,
+	T: DeserializeOwned,
+{
+	Ok(T::deserialize(serde_json::Value::deserialize(deserializer)?).ok())
+}
+
+/// `Some(value)` whenever the key is there, even as `null`. With `#[serde(default)]`
+/// an absent key stays `None`: a snapshot without `main_cost` says nothing about it.
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<f64>>, D::Error> {
+	Option::<f64>::deserialize(deserializer).map(Some)
+}
+
+fn fold_main_cost(folded: &mut Option<Option<f64>>, incoming: Option<Option<f64>>) {
+	if let Some(incoming) = incoming {
+		*folded = Some(match (*folded, incoming) {
+			(None, value) => value,
+			(Some(Some(old)), Some(new)) => Some(old.max(new)),
+			_ => None,
+		});
+	}
+}
+
+#[derive(Deserialize)]
+struct BackgroundSupervisorEntry {
+	id: String,
+	accounting: crate::session::accounting::SupervisorAccounting,
+}
+
+#[derive(Deserialize)]
+struct SummaryEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	timestamp: Option<u64>,
+	session_info: Option<SessionInfo>,
+}
+
+/// Which snapshot fields a SUMMARY actually carries: `SessionInfo` fills absent
+/// ones with defaults, and folding a default over saved accounting would erase it.
+#[derive(Deserialize)]
+struct SummaryPresence {
+	session_info: SnapshotPresence,
+}
+
+#[derive(Deserialize)]
+struct SnapshotPresence {
+	#[serde(default, deserialize_with = "present")]
+	main_cost: Option<Option<f64>>,
+	#[serde(default)]
+	supervisor_accounting: Option<IgnoredAny>,
+}
+
+/// A STATS checkpoint: the snapshot fields plus the counters it raises.
+#[derive(Deserialize)]
+struct StatsEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	timestamp: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	total_cost: Option<f64>,
+	#[serde(default)]
+	supervisor_accounting: Option<crate::session::accounting::SupervisorAccounting>,
+	#[serde(default, deserialize_with = "present")]
+	main_cost: Option<Option<f64>>,
+	#[serde(default)]
+	agent_runs: Option<Vec<crate::session::tap_runs::TapJobInfo>>,
+	#[serde(default, deserialize_with = "lenient")]
+	input_tokens: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	output_tokens: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	cache_read_tokens: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	cache_write_tokens: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	reasoning_tokens: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	tool_calls: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	total_api_time_ms: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	total_tool_time_ms: Option<u64>,
+	#[serde(default, deserialize_with = "lenient")]
+	total_layer_time_ms: Option<u64>,
+}
+
+impl StatsEntry {
+	/// Only ever raises: a cached-only request reports 0 non-cached tokens and must
+	/// not overwrite the totals accumulated in the SUMMARY.
+	fn raise_counters(&self, info: &mut SessionInfo) {
+		if let Some(accounting) = &self.supervisor_accounting {
+			info.supervisor_accounting.merge_max(accounting);
+		}
+		if let Some(total_cost) = self.total_cost {
+			if total_cost > info.total_cost {
+				info.total_cost = total_cost;
+			}
+		}
+		info.input_tokens = info.input_tokens.max(self.input_tokens.unwrap_or(0));
+		info.output_tokens = info.output_tokens.max(self.output_tokens.unwrap_or(0));
+		info.cache_read_tokens = info.cache_read_tokens.max(self.cache_read_tokens.unwrap_or(0));
+		info.cache_write_tokens = info.cache_write_tokens.max(self.cache_write_tokens.unwrap_or(0));
+		info.reasoning_tokens = info.reasoning_tokens.max(self.reasoning_tokens.unwrap_or(0));
+		info.tool_calls = info.tool_calls.max(self.tool_calls.unwrap_or(0));
+		info.total_api_time_ms = info.total_api_time_ms.max(self.total_api_time_ms.unwrap_or(0));
+		info.total_tool_time_ms = info.total_tool_time_ms.max(self.total_tool_time_ms.unwrap_or(0));
+		info.total_layer_time_ms = info.total_layer_time_ms.max(self.total_layer_time_ms.unwrap_or(0));
+	}
+}
+
+#[derive(Deserialize)]
+struct CompressionPointEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	compression_type: Option<String>,
+	#[serde(default, deserialize_with = "lenient")]
+	messages_removed: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct TruncationPointEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	message_count: Option<u64>,
+}
+
+/// COMMAND and OUTPUT_MODE_* entries both record the command line that caused them.
+#[derive(Deserialize)]
+struct CommandEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	command: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct KnowledgeEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ToolCallEntry {
+	#[serde(default, deserialize_with = "lenient")]
+	tool_name: Option<String>,
+	#[serde(default, deserialize_with = "lenient")]
+	tool_id: Option<String>,
+	#[serde(default, deserialize_with = "lenient")]
+	parameters: Option<serde_json::Value>,
 }
 
 /// Parse a session log file line by line, extracting messages and session metadata.
@@ -282,296 +433,207 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	let mut restoration_point_found = false;
 	let mut restoration_messages = Vec::new();
 	let mut pending_tool_calls: Vec<serde_json::Value> = Vec::new();
+	let mut runtime_state = SessionRuntimeState::default();
 
 	// Process the file line by line to avoid loading the entire file into memory
 	for line in lines {
 		let line = line?;
 
-		// Try to parse as JSON first (new format)
-		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
-			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
-				let snapshot = match log_type {
-					"SUMMARY" => json_value.get("session_info"),
-					"STATS" => Some(&json_value),
-					_ => None,
-				};
-				if let Some(snapshot) = snapshot {
-					if let Some(value) = snapshot.get("total_cost") {
-						total_cost = total_cost.max(serde_json::from_value::<f64>(value.clone())?);
+		// Dispatch on the entry type alone: SUMMARY and STATS lines run to hundreds of KB
+		// and most entry types are not read here, so only the arm that consumes a line parses it.
+		if let Some(log_type) = entry_kind(&line) {
+			runtime_state.apply(log_type, &line)?;
+			match log_type {
+				"BACKGROUND_SUPERVISOR" => {
+					let entry: BackgroundSupervisorEntry =
+						serde_json::from_str(&line).context("BACKGROUND_SUPERVISOR entry malformed")?;
+					background_supervisor.push((entry.id, entry.accounting));
+				}
+				"SUMMARY" => {
+					// SUMMARY is the source of truth - it contains complete session state
+					let entry: SummaryEntry = serde_json::from_str(&line)?;
+					if let Some(mut info) = entry.session_info {
+						let presence: SummaryPresence = serde_json::from_str(&line)?;
+						total_cost = total_cost.max(info.total_cost);
+						if presence.session_info.supervisor_accounting.is_some() {
+							saved_supervisor.merge_max(&info.supervisor_accounting);
+						}
+						fold_main_cost(&mut main_cost, presence.session_info.main_cost);
+						// Moved, not copied: the load merges the folded history back into the
+						// session, and a snapshot's own list is only part of it.
+						crate::session::tap_runs::merge_history(&mut agent_runs, std::mem::take(&mut info.agent_runs));
+						session_info = Some(info);
+						// Track SUMMARY timestamp to ignore older STATS entries
+						last_summary_timestamp = entry.timestamp.unwrap_or(0);
 					}
-					if let Some(value) = snapshot.get("supervisor_accounting") {
-						saved_supervisor.merge_max(&serde_json::from_value(value.clone())?);
+				}
+				"RESTORATION_POINT" => {
+					// Found a restoration point - this means the session was optimized with /done
+					restoration_point_found = true;
+					messages.clear();
+					restoration_messages.clear();
+					pending_tool_calls.clear(); // Clear stale tool calls from before restoration
+				}
+				"COMPRESSION_POINT" => {
+					// Found a compression point - messages before this were compressed
+					// Clear messages like RESTORATION_POINT to reflect compressed state
+					if restoration_point_found {
+						restoration_messages.clear();
+					} else {
+						messages.clear();
 					}
-					if let Some(value) = snapshot.get("main_cost") {
-						let incoming: Option<f64> = serde_json::from_value(value.clone())?;
-						main_cost = Some(match (main_cost, incoming) {
-							(None, value) => value,
-							(Some(Some(old)), Some(new)) => Some(old.max(new)),
-							_ => None,
-						});
-					}
-					if let Some(value) = snapshot.get("agent_runs") {
-						crate::session::tap_runs::merge_history(
-							&mut agent_runs,
-							serde_json::from_value::<Vec<crate::session::tap_runs::TapJobInfo>>(value.clone())?,
+					pending_tool_calls.clear(); // Clear stale tool calls from before compression
+
+					// Log compression restoration for debugging
+					let entry: CompressionPointEntry = serde_json::from_str(&line)?;
+					if let (Some(comp_type), Some(msgs_removed)) = (entry.compression_type, entry.messages_removed) {
+						crate::log_debug!(
+							"Session restoration: Found COMPRESSION_POINT ({}, {} messages removed)",
+							comp_type,
+							msgs_removed
 						);
 					}
 				}
-				match log_type {
-					"BACKGROUND_SUPERVISOR" => {
-						let id: String = serde_json::from_value(
-							json_value
-								.get("id")
-								.context("BACKGROUND_SUPERVISOR.id missing")?
-								.clone(),
-						)?;
-						let accounting = serde_json::from_value(
-							json_value
-								.get("accounting")
-								.context("BACKGROUND_SUPERVISOR.accounting missing")?
-								.clone(),
-						)?;
-						background_supervisor.push((id, accounting));
-					}
-					"SUMMARY" => {
-						// Extract session info from JSON log entry
-						// SUMMARY is the source of truth - it contains complete session state
-						if let Some(session_info_value) = json_value.get("session_info") {
-							session_info = Some(serde_json::from_value(session_info_value.clone())?);
-							// Track SUMMARY timestamp to ignore older STATS entries
-							last_summary_timestamp = json_value.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
-						}
-					}
-					"RESTORATION_POINT" => {
-						// Found a restoration point - this means the session was optimized with /done
-						restoration_point_found = true;
-						messages.clear();
-						restoration_messages.clear();
-						pending_tool_calls.clear(); // Clear stale tool calls from before restoration
-					}
-					"COMPRESSION_POINT" => {
-						// Found a compression point - messages before this were compressed
-						// Clear messages like RESTORATION_POINT to reflect compressed state
+				"TRUNCATION_POINT" => {
+					// Found a truncation point - this means messages were removed due to Ctrl+C cleanup
+					// Truncate to the specified message count to reflect the cleaned state
+					let entry: TruncationPointEntry = serde_json::from_str(&line)?;
+					if let Some(message_count) = entry.message_count {
+						let target_count = message_count as usize;
 						if restoration_point_found {
-							restoration_messages.clear();
-						} else {
-							messages.clear();
-						}
-						pending_tool_calls.clear(); // Clear stale tool calls from before compression
-
-						// Log compression restoration for debugging
-						if let (Some(comp_type), Some(msgs_removed)) = (
-							json_value.get("compression_type").and_then(|t| t.as_str()),
-							json_value.get("messages_removed").and_then(|m| m.as_u64()),
-						) {
+							restoration_messages.truncate(target_count);
 							crate::log_debug!(
-								"Session restoration: Found COMPRESSION_POINT ({}, {} messages removed)",
-								comp_type,
-								msgs_removed
+								"Session restoration: Found TRUNCATION_POINT - truncated restoration messages to {}",
+								target_count
+							);
+						} else {
+							messages.truncate(target_count);
+							crate::log_debug!(
+								"Session restoration: Found TRUNCATION_POINT - truncated messages to {}",
+								target_count
 							);
 						}
 					}
-					"TRUNCATION_POINT" => {
-						// Found a truncation point - this means messages were removed due to Ctrl+C cleanup
-						// Truncate to the specified message count to reflect the cleaned state
-						if let Some(message_count) = json_value.get("message_count").and_then(|m| m.as_u64()) {
-							let target_count = message_count as usize;
-							if restoration_point_found {
-								restoration_messages.truncate(target_count);
-								crate::log_debug!(
-									"Session restoration: Found TRUNCATION_POINT - truncated restoration messages to {}",
-									target_count
-								);
-							} else {
-								messages.truncate(target_count);
-								crate::log_debug!(
-									"Session restoration: Found TRUNCATION_POINT - truncated messages to {}",
-									target_count
-								);
-							}
-						}
-						pending_tool_calls.clear(); // Clear stale tool calls from before truncation
-					}
-					"COMMAND" => {
-						// Commands are processed separately in extract_runtime_state_from_log
-						continue;
-					}
-					// Replace and Restart both rebuild the session from scratch: clear prior
-					// messages here so the rebuilt snapshot (persisted as message lines after
-					// this marker by command_executor) is the only state that survives reload.
-					"OUTPUT_MODE_REPLACE" | "OUTPUT_MODE_RESTART" => {
-						if restoration_point_found {
-							restoration_messages.clear();
-						} else {
-							messages.clear();
-						}
-						pending_tool_calls.clear(); // Clear stale tool calls from before replace
-
-						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
-							crate::log_debug!("Session restoration: Found {} from command '{}'", log_type, command);
-						}
-					}
-					// Append and Last only add messages; the appended message lines follow
-					// this marker in the log, so no clearing is needed.
-					"OUTPUT_MODE_APPEND" | "OUTPUT_MODE_LAST" => continue,
-					"STATS" => {
-						// STATS entries provide incremental updates during a session
-						// BUT: Only apply STATS that are NEWER than the last SUMMARY
-						// This ensures SUMMARY (written on save/exit) is the source of truth
-						let stats_timestamp = json_value.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
-
-						// Only apply STATS if it's newer than the last SUMMARY
-						// This prevents old STATS from overwriting fresh SUMMARY data on resume
-						if stats_timestamp > last_summary_timestamp {
-							if let Some(info) = &mut session_info {
-								if let Some(value) = json_value.get("supervisor_accounting") {
-									info.supervisor_accounting
-										.merge_max(&serde_json::from_value(value.clone())?);
-								}
-								// CRITICAL FIX: Only apply STATS values if they're greater than current values
-								// This prevents cached-only requests (where non-cached tokens = 0) from
-								// overwriting the accumulated token counts from the SUMMARY
-								if let Some(total_cost) = json_value.get("total_cost").and_then(|c| c.as_f64()) {
-									if total_cost > info.total_cost {
-										info.total_cost = total_cost;
-									}
-								}
-								if let Some(input_tokens) = json_value.get("input_tokens").and_then(|t| t.as_u64()) {
-									if input_tokens > info.input_tokens {
-										info.input_tokens = input_tokens;
-									}
-								}
-								if let Some(output_tokens) = json_value.get("output_tokens").and_then(|t| t.as_u64()) {
-									if output_tokens > info.output_tokens {
-										info.output_tokens = output_tokens;
-									}
-								}
-								if let Some(cache_read_tokens) =
-									json_value.get("cache_read_tokens").and_then(|t| t.as_u64())
-								{
-									if cache_read_tokens > info.cache_read_tokens {
-										info.cache_read_tokens = cache_read_tokens;
-									}
-								}
-								if let Some(cache_write_tokens) =
-									json_value.get("cache_write_tokens").and_then(|t| t.as_u64())
-								{
-									if cache_write_tokens > info.cache_write_tokens {
-										info.cache_write_tokens = cache_write_tokens;
-									}
-								}
-								if let Some(reasoning_tokens) =
-									json_value.get("reasoning_tokens").and_then(|t| t.as_u64())
-								{
-									info.reasoning_tokens = info.reasoning_tokens.max(reasoning_tokens);
-								}
-
-								if let Some(tool_calls) = json_value.get("tool_calls").and_then(|t| t.as_u64()) {
-									if tool_calls > info.tool_calls {
-										info.tool_calls = tool_calls;
-									}
-								}
-								if let Some(api_time) = json_value.get("total_api_time_ms").and_then(|t| t.as_u64()) {
-									if api_time > info.total_api_time_ms {
-										info.total_api_time_ms = api_time;
-									}
-								}
-								if let Some(tool_time) = json_value.get("total_tool_time_ms").and_then(|t| t.as_u64()) {
-									if tool_time > info.total_tool_time_ms {
-										info.total_tool_time_ms = tool_time;
-									}
-								}
-								if let Some(layer_time) = json_value.get("total_layer_time_ms").and_then(|t| t.as_u64())
-								{
-									if layer_time > info.total_layer_time_ms {
-										info.total_layer_time_ms = layer_time;
-									}
-								}
-							}
-						}
-					}
-					"TOOL_CALL" => {
-						// Collect tool calls to reconstruct assistant message with tool_calls
-						if let (Some(tool_name), Some(tool_id), Some(parameters)) = (
-							json_value.get("tool_name").and_then(|n| n.as_str()),
-							json_value.get("tool_id").and_then(|id| id.as_str()),
-							json_value.get("parameters"),
-						) {
-							// Store tool call for later reconstruction
-							pending_tool_calls.push(serde_json::json!({
-								"id": tool_id,
-								"type": "function",
-								"function": {
-									"name": tool_name,
-									"arguments": serde_json::to_string(parameters).unwrap_or_default()
-								}
-							}));
-						}
-					}
-					// Everything else is irrelevant to message reconstruction: debug log
-					// entries (API_REQUEST/RESPONSE, TOOL_RESULT, CACHE, ERROR,
-					// SYSTEM/USER/ASSISTANT), command/plan/schedule markers consumed by
-					// other readers, and any unknown future types.
-					_ => continue,
+					pending_tool_calls.clear(); // Clear stale tool calls from before truncation
 				}
-			} else if line.contains("\"role\":") && line.contains("\"content\":") {
-				// This is a regular message JSON line
-				let parsed = serde_json::from_str::<Message>(&line);
-				if let Err(ref e) = parsed {
-					// Don't silently drop — a lost line is silent history loss on
-					// resume. Best-effort skip (one bad line must not nuke the whole
-					// session) but make it visible.
-					crate::log_error!("Skipping unparseable session message line on resume: {}", e);
-				}
-				if let Ok(message) = parsed {
-					if let Some(run) = crate::session::tap_runs::recover_job(&message) {
-						if !agent_runs.iter().any(|saved| saved.id == run.id) {
-							agent_runs.push(run);
-						}
-					}
-					// If this is the first tool message and we have pending tool calls,
-					// reconstruct the assistant message with tool_calls ONLY if not already present
-					if message.role == "tool" && !pending_tool_calls.is_empty() {
-						// Check if the last message is already an assistant message with tool_calls
-						let last_is_assistant_with_tool_calls = if restoration_point_found {
-							restoration_messages.last()
-						} else {
-							messages.last()
-						}
-						.map(|m| m.role == "assistant" && m.tool_calls.is_some())
-						.unwrap_or(false);
-
-						// Only reconstruct if the assistant message doesn't already exist
-						// This prevents losing thinking content when the Message JSON was already parsed
-						if !last_is_assistant_with_tool_calls {
-							let assistant_with_tool_calls = Message {
-								role: "assistant".to_string(),
-								content: "".to_string(), // Empty content for tool call messages
-								tool_calls: Some(serde_json::Value::Array(pending_tool_calls.clone())),
-								timestamp: message.timestamp,
-								cached: false,
-								..Default::default()
-							};
-
-							if restoration_point_found {
-								restoration_messages.push(assistant_with_tool_calls);
-							} else {
-								messages.push(assistant_with_tool_calls);
-							}
-						}
-
-						// Clear pending tool calls since we've reconstructed the assistant message
-						pending_tool_calls.clear();
-					}
-
+				// Replace and Restart both rebuild the session from scratch: clear prior
+				// messages here so the rebuilt snapshot (persisted as message lines after
+				// this marker by command_executor) is the only state that survives reload.
+				"OUTPUT_MODE_REPLACE" | "OUTPUT_MODE_RESTART" => {
 					if restoration_point_found {
-						restoration_messages.push(message);
+						restoration_messages.clear();
 					} else {
-						messages.push(message);
+						messages.clear();
 					}
+					pending_tool_calls.clear(); // Clear stale tool calls from before replace
+
+					let entry: CommandEntry = serde_json::from_str(&line)?;
+					if let Some(command) = entry.command {
+						crate::log_debug!("Session restoration: Found {} from command '{}'", log_type, command);
+					}
+				}
+				"STATS" => {
+					// STATS entries provide incremental updates during a session
+					let mut stats: StatsEntry = serde_json::from_str(&line)?;
+					if let Some(stats_total_cost) = stats.total_cost {
+						total_cost = total_cost.max(stats_total_cost);
+					}
+					if let Some(accounting) = &stats.supervisor_accounting {
+						saved_supervisor.merge_max(accounting);
+					}
+					fold_main_cost(&mut main_cost, stats.main_cost);
+					if let Some(runs) = stats.agent_runs.take() {
+						crate::session::tap_runs::merge_history(&mut agent_runs, runs);
+					}
+					// Only apply STATS that are NEWER than the last SUMMARY: SUMMARY (written
+					// on save/exit) is the source of truth, and old STATS must not overwrite it.
+					if stats.timestamp.unwrap_or(0) > last_summary_timestamp {
+						if let Some(info) = &mut session_info {
+							stats.raise_counters(info);
+						}
+					}
+				}
+				"TOOL_CALL" => {
+					// Collect tool calls to reconstruct assistant message with tool_calls
+					let entry: ToolCallEntry = serde_json::from_str(&line)?;
+					if let (Some(tool_name), Some(tool_id), Some(parameters)) =
+						(entry.tool_name, entry.tool_id, entry.parameters)
+					{
+						// Store tool call for later reconstruction
+						pending_tool_calls.push(serde_json::json!({
+							"id": tool_id,
+							"type": "function",
+							"function": {
+								"name": tool_name,
+								"arguments": serde_json::to_string(&parameters).unwrap_or_default()
+							}
+						}));
+					}
+				}
+				// Everything else is irrelevant to message reconstruction: debug log
+				// entries (API_REQUEST/RESPONSE, TOOL_RESULT, CACHE, ERROR,
+				// SYSTEM/USER/ASSISTANT), markers consumed by other readers (COMMAND and
+				// KNOWLEDGE_ENTRY feed the runtime state above; OUTPUT_MODE_APPEND/LAST only
+				// add messages that follow them), and any unknown future types.
+				_ => {}
+			}
+		} else if line.starts_with('{') && line.contains("\"role\":") && line.contains("\"content\":") {
+			// This is a regular message JSON line
+			let parsed = serde_json::from_str::<Message>(&line);
+			if let Err(ref e) = parsed {
+				// Don't silently drop — a lost line is silent history loss on
+				// resume. Best-effort skip (one bad line must not nuke the whole
+				// session) but make it visible.
+				crate::log_error!("Skipping unparseable session message line on resume: {}", e);
+			}
+			if let Ok(message) = parsed {
+				if let Some(run) = crate::session::tap_runs::recover_job(&message) {
+					if !agent_runs.iter().any(|saved| saved.id == run.id) {
+						agent_runs.push(run);
+					}
+				}
+				// If this is the first tool message and we have pending tool calls,
+				// reconstruct the assistant message with tool_calls ONLY if not already present
+				if message.role == "tool" && !pending_tool_calls.is_empty() {
+					// Check if the last message is already an assistant message with tool_calls
+					let last_is_assistant_with_tool_calls = if restoration_point_found {
+						restoration_messages.last()
+					} else {
+						messages.last()
+					}
+					.map(|m| m.role == "assistant" && m.tool_calls.is_some())
+					.unwrap_or(false);
+
+					// Only reconstruct if the assistant message doesn't already exist
+					// This prevents losing thinking content when the Message JSON was already parsed
+					if !last_is_assistant_with_tool_calls {
+						let assistant_with_tool_calls = Message {
+							role: "assistant".to_string(),
+							content: "".to_string(), // Empty content for tool call messages
+							tool_calls: Some(serde_json::Value::Array(pending_tool_calls.clone())),
+							timestamp: message.timestamp,
+							cached: false,
+							..Default::default()
+						};
+
+						if restoration_point_found {
+							restoration_messages.push(assistant_with_tool_calls);
+						} else {
+							messages.push(assistant_with_tool_calls);
+						}
+					}
+
+					// Clear pending tool calls since we've reconstructed the assistant message
+					pending_tool_calls.clear();
+				}
+
+				if restoration_point_found {
+					restoration_messages.push(message);
+				} else {
+					messages.push(message);
 				}
 			}
-		} else {
+		} else if !line.starts_with('{') {
 			// Fallback to legacy prefix-based format for backward compatibility
 			if line.starts_with("SUMMARY: ") {
 				if let Some(content) = line.strip_prefix("SUMMARY: ") {
@@ -655,6 +717,7 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 		messages,
 		restoration_messages,
 		restoration_point_found,
+		runtime_state,
 	})
 }
 
@@ -662,9 +725,13 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 ///
 /// Applies runtime state overrides (e.g. model changes from `/model` commands),
 /// cleans up any interrupted tool calls, and returns the final Session.
-fn reconstruct_messages(mut info: SessionInfo, final_messages: Vec<Message>, session_file: &Path) -> Result<Session> {
-	let runtime_state = extract_runtime_state_from_log(session_file)?;
-	if let Some(model) = runtime_state.model {
+fn reconstruct_messages(
+	mut info: SessionInfo,
+	final_messages: Vec<Message>,
+	session_file: &Path,
+	runtime_state: &SessionRuntimeState,
+) -> Result<Session> {
+	if let Some(model) = runtime_state.model.clone() {
 		info.model = model;
 	}
 
@@ -684,7 +751,11 @@ fn reconstruct_messages(mut info: SessionInfo, final_messages: Vec<Message>, ses
 ///
 /// Synthesises a default SessionInfo from the file path and any STATS entries,
 /// then applies runtime state overrides.
-fn restore_session_info(final_messages: Vec<Message>, session_file: &Path) -> Result<Session> {
+fn restore_session_info(
+	final_messages: Vec<Message>,
+	session_file: &Path,
+	runtime_state: &SessionRuntimeState,
+) -> Result<Session> {
 	// file_stem() on "name.jsonl.zst" yields "name.jsonl" — strip the residual
 	// .jsonl so the session name matches what the logger writes under. Leaving it
 	// forks all subsequent log writes to a differently-named file.
@@ -712,14 +783,16 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &Path) -> Re
 		..Default::default()
 	};
 
-	let runtime_state = extract_runtime_state_from_log(session_file)?;
-	if let Some(model) = runtime_state.model {
+	if let Some(model) = runtime_state.model.clone() {
 		info.model = model;
 	}
 
 	// Apply any STATS entries found in the file (best-effort token/cost recovery)
 	for line in SessionLog::open(session_file)? {
 		let line = line?;
+		if entry_kind(&line) != Some("STATS") {
+			continue;
+		}
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 			if json_value.get("type").and_then(|t| t.as_str()) == Some("STATS") {
 				if let Some(value) = json_value.get("supervisor_accounting") {
@@ -769,7 +842,18 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &Path) -> Re
 	})
 }
 
+/// A session read back from its log, with the runtime state (model, role, effort,
+/// knowledge) found in the same pass.
+pub struct LoadedSession {
+	pub session: Session,
+	pub runtime_state: SessionRuntimeState,
+}
+
 pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
+	Ok(load_session_with_runtime_state(session_file)?.session)
+}
+
+pub fn load_session_with_runtime_state(session_file: &PathBuf) -> Result<LoadedSession, anyhow::Error> {
 	if !session_file.exists() {
 		return Err(anyhow::anyhow!("Session file does not exist"));
 	}
@@ -799,9 +883,9 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	};
 
 	let mut session = if let Some(info) = parsed.session_info {
-		reconstruct_messages(info, final_messages, session_file)?
+		reconstruct_messages(info, final_messages, session_file, &parsed.runtime_state)?
 	} else {
-		restore_session_info(final_messages, session_file)?
+		restore_session_info(final_messages, session_file, &parsed.runtime_state)?
 	};
 	session.info.total_cost = session.info.total_cost.max(parsed.total_cost);
 	session.info.supervisor_accounting.merge_max(&parsed.saved_supervisor);
@@ -812,7 +896,10 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	for (id, accounting) in parsed.background_supervisor {
 		session.info.apply_background_usage(id, &accounting);
 	}
-	Ok(session)
+	Ok(LoadedSession {
+		session,
+		runtime_state: parsed.runtime_state,
+	})
 }
 
 /// Runtime state extracted from session snapshots and commands
@@ -830,43 +917,62 @@ pub fn extract_runtime_state_from_log(session_file: &Path) -> Result<SessionRunt
 
 	for line in SessionLog::open(session_file)? {
 		let line = line?;
-
-		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
-			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
-				match log_type {
-					"SUMMARY" => {
-						if let Some(info) = json_value.get("session_info") {
-							let info: SessionInfo = serde_json::from_value(info.clone())?;
-							// A saved snapshot supersedes earlier model and role commands.
-							state.model = Some(info.model);
-							// Legacy snapshots may predate persisted role metadata.
-							if !info.role.is_empty() {
-								state.role = Some(info.role);
-							}
-						}
-					}
-					"RESTORATION_POINT" => {
-						// Reset state tracking after restoration point
-						state = SessionRuntimeState::default();
-					}
-					"KNOWLEDGE_ENTRY" => {
-						// Restore critical knowledge entries from compression cycles
-						if let Some(content) = json_value.get("content").and_then(|c| c.as_str()) {
-							state.critical_knowledge.push(content.to_string());
-						}
-					}
-					"COMMAND" => {
-						// Process all commands to get the final state
-						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
-							apply_command_to_runtime_state(&mut state, command);
-						}
-					}
-					_ => {}
-				}
-			}
+		if let Some(kind) = entry_kind(&line) {
+			state.apply(kind, &line)?;
 		}
 	}
 	Ok(state)
+}
+
+#[derive(Deserialize)]
+struct RuntimeSummary {
+	session_info: Option<RuntimeSummaryInfo>,
+}
+
+/// The two fields of `SessionInfo` the runtime state reads, so a SUMMARY line is
+/// not built into a whole `SessionInfo` just for them.
+#[derive(Deserialize)]
+struct RuntimeSummaryInfo {
+	model: String,
+	// Legacy snapshots may predate persisted role metadata.
+	#[serde(default)]
+	role: String,
+}
+
+impl SessionRuntimeState {
+	/// Fold one log entry into the state; entry kinds that do not affect it are ignored.
+	fn apply(&mut self, kind: &str, line: &str) -> Result<()> {
+		match kind {
+			"SUMMARY" => {
+				let entry: RuntimeSummary = serde_json::from_str(line)?;
+				if let Some(info) = entry.session_info {
+					// A saved snapshot supersedes earlier model and role commands.
+					self.model = Some(info.model);
+					if !info.role.is_empty() {
+						self.role = Some(info.role);
+					}
+				}
+			}
+			// Reset state tracking after restoration point
+			"RESTORATION_POINT" => *self = Self::default(),
+			// Restore critical knowledge entries from compression cycles
+			"KNOWLEDGE_ENTRY" => {
+				let entry: KnowledgeEntry = serde_json::from_str(line)?;
+				if let Some(content) = entry.content {
+					self.critical_knowledge.push(content);
+				}
+			}
+			// Process all commands to get the final state
+			"COMMAND" => {
+				let entry: CommandEntry = serde_json::from_str(line)?;
+				if let Some(command) = entry.command {
+					apply_command_to_runtime_state(self, &command);
+				}
+			}
+			_ => {}
+		}
+		Ok(())
+	}
 }
 
 /// The role a session should come back as when resumed without an explicit one.
@@ -943,6 +1049,11 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 pub fn summary_log_entry(info: &SessionInfo) -> serde_json::Value {
 	let mut info = info.clone();
 	info.capture_agent_runs();
+	summary_entry_of(&info)
+}
+
+/// The SUMMARY entry for exactly the metadata given, nothing captured or added.
+pub(crate) fn summary_entry_of(info: &SessionInfo) -> serde_json::Value {
 	serde_json::json!({
 		"type": "SUMMARY",
 		"timestamp": crate::utils::time::now_secs(),
@@ -990,6 +1101,19 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 
 /// Every zstd frame starts with these bytes (RFC 8878 §3.1.1).
 const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
+/// The `type` of a log entry, read without building the entry: serde skips
+/// every other field. `None` for a message line (it has no `type`) and for a
+/// line that is not a JSON object. Borrowed, so a `type` holding an escape also
+/// reads as `None`; every writer emits a plain ASCII literal.
+pub(crate) fn entry_kind(line: &str) -> Option<&str> {
+	#[derive(Deserialize)]
+	struct Kind<'a> {
+		#[serde(borrow, rename = "type")]
+		kind: Option<&'a str>,
+	}
+	serde_json::from_str::<Kind>(line).ok()?.kind
+}
 
 /// A session log, read line by line and frame by frame.
 ///

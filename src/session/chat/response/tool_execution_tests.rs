@@ -1103,6 +1103,7 @@ async fn a_lift_of_a_rule_the_plugin_registered_goes_to_the_admission() {
 		workdir: &dir,
 		project: "proj",
 		messages: &[],
+		detached: false,
 		status: None,
 		plan: None,
 		tools: None,

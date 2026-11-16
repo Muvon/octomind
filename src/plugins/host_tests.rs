@@ -78,6 +78,7 @@ impl Rig {
 			workdir: self.dir.path(),
 			project: "proj",
 			messages,
+			detached: false,
 			status: None,
 			plan: None,
 			tools: None,
@@ -171,6 +172,7 @@ fn outcome(call_id: &str, result: &str, size_tokens: usize) -> ToolOutcome {
 		command: None,
 		paths: Vec::new(),
 		replaceable: true,
+		returned: None,
 	}
 }
 
@@ -224,7 +226,8 @@ async fn handshake_sends_the_protocol_the_host_and_the_effect_table() {
 	assert_eq!(init[0]["protocol"], PROTOCOL_VERSION);
 	assert_eq!(init[0]["host"]["name"], "octomind");
 	assert_eq!(init[0]["events"]["tool.before"], json!(allowed_effects("tool.before")));
-	assert_eq!(init[0]["events"]["session.end"], json!([]));
+	assert_eq!(init[0]["events"]["compact.after"], json!([]));
+	assert_eq!(init[0]["events"]["session.end"], json!(allowed_effects("session.end")));
 	assert!(rig.host.active(SESSION));
 	assert!(rig.host.subscribed(SESSION, event::TURN_END));
 	assert!(!rig.host.subscribed(SESSION, event::TOOL_BEFORE));
@@ -623,7 +626,7 @@ async fn the_second_report_replaces_the_first_when_none_was_taken_between() {
 fn a_report_on_a_notification_is_ignored_and_every_answered_event_allows_it() {
 	let mut answer: Answer =
 		serde_json::from_value(json!({"report": {"mechanics": {}, "totals": totals(0, 0.0)}})).unwrap();
-	sanitize("a", event::SESSION_END, &mut answer);
+	sanitize("a", event::COMPACT_AFTER, &mut answer);
 	assert!(answer.report.is_none());
 	for name in event::ALL.iter().filter(|name| !event::NOTIFICATIONS.contains(name)) {
 		assert!(allowed_effects(name).contains(&protocol::effect::REPORT), "{name}");
@@ -1446,6 +1449,7 @@ async fn a_stub_on_the_process_wide_host_answers_the_free_functions() {
 		workdir: dir.path(),
 		project: "proj",
 		messages: &[],
+		detached: false,
 		status: None,
 		plan: None,
 		tools: None,
@@ -1524,6 +1528,7 @@ async fn a_history_send_the_plugin_never_takes_times_out_and_counts_as_a_failure
 		workdir: dir.path(),
 		project: "proj",
 		messages: &[],
+		detached: false,
 		status: None,
 		plan: None,
 		tools: None,
@@ -1593,6 +1598,7 @@ async fn what_the_plugin_is_due_to_hear_survives_a_send_that_is_dropped() {
 		workdir: dir.path(),
 		project: "proj",
 		messages: &[],
+		detached: false,
 		status: None,
 		plan: None,
 		tools: None,

@@ -321,6 +321,9 @@ pub struct ChatSession {
 	/// Notes plugins queued for the model, waiting for the next safe point of
 	/// the loop to be written into the history (runtime-only).
 	pub plugin_notes: Vec<String>,
+	/// Notes plugins sent with a tool round that belong right after its
+	/// results, before the history is folded or the goal recited (runtime-only).
+	pub plugin_result_notes: Vec<String>,
 	/// How often plugins kept the current user turn going; capped by
 	/// [`MAX_PLUGIN_CONTINUATIONS`].
 	pub plugin_continuations: u8,
@@ -413,6 +416,7 @@ impl ChatSession {
 			recalled_refs: Vec::new(),
 			system_prompt_built: false,
 			plugin_notes: Vec::new(),
+			plugin_result_notes: Vec::new(),
 			plugin_continuations: 0,
 			turn_mutated_paths: Default::default(),
 			repeat_guard: Default::default(),
@@ -618,6 +622,7 @@ impl ChatSession {
 						recalled_refs: Vec::new(),
 						system_prompt_built: false,
 						plugin_notes: Vec::new(),
+						plugin_result_notes: Vec::new(),
 						plugin_continuations: 0,
 						turn_mutated_paths: Default::default(),
 						repeat_guard: Default::default(),
@@ -1377,9 +1382,25 @@ impl ChatSession {
 		self.plugin_notes.extend(notes);
 	}
 
+	/// Queue notes that belong right after the results of the current tool round.
+	pub fn queue_plugin_result_notes(&mut self, notes: Vec<String>) {
+		self.plugin_result_notes.extend(notes);
+	}
+
+	/// Write the notes that belong right after a tool round's results. Called
+	/// once the results are in the history and before anything else is added.
+	pub fn deliver_plugin_result_notes(&mut self) -> Result<()> {
+		for note in std::mem::take(&mut self.plugin_result_notes) {
+			self.add_system_managed_user_message(&note)?;
+		}
+		Ok(())
+	}
+
 	/// Write the queued notes into the history in the order they came, each as
-	/// feedback managed by the system, and empty the queue.
+	/// feedback managed by the system, and empty the queue. A note that waited
+	/// for a tool round's results and saw none added goes first.
 	pub fn deliver_plugin_notes(&mut self) -> Result<()> {
+		self.deliver_plugin_result_notes()?;
 		for note in std::mem::take(&mut self.plugin_notes) {
 			self.add_system_managed_user_message(&note)?;
 		}
@@ -1389,6 +1410,7 @@ impl ChatSession {
 	/// Throw the queued notes away without writing them.
 	pub fn drop_plugin_notes(&mut self) {
 		self.plugin_notes.clear();
+		self.plugin_result_notes.clear();
 	}
 
 	/// What a new user turn starts over with.
@@ -1470,6 +1492,7 @@ impl ChatSession {
 			recalled_refs: Vec::new(),
 			system_prompt_built: false,
 			plugin_notes: Vec::new(),
+			plugin_result_notes: Vec::new(),
 			plugin_continuations: 0,
 			turn_mutated_paths: Default::default(),
 			repeat_guard: Default::default(),

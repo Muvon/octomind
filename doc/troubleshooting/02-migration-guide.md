@@ -456,7 +456,8 @@ does the following to `config.toml`:
 Besydr installs itself on first use: when the `besydr` program is not found, octomind downloads it from the signed release
 the entry names and never updates it by itself. Lessons octomind learned earlier are imported by Besydr on its first
 run. The `/learning` command comes from the plugin now, and the hidden `octomind distill` command is gone.
-`octomind evaluate` needs `--model` because `[decision]` no longer supplies one.
+`octomind evaluate` without `--model` calls `cloudflare:typesafe/jev`, the model octomind shipped in `[decision]`. If you
+had set another model there, pass it with `--model`: octomind no longer reads that table.
 
 To keep running octomind as a plain agent loop, set `enabled = false` on the `besydr` entry or delete it; see
 [Plugins](../usage/14-supervisor.md) and [Config Reference](../reference/03-config-reference.md#plugins).

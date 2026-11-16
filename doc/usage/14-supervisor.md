@@ -65,21 +65,32 @@ With or without a plugin, Octomind still runs:
   removes before display;
 - a hard stop for runaway tool loops: when `max_identical_rounds` tool rounds in a row (default `10`) repeat calls and
   results already seen since the last new result, the turn ends with a notice naming the repeated call. `0` turns the
-  stop off. It is a root key of `config.toml`, and `-c max_identical_rounds=0` sets it for one run.
+  stop off. It is a root key of `config.toml`, and `-c max_identical_rounds=0` sets it for one run;
+- its own rules for which skill and which capability a request activates, which specialist gets a delegated task, and
+  which tool results a compaction summarizes.
+
+For each of those four rules Octomind also asks its plugins for a judgement. Besydr answers with its decision model
+when the matching switch is on in its `[decision]` table (`skills`, `capabilities`, `taps`, `compression`; all off by
+default), and Octomind then acts on the answer. With no answer the rule's own outcome stands. See
+[Plugins: judge](../integration/05-plugins.md#judge).
 
 Without the plugin there is no completion check, no tool admission check, no learning across sessions, no condensing of
 tool output and no plan manager.
 
 ## When the plugin does not work
 
-When the plugin cannot be started or does not answer, Octomind goes on without it and queues a notice. After three
-failed events in a row, the plugin is off for the rest of that session.
+When the plugin does not answer an event, Octomind goes on without that answer and queues a notice. A plugin that is
+busy is not taken for dead: while it works on an answer it tells Octomind so, and Octomind keeps waiting, for at most
+one hour. After three unanswered events in a row the plugin is paused for 30 seconds and then tried again with the next
+event. Each failed try doubles the pause, up to 10 minutes; one answered event ends it, with the notice
+`plugin 'besydr' answers again`. A connection that was closed is opened again before the next event. A plugin that
+cannot be started at all is off for that session, and the next session tries again.
 
 Octomind prints such a notice on standard error, and only when standard error is a terminal and the output format is
-not `jsonl`. A plugin that is switched off for the session is also reported where notices are not shown:
-`octomind run` prints `plugin 'besydr' is off for this session: …` as an error on standard error, also with
-`--format jsonl` or with standard error sent to a file, and the ACP and WebSocket servers write the same line to their
-log file. The session continues without the plugin.
+not `jsonl`. A plugin that is paused or could not be started is also reported where notices are not shown:
+`octomind run` prints the notice as an error on standard error, also with `--format jsonl` or with standard error sent
+to a file, and the ACP and WebSocket servers write the same line to their log file. The session continues without the
+plugin until it answers again.
 
 ## Where the old settings went
 
@@ -95,8 +106,9 @@ and takes the matching settings over into its own configuration file. Two more v
 - `supervisor.enabled = false` becomes `enabled = false` on the `besydr` plugin entry.
 
 Command-line overrides such as `-c supervisor.gate.enabled=false` no longer name an Octomind setting. The `[decision]`
-model is gone too: `octomind evaluate` takes its model from `--model` (see
-[Calibrated checks](../use-cases/23-calibrated-checks-with-evaluate.md)).
+model is gone too: `octomind evaluate` takes its model from `--model`, and without the flag calls
+`cloudflare:typesafe/jev`, the model Octomind shipped in `[decision]`. If you had set another model there, pass it with
+`--model` (see [Calibrated checks](../use-cases/23-calibrated-checks-with-evaluate.md)).
 
 Lessons that Octomind learned earlier are imported by Besydr on its first run.
 

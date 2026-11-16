@@ -15,9 +15,15 @@
 use super::*;
 use crate::plugins::protocol::{Deny, Row};
 
+/// `judge` and `session.end` are answered, but run outside the conversation.
+const OUTSIDE_CONVERSATION: [&str; 2] = [event::JUDGE, event::SESSION_END];
+
 #[test]
-fn every_answered_event_allows_the_common_effects() {
-	for name in event::ALL.iter().filter(|name| !event::NOTIFICATIONS.contains(name)) {
+fn every_answered_event_of_the_conversation_allows_the_common_effects() {
+	let answered = event::ALL
+		.iter()
+		.filter(|name| !event::NOTIFICATIONS.contains(name) && !OUTSIDE_CONVERSATION.contains(name));
+	for name in answered {
 		let allowed = allowed_effects(name);
 		for effect in [
 			effect::CONTEXT,
@@ -30,6 +36,18 @@ fn every_answered_event_allows_the_common_effects() {
 			assert!(allowed.contains(&effect), "{name} must allow {effect}");
 		}
 	}
+}
+
+#[test]
+fn a_judgement_and_the_end_of_a_session_cannot_change_the_conversation() {
+	assert_eq!(
+		allowed_effects(event::SESSION_END),
+		[effect::USAGE, effect::REPORT, effect::NOTICE]
+	);
+	assert_eq!(
+		allowed_effects(event::JUDGE),
+		[effect::USAGE, effect::REPORT, effect::NOTICE, effect::JUDGEMENTS]
+	);
 }
 
 #[test]
@@ -53,11 +71,15 @@ fn each_event_allows_its_own_extra_effects_only() {
 	let extra = [
 		(event::PROMPT_SUBMIT, vec![effect::REPLACE_PROMPT, effect::BLOCK]),
 		(event::TOOL_BEFORE, vec![effect::DENY, effect::LIFT]),
-		(event::TOOL_AFTER, vec![effect::REPLACE, effect::STOP]),
+		(
+			event::TOOL_AFTER,
+			vec![effect::REPLACE, effect::STOP, effect::RESULT_NOTE],
+		),
 		(event::TURN_END, vec![effect::CONTINUE, effect::VERIFIED]),
 		(event::SUBAGENT_START, vec![effect::INHERIT]),
 		(event::COMMAND, vec![effect::OUTPUT]),
 		(event::STATUS, vec![effect::ROWS]),
+		(event::JUDGE, vec![effect::JUDGEMENTS]),
 	];
 	let every_extra: Vec<&str> = extra.iter().flat_map(|(_, effects)| effects.clone()).collect();
 	for (name, own) in &extra {
@@ -124,7 +146,7 @@ fn sanitize_clears_everything_from_a_notification() {
 		notice: vec!["x".into()],
 		..Answer::default()
 	};
-	sanitize("p", event::SESSION_END, &mut answer);
+	sanitize("p", event::COMPACT_AFTER, &mut answer);
 	assert_eq!(answer, Answer::default());
 }
 

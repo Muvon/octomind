@@ -28,7 +28,6 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 | `untap` | Remove a previously added tap. |
 | `vars` | Show placeholder variables and their resolved values. |
 | `send` | Inject a message into a running named session. |
-| `evaluate` | Ask the evaluation model typed questions about a JSON state; prints calibrated answers as JSON. See [Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md). |
 | `workflow` | List tap workflows or run one by name/local TOML file. See [Workflows](../usage/09-workflows.md). |
 | `completion` | Generate shell completion scripts. |
 | `complete` | Hidden: print cached completion candidates. |
@@ -411,41 +410,6 @@ echo "Check build status" | octomind send --name ci-watcher
 octomind send --name ci-watcher "Check build status"
 ```
 
-## `octomind evaluate [FILE]`
-
-Ask an evaluation model a set of typed questions about one JSON state and print the calibrated answers. There is no
-generated text: every question comes back as a probability. Use it to try question wording on a real state, to check
-provider credentials, or
-from scripts and guardrail validators that need a calibrated yes/no without a session.
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Default: `cloudflare:typesafe/jev`. An empty value is an error. |
-| `FILE` | | JSON request file. If omitted, reads from stdin. |
-
-The request is `{"state": <any JSON>, "questions": {"<id>": <question>, …}}`. A question is one of:
-
-- `{"type": "noul", "instructions": "…", "criteria": {"true": "…", "false": "…"}}` — yes/no; `criteria` is optional. Answer: `{"type": "noul", "noul": <p(yes)>}`.
-- `{"type": "choice", "instructions": "…", "criteria": {"<option>": "<description or null>", …}}` — one option of at least two. Answer: `choice`, `probabilities` (sum to 1), `confidence`.
-- `{"type": "score", "instructions": "…", "criteria": ["<level 0>", "<level 1>", …]}` — at least two ordered levels. Answer: `score` (probability-weighted, may fall between levels), `legend`, `probabilities`, `confidence`.
-
-Answers keyed by question id go to **stdout**: pretty-printed on a terminal, one compact line when piped, so `jq` works
-either way. One line with model, tokens, cost, and wall time goes to **stderr**. Credentials come from the environment
-(`TYPESAFE_API_KEY`; `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`; `OCTOHUB_API_KEY`). An empty
-`questions` map is rejected before any call; a missing key, HTTP error, or unparseable response exits non-zero. The call uses octolib's defaults: two retries on 429/5xx and a 30-second timeout.
-
-[config-templates/evaluate.json](../../config-templates/evaluate.json) is a runnable request with all three types;
-[Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md) wires the command into a validator and a pipe:
-
-```bash
-octomind evaluate config-templates/evaluate.json
-octomind evaluate -m typesafe:jev-latest config-templates/evaluate.json
-cat <<'JSON' | octomind evaluate | jq .done.noul
-{"state": {"task": "add a --json flag", "diff": "+    #[arg(long)] json: bool"},
- "questions": {"done": {"type": "noul", "instructions": "Does the diff implement the task?"}}}
-JSON
-```
-
 ## `octomind workflow [NAME|FILE]`
 
 Run a multi-step workflow defined in a TOML file.
@@ -578,7 +542,7 @@ octomind run --help
 CLI registration: [main.rs](../../src/main.rs). Argument structs and behavior: [run.rs](../../src/commands/run.rs),
 [config.rs](../../src/commands/config.rs), [server.rs](../../src/commands/server.rs),
 [acp.rs](../../src/commands/acp.rs), [tap.rs](../../src/commands/tap.rs), [untap.rs](../../src/commands/untap.rs),
-[login.rs](../../src/commands/login.rs), [send.rs](../../src/commands/send.rs), [evaluate.rs](../../src/commands/evaluate.rs),
+[login.rs](../../src/commands/login.rs), [send.rs](../../src/commands/send.rs),
 [vars.rs](../../src/commands/vars.rs),
 [workflow.rs](../../src/commands/workflow.rs), [complete.rs](../../src/commands/complete.rs). Workflow file schema: [schema.rs](../../src/workflow/schema.rs).
 State paths: [directories.rs](../../src/directories.rs).

@@ -38,7 +38,6 @@ fn configure_first_run_excludes_noninteractive_modes_and_other_commands() {
 		vec!["octomind", "acp"],
 		vec!["octomind", "server"],
 		vec!["octomind", "workflow"],
-		vec!["octomind", "evaluate"],
 		vec!["octomind", "send", "--name", "session", "hello"],
 		vec!["octomind", "config"],
 		vec!["octomind", "configure"],

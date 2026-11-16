@@ -597,10 +597,14 @@ async fn test_schedule_snapshot_restores_tool_arguments_cwd_and_latest_removal()
 		let before = entries();
 		let path = crate::session::logger::get_session_log_path(&session).expect("real snapshot log path");
 		assert!(path.is_file(), "API mutations must persist a real log");
+		let restore_from_log = || {
+			let loaded = crate::session::persistence::load_session_with_runtime_state(&path).expect("load");
+			restore_schedule(&session, loaded.schedule.expect("schedule in the log"));
+		};
 		crate::session::context::clear_schedule_storage(&session);
 		assert_eq!(entries(), json!([]));
 		crate::mcp::set_thread_working_directory(PathBuf::from("cwd-after-resume"));
-		restore_schedule_for_session(&session);
+		restore_from_log();
 		assert_eq!(
 			entries(),
 			before,
@@ -612,7 +616,7 @@ async fn test_schedule_snapshot_restores_tool_arguments_cwd_and_latest_removal()
 		assert_eq!(after_remove.as_array().unwrap().len(), 1);
 		assert_eq!(after_remove[0]["message"], "message survives alongside tool");
 		crate::session::context::clear_schedule_storage(&session);
-		restore_schedule_for_session(&session);
+		restore_from_log();
 		assert_eq!(
 			entries(),
 			after_remove,

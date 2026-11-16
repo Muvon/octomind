@@ -267,6 +267,8 @@ fn failed_stats_append_leaves_runs_unwritten_for_the_next_snapshot() {
 
 	assert!(log_stats_checkpoint(&unwritable, &info).is_err());
 
-	assert_eq!(tap_runs::runs_to_log(&info.name, &info.agent_runs), info.agent_runs);
+	let mut next_snapshot = info.clone();
+	tap_runs::keep_unlogged(&mut next_snapshot);
+	assert_eq!(next_snapshot.agent_runs, info.agent_runs);
 	tap_runs::clear_for_session(&info.name);
 }

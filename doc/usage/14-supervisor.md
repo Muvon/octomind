@@ -106,9 +106,8 @@ and takes the matching settings over into its own configuration file. Two more v
 - `supervisor.enabled = false` becomes `enabled = false` on the `besydr` plugin entry.
 
 Command-line overrides such as `-c supervisor.gate.enabled=false` no longer name an Octomind setting. The `[decision]`
-model is gone too: `octomind evaluate` takes its model from `--model`, and without the flag calls
-`cloudflare:typesafe/jev`, the model Octomind shipped in `[decision]`. If you had set another model there, pass it with
-`--model` (see [Calibrated checks](../use-cases/23-calibrated-checks-with-evaluate.md)).
+model is gone too, and the `octomind evaluate` command with it: Octomind has no evaluation model of its own, and
+Besydr answers the judgements.
 
 Lessons that Octomind learned earlier are imported by Besydr on its first run.
 

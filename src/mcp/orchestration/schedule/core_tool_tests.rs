@@ -328,7 +328,7 @@ impl Drop for DataDirAt {
 
 #[tokio::test]
 #[serial]
-async fn add_survives_an_unloggable_snapshot_and_restore_handles_a_blocked_data_dir() {
+async fn add_survives_an_unloggable_snapshot_in_a_blocked_data_dir() {
 	// A file where the data dir should be makes every path under it fail.
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let blocker = tmp.path().join("blocker");
@@ -351,44 +351,8 @@ async fn add_survives_an_unloggable_snapshot_and_restore_handles_a_blocked_data_
 			added.extract_content()
 		);
 		assert!(has_pending_schedules());
-
-		// Restore from an unresolvable log path is a silent no-op.
-		restore_schedule_for_session("any-session");
 	})
 	.await;
-}
-
-#[cfg(unix)]
-fn chmod(path: &std::path::Path, mode: u32) {
-	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("set permissions");
-}
-
-#[tokio::test]
-#[serial]
-#[cfg(unix)]
-async fn restore_is_a_noop_for_unreadable_and_non_zstd_logs() {
-	let tmp = tempfile::tempdir().expect("tempdir");
-	let sessions = tmp.path().join("sessions");
-	std::fs::create_dir_all(&sessions).expect("create sessions dir");
-	let _guard = DataDirAt::new(tmp.path().to_path_buf());
-
-	let unreadable = sessions.join("unreadable.jsonl.zst");
-	std::fs::write(&unreadable, b"placeholder").expect("write log");
-	chmod(&unreadable, 0o000);
-
-	let garbage = sessions.join("garbage.jsonl.zst");
-	std::fs::write(&garbage, b"definitely not zstd data").expect("write log");
-
-	let sid = unique_session("restore-noop");
-	crate::session::context::with_session_id(sid, async {
-		restore_schedule_for_session("unreadable");
-		restore_schedule_for_session("garbage");
-		assert!(!has_pending_schedules(), "failed restores must leave the store empty");
-	})
-	.await;
-
-	chmod(&unreadable, 0o644);
 }
 
 #[tokio::test]
@@ -421,7 +385,9 @@ async fn restore_replays_the_latest_snapshot_into_a_new_session() {
 			!has_pending_schedules(),
 			"store must be empty after the simulated restart"
 		);
-		restore_schedule_for_session(&writer);
+		let log = crate::session::logger::get_session_log_path(&writer).expect("log path");
+		let loaded = crate::session::persistence::load_session_with_runtime_state(&log).expect("load");
+		restore_schedule(&writer, loaded.schedule.expect("schedule in the log"));
 		assert!(
 			has_pending_schedules(),
 			"the snapshot must be replayed into the restarted session"

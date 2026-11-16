@@ -359,23 +359,12 @@ fn cli_fallbacks_apply_outside_a_session_context() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn restore_replays_the_latest_snapshot_into_session_storage() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let data_dir = tempfile::tempdir().expect("temp data dir");
-	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
-
-	let session = unique_session("restore-latest");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("older", 3, 0)).expect("first snapshot");
-	// A malformed plan payload must be skipped, not abort the replay.
-	crate::session::persistence::append_to_session_file(
-		&crate::session::logger::get_session_log_file(&session).unwrap(),
-		r#"{"type":"PLAN_SNAPSHOT","plan":{"title":123}}"#,
-	)
-	.expect("malformed entry appends");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("newest", 3, 1)).expect("second snapshot");
+async fn restore_plan_puts_the_loaded_plan_into_session_storage() {
+	let session = unique_session("restore-applies");
 
 	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
+		assert!(!has_active_plan());
+		restore_plan(&session, plan_fixture("newest", 3, 1));
 		assert!(has_active_plan());
 		let json = get_current_plan_json().await.unwrap();
 		assert_eq!(json["plan_title"], "newest");
@@ -384,72 +373,7 @@ async fn restore_replays_the_latest_snapshot_into_session_storage() {
 		assert_eq!(json["tasks"][0]["status"], "completed");
 	})
 	.await;
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 	crate::session::context::clear_plan_storage(&session);
-}
-
-#[tokio::test]
-#[serial_test::serial]
-async fn restore_honors_a_trailing_clear_marker() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let data_dir = tempfile::tempdir().expect("temp data dir");
-	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
-
-	let session = unique_session("restore-cleared");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("gone", 2, 0)).expect("snapshot");
-	crate::session::logger::log_plan_cleared(&session).expect("clear marker");
-
-	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
-		assert!(!has_active_plan());
-	})
-	.await;
-	std::env::remove_var("OCTOMIND_DATA_DIR");
-	crate::session::context::clear_plan_storage(&session);
-}
-
-#[tokio::test]
-#[serial_test::serial]
-async fn restore_tolerates_missing_corrupt_and_foreign_logs() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let data_dir = tempfile::tempdir().expect("temp data dir");
-	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
-
-	// Missing log file: plain no-op.
-	let session = unique_session("restore-missing");
-	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
-		assert!(!has_active_plan());
-	})
-	.await;
-
-	// Corrupt (non-zstd) log: the decoder fails, restore gives up quietly.
-	let session = unique_session("restore-corrupt");
-	let log = crate::session::logger::get_session_log_file(&session).unwrap();
-	std::fs::write(&log, b"definitely not zstd").expect("write corrupt log");
-	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
-		assert!(!has_active_plan());
-	})
-	.await;
-
-	// Valid zstd, but only unparseable / foreign / keyless entries.
-	let session = unique_session("restore-foreign");
-	let log = crate::session::logger::get_session_log_file(&session).unwrap();
-	for line in [
-		"{not json",
-		r#"{"type":"OTHER","plan":null}"#,
-		r#"{"type":"PLAN_SNAPSHOT"}"#,
-	] {
-		crate::session::persistence::append_to_session_file(&log, line).expect("raw entry appends");
-	}
-	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
-		assert!(!has_active_plan());
-	})
-	.await;
-
-	std::env::remove_var("OCTOMIND_DATA_DIR");
 }
 
 #[tokio::test]
@@ -471,11 +395,9 @@ async fn sidecar_transitions_persist_and_resume_as_a_cleared_plan() {
 
 	// A fresh process resumes from the log: the trailing PLAN_CLEARED must
 	// win over the earlier snapshots.
-	crate::session::context::with_session_id(session.clone(), async {
-		restore_plan_for_session(&session);
-		assert!(!has_active_plan());
-	})
-	.await;
+	let log = crate::session::logger::get_session_log_file(&session).unwrap();
+	let loaded = crate::session::persistence::load_session_with_runtime_state(&log).expect("load");
+	assert!(loaded.plan.is_none());
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 	crate::session::context::clear_plan_storage(&session);
 }

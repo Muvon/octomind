@@ -907,3 +907,63 @@ fn snapshots_log_only_changed_runs_and_loading_rebuilds_the_full_history() {
 	assert_eq!(loaded_runs, expected);
 	tap_runs::clear_for_session(&session.info.name);
 }
+
+const HISTORY_ENTRY_COUNT: usize = 300;
+// Counters and timestamps may gain a digit between two snapshots; nothing else may grow.
+const SNAPSHOT_DIGIT_ALLOWANCE_BYTES: usize = 32;
+
+fn logged_entry_lengths(path: &std::path::Path, entry_type: &str) -> Vec<usize> {
+	use std::io::BufRead;
+	let reader = std::io::BufReader::new(zstd::stream::read::Decoder::new(std::fs::File::open(path).unwrap()).unwrap());
+	reader
+		.lines()
+		.map(|line| line.unwrap())
+		.filter(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["type"] == entry_type)
+		.map(|line| line.len())
+		.collect()
+}
+
+#[test]
+fn snapshot_size_does_not_grow_with_session_history() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("snapshot-size.jsonl.zst");
+	let mut session = Session::new("snapshot-size".into(), "test/model".into());
+	session.session_file = Some(path.clone());
+
+	session.save().unwrap();
+	crate::session::logger::log_stats_checkpoint(&path, &session.info).unwrap();
+
+	session.info.agent_runs = (0..HISTORY_ENTRY_COUNT)
+		.map(|index| agent_run(&format!("run-{index}"), tap_runs::TapJobStatus::Done, Some(1.0)))
+		.collect();
+	session.info.supervisor_accounting.background_runs = (0..HISTORY_ENTRY_COUNT)
+		.map(|index| format!("background-{index}"))
+		.collect();
+	session.save().unwrap();
+	crate::session::logger::log_stats_checkpoint(&path, &session.info).unwrap();
+
+	session.save().unwrap();
+	crate::session::logger::log_stats_checkpoint(&path, &session.info).unwrap();
+
+	for entry_type in ["SUMMARY", "STATS"] {
+		let lengths = logged_entry_lengths(&path, entry_type);
+		let first = lengths[0];
+		let last = *lengths.last().unwrap();
+		assert!(
+			last <= first + SNAPSHOT_DIGIT_ALLOWANCE_BYTES,
+			"a snapshot field grows with session history: the last {entry_type} is {last} bytes, the first {first}"
+		);
+	}
+
+	let loaded = load_session(&path).unwrap();
+	assert_eq!(loaded.info.agent_runs.len(), HISTORY_ENTRY_COUNT);
+	assert_eq!(
+		loaded.info.supervisor_accounting.background_runs,
+		session.info.supervisor_accounting.background_runs
+	);
+	assert_eq!(
+		session.info.supervisor_accounting.background_runs.len(),
+		HISTORY_ENTRY_COUNT
+	);
+	tap_runs::clear_for_session(&session.info.name);
+}

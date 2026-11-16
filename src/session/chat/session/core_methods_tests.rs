@@ -226,6 +226,57 @@ async fn initialize_named_existing_session_resumes_transcript() {
 
 #[serial_test::serial]
 #[tokio::test]
+async fn initialize_resume_puts_the_logged_plan_and_schedule_into_the_session_stores() {
+	use crate::mcp::core::plan::storage::{ExecutionPlan, PlanStatus, PlanStorage};
+	use crate::mcp::orchestration::schedule::storage::{ScheduleAction, ScheduleEntry};
+
+	let _data = DataDirGuard::new();
+	let first = initialized_named_session("core-init-plan-schedule").await;
+	let name = first.session.info.name.clone();
+	let plan = ExecutionPlan {
+		title: "logged plan".to_string(),
+		tasks: Vec::new(),
+		current_task_index: 0,
+		created_at: chrono::Utc::now(),
+		status: PlanStatus::Active,
+	};
+	let entry = ScheduleEntry::new(
+		"logged entry".to_string(),
+		ScheduleAction::Message {
+			message: "ping".to_string(),
+		},
+		chrono::Local::now() + chrono::Duration::seconds(60),
+		None,
+	);
+	crate::session::logger::log_plan_snapshot(&name, &plan).unwrap();
+	crate::session::logger::log_schedule_snapshot(&name, &[entry]).unwrap();
+
+	let config = test_config();
+	let params = SessionInitParams::new(&config, "assistant").with_name(name.clone());
+	let resumed = ChatSession::initialize(params).await.expect("resume session");
+	assert!(resumed.was_resumed);
+
+	{
+		let plan_store = crate::session::context::get_plan_storage(&name);
+		let plan_store = plan_store.lock().unwrap();
+		assert_eq!(plan_store.get_plan().expect("plan restored").title, "logged plan");
+	}
+	let schedule_store = crate::session::context::get_schedule_storage(&name);
+	let descriptions: Vec<String> = schedule_store
+		.lock()
+		.unwrap()
+		.entries()
+		.iter()
+		.map(|entry| entry.description.clone())
+		.collect();
+	assert_eq!(descriptions, vec!["logged entry".to_string()]);
+
+	crate::session::context::clear_plan_storage(&name);
+	crate::session::context::clear_schedule_storage(&name);
+}
+
+#[serial_test::serial]
+#[tokio::test]
 async fn initialize_resume_keeps_raw_notes_but_restores_visible_answers() {
 	let _data = DataDirGuard::new();
 	let mut first = initialized_named_session("core-init-internal-notes").await;

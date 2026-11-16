@@ -19,7 +19,8 @@
 //! are JSON-RPC 2.0: one JSON object per line over standard input and output
 //! or a local socket, one object per request body over HTTP. The method of a
 //! request is the event name; its `params` is [`Event`] with the payload of
-//! that event; its `result` is [`Answer`]. The plugin never calls octomind.
+//! that event; its `result` is [`Answer`]. The plugin never calls octomind;
+//! the one message it sends on its own is [`METHOD_PROGRESS`].
 //!
 //! This file is the contract. It names no concept of any particular plugin:
 //! everything a plugin knows arrives in an event, and everything it wants
@@ -41,6 +42,10 @@ pub const METHOD_SESSION_HISTORY: &str = "session.history";
 /// plugin stops the work for it and keeps no state that answer would have
 /// committed.
 pub const METHOD_CANCEL: &str = "cancel";
+/// Notification from the plugin to the host: the plugin is still working on a
+/// request. The host starts its wait for that request's answer again, so work
+/// that takes long is not cut off while a plugin that went silent still is.
+pub const METHOD_PROGRESS: &str = "progress";
 
 /// Every event name, in the order the loop reaches them.
 pub mod event {
@@ -56,9 +61,10 @@ pub mod event {
 	pub const SUBAGENT_END: &str = "subagent.end";
 	pub const COMMAND: &str = "command";
 	pub const STATUS: &str = "status";
+	pub const JUDGE: &str = "judge";
 	pub const SESSION_END: &str = "session.end";
 
-	pub const ALL: [&str; 13] = [
+	pub const ALL: [&str; 14] = [
 		SESSION_START,
 		PROMPT_SUBMIT,
 		REQUEST_BEFORE,
@@ -71,11 +77,12 @@ pub mod event {
 		SUBAGENT_END,
 		COMMAND,
 		STATUS,
+		JUDGE,
 		SESSION_END,
 	];
 
 	/// Events sent as notifications: the plugin sends no answer.
-	pub const NOTIFICATIONS: [&str; 3] = [COMPACT_AFTER, SUBAGENT_END, SESSION_END];
+	pub const NOTIFICATIONS: [&str; 2] = [COMPACT_AFTER, SUBAGENT_END];
 }
 
 /// Every effect name, as listed per event in [`InitializeParams::events`].
@@ -101,6 +108,8 @@ pub mod effect {
 	pub const VERIFIED: &str = "verified";
 	pub const REPORT: &str = "report";
 	pub const READ: &str = "read";
+	pub const RESULT_NOTE: &str = "result_note";
+	pub const JUDGEMENTS: &str = "judgements";
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +161,13 @@ pub struct CancelParams {
 	pub id: u64,
 }
 
+/// `params` of [`METHOD_PROGRESS`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProgressParams {
+	/// `id` of the request the plugin is still working on.
+	pub id: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Handshake
 // ---------------------------------------------------------------------------
@@ -178,9 +194,11 @@ pub struct InitializeResult {
 	/// Slash commands the plugin provides.
 	#[serde(default)]
 	pub commands: Vec<CommandSpec>,
-	/// Time the plugin needs to answer an event, in seconds, by event name.
-	/// The host waits this long unless its own limit for the plugin is
-	/// shorter. An event not listed gets the host's default.
+	/// How long the host waits for the answer to an event without hearing
+	/// from the plugin, in seconds, by event name. A [`METHOD_PROGRESS`]
+	/// notification for the request starts the wait again. The host's own
+	/// limit for the plugin applies when it is shorter. An event not listed
+	/// gets the host's default.
 	#[serde(default)]
 	pub timeouts: BTreeMap<String, u64>,
 }
@@ -200,6 +218,10 @@ pub struct PluginOptions {
 	/// Cut tool results inside `messages` to this many characters.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub result_chars: Option<usize>,
+	/// `tool.after`: send [`ToolOutcome::returned`], with its text cut to this
+	/// many characters. Without it the plugin sees only what the agent saw.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub returned_chars: Option<usize>,
 	/// `turn.end`: send each changed file's `diff` or `head`, cut at this many
 	/// characters, and `tree_status`. Without it the host sends only `path`
 	/// and `exists` per file, for a plugin that reads the work tree itself.
@@ -291,6 +313,10 @@ pub struct Event<P> {
 	/// changed on disk since.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub files: Vec<FileText>,
+	/// How many judgements of each purpose changed what the host did since the
+	/// previous event, by [`Judge::purpose`].
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	pub judged: BTreeMap<String, u64>,
 	#[serde(flatten)]
 	pub payload: P,
 }
@@ -564,6 +590,20 @@ pub struct ToolOutcome {
 	/// The host can replace this result and keep the original readable.
 	#[serde(default)]
 	pub replaceable: bool,
+	/// What the tool returned, when the host showed the agent something else:
+	/// a note in place of a repeated result, or a text that no longer starts
+	/// the way the tool's did. Sent to a plugin that set
+	/// [`PluginOptions::returned_chars`].
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub returned: Option<Returned>,
+}
+
+/// A tool result as the tool returned it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Returned {
+	pub error: bool,
+	/// The start of the text.
+	pub text: String,
 }
 
 /// Both fields are empty when the host cannot measure the tree.
@@ -685,7 +725,57 @@ pub struct Command {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StatusRequest {}
 
-/// `session.end`: notification that the session ends.
+/// `judge`: the host asks for a judgement it otherwise makes by a fixed rule,
+/// for example which of several skills fits a request. A plugin that has no
+/// answer returns none, and the host keeps the outcome of its own rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Judge {
+	/// What the host decides with the answer, for example `skills`.
+	pub purpose: String,
+	/// What the questions are about.
+	pub subject: Value,
+	/// Questions about the subject, by id.
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	pub questions: BTreeMap<String, Question>,
+	/// Parts of the subject that each get the same yes-or-no question.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub items: Option<JudgeItems>,
+}
+
+/// One question of a `judge` event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Question {
+	/// Yes or no.
+	YesNo { text: String },
+	/// One of `options`: each option's name with what it stands for.
+	Choice {
+		text: String,
+		options: BTreeMap<String, String>,
+	},
+}
+
+/// Parts of a `judge` subject, each judged on its own. The plugin decides how
+/// many of them one model call reads: it shows the model `subject` with the
+/// parts of that call as a list under `key`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JudgeItems {
+	pub key: String,
+	/// The yes-or-no question for one part. `{slot}` becomes the part's place
+	/// in the list the model reads and `{id}` its id.
+	pub question: String,
+	pub items: Vec<JudgeItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JudgeItem {
+	/// Unique among the items; the answer names the part by it.
+	pub id: String,
+	pub data: Value,
+}
+
+/// `session.end`: the session ends. The answer may carry `notice`, `usage`
+/// and `report`; the host waits for it only briefly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionEnd {
 	/// `exit`, `clear`, `switch` or `error`.
@@ -755,10 +845,16 @@ pub struct Answer {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub replace: Vec<Replace>,
 	/// Text queued for the model as feedback managed by the system. It is
-	/// written into the history. `{plan_checklist}` in a note sent together
-	/// with `plan` becomes the host's checklist after the change.
+	/// written into the history just before the next model request.
+	/// `{plan_checklist}` in a note sent together with `plan` becomes the
+	/// host's checklist after the change.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub note: Vec<String>,
+	/// `tool.after`: text written into the history right after the round's
+	/// results, before the host folds history or recites. `{plan_checklist}`
+	/// works as in `note`.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub result_note: Vec<String>,
 	/// `tool.after`: end the turn with this notice, with no further request.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub stop: Option<String>,
@@ -778,6 +874,10 @@ pub struct Answer {
 	/// The host passes it to a parent session as the subagent's verdict.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub verified: Option<bool>,
+	/// `judge`: the answers by question id, and by item id for `items`. A
+	/// question the plugin could not answer is left out.
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	pub judgements: BTreeMap<String, Judgement>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -795,7 +895,120 @@ pub struct Block {
 	pub keep: bool,
 	/// `pin`: lines the host keeps as separate items when it folds history.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
-	pub items: Vec<String>,
+	pub items: Vec<PinItem>,
+}
+
+/// One line of a pinned block that survives a fold of the history on its own.
+/// In JSON it is the bare text, or an object when `label` or `from_request`
+/// is set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(from = "PinItemWire", into = "PinItemWire")]
+pub struct PinItem {
+	pub text: String,
+	/// The word the host prints before the text, in place of `constraint`.
+	pub label: Option<String>,
+	/// The text is a line of the current request, so the host may name that
+	/// message as its source.
+	pub from_request: bool,
+}
+
+impl PinItem {
+	pub fn text(text: impl Into<String>) -> Self {
+		Self {
+			text: text.into(),
+			..Self::default()
+		}
+	}
+}
+
+impl From<&str> for PinItem {
+	fn from(text: &str) -> Self {
+		Self::text(text)
+	}
+}
+
+impl From<String> for PinItem {
+	fn from(text: String) -> Self {
+		Self::text(text)
+	}
+}
+
+/// Equal to a text when the item is that text and nothing more.
+impl PartialEq<str> for PinItem {
+	fn eq(&self, text: &str) -> bool {
+		self.label.is_none() && !self.from_request && self.text == text
+	}
+}
+
+impl PartialEq<&str> for PinItem {
+	fn eq(&self, text: &&str) -> bool {
+		self == *text
+	}
+}
+
+impl PartialEq<String> for PinItem {
+	fn eq(&self, text: &String) -> bool {
+		self == text.as_str()
+	}
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum PinItemWire {
+	Text(String),
+	Full {
+		text: String,
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		label: Option<String>,
+		#[serde(default, skip_serializing_if = "is_false")]
+		from_request: bool,
+	},
+}
+
+impl From<PinItemWire> for PinItem {
+	fn from(wire: PinItemWire) -> Self {
+		match wire {
+			PinItemWire::Text(text) => Self::text(text),
+			PinItemWire::Full {
+				text,
+				label,
+				from_request,
+			} => Self {
+				text,
+				label,
+				from_request,
+			},
+		}
+	}
+}
+
+impl From<PinItem> for PinItemWire {
+	fn from(item: PinItem) -> Self {
+		if item.label.is_none() && !item.from_request {
+			return Self::Text(item.text);
+		}
+		Self::Full {
+			text: item.text,
+			label: item.label,
+			from_request: item.from_request,
+		}
+	}
+}
+
+/// The answer to one question of a `judge` event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Judgement {
+	YesNo {
+		/// Probability of yes, 0 to 1.
+		yes: f64,
+	},
+	Choice {
+		/// The most probable option.
+		choice: String,
+		/// Every option with its probability; they sum to 1.
+		probabilities: BTreeMap<String, f64>,
+	},
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

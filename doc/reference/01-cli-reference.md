@@ -420,7 +420,7 @@ from scripts and guardrail validators that need a calibrated yes/no without a se
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Required; an absent or empty value is an error. |
+| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Default: `cloudflare:typesafe/jev`. An empty value is an error. |
 | `FILE` | | JSON request file. If omitted, reads from stdin. |
 
 The request is `{"state": <any JSON>, "questions": {"<id>": <question>, …}}`. A question is one of:

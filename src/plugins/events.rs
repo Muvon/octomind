@@ -17,11 +17,13 @@
 
 use super::host::{Effects, EventContext, Flow, Host};
 use super::protocol::{
-	event, Command, CommandOutput, CompactAfter, CompactBefore, Deny, Lift, PromptSubmit, Replace, RequestBefore, Row,
-	SessionEnd, SessionStart, StatusRequest, SubagentEnd, SubagentStart, ToolAfter, ToolBefore, TurnEnd,
+	event, Command, CommandOutput, CompactAfter, CompactBefore, Deny, Judge, Judgement, Lift, PromptSubmit, Replace,
+	RequestBefore, Returned, Row, SessionEnd, SessionStart, StatusRequest, SubagentEnd, SubagentStart, ToolAfter,
+	ToolBefore, TurnEnd,
 };
+use super::state::truncate_chars;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 pub struct PromptOutcome {
 	/// The prompt after every plugin's replacement.
@@ -52,6 +54,14 @@ pub struct TurnEndOutcome {
 	/// Every plugin that judged the turn found it complete.
 	pub verified: Option<bool>,
 	pub effects: Effects,
+}
+
+/// The judgements one plugin gave for a `judge` event.
+pub struct Judged {
+	/// The plugin that answered: [`Host::record_judged`] names it.
+	pub plugin: String,
+	/// By question id, and by item id for the items.
+	pub judgements: BTreeMap<String, Judgement>,
 }
 
 struct ToolAfterState {
@@ -195,6 +205,15 @@ impl Host {
 							}
 						}
 					}
+					for call in &mut payload.calls {
+						call.returned = match (call.returned.take(), plugin.options.returned_chars) {
+							(Some(returned), Some(limit)) => Some(Returned {
+								text: truncate_chars(&returned.text, limit),
+								..returned
+							}),
+							_ => None,
+						};
+					}
 					payload
 				},
 				|state, _, answer| {
@@ -286,9 +305,37 @@ impl Host {
 		.await;
 	}
 
+	/// The notices, usage and report of the answers stay in the host until the
+	/// caller settles them.
 	pub async fn session_end(&self, ctx: &EventContext<'_>, payload: SessionEnd) {
 		self.run_event(event::SESSION_END, ctx, None, (), |_, _| &payload, |_, _, _| Flow::Next)
 			.await;
+	}
+
+	/// The first plugin that gives a judgement wins and later plugins are not
+	/// asked. `None` when no plugin gave one: the caller keeps the outcome of
+	/// its own rule.
+	pub async fn judge(&self, ctx: &EventContext<'_>, payload: Judge) -> Option<Judged> {
+		let (judged, _) = self
+			.run_event(
+				event::JUDGE,
+				ctx,
+				None,
+				None::<Judged>,
+				|_, _| &payload,
+				|judged, plugin, answer| {
+					if answer.judgements.is_empty() {
+						return Flow::Next;
+					}
+					*judged = Some(Judged {
+						plugin: plugin.to_string(),
+						judgements: std::mem::take(&mut answer.judgements),
+					});
+					Flow::Stop
+				},
+			)
+			.await;
+		judged
 	}
 
 	/// The value each plugin hands to its subagent's `session.start`, by plugin name.

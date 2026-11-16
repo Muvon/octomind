@@ -27,6 +27,7 @@ pub mod events;
 pub mod ground_truth;
 pub mod host;
 pub mod install;
+pub mod judgement;
 pub mod lifecycle;
 pub mod payload;
 pub mod project;
@@ -40,7 +41,7 @@ pub mod test_support;
 pub mod transport;
 pub mod workdir;
 
-pub use events::{PromptOutcome, ToolAfterOutcome, ToolBeforeOutcome, TurnEndOutcome};
+pub use events::{Judged, PromptOutcome, ToolAfterOutcome, ToolBeforeOutcome, TurnEndOutcome};
 pub use host::{Effects, EventContext, Host};
 pub use state::{PluginBlock, PluginCommand, PluginStatusField};
 
@@ -52,8 +53,8 @@ pub struct PromptBlocked(pub String);
 
 use crate::config::PluginConfig;
 use protocol::{
-	Command, CommandOutput, CompactAfter, CompactBefore, PluginOptions, PromptSubmit, RequestBefore, Row, RuleOutcome,
-	SessionEnd, SessionStart, SkillDir, SubagentEnd, SubagentStart, ToolAfter, ToolBefore, TurnEnd, Usage,
+	Command, CommandOutput, CompactAfter, CompactBefore, Judge, PluginOptions, PromptSubmit, RequestBefore, Row,
+	RuleOutcome, SessionEnd, SessionStart, SkillDir, SubagentEnd, SubagentStart, ToolAfter, ToolBefore, TurnEnd, Usage,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -102,6 +103,12 @@ pub fn mark_history_reset(session_id: &str) {
 /// A rule `plugin` registered matched. It goes out with that plugin's next event.
 pub fn record_rule_match(session_id: &str, plugin: &str, rule_id: &str, outcome: RuleOutcome) {
 	host().record_rule_match(session_id, plugin, rule_id, outcome)
+}
+
+/// `count` judgements `plugin` gave for `purpose` changed what octomind did.
+/// The plugin hears it with its next event.
+pub fn record_judged(session_id: &str, plugin: &str, purpose: &str, count: u64) {
+	host().record_judged(session_id, plugin, purpose, count)
 }
 
 /// The host could not apply the last `plan` effect. The plugin whose plan
@@ -164,6 +171,11 @@ pub async fn subagent_end(ctx: &EventContext<'_>, payload: SubagentEnd) {
 
 pub async fn session_end(ctx: &EventContext<'_>, payload: SessionEnd) {
 	host().session_end(ctx, payload).await
+}
+
+/// Ask the plugins for a judgement. `None` when no plugin gave one.
+pub async fn judge(ctx: &EventContext<'_>, payload: Judge) -> Option<Judged> {
+	host().judge(ctx, payload).await
 }
 
 pub async fn command(ctx: &EventContext<'_>, plugin: &str, payload: Command) -> Option<CommandOutput> {

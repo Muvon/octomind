@@ -214,6 +214,7 @@ impl Rig {
 			workdir: self.dir.path(),
 			project: "proj",
 			messages: &[],
+			detached: false,
 			status: None,
 			plan: None,
 			tools: None,

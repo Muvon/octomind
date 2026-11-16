@@ -31,7 +31,7 @@ use crate::config::{PluginConfig, DEFAULT_PLUGIN_TIMEOUT_SECONDS, MAX_PLUGIN_TIM
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,6 +63,9 @@ pub struct EventContext<'a> {
 	pub project: &'a str,
 	/// The session's full message list now. The host sends each plugin what it has not seen.
 	pub messages: &'a [crate::session::Message],
+	/// The caller has no message list at hand: `messages` is empty, the event
+	/// carries none, and each plugin's place in the history stays where it is.
+	pub detached: bool,
 	pub status: Option<Status>,
 	pub plan: Option<PlanState>,
 	/// The current tool list, when the caller has it. Each plugin gets it only
@@ -77,6 +80,8 @@ pub struct EventContext<'a> {
 pub struct Effects {
 	/// Text for the session inbox, as feedback managed by the system.
 	pub notes: Vec<String>,
+	/// `tool.after`: text that goes into the history right after the round's results.
+	pub result_notes: Vec<String>,
 	/// The host's plan change. The first plugin that sent one wins.
 	pub plan: Option<PlanUpdate>,
 }
@@ -101,8 +106,11 @@ struct Envelope {
 	messages: Vec<protocol::Message>,
 	messages_reset: bool,
 	rule_matches: Vec<RuleMatch>,
+	judged: BTreeMap<String, u64>,
 	plan_error: Option<String>,
 	dropped_context: Vec<String>,
+	/// The event carries no messages and leaves the plugin's place in the history.
+	detached: bool,
 	/// The tool list to send, and its hash to remember once the event is answered.
 	tools: Option<(Vec<ToolInfo>, u64)>,
 	/// Length of the session's message list when this event was built.
@@ -292,6 +300,14 @@ impl Host {
 				outcome,
 			});
 		}
+	}
+
+	/// `count` judgements `plugin` gave for `purpose` changed what the host did.
+	/// The plugin hears it with its next event.
+	pub fn record_judged(&self, session_id: &str, plugin: &str, purpose: &str, count: u64) {
+		self.with_slot(session_id, plugin, |slot| {
+			*slot.judged.entry(purpose.to_string()).or_default() += count;
+		});
 	}
 
 	/// Ids of the rules `plugin` registered.
@@ -563,6 +579,7 @@ impl Host {
 				continue;
 			};
 			effects.notes.append(&mut answer.note);
+			effects.result_notes.append(&mut answer.result_note);
 			if let Some(plan) = answer.plan.take() {
 				if effects.plan.is_none() {
 					effects.plan = Some(plan);
@@ -604,12 +621,17 @@ impl Host {
 			.iter_mut()
 			.find(|slot| slot.name == name && slot.takes(event_name))?;
 		// A cursor past the list means the history shrank without a reset call.
-		let messages_reset = slot.reset_pending || slot.seen > ctx.messages.len();
-		let first = if messages_reset { 0 } else { slot.seen };
-		let messages = ctx.messages[first..]
-			.iter()
-			.map(|message| wire_message(message, slot.options.result_chars))
-			.collect();
+		let messages_reset = !ctx.detached && (slot.reset_pending || slot.seen > ctx.messages.len());
+		let (messages, sent_through) = if ctx.detached {
+			(Vec::new(), slot.seen)
+		} else {
+			let first = if messages_reset { 0 } else { slot.seen };
+			let messages = ctx.messages[first..]
+				.iter()
+				.map(|message| wire_message(message, slot.options.result_chars))
+				.collect();
+			(messages, ctx.messages.len())
+		};
 		// `session.start` always carries the list and it is the reference; later
 		// events carry it only when it differs from what this plugin saw last.
 		let tools = match &ctx.tools {
@@ -631,11 +653,13 @@ impl Host {
 				messages,
 				messages_reset,
 				rule_matches: slot.rule_matches.clone(),
+				judged: slot.judged.clone(),
 				plan_error: slot.plan_error.clone(),
 				dropped_context: slot.dropped_context.clone(),
+				detached: ctx.detached,
 				files: slot.waiting_files.clone(),
 				tools,
-				sent_through: ctx.messages.len(),
+				sent_through,
 			},
 		})
 	}
@@ -673,6 +697,7 @@ impl Host {
 			active_skills: ctx.active_skills.clone(),
 			dropped_context: envelope.dropped_context.clone(),
 			files: envelope.files.clone(),
+			judged: envelope.judged.clone(),
 			payload,
 		};
 		match deliver(transport.as_ref(), event_name, &params, timeout).await {
@@ -708,11 +733,19 @@ impl Host {
 		};
 		slot.failures = 0;
 		slot.seen = envelope.sent_through;
-		slot.reset_pending = false;
+		if !envelope.detached {
+			slot.reset_pending = false;
+		}
 		// Taken out only now, so an event that is dropped before it is answered
 		// leaves them for the next one. Entries added while it ran stay.
 		slot.rule_matches
 			.drain(..envelope.rule_matches.len().min(slot.rule_matches.len()));
+		for (purpose, sent) in &envelope.judged {
+			if let Some(count) = slot.judged.get_mut(purpose) {
+				*count = count.saturating_sub(*sent);
+			}
+		}
+		slot.judged.retain(|_, count| *count > 0);
 		slot.waiting_files
 			.drain(..envelope.files.len().min(slot.waiting_files.len()));
 		if slot.plan_error == envelope.plan_error {
@@ -866,6 +899,7 @@ impl Host {
 			active_skills: ctx.active_skills.clone(),
 			dropped_context: Vec::new(),
 			files: Vec::new(),
+			judged: BTreeMap::new(),
 			payload: serde_json::Map::<String, Value>::new(),
 		};
 		let params = serde_json::to_value(&params).expect("history event serializes");

@@ -1818,7 +1818,7 @@ async fn plugin_pin_items_replace_the_supervisor_state_in_the_fold() {
 			name: "rules".to_string(),
 			text: "section text".to_string(),
 			keep: false,
-			items: vec!["pinned rule".to_string(), "pinned policy".to_string()],
+			items: vec!["pinned rule".into(), "pinned policy".into()],
 		}],
 	);
 

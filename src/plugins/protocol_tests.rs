@@ -47,6 +47,7 @@ fn sample_event() -> Event<PromptSubmit> {
 		active_skills: Vec::new(),
 		dropped_context: Vec::new(),
 		files: Vec::new(),
+		judged: BTreeMap::new(),
 		payload: PromptSubmit {
 			prompt: "do it".to_string(),
 			original: None,
@@ -118,6 +119,7 @@ fn full_event<P>(payload: P) -> Event<P> {
 			text: Some("# API".into()),
 			skipped: None,
 		}],
+		judged: BTreeMap::from([("skills".to_string(), 2)]),
 		payload,
 		session_id: "s1".into(),
 		role: "developer".into(),
@@ -221,6 +223,10 @@ fn every_payload_round_trips_inside_an_event_with_every_common_field_set() {
 			free_form: true,
 			paths: vec!["/p".into()],
 			replaceable: true,
+			returned: Some(Returned {
+				error: false,
+				text: "raw".into(),
+			}),
 		}],
 		tree: Some(TreeChange {
 			before: "a".into(),
@@ -354,6 +360,8 @@ fn every_answer_field_is_named_like_its_effect() {
 			keep_original: false,
 		}],
 		note: vec!["n".into()],
+		result_note: vec!["n".into()],
+		judgements: BTreeMap::from([("q".to_string(), Judgement::YesNo { yes: 0.5 })]),
 		stop: Some("s".into()),
 		continue_with: Some("c".into()),
 		inherit: Some(json!(1)),
@@ -388,6 +396,8 @@ fn every_answer_field_is_named_like_its_effect() {
 		effect::OUTPUT,
 		effect::ROWS,
 		effect::VERIFIED,
+		effect::RESULT_NOTE,
+		effect::JUDGEMENTS,
 	];
 	assert_eq!(fields, effects.into_iter().collect::<HashSet<_>>());
 }
@@ -418,10 +428,7 @@ fn notifications_are_events_and_every_event_is_listed_once() {
 	for name in event::NOTIFICATIONS {
 		assert!(all.contains(name), "{name}");
 	}
-	assert_eq!(
-		event::NOTIFICATIONS,
-		[event::COMPACT_AFTER, event::SUBAGENT_END, event::SESSION_END]
-	);
+	assert_eq!(event::NOTIFICATIONS, [event::COMPACT_AFTER, event::SUBAGENT_END]);
 	assert_eq!(event::ALL.first(), Some(&event::SESSION_START));
 	assert_eq!(event::ALL.last(), Some(&event::SESSION_END));
 }
@@ -447,7 +454,7 @@ fn blocks_default_to_plain_text_and_the_handshake_may_declare_timeouts() {
 	assert!(!block.keep && block.items.is_empty());
 	let kept: Block = serde_json::from_value(json!({"name": "n", "text": "t", "keep": true, "items": ["a"]})).unwrap();
 	assert!(kept.keep);
-	assert_eq!(kept.items, vec!["a".to_string()]);
+	assert_eq!(kept.items, ["a"]);
 
 	let result: InitializeResult = serde_json::from_value(json!({
 		"protocol": 1,
@@ -469,4 +476,80 @@ fn rpc_response_carries_a_result_or_an_error() {
 	let failed: RpcResponse =
 		serde_json::from_str(r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"no"}}"#).unwrap();
 	assert_eq!(failed.error.unwrap().code, -32601);
+}
+
+#[test]
+fn progress_names_the_request_it_keeps_alive() {
+	assert_eq!(METHOD_PROGRESS, "progress");
+	assert_eq!(
+		serde_json::to_value(ProgressParams { id: 4 }).unwrap(),
+		json!({"id": 4})
+	);
+}
+
+#[test]
+fn a_pin_item_is_a_bare_text_unless_it_says_more() {
+	let plain = PinItem::text("never push to main");
+	assert_eq!(serde_json::to_value(&plain).unwrap(), json!("never push to main"));
+	assert_eq!(
+		serde_json::from_value::<PinItem>(json!("never push to main")).unwrap(),
+		plain
+	);
+
+	let labelled = PinItem {
+		text: "forbidden for this turn".into(),
+		label: Some("verification_policy".into()),
+		from_request: false,
+	};
+	let value = serde_json::to_value(&labelled).unwrap();
+	assert_eq!(
+		value,
+		json!({"text": "forbidden for this turn", "label": "verification_policy"})
+	);
+	assert_eq!(serde_json::from_value::<PinItem>(value).unwrap(), labelled);
+
+	let quoted = PinItem {
+		text: "keep the old API".into(),
+		label: None,
+		from_request: true,
+	};
+	let value = serde_json::to_value(&quoted).unwrap();
+	assert_eq!(value, json!({"text": "keep the old API", "from_request": true}));
+	assert_eq!(serde_json::from_value::<PinItem>(value).unwrap(), quoted);
+	assert!(plain == "never push to main" && labelled != "forbidden for this turn");
+}
+
+#[test]
+fn a_judge_event_and_its_judgements_round_trip() {
+	assert_round_trip(Judge {
+		purpose: "skills".into(),
+		subject: json!("fix the failing test"),
+		questions: BTreeMap::from([(
+			"skill".to_string(),
+			Question::Choice {
+				text: "Which skill applies?".into(),
+				options: BTreeMap::from([("rust".to_string(), "Rust work".to_string())]),
+			},
+		)]),
+		items: Some(JudgeItems {
+			key: "units".into(),
+			question: "`units[{slot}]` (packet {id}): still needed?".into(),
+			items: vec![JudgeItem {
+				id: "p1".into(),
+				data: json!({"id": "p1", "tokens": 9}),
+			}],
+		}),
+	});
+	let question = serde_json::to_value(Question::YesNo { text: "ok?".into() }).unwrap();
+	assert_eq!(question, json!({"type": "yes_no", "text": "ok?"}));
+
+	let answer: Answer = serde_json::from_value(json!({
+		"judgements": {
+			"skill": {"type": "choice", "choice": "rust", "probabilities": {"rust": 0.9, "none": 0.1}},
+			"p1": {"type": "yes_no", "yes": 0.2}
+		}
+	}))
+	.unwrap();
+	assert_eq!(answer.judgements["p1"], Judgement::YesNo { yes: 0.2 });
+	assert!(matches!(&answer.judgements["skill"], Judgement::Choice { choice, .. } if choice == "rust"));
 }

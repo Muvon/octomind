@@ -159,13 +159,14 @@ written as `[[plugins]]` tables, for example in a split-config file.
 | `headers` | string map | `{}` | Extra request headers for `http`. Values support `{{ENV:KEY}}`. |
 | `enabled` | bool | `true` | Set `false` to keep the entry but not start the plugin. |
 | `roles` | string array | `[]` | Roles the plugin applies to; empty means all roles. An entry matches an exact role tag or a domain prefix (`developer` matches `developer:general`). |
-| `timeout_seconds` | u64 | absent | Upper limit in seconds for one event, `1` to `3600`. A plugin declares the time it needs per event (30 seconds for an event it declares none, and for the handshake); with this set, the smaller value applies. |
+| `timeout_seconds` | u64 | absent | Upper limit in seconds for how long octomind waits for one event's answer without hearing from the plugin, `1` to `3600`. A plugin declares that time per event (30 seconds for an event it declares none, and for the handshake); with this set, the smaller value applies. |
 | `install_manifest` | string | absent | `https://` URL of a signed release manifest. When `command` is not installed, octomind downloads the program for this machine from it. Only for `stdio` and `socket`; needs `command` and `install_key`. |
 | `install_key` | string | absent | Ed25519 public key (base64 of 32 bytes) the manifest must be signed with. Needs `install_manifest`; each is invalid without the other. |
 
 Unknown keys in an entry are rejected. When a plugin cannot be started or does not answer, octomind goes on without it
-and shows a notice; after 3 failed events in a row the plugin is off for the rest of the session. Besydr's own
-settings live in Besydr's config file, not here: see [Besydr's configuration](https://besydr.com/docs/configuration).
+and shows a notice; after 3 unanswered events in a row the plugin is paused for 30 seconds and then tried again (see
+[Failures](../integration/05-plugins.md#failures)). Besydr's own settings live in Besydr's config file, not here: see
+[Besydr's configuration](https://besydr.com/docs/configuration).
 
 ## `[model]`
 

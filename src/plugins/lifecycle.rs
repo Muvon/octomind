@@ -16,7 +16,7 @@
 //! also for subagents.
 
 use super::payload::{self, ContextParts};
-use super::protocol::{event, SessionEnd, SessionStart, SubagentEnd, SubagentStart};
+use super::protocol::{event, Judge, SessionEnd, SessionStart, SubagentEnd, SubagentStart};
 use crate::config::Config;
 use crate::session::chat::session::utils::AGENTS_FILE;
 use crate::session::chat::session::ChatSession;
@@ -162,6 +162,8 @@ pub async fn session_ended(chat_session: &mut ChatSession, reason: &str) {
 			super::session_end(&parts.context(&chat_session.session.messages, None), payload).await;
 		})
 		.await;
+		// The answer's notices are shown and its usage is booked before the state goes.
+		super::apply::settle(&session_id, Some(&mut chat_session.session));
 	}
 	parentage().lock().remove(&session_id);
 	super::end_session(&session_id);
@@ -183,7 +185,7 @@ pub async fn subagent_starting(
 		prompt: task.to_string(),
 		system_prompt: system_prompt.map(str::to_string),
 	};
-	let inherited = super::subagent_start(&parts.context(&[], None), payload).await;
+	let inherited = super::subagent_start(&parts.detached_context(None), payload).await;
 	super::apply::settle(parent_session_id, None);
 	inherited
 }
@@ -194,7 +196,20 @@ pub async fn subagent_ended(parent_session_id: &str, child_session_id: Option<&s
 	let payload = SubagentEnd {
 		child_session_id: child_session_id.map(str::to_string),
 	};
-	super::subagent_end(&parts.context(&[], None), payload).await;
+	super::subagent_end(&parts.detached_context(None), payload).await;
+}
+
+/// Ask the plugins of `session_id` for a judgement. The places that need one
+/// (skill and capability choice, specialist routing, the fold of the history)
+/// have no message list at hand, and a judgement needs none. `None` when no
+/// plugin gave one: the caller keeps the outcome of its own rule.
+pub async fn judge_detached(session_id: &str, payload: Judge) -> Option<super::Judged> {
+	if !super::subscribed(session_id, event::JUDGE) {
+		return None;
+	}
+	let parent = parent_session_id(session_id);
+	let parts = detached_parts(session_id, parent.as_deref(), &parent_role(session_id));
+	super::judge(&parts.detached_context(None), payload).await
 }
 
 /// A subagent that runs inside this process and has plugin sessions of its own.
@@ -235,7 +250,7 @@ pub async fn start_in_process_child(
 		capabilities: capability_names(&role, config),
 		context_files: Vec::new(),
 	};
-	super::session_start(&parts.context(&[], tools), start, &inherited).await;
+	super::session_start(&parts.detached_context(tools), start, &inherited).await;
 	super::apply::settle(child_session_id, None);
 	Some(InProcessChild {
 		parent_session_id: parent_session_id.to_string(),
@@ -255,7 +270,8 @@ pub async fn end_in_process_child(child: InProcessChild) {
 		let payload = SessionEnd {
 			reason: REASON_EXIT.to_string(),
 		};
-		super::session_end(&parts.context(&[], None), payload).await;
+		super::session_end(&parts.detached_context(None), payload).await;
+		super::apply::settle(&child.child_session_id, None);
 	}
 	parentage().lock().remove(&child.child_session_id);
 	super::end_session(&child.child_session_id);

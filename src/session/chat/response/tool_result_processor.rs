@@ -76,6 +76,11 @@ pub async fn process_tool_results(
 	let mut cache_check_time = 0u128;
 	add_tool_results(&tool_results, chat_session, config)?;
 
+	// Notes a plugin tied to this round's results, such as feedback on the plan,
+	// follow the results directly: a fold or the goal recitation below then
+	// sees them where the round left them.
+	chat_session.deliver_plugin_result_notes()?;
+
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,

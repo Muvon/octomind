@@ -16,7 +16,8 @@
 //! decide what an answer may do.
 
 use super::protocol::{
-	self, effect, event, Answer, Block, CommandSpec, FileText, PluginOptions, RuleMatch, SkillDir, StatusField, Usage,
+	self, effect, event, Answer, Block, CommandSpec, FileText, PinItem, PluginOptions, RuleMatch, SkillDir,
+	StatusField, Usage,
 };
 use super::read::Stamp;
 use super::transport::Transport;
@@ -31,7 +32,7 @@ use std::time::Duration;
 /// Failed or unanswered events in a row after which a plugin is off for the session.
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
-/// Effects every answered event allows.
+/// Effects every answered event of the conversation allows.
 const COMMON_EFFECTS: [&str; 10] = [
 	effect::CONTEXT,
 	effect::PIN,
@@ -45,6 +46,9 @@ const COMMON_EFFECTS: [&str; 10] = [
 	effect::NOTE,
 ];
 
+/// Effects of an event that leaves the conversation as it is.
+const OUTSIDE_CONVERSATION_EFFECTS: [&str; 3] = [effect::USAGE, effect::REPORT, effect::NOTICE];
+
 /// A named block of text that a plugin set.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginBlock {
@@ -56,7 +60,7 @@ pub struct PluginBlock {
 	pub keep: bool,
 	/// `pin`: lines the host keeps as separate items when it folds history.
 	#[serde(default)]
-	pub items: Vec<String>,
+	pub items: Vec<PinItem>,
 }
 
 /// A status-line field a plugin added at its handshake.
@@ -84,7 +88,7 @@ pub struct StoredBlock {
 	pub name: String,
 	pub text: String,
 	pub keep: bool,
-	pub items: Vec<String>,
+	pub items: Vec<PinItem>,
 }
 
 /// Set a block, replacing one of the same name in place; no text removes it.
@@ -148,6 +152,9 @@ pub struct PluginSlot {
 	/// The host rewrote the history: the next event carries the full list.
 	pub reset_pending: bool,
 	pub rule_matches: Vec<RuleMatch>,
+	/// Judgements of this plugin that changed what the host did, by purpose,
+	/// since the last event it answered.
+	pub judged: BTreeMap<String, u64>,
 	/// Hash of the tool list this plugin saw last.
 	pub tools_hash: Option<u64>,
 	/// The host could not apply this plugin's last plan change.
@@ -193,6 +200,7 @@ impl PluginSlot {
 			seen: 0,
 			reset_pending: false,
 			rule_matches: Vec::new(),
+			judged: BTreeMap::new(),
 			tools_hash: None,
 			plan_error: None,
 			dropped_context: Vec::new(),
@@ -234,6 +242,14 @@ pub fn allowed_effects(event_name: &str) -> Vec<&'static str> {
 	if event::NOTIFICATIONS.contains(&event_name) {
 		return Vec::new();
 	}
+	// A judgement and the end of a session change nothing in the conversation.
+	if matches!(event_name, event::JUDGE | event::SESSION_END) {
+		let mut allowed = OUTSIDE_CONVERSATION_EFFECTS.to_vec();
+		if event_name == event::JUDGE {
+			allowed.push(effect::JUDGEMENTS);
+		}
+		return allowed;
+	}
 	let mut allowed = COMMON_EFFECTS.to_vec();
 	if matches!(event_name, event::COMMAND | event::STATUS) {
 		allowed.retain(|name| !matches!(*name, effect::NOTE | effect::PLAN));
@@ -241,7 +257,7 @@ pub fn allowed_effects(event_name: &str) -> Vec<&'static str> {
 	let extra: &[&str] = match event_name {
 		event::PROMPT_SUBMIT => &[effect::REPLACE_PROMPT, effect::BLOCK],
 		event::TOOL_BEFORE => &[effect::DENY, effect::LIFT],
-		event::TOOL_AFTER => &[effect::REPLACE, effect::STOP],
+		event::TOOL_AFTER => &[effect::REPLACE, effect::STOP, effect::RESULT_NOTE],
 		event::TURN_END => &[effect::CONTINUE, effect::VERIFIED],
 		event::SUBAGENT_START => &[effect::INHERIT],
 		event::COMMAND => &[effect::OUTPUT],
@@ -307,7 +323,7 @@ pub fn rule_ids(rules: &str) -> HashSet<String> {
 }
 
 /// Cut `text` to `limit` characters.
-fn truncate_chars(text: &str, limit: usize) -> String {
+pub(super) fn truncate_chars(text: &str, limit: usize) -> String {
 	match text.char_indices().nth(limit) {
 		Some((end, _)) => text[..end].to_string(),
 		None => text.to_string(),

@@ -37,15 +37,16 @@ pub async fn apply(chat_session: &mut ChatSession, effects: Effects) -> Result<(
 		}
 	}
 
-	if !effects.notes.is_empty() {
+	if !effects.notes.is_empty() || !effects.result_notes.is_empty() {
 		let checklist = plan::render_plan_checklist().unwrap_or_default();
-		chat_session.queue_plugin_notes(
-			effects
-				.notes
+		let with_checklist = |notes: Vec<String>| -> Vec<String> {
+			notes
 				.into_iter()
 				.map(|note| note.replace(PLAN_CHECKLIST_PLACEHOLDER, &checklist))
-				.collect(),
-		);
+				.collect()
+		};
+		chat_session.queue_plugin_result_notes(with_checklist(effects.result_notes));
+		chat_session.queue_plugin_notes(with_checklist(effects.notes));
 	}
 
 	settle(&session_id, Some(&mut chat_session.session));

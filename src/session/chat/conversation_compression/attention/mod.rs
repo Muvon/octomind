@@ -528,7 +528,10 @@ fn plugin_pinned_items(session: &ChatSession) -> Option<Vec<PinnedItem>> {
 	Some(
 		pins.into_iter()
 			.flat_map(|block| block.items)
-			.map(|text| PinnedItem { text, source: None })
+			.map(|item| PinnedItem {
+				text: item.text,
+				source: None,
+			})
 			.collect(),
 	)
 }

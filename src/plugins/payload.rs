@@ -73,12 +73,23 @@ impl ContextParts {
 
 	pub fn context<'a>(&'a self, messages: &'a [Message], tools: Option<Vec<ToolInfo>>) -> EventContext<'a> {
 		EventContext {
+			messages,
+			detached: false,
+			..self.detached_context(tools)
+		}
+	}
+
+	/// The context of an event sent from a place that has no message list. The
+	/// event carries no messages and the plugins keep their place in the history.
+	pub fn detached_context(&self, tools: Option<Vec<ToolInfo>>) -> EventContext<'_> {
+		EventContext {
 			session_id: &self.session_id,
 			parent_session_id: self.parent_session_id.as_deref(),
 			role: &self.role,
 			workdir: &self.workdir,
 			project: &self.project,
-			messages,
+			messages: &[],
+			detached: true,
 			status: self.status.clone(),
 			plan: self.plan.clone(),
 			tools,
@@ -211,6 +222,7 @@ pub fn tool_outcome(
 			.map(|path| workdir.join(path).to_string_lossy().into_owned())
 			.collect(),
 		replaceable,
+		returned: None,
 	}
 }
 

@@ -54,7 +54,7 @@ Details that matter when writing the program:
 
 - Over `stdio` and `socket`, a request carries an `id` and the plugin answers with a response that has the same `id`.
   A message without an `id` is a notification: do not answer it. A line on standard output that is not a JSON-RPC
-  response is ignored, so a stray log line does no harm.
+  response or a `progress` notification is ignored, so a stray log line does no harm.
 - A response carries either `result` or `error` (`code` and `message`). An `error` counts as a failed event.
 - Octomind keeps one connection per plugin for the whole process. All sessions share it, and requests are told apart by
   `id`, so a plugin may get requests of two sessions at the same time.
@@ -102,7 +102,7 @@ At the start of every session, for every enabled plugin whose roles match, Octom
   "events": {
     "session.start": ["context", "pin", "usage", "report", "read", "notice", "register", "history", "plan", "note"],
     "tool.before": ["context", "pin", "usage", "report", "read", "notice", "register", "history", "plan", "note", "deny", "lift"],
-    "session.end": []
+    "session.end": ["usage", "report", "notice"]
   }}}
 ```
 
@@ -126,7 +126,7 @@ three entries). A plugin may read it to learn what the host in front of it suppo
 | `options` | object | Optional. How much data the plugin wants. See the table below. |
 | `status_fields` | list | Optional. Fields the plugin adds to the agent's status line: `name`, `instruction` (added to the status-line prompt), `default` (shown in the template), and optionally `example` (shown in the example line, `default` when absent). The parsed value comes back in `status.fields` under `name`. |
 | `commands` | list | Optional. Slash commands the plugin provides: `name` (without the slash), `hint` and `description`. They arrive as the `command` event. |
-| `timeouts` | table | Optional. Seconds the plugin needs to answer, by event name. See [Time limits](#time-limits). |
+| `timeouts` | table | Optional. Seconds Octomind waits for an answer without hearing from the plugin, by event name. See [Time limits](#time-limits). |
 
 Fields of the request: `protocol` (integer), `host` (`name` and `version`) and `events` (event name to list of effect
 names).
@@ -140,6 +140,7 @@ Options, all optional. Without an option the host sends the plain default.
 |--------|-----------|---------|
 | `min_output_tokens` | `tool.after` | Send a result's text only when it has at least this many tokens. Smaller results still arrive with `result_hash`, `size_tokens` and `size_bytes`. A result a plugin has already replaced in this round is still sent. |
 | `result_chars` | every event with `messages` | Cut the content of messages with the role `tool` to this many characters. |
+| `returned_chars` | `tool.after` | Send `returned` for a call whose result the agent did not see as the tool returned it, with its text cut to this many characters. Without the option `returned` is never sent. |
 | `diff_chars` | `turn.end` | Send each changed file's `diff` or `head`, cut at this many characters, and `tree_status`. Without it, the host sends only `path` and `exists` per file. |
 | `read_max_files` | `read` | The most files the host sends for one answer. At most 200. |
 | `read_max_file_bytes` | `read` | The largest file the host reads. Larger files arrive with `skipped: too_large`. At most 65536. |
@@ -156,7 +157,7 @@ Options, all optional. Without an option the host sends the plain default.
 | `workdir` | string | Working directory of the session. |
 | `project` | string | Base name of the repository root, or of the workdir outside a repository. |
 | `git_remote` | string, optional | URL of the `origin` remote, when the workdir has one. |
-| `messages` | list | Messages added to the session since the previous event this plugin answered. With `messages_reset` it is the full list. |
+| `messages` | list | Messages added to the session since the previous event this plugin answered. With `messages_reset` it is the full list. Empty on `subagent.start`, `subagent.end` and `judge`, which are sent from places that have no message list; these events do not move the cursor. |
 | `messages_reset` | bool | The host rewrote its history (a compaction, a resume, a rollback). `messages` then replaces everything the plugin holds for this session. |
 | `status` | object, optional | The status line parsed from the latest assistant message: `state` (`exploring`, `progressing`, `blocked`, `need_input` or `done`), `focus`, `next`, `carry` (list of strings) and `fields` (values of the plugin-registered fields, by name). |
 | `rule_matches` | list | Rules this plugin registered that matched since the previous event: `id` and `outcome` (`applied`, or `observed` for a rule in `observe` mode). |
@@ -166,6 +167,7 @@ Options, all optional. Without an option the host sends the plain default.
 | `active_skills` | list of strings | Names of the skills active now. Sent when not empty. |
 | `dropped_context` | list of strings | Names of this plugin's context blocks the host left out of the previous model request for lack of room. Sent when not empty. |
 | `files` | list | Texts of files the plugin asked for with `read`. See [File reads](#file-reads). |
+| `judged` | table | How many of this plugin's judgements changed what the host did since the previous event, by `purpose`. Sent when not empty. See [judge](#judge). |
 
 A message has `role` (`system`, `user`, `assistant` or `tool`), `content`, `timestamp` (seconds since the Unix epoch) and
 `managed`. `managed` is true for a `user` message that the host or a plugin wrote, not the person. Such a message is never
@@ -197,19 +199,22 @@ counts as empty. The name of a field is the name of its effect. Which effects an
 | `deny` | list | `tool.before` only. |
 | `lift` | list | `tool.before` only. |
 | `replace` | list | `tool.after` only. |
+| `result_note` | list of strings | `tool.after` only. |
 | `stop` | string | `tool.after` only. |
 | `continue` | string | `turn.end` only. |
 | `verified` | bool | `turn.end` only. |
 | `inherit` | any JSON | `subagent.start` only. |
 | `output` | object | `command` only. |
 | `rows` | list | `status` only. |
+| `judgements` | table | `judge` only. |
 
 ## Events
 
 Events are listed in the order the loop reaches them. Every event that is not a notification allows the effects
 `context`, `pin`, `usage`, `report`, `read`, `notice`, `register`, `history`, `plan` and `note`. These are the common
-effects. The exceptions are `command` and `status`, which allow all of them except `note` and `plan`. A notification
-allows no effects. Each entry below lists only what it adds.
+effects. There are two kinds of exception. `command` and `status` allow all of them except `note` and `plan`. `judge`
+and `session.end` run outside the conversation and allow only `usage`, `report` and `notice`. A notification allows no
+effects. Each entry below lists only what it adds.
 
 Events are sent to plugins in the order of the config. One plugin is asked at a time. Some events stop after the first
 plugin that answers in a certain way; this is stated per event.
@@ -278,7 +283,7 @@ output of detached jobs that arrived between rounds.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `intent` | string, optional | What the assistant said, or thought, when it made the calls. |
-| `calls` | list | One entry per call: `id`, `tool`, `server`, `arguments`, `error`, `denied`, `result`, `result_hash`, `size_tokens`, `size_bytes`, `mutation`, `command`, `free_form`, `paths` and `replaceable`. See below. |
+| `calls` | list | One entry per call: `id`, `tool`, `server`, `arguments`, `error`, `denied`, `result`, `result_hash`, `size_tokens`, `size_bytes`, `mutation`, `command`, `free_form`, `paths`, `replaceable` and `returned`. See below. |
 | `tree` | object, optional | `before` and `after`, fingerprints of the working tree around the round. Both are empty when the host cannot measure the tree. |
 | `subagents` | object, optional | Subagent runs that finished in this round: `finished` and `verified`. |
 | `background` | list | Output of detached jobs that arrived since the previous event: `call_id`, `label` and `output`. |
@@ -299,9 +304,11 @@ Fields of a call:
 | `free_form` | The tool runs a free-form command string, such as a shell. |
 | `paths` | Paths named in the arguments, made absolute. |
 | `replaceable` | The host can replace this result and keep the original readable. |
+| `returned` | `{error, text}`: what the tool returned, when the agent sees something else. The host replaces a result that repeats an earlier one with a short note marked as an error, and cuts a large result; `returned` then holds the tool's own error flag and the start of its own text. Sent only to a plugin that set `returned_chars`, and only when `error` or the start of the text differs from what `result` shows. |
 
-Extra effects: `replace`, `stop`. Each plugin sees the results that the plugins before it replaced. For one call, a later
-plugin's text replaces an earlier one's. The first plugin that sends a `stop` wins, and later plugins are not asked.
+Extra effects: `replace`, `stop`, `result_note`. Each plugin sees the results that the plugins before it replaced. For
+one call, a later plugin's text replaces an earlier one's. The first plugin that sends a `stop` wins, and later plugins
+are not asked.
 
 ### turn.end
 
@@ -377,21 +384,53 @@ Extra effects: `output`.
 
 Extra effects: `rows`. The rows of every plugin that sent some are shown.
 
+### judge
+
+Octomind decides a few things by a fixed rule and asks its plugins for a judgement that may change the outcome. A
+plugin that has no judgement answers with none, and the rule's outcome stands. The first plugin that returns judgements
+wins, and later plugins are not asked.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `purpose` | string | What the host decides with the answer. See the table below. |
+| `subject` | any JSON | What the questions are about. |
+| `questions` | table | Questions about the subject, by id. A question is `{type: "yes_no", text}` or `{type: "choice", text, options}`, where `options` maps each option's name to what it stands for. |
+| `items` | object, optional | Parts of the subject that each get the same yes-or-no question: `key`, `question` and `items`, a list of `{id, data}`. The plugin decides how many parts one model call reads. It shows the model `subject` with the `data` of those parts as a list under `key`, and asks `question` once per part with `{slot}` replaced by the part's place in that list and `{id}` by its id. |
+
+| `purpose` | Sent when | What the answer changes |
+|-----------|-----------|-------------------------|
+| `skills` | A user message matched no skill by rule. One choice among the skills that are not active and `none`. | The chosen skill is activated when its probability is at least 0.6. |
+| `capabilities` | A user message, after the capabilities were ranked by text similarity. One choice among the 5 best and `none`. | A capability picked by similarity is dropped when the choice gives it less than 0.05. With none picked, the chosen one is activated at 0.6 or more. |
+| `taps` | A task is delegated without naming a specialist. One choice among the 16 best matches and `none`. | The chosen specialist gets the task; `none` starts nothing. |
+| `compression` | A fold of the history, once per fold. `items` holds the tool results the fold would summarize. | A result whose probability of still being needed is below 0.5 is dropped from the fold's input and stays readable in the archive. |
+
+Extra effects: `judgements`, a table from question id, and from item id for `items`, to the answer:
+`{type: "yes_no", yes}` with the probability of yes, or `{type: "choice", choice, probabilities}` with the most
+probable option and every option's probability. A question the plugin could not answer is left out. A choice that was
+not among the options is ignored. When a judgement changes what Octomind does, the plugin hears it in `judged` with its
+next event.
+
 ### session.end
 
-A notification that the session ends. No answer, no effects.
+The session ends. Octomind waits at most 5 seconds for the answer, whatever the plugin declared, so that leaving is
+never held up; work that takes longer belongs in the background.
 
 | Field | Type | Meaning |
 |-------|------|---------|
 | `reason` | string | `exit`, `clear`, `switch` or `error`. |
 
+Allowed effects: `usage`, `report` and `notice` only. They are shown and stored with the session before it closes.
+
 ### Other messages
 
-Two methods are not events. `session.history` is a notification with the full message list, sent once after an answer
+Three methods are not events. `session.history` is a notification with the full message list, sent once after an answer
 asked for it with `history`. It carries the common fields, `messages_reset` true and no payload. `cancel` is a
 notification with `params` `{"id": <n>}`. It tells the plugin that Octomind no longer waits for the answer to request
 `n`, because it timed out or the user pressed Ctrl+C. The plugin stops that work and keeps no state the answer would
 have committed. Over `http` there is no connection to tell, so `cancel` goes out as one best-effort POST.
+
+`progress` goes the other way: it is a notification the plugin sends, with `params` `{"id": <n>}`, while it still works
+on request `n`. See [Time limits](#time-limits). Over `http` there is no channel for it.
 
 ## Effects
 
@@ -401,7 +440,7 @@ notice, and the rest of the answer still counts.
 | Effect | Value | What Octomind does |
 |--------|-------|--------------------|
 | `context` | list of `{name, text, keep}` | Keeps the block by `name`. Its text is added to every model request and never written into the history. A block with the same `name` is replaced in place. No `text` removes the block. A plugin's blocks are joined in the order they were first set, with nothing between them. When the context window is short, the host may leave blocks out; `keep: true` asks to keep that one, and `dropped_context` tells the plugin which blocks were left out. |
-| `pin` | list of `{name, text, items}` | Keeps text through every compaction and recites it near the end of the context. `items` are lines the host keeps as separate items when it folds history. No `text` removes the block. Pins are stored with the session. |
+| `pin` | list of `{name, text, items}` | Keeps text through every compaction and recites it near the end of the context. `items` are lines the host keeps as separate items when it folds history. An item is a string, or `{text, label, from_request}`: the fold lists it as `label: text` (`constraint: text` without a label), and with `from_request` it names the user's message as the source when that message contains the text. No `text` removes the block. A plugin's pinned blocks are joined in the order they were first set. Pins are stored with the session. |
 | `usage` | list of `{label, calls, input_tokens, output_tokens, reasoning_tokens, cost, wall_ms, blocking}` | Books the spend into the session's cost under the plugin. `label` is shown in `/info`, `cost` is in US dollars, `wall_ms` is milliseconds, `blocking` says the agent waited for the calls. |
 | `report` | `{mechanics, totals}` | Stores the plugin's accounting for the session as data, for the machine-readable cost output. A new report replaces the previous one. `mechanics` maps a name to any JSON; `totals` holds `chat_calls`, `decision_calls`, `wall_blocking_ms`, `wall_background_ms`, `api_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens` and `cost`. |
 | `notice` | list of strings | Shows each entry to the user as a dim notice. An entry may hold several lines. |
@@ -409,7 +448,8 @@ notice, and the rest of the answer still counts.
 | `history` | `true` | Sends the full message list once as a `session.history` notification. Meant for a plugin that lost its state. |
 | `read` | list of paths or globs | Reads the files for the next event. See [File reads](#file-reads). |
 | `plan` | `{action, ...}` | Changes the host's plan. `start` takes `title` and `tasks`; `advance` takes `summary`; `revise` takes `reason` and `tasks`; `finish` takes `summary`. A task is `{title, done_when}`. If several plugins send a plan change in one event, the first wins and the rest are ignored. If the host cannot apply the change, the plugin hears the reason in `plan_error` with its next event. |
-| `note` | list of strings | Queues each entry for the model as feedback managed by the system, and writes it into the history. In a note sent together with `plan`, `{plan_checklist}` becomes the host's checklist after the change. |
+| `note` | list of strings | Queues each entry for the model as feedback managed by the system, and writes it into the history just before the next model request. In a note sent together with `plan`, `{plan_checklist}` becomes the host's checklist after the change. |
+| `result_note` | list of strings | Like `note`, but written right after the results of the round, before the host folds history or adds its own reminders. Meant for feedback that belongs to those results. |
 | `replace_prompt` | string | Replaces the text of the user's prompt. |
 | `block` | string | Stops the prompt and shows the user this message. The session goes on. |
 | `deny` | list of `{call_id, reason}` | Does not run the call. The model gets `reason` as the result of the call. |
@@ -421,6 +461,7 @@ notice, and the rest of the answer still counts.
 | `inherit` | any JSON | A value handed to the subagent's `session.start`. |
 | `output` | `{text, data}` | The result of a command. `text` is shown to the user; `data` is a structured result for clients that render it themselves. |
 | `rows` | list of `{label, value}` | Label and value pairs for `/info`. |
+| `judgements` | table of id to `{type, ...}` | The answers to a `judge` event. See [judge](#judge). |
 
 ## File reads
 
@@ -468,12 +509,16 @@ answer wins and where each plugin sees the result of the one before it. For the 
 
 ### Time limits
 
-Octomind waits for the answer to a request for a limited time.
+Octomind waits for the answer to a request for a limited time without hearing from the plugin.
 
 - `initialize`: `timeout_seconds` of the entry, or 30 seconds without it.
-- Any other event: the plugin declares the seconds it needs in `timeouts` by event name, and 30 seconds is the limit for
-  an event it did not list. If the entry sets `timeout_seconds`, the smaller of the two applies. The limit is never
-  below 1 second or above 3600.
+- Any other event: the plugin declares the seconds in `timeouts` by event name, and 30 seconds is the limit for an event
+  it did not list. If the entry sets `timeout_seconds`, the smaller of the two applies. The limit is never below 1
+  second or above 3600.
+- Over `stdio` and `socket`, a `progress` notification for the request starts this wait again. A plugin that needs
+  longer than its limit for one answer sends one from time to time while it works, and is not taken for dead. Whatever
+  arrives, Octomind stops waiting 3600 seconds after it sent the request. Over `http` the limit is the whole wait.
+- `session.end` gets at most 5 seconds.
 - Notifications get the same limit for being written to the connection. Over `http` they get 10 seconds.
 
 ### Failures
@@ -481,21 +526,28 @@ Octomind waits for the answer to a request for a limited time.
 An event fails when the plugin does not answer in time, the connection is closed, the plugin sends an `error`, or the
 answer cannot be read. The agent goes on without the plugin's answer; no effects of that event are applied. Octomind
 queues a notice: `plugin 'name' did not answer EVENT: reason`. Any answered event sets the count of failures back to zero.
-After 3 failures in a row, the plugin is off for the rest of the session, with the notice
-`plugin 'name' is off for this session after 3 failures in a row`.
+
+After 3 failures in a row the plugin is paused, with the notice
+`plugin 'name' did not answer 3 events in a row; octomind goes on without it and tries again in 30s`. A paused plugin is
+sent nothing. When the pause is over, the next event it subscribes to is sent as a trial. If the plugin answers, it is
+back, with the notice `plugin 'name' answers again`. If it does not, it is paused again for twice as long, up to 600
+seconds. A pause never lasts for the rest of the session.
+
+If a `stdio` or `socket` connection is closed, Octomind connects again before the next event and repeats `initialize`.
+The plugin may have lost what it knew, so that event carries the full message list with `messages_reset`.
 
 A notice, whether queued by Octomind or sent by a plugin as `notice`, is printed on standard error, and only when
 standard error is a terminal and the output format is not `jsonl`. With `--format jsonl`, with standard error sent to a
 file or a pipe, and for ACP and WebSocket clients, notices are dropped.
 
-The two notices that a plugin is off for the session are the exception. Where a notice is not shown, Octomind reports
-the same text as an error: `octomind run` prints it on standard error in every output format, and the ACP and WebSocket
-servers write it to their log file (`acp-debug.log`, `websocket-debug.log` in the logs directory).
+The notice that a plugin is paused and the notice that it failed its handshake are the exception. Where a notice is not
+shown, Octomind reports the same text as an error: `octomind run` prints it on standard error in every output format,
+and the ACP and WebSocket servers write it to their log file (`acp-debug.log`, `websocket-debug.log` in the logs
+directory).
 
-A plugin that is off is sent nothing and asked nothing. Its context blocks and commands stop applying. Its pinned
-blocks stay. A plugin that failed its handshake is off from the start, with one notice. The switch applies to one
-session only. If a `stdio` or `socket` connection is closed, the next session connects again; the failing session does
-not.
+While a plugin is paused its context blocks, pinned blocks and commands stay as they were. A plugin that failed its
+first handshake is off for that session, with one notice; it is sent nothing and asked nothing, and the next session
+tries again.
 
 ### Across a resume
 

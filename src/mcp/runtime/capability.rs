@@ -41,6 +41,7 @@
 
 use crate::config::Config;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
+use crate::plugins::judgement;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
@@ -1134,6 +1135,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 			top1_name
 		);
 	}
+	let top = evaluate_pick(&intent, top, &scored).await;
 
 	if let Some((score, cap)) = top {
 		match activate_capability_inline(&cap.name, config).await {
@@ -1153,6 +1155,76 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 	}
 
 	Vec::new()
+}
+
+/// A plugin's say over the cosine decision: a cosine winner the choice gives
+/// under `CAPABILITY_CONFIRM_AT` is vetoed; with no winner, the choice's pick
+/// activates at `CAPABILITY_ACTIVATE_AT` or above, carrying its probability as
+/// the score. The choice lists the `CAPABILITY_TOP_K` best-scored candidates
+/// (name and description) plus `none` over the stripped intent. With no
+/// answer, the cosine decision stands.
+async fn evaluate_pick<'a>(
+	intent: &str,
+	cosine: Option<(f32, &'a crate::agent::registry::ResolvedCapability)>,
+	ranked: &[(f32, &'a crate::agent::registry::ResolvedCapability)],
+) -> Option<(f32, &'a crate::agent::registry::ResolvedCapability)> {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return cosine;
+	};
+	let candidates = &ranked[..ranked.len().min(judgement::CAPABILITY_TOP_K)];
+	let Some(pick) = judgement::CAPABILITIES
+		.pick(
+			&session_id,
+			intent,
+			candidates
+				.iter()
+				.map(|(_, cap)| (cap.name.as_str(), cap.description.as_str())),
+		)
+		.await
+	else {
+		return cosine;
+	};
+	let cosine_name = cosine.map(|(_, cap)| cap.name.as_str());
+	let names: Vec<&str> = candidates.iter().map(|(_, cap)| cap.name.as_str()).collect();
+	let verdict = apply_capability_answer(cosine_name, &names, &pick.choice, |name| pick.probability(name));
+	let picked = match verdict {
+		Some(name) if cosine_name == Some(name) => cosine,
+		Some(name) => candidates
+			.iter()
+			.find(|(_, cap)| cap.name == name)
+			.map(|(_, cap)| (pick.probability(name) as f32, *cap)),
+		None => None,
+	};
+	if picked.map(|(_, cap)| cap.name.as_str()) != cosine_name {
+		crate::log_debug!(
+			"capability judgement: {} → {} (choice '{}' p={:.2})",
+			cosine_name.unwrap_or("none"),
+			picked.map(|(_, cap)| cap.name.as_str()).unwrap_or("none"),
+			pick.choice,
+			pick.probability(&pick.choice)
+		);
+		pick.applied(&session_id);
+	}
+	picked
+}
+
+/// Apply the confirm and activate floors to one choice: `cosine` is the cosine
+/// winner's name, `candidates` the names the choice listed, `probability` the
+/// plugin's probability of a name. `Some` is the capability to activate, `None`
+/// an abstain. Pure, so the two floors are unit-testable.
+fn apply_capability_answer<'a>(
+	cosine: Option<&'a str>,
+	candidates: &[&'a str],
+	choice: &str,
+	probability: impl Fn(&str) -> f64,
+) -> Option<&'a str> {
+	match cosine {
+		Some(winner) => (probability(winner) >= judgement::CAPABILITY_CONFIRM_AT).then_some(winner),
+		None => candidates
+			.iter()
+			.copied()
+			.find(|name| *name == choice && probability(name) >= judgement::CAPABILITY_ACTIVATE_AT),
+	}
 }
 
 /// Translate capability `allowed_tools` patterns into the bare-name

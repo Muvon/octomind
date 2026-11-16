@@ -285,6 +285,20 @@ impl OctomindAgent {
 		}
 	}
 
+	/// Connection ended: tell each session's plugins, as the interactive path
+	/// does when it exits. The session is saved after their answer is booked.
+	async fn end_plugin_sessions(&self) {
+		let session_ids: Vec<String> = self.sessions.borrow().keys().cloned().collect();
+		for session_id in session_ids {
+			let entry = self.sessions.borrow_mut().remove(&session_id);
+			let Some((mut chat_session, cwd)) = entry else {
+				continue;
+			};
+			crate::plugins::lifecycle::session_ended(&mut chat_session, crate::plugins::lifecycle::REASON_EXIT).await;
+			self.sessions.borrow_mut().insert(session_id, (chat_session, cwd));
+		}
+	}
+
 	/// Inject the client connection once the ACP event loop starts serving. Supplied
 	/// by the `with_spawned` runner, which hands us a long-lived `ConnectionTo<Client>`.
 	pub fn set_connection(&self, conn: ConnectionTo<Client>) {
@@ -2309,6 +2323,7 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		log_debug!("ACP: connection ended: {}", e);
 	}
 	agent.finish_keepalives().await;
+	agent.end_plugin_sessions().await;
 	agent.record_telemetry();
 	Ok(())
 }

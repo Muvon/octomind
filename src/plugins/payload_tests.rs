@@ -43,7 +43,7 @@ fn call(tool: &str, parameters: Value) -> McpToolCall {
 fn outcome(tool: &str, parameters: Value, workdir: &Path) -> ToolOutcome {
 	let call = call(tool, parameters);
 	let result = McpToolResult::success(tool.to_string(), call.tool_id.clone(), "ok".to_string());
-	tool_outcome(&call, &result, workdir, false, false)
+	tool_outcome(&call, &result, workdir, false, false, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +298,7 @@ fn an_outcome_carries_the_result_text_and_its_measures() {
 		"no such file é".to_string(),
 	);
 
-	let outcome = tool_outcome(&call, &result, Path::new("/work"), true, true);
+	let outcome = tool_outcome(&call, &result, Path::new("/work"), true, true, None);
 
 	assert_eq!(outcome.id, "id-payload_measure");
 	assert_eq!(outcome.tool, "payload_measure");
@@ -308,6 +308,81 @@ fn an_outcome_carries_the_result_text_and_its_measures() {
 	assert_eq!(outcome.size_bytes, "no such file é".len());
 	assert_eq!(outcome.size_tokens, crate::session::estimate_tokens("no such file é"));
 	assert_eq!(outcome.result_hash, result_hash("no such file é"));
+}
+
+/// The outcome of a call whose result the agent was shown as `shown`, with what
+/// the tool itself returned remembered as `returned`.
+fn shown_outcome(name: &str, shown: McpToolResult, returned: Option<&Returned>) -> ToolOutcome {
+	let call = call(name, json!({}));
+	tool_outcome(&call, &shown, Path::new("/work"), false, false, returned)
+}
+
+fn returned(error: bool, text: &str) -> Returned {
+	Returned {
+		error,
+		text: text.to_string(),
+	}
+}
+
+#[test]
+fn a_repeat_note_carries_what_the_tool_really_returned() {
+	let real = McpToolResult::success(
+		"payload_repeat".into(),
+		"id-payload_repeat".into(),
+		"real output".into(),
+	);
+	let remembered = returned_by_tool(&real, 8);
+	assert_eq!(remembered, returned(false, "real out"));
+
+	// The repeat note replaces the text and marks the result as an error.
+	let note = McpToolResult::error(
+		"payload_repeat".into(),
+		"id-payload_repeat".into(),
+		"Already seen".into(),
+	);
+	let outcome = shown_outcome("payload_repeat", note, Some(&remembered));
+
+	assert!(outcome.error);
+	assert_eq!(outcome.returned, Some(returned(false, "real out")));
+}
+
+#[test]
+fn a_cut_that_keeps_the_start_carries_nothing_extra() {
+	let shown = McpToolResult::success(
+		"payload_cut".into(),
+		"id-payload_cut".into(),
+		"real output ... [cut]".into(),
+	);
+	let outcome = shown_outcome("payload_cut", shown, Some(&returned(false, "real out")));
+
+	assert_eq!(outcome.returned, None);
+}
+
+#[test]
+fn a_cut_that_does_not_keep_the_start_carries_what_the_tool_returned() {
+	let shown = McpToolResult::success(
+		"payload_tail".into(),
+		"id-payload_tail".into(),
+		"... [cut] end of the output".into(),
+	);
+	let outcome = shown_outcome("payload_tail", shown, Some(&returned(false, "real out")));
+
+	assert_eq!(outcome.returned, Some(returned(false, "real out")));
+}
+
+#[test]
+fn an_error_flag_that_changed_carries_what_the_tool_returned() {
+	let shown = McpToolResult::error("payload_flag".into(), "id-payload_flag".into(), "real output".into());
+	let outcome = shown_outcome("payload_flag", shown, Some(&returned(false, "real output")));
+
+	assert_eq!(outcome.returned, Some(returned(false, "real output")));
+}
+
+#[test]
+fn with_nothing_remembered_an_outcome_carries_no_returned_text() {
+	let shown = McpToolResult::success("payload_none".into(), "id-payload_none".into(), "output".into());
+
+	assert_eq!(shown_outcome("payload_none", shown, None).returned, None);
 }
 
 #[test]

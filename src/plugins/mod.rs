@@ -226,6 +226,18 @@ pub fn take_usage(session_id: &str) -> Vec<(String, Usage)> {
 	host().take_usage(session_id)
 }
 
+/// Move the usage the plugins of session `from` left unbooked to the same
+/// plugins of session `to`.
+pub fn pass_usage(from: &str, to: &str) {
+	host().pass_usage(from, to)
+}
+
+/// Milliseconds the agent waited for the plugins of the session since the last
+/// call. Events that ran at the same time count once.
+pub fn take_waited_ms(session_id: &str) -> u64 {
+	host().take_waited_ms(session_id)
+}
+
 /// The latest report of each plugin that sent one since the last call, as `(plugin, report)`.
 pub fn take_reports(session_id: &str) -> Vec<(String, protocol::Report)> {
 	host().take_reports(session_id)

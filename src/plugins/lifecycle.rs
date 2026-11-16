@@ -148,8 +148,9 @@ pub async fn session_started(chat_session: &mut ChatSession, config: &Config, so
 	.await
 }
 
-/// Send `session.end` and drop the session's plugin state. `reason` is
-/// `exit`, `switch` or `error`.
+/// Send `session.end`, book what the plugins answered and drop the session's
+/// plugin state. `reason` is `exit`, `switch` or `error`. The session file is
+/// saved after the booking, so the callers that leave octomind next keep it.
 pub async fn session_ended(chat_session: &mut ChatSession, reason: &str) {
 	let session_id = chat_session.session.info.name.clone();
 	if super::subscribed(&session_id, event::SESSION_END) {
@@ -164,6 +165,9 @@ pub async fn session_ended(chat_session: &mut ChatSession, reason: &str) {
 		.await;
 		// The answer's notices are shown and its usage is booked before the state goes.
 		super::apply::settle(&session_id, Some(&mut chat_session.session));
+		if let Err(error) = chat_session.save() {
+			crate::log_debug!("Session not saved after session.end: {:#}", error);
+		}
 	}
 	parentage().lock().remove(&session_id);
 	super::end_session(&session_id);
@@ -259,7 +263,7 @@ pub async fn start_in_process_child(
 }
 
 /// The in-process subagent finished: `session.end` for it, then `subagent.end`
-/// for the parent.
+/// for the parent. The usage its plugins left unbooked moves to the parent's.
 pub async fn end_in_process_child(child: InProcessChild) {
 	if super::subscribed(&child.child_session_id, event::SESSION_END) {
 		let parts = detached_parts(
@@ -273,6 +277,10 @@ pub async fn end_in_process_child(child: InProcessChild) {
 		super::session_end(&parts.detached_context(None), payload).await;
 		super::apply::settle(&child.child_session_id, None);
 	}
+	// The child has no session to book into, so what its plugins spent and the
+	// parent's books have not seen goes to the parent's plugins: the parent's
+	// next settle books it.
+	super::pass_usage(&child.child_session_id, &child.parent_session_id);
 	parentage().lock().remove(&child.child_session_id);
 	super::end_session(&child.child_session_id);
 	subagent_ended(&child.parent_session_id, Some(&child.child_session_id)).await;

@@ -15,7 +15,11 @@
 //! Octomind's own count of tool rounds that repeat a round already made.
 //!
 //! The hard stop on repeated rounds (`max_identical_rounds`) is the agent
-//! loop's own: it counts rounds here, whatever plugins are configured.
+//! loop's own: it counts rounds here, whatever plugins are configured. A round
+//! repeats an earlier one when its calls are the same and either the texts the
+//! tools returned are the same or the texts the agent was shown are the same:
+//! a repeat note shown in place of a real result must not hide that the tool
+//! returned the same thing.
 
 use crate::mcp::tool_shape::param_paths;
 use std::collections::hash_map::DefaultHasher;
@@ -26,6 +30,7 @@ use std::hash::{Hash, Hasher};
 const REMEMBERED_CAP: usize = 128;
 
 /// What the guard reads from one finished tool call.
+#[derive(Clone, Copy)]
 pub struct RoundCall<'a> {
 	pub tool: &'a str,
 	pub parameters: &'a serde_json::Value,
@@ -36,15 +41,37 @@ pub struct RoundCall<'a> {
 	pub free_form: bool,
 }
 
+/// Fingerprints of one round: by what the agent was shown and by what the tools
+/// returned. Two rounds are the same when either matches.
+#[derive(Debug, Clone, Copy)]
+struct RoundKey {
+	shown: u64,
+	returned: u64,
+}
+
+impl RoundKey {
+	fn repeats(&self, earlier: &RoundKey) -> bool {
+		self.shown == earlier.shown || self.returned == earlier.returned
+	}
+}
+
+/// One call as the guard fingerprints it.
+struct NotedCall {
+	shown: u64,
+	returned: u64,
+	/// The call brought something new.
+	novel: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct RepeatGuard {
 	/// Tool rounds in a row that repeated a round already made since the last
 	/// new result, the first of them included.
 	identical_rounds: usize,
 	/// Round fingerprints since the last round that brought something new.
-	rounds_since_progress: VecDeque<u64>,
+	rounds_since_progress: VecDeque<RoundKey>,
 	/// Fingerprint of the latest round: what a tree move restarts the count from.
-	last_round: Option<u64>,
+	last_round: Option<RoundKey>,
 	/// Fingerprints of the results seen recently, to tell new results from old.
 	seen: HashSet<u64>,
 	seen_order: VecDeque<u64>,
@@ -55,32 +82,42 @@ impl RepeatGuard {
 	/// rounds in a row repeated an earlier one. A parallel batch is one model
 	/// decision, so it counts once however many calls it holds.
 	pub fn note_round(&mut self, calls: &[RoundCall<'_>]) -> usize {
-		let mut call_hashes = Vec::with_capacity(calls.len());
+		self.note_round_returned(calls, calls)
+	}
+
+	/// [`Self::note_round`] for a round whose results the agent was shown
+	/// differently from how the tools returned them: `shown` holds the texts the
+	/// agent sees, `returned` the same calls in the same order with the texts and
+	/// error flags the tools returned.
+	pub fn note_round_returned(&mut self, shown: &[RoundCall<'_>], returned: &[RoundCall<'_>]) -> usize {
+		let mut shown_hashes = Vec::with_capacity(shown.len());
+		let mut returned_hashes = Vec::with_capacity(shown.len());
 		let mut round_novel = false;
-		for call in calls {
-			let (call_hash, novel) = self.note_call(call);
-			call_hashes.push(call_hash);
-			round_novel |= novel;
+		for (shown, returned) in shown.iter().zip(returned) {
+			let noted = self.note_call(shown, returned);
+			shown_hashes.push(noted.shown);
+			returned_hashes.push(noted.returned);
+			round_novel |= noted.novel;
 		}
 
 		// The order of parallel calls carries no meaning.
-		call_hashes.sort_unstable();
-		let mut hasher = DefaultHasher::new();
-		call_hashes.hash(&mut hasher);
-		let round_hash = hasher.finish();
+		let round = RoundKey {
+			shown: hash_unordered(shown_hashes),
+			returned: hash_unordered(returned_hashes),
+		};
 
 		if round_novel {
 			self.rounds_since_progress.clear();
 		}
-		let repeated = !round_novel && self.rounds_since_progress.contains(&round_hash);
+		let repeated = !round_novel && self.rounds_since_progress.iter().any(|earlier| round.repeats(earlier));
 		self.identical_rounds = if repeated { self.identical_rounds + 1 } else { 1 };
 		if !repeated {
-			self.rounds_since_progress.push_back(round_hash);
+			self.rounds_since_progress.push_back(round);
 			if self.rounds_since_progress.len() > REMEMBERED_CAP {
 				self.rounds_since_progress.pop_front();
 			}
 		}
-		self.last_round = Some(round_hash);
+		self.last_round = Some(round);
 		self.identical_rounds
 	}
 
@@ -105,9 +142,23 @@ impl RepeatGuard {
 		self.identical_rounds
 	}
 
-	/// Returns the call's fingerprint for the round and whether it brought
-	/// something new.
-	fn note_call(&mut self, call: &RoundCall<'_>) -> (u64, bool) {
+	fn note_call(&mut self, shown: &RoundCall<'_>, returned: &RoundCall<'_>) -> NotedCall {
+		let (shown_hash, shown_fresh) = self.note_view(shown, View::Shown);
+		let (returned_hash, returned_fresh) = self.note_view(returned, View::Returned);
+		// A successful write is progress even when its output repeats. A free-form
+		// command only looks like a write, so it earns no such credit. Judged on
+		// what the tool returned: a repeat note shown instead does not undo it.
+		let wrote = !returned.is_error && returned.is_mutation && !returned.free_form;
+		NotedCall {
+			shown: shown_hash,
+			returned: returned_hash,
+			novel: (shown_fresh && returned_fresh) || wrote,
+		}
+	}
+
+	/// Returns the call's fingerprint for the round and whether its result is
+	/// one not seen before in this view.
+	fn note_view(&mut self, call: &RoundCall<'_>, view: View) -> (u64, bool) {
 		let result = canonical_loop_result(call.tool, call.result);
 
 		// A call repeats when tool, arguments, result and error flag all match.
@@ -122,6 +173,9 @@ impl RepeatGuard {
 		// arguments) returned something not seen before. Rewording the other
 		// arguments does not make it new.
 		let mut hasher = DefaultHasher::new();
+		// Shown and returned text are remembered apart: one result seen in both
+		// views must count as new in each.
+		view.hash(&mut hasher);
 		call.tool.hash(&mut hasher);
 		param_paths(call.parameters).hash(&mut hasher);
 		result.hash(&mut hasher);
@@ -136,12 +190,23 @@ impl RepeatGuard {
 				}
 			}
 		}
-
-		// A successful write is progress even when its output repeats. A free-form
-		// command only looks like a write, so it earns no such credit.
-		let novel = fresh || (!call.is_error && call.is_mutation && !call.free_form);
-		(call_hash, novel)
+		(call_hash, fresh)
 	}
+}
+
+/// Which of the two texts of a result a fingerprint is of.
+#[derive(Hash, Clone, Copy)]
+enum View {
+	Shown,
+	Returned,
+}
+
+/// One fingerprint for the calls of a round, whatever their order.
+fn hash_unordered(mut call_hashes: Vec<u64>) -> u64 {
+	call_hashes.sort_unstable();
+	let mut hasher = DefaultHasher::new();
+	call_hashes.hash(&mut hasher);
+	hasher.finish()
 }
 
 /// A tap launch answers with a fresh run id every time; masking it lets a

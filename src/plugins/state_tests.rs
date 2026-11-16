@@ -14,6 +14,7 @@
 
 use super::*;
 use crate::plugins::protocol::{Deny, Row};
+use crate::plugins::test_support::StubPlugin;
 
 /// `judge` and `session.end` are answered, but run outside the conversation.
 const OUTSIDE_CONVERSATION: [&str; 2] = [event::JUDGE, event::SESSION_END];
@@ -274,4 +275,118 @@ fn the_tool_list_hash_changes_with_the_list() {
 	let one = [tool("a")];
 	assert_eq!(tools_hash(&one), tools_hash(&[tool("a")]));
 	assert_ne!(tools_hash(&one), tools_hash(&[tool("a"), tool("b")]));
+}
+
+fn slot_declaring(timeouts: &[(&str, u64)]) -> PluginSlot {
+	let config: PluginConfig = toml::from_str("name = \"p\"\ntype = \"stdio\"\ncommand = \"p\"\n").unwrap();
+	let result = protocol::InitializeResult {
+		protocol: protocol::PROTOCOL_VERSION,
+		plugin: protocol::ProgramInfo {
+			name: "p".into(),
+			version: "0".into(),
+		},
+		subscribe: Vec::new(),
+		options: PluginOptions::default(),
+		status_fields: Vec::new(),
+		commands: Vec::new(),
+		timeouts: timeouts
+			.iter()
+			.map(|(name, seconds)| (name.to_string(), *seconds))
+			.collect(),
+	};
+	let transport = Arc::new(StubPlugin::new(&[]));
+	PluginSlot::new(
+		&config,
+		transport,
+		HashSet::from([event::TOOL_AFTER.to_string()]),
+		&result,
+	)
+}
+
+#[test]
+fn session_end_waits_five_seconds_at_most_whatever_the_plugin_declares() {
+	let secs = Duration::from_secs;
+	let long = slot_declaring(&[(event::SESSION_END, 3600)]);
+	assert_eq!(
+		long.wait_limit(event::SESSION_END),
+		WaitLimit {
+			silence: SESSION_END_WAIT,
+			total: SESSION_END_WAIT
+		}
+	);
+	let short = slot_declaring(&[(event::SESSION_END, 2)]);
+	assert_eq!(
+		short.wait_limit(event::SESSION_END),
+		WaitLimit {
+			silence: secs(2),
+			total: SESSION_END_WAIT
+		}
+	);
+}
+
+#[test]
+fn another_event_waits_its_declared_silence_but_never_past_the_hosts_maximum() {
+	let slot = slot_declaring(&[(event::TOOL_AFTER, 120)]);
+	assert_eq!(
+		slot.wait_limit(event::TOOL_AFTER),
+		WaitLimit {
+			silence: Duration::from_secs(120),
+			total: Duration::from_secs(MAX_PLUGIN_TIMEOUT_SECONDS)
+		}
+	);
+}
+
+#[test]
+fn a_paused_slot_takes_nothing_until_the_pause_is_over_and_an_answer_ends_it() {
+	let mut slot = slot_declaring(&[]);
+	assert!(slot.takes(event::TOOL_AFTER));
+	assert!(!slot.takes(event::TURN_END), "not subscribed");
+
+	slot.paused_until = Some(Instant::now() + Duration::from_secs(60));
+	assert!(!slot.takes(event::TOOL_AFTER));
+
+	slot.paused_until = Some(Instant::now() - Duration::from_secs(1));
+	assert!(slot.takes(event::TOOL_AFTER), "the next event is the trial");
+	slot.failures = MAX_CONSECUTIVE_FAILURES;
+	slot.pause = LONGEST_PAUSE;
+
+	assert!(slot.recover());
+	assert!(slot.paused_until.is_none() && slot.failures == 0);
+	assert_eq!(slot.pause, FIRST_PAUSE);
+	assert!(!slot.recover(), "it was not paused any more");
+}
+
+#[test]
+fn overlapping_waits_count_from_the_first_start_to_the_last_end() {
+	let start = Instant::now();
+	let at = |milliseconds| start + Duration::from_millis(milliseconds);
+	let mut clock = WaitClock::default();
+
+	clock.enter(at(0));
+	clock.enter(at(50));
+	clock.leave(at(100));
+	clock.leave(at(150));
+	assert_eq!(
+		clock.take_ms(at(200)),
+		150,
+		"idle time after the last end is not counted"
+	);
+
+	clock.enter(at(300));
+	clock.leave(at(340));
+	assert_eq!(clock.take_ms(at(400)), 40);
+	assert_eq!(clock.take_ms(at(500)), 0);
+}
+
+#[test]
+fn taking_the_time_while_an_event_is_awaited_counts_what_has_passed_and_goes_on() {
+	let start = Instant::now();
+	let at = |milliseconds| start + Duration::from_millis(milliseconds);
+	let mut clock = WaitClock::default();
+
+	clock.enter(at(0));
+	assert_eq!(clock.take_ms(at(70)), 70);
+	clock.leave(at(100));
+
+	assert_eq!(clock.take_ms(at(200)), 30);
 }

@@ -69,12 +69,14 @@ fn cost_reaches_the_session_total_once() {
 }
 
 #[test]
-fn only_blocking_entries_add_to_the_blocking_time() {
+fn usage_with_wall_time_never_changes_the_blocking_time_of_the_session() {
 	let mut session = session("plugin-usage-blocking");
 	record_plugin_usage(&mut session, "a", &spent("judge", 1, 0.0, 400, true));
 	record_plugin_usage(&mut session, "a", &spent("judge", 1, 0.0, 600, false));
 	let accounting = &session.info.supervisor_accounting;
-	assert_eq!(accounting.blocking_wall_time_ms, 400);
+	// Octomind measures the wait itself; calls that overlap would count twice here.
+	assert_eq!(accounting.blocking_wall_time_ms, 0);
+	// Only the entry of the label keeps what the plugin said, split by blocking and not.
 	assert_eq!(accounting.plugin_usage["judge"].blocking_wall_time_ms, 400);
 	assert_eq!(accounting.plugin_usage["judge"].background_wall_time_ms, 600);
 }
@@ -93,7 +95,6 @@ fn the_map_survives_saving_and_resuming() {
 		resumed.info.supervisor_accounting.plugin_usage,
 		session.info.supervisor_accounting.plugin_usage
 	);
-	assert_eq!(resumed.info.supervisor_accounting.blocking_wall_time_ms, 100);
 	assert_eq!(resumed.info.total_cost, 0.5);
 }
 

@@ -20,17 +20,25 @@ use super::protocol::{
 	StatusField, Usage,
 };
 use super::read::Stamp;
-use super::transport::Transport;
-use crate::config::{DEFAULT_PLUGIN_TIMEOUT_SECONDS, MAX_PLUGIN_TIMEOUT_SECONDS};
+use super::transport::{Transport, WaitLimit};
+use crate::config::{PluginConfig, DEFAULT_PLUGIN_TIMEOUT_SECONDS, MAX_PLUGIN_TIMEOUT_SECONDS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::Instant;
 
-/// Failed or unanswered events in a row after which a plugin is off for the session.
+/// Failed or unanswered events in a row after which a plugin is paused.
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// How long the first pause lasts. Each failed trial after it doubles the pause.
+pub const FIRST_PAUSE: Duration = Duration::from_secs(30);
+/// The longest pause: a plugin that keeps failing is still tried this often.
+pub const LONGEST_PAUSE: Duration = Duration::from_secs(600);
+/// Leaving octomind must not hang on a plugin, so `session.end` waits this long
+/// at most, whatever the plugin declared.
+pub const SESSION_END_WAIT: Duration = Duration::from_secs(5);
 
 /// Effects every answered event of the conversation allows.
 const COMMON_EFFECTS: [&str; 10] = [
@@ -135,18 +143,22 @@ pub fn event_limit(user_limit: Option<u64>, declared: Option<u64>) -> Duration {
 /// One plugin inside one session.
 pub struct PluginSlot {
 	pub name: String,
+	/// The config entry, kept to connect again after the connection closed.
+	pub config: PluginConfig,
 	pub transport: Arc<dyn Transport>,
-	/// `timeout_seconds` of the config entry.
-	pub user_limit: Option<u64>,
 	/// Seconds per event, as the plugin declared them.
 	pub declared_limits: BTreeMap<String, u64>,
 	pub subscribed: HashSet<String>,
 	pub options: PluginOptions,
 	pub status_fields: Vec<StatusField>,
 	pub commands: Vec<CommandSpec>,
-	/// Off for the rest of the session: it sends nothing and is asked nothing.
-	pub off: bool,
+	/// Failed events in a row, counted until the plugin is paused.
 	pub failures: u32,
+	/// The plugin is asked nothing until then. Once the time has passed it
+	/// stays set until an event is answered: the next event is a trial.
+	pub paused_until: Option<Instant>,
+	/// Length of the current pause. A failed trial doubles it.
+	pub pause: Duration,
 	/// How many messages of the session this plugin has been sent.
 	pub seen: usize,
 	/// The host rewrote the history: the next event carries the full list.
@@ -180,23 +192,23 @@ pub struct PluginSlot {
 
 impl PluginSlot {
 	pub fn new(
-		name: &str,
+		config: &PluginConfig,
 		transport: Arc<dyn Transport>,
-		user_limit: Option<u64>,
 		subscribed: HashSet<String>,
 		result: &protocol::InitializeResult,
 	) -> Self {
 		Self {
-			name: name.to_string(),
+			name: config.name.clone(),
+			config: config.clone(),
 			transport,
-			user_limit,
 			declared_limits: result.timeouts.clone(),
 			subscribed,
 			options: result.options.clone(),
 			status_fields: result.status_fields.clone(),
 			commands: result.commands.clone(),
-			off: false,
 			failures: 0,
+			paused_until: None,
+			pause: FIRST_PAUSE,
 			seen: 0,
 			reset_pending: false,
 			rule_matches: Vec::new(),
@@ -217,13 +229,88 @@ impl PluginSlot {
 		}
 	}
 
-	pub fn takes(&self, event: &str) -> bool {
-		!self.off && self.subscribed.contains(event)
+	/// The plugin is paused and the pause is not over.
+	pub fn is_paused(&self) -> bool {
+		self.paused_until.is_some_and(|until| Instant::now() < until)
 	}
 
-	/// Time one `event` gets.
+	pub fn takes(&self, event: &str) -> bool {
+		self.subscribed.contains(event) && !self.is_paused()
+	}
+
+	/// Time one `event` may go without a sign of life from the plugin.
 	pub fn limit(&self, event: &str) -> Duration {
-		event_limit(self.user_limit, self.declared_limits.get(event).copied())
+		event_limit(self.config.timeout_seconds, self.declared_limits.get(event).copied())
+	}
+
+	/// How long a request for `event_name` waits. A plugin's `progress`
+	/// notification restarts the silence clock, but the whole request never
+	/// takes longer than the host's own maximum.
+	pub fn wait_limit(&self, event_name: &str) -> WaitLimit {
+		let silence = self.limit(event_name);
+		if event_name == event::SESSION_END {
+			return WaitLimit {
+				silence: silence.min(SESSION_END_WAIT),
+				total: SESSION_END_WAIT,
+			};
+		}
+		WaitLimit {
+			silence,
+			total: Duration::from_secs(MAX_PLUGIN_TIMEOUT_SECONDS),
+		}
+	}
+
+	/// An event was answered: forget the failures and the pause. `true` when
+	/// the plugin was paused, so the answer ends a pause.
+	pub fn recover(&mut self) -> bool {
+		self.failures = 0;
+		self.pause = FIRST_PAUSE;
+		self.paused_until.take().is_some()
+	}
+}
+
+/// How long the agent waited for plugins. Events that run at the same time
+/// count once, from the first one to start to the last one to end.
+#[derive(Default)]
+pub struct WaitClock {
+	/// Events awaited right now.
+	in_flight: u32,
+	/// When `in_flight` last left zero.
+	since: Option<Instant>,
+	collected: Duration,
+}
+
+impl WaitClock {
+	pub fn enter(&mut self, now: Instant) {
+		if self.in_flight == 0 {
+			self.since = Some(now);
+		}
+		self.in_flight += 1;
+	}
+
+	pub fn leave(&mut self, now: Instant) {
+		self.in_flight = self.in_flight.saturating_sub(1);
+		if self.in_flight == 0 {
+			self.collect(now);
+			self.since = None;
+		}
+	}
+
+	/// Milliseconds collected so far, up to `now`. The clock starts again from zero.
+	pub fn take_ms(&mut self, now: Instant) -> u64 {
+		if self.since.is_some() {
+			self.collect(now);
+			self.since = Some(now);
+		}
+		let milliseconds = self.collected.as_millis() as u64;
+		self.collected = Duration::ZERO;
+		milliseconds
+	}
+
+	fn collect(&mut self, now: Instant) {
+		if let Some(since) = self.since {
+			self.collected += now.saturating_duration_since(since);
+		}
 	}
 }
 
@@ -235,6 +322,8 @@ pub struct SessionState {
 	/// The plugin whose `plan` effect won the last merge.
 	pub plan_owner: Option<String>,
 	pub notices: Vec<String>,
+	/// Time the agent waited for plugins since it was last taken.
+	pub wait: WaitClock,
 }
 
 /// Effects `event` allows. A notification allows none.

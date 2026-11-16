@@ -24,14 +24,22 @@ struct Cli {
 }
 
 #[test]
-fn evaluate_args_model_and_file_are_optional() {
+fn the_model_defaults_to_the_one_octomind_shipped_for_its_judgements() {
 	let cli = Cli::try_parse_from(["octomind"]).expect("bare parse");
-	assert!(cli.args.model.is_none());
+	assert_eq!(cli.args.model, DEFAULT_MODEL);
+	assert_eq!(DEFAULT_MODEL, "cloudflare:typesafe/jev");
 	assert!(cli.args.file.is_none());
 
 	let cli = Cli::try_parse_from(["octomind", "-m", "typesafe:jev-latest", "req.json"]).expect("model + file parse");
-	assert_eq!(cli.args.model.as_deref(), Some("typesafe:jev-latest"));
+	assert_eq!(cli.args.model, "typesafe:jev-latest");
 	assert_eq!(cli.args.file.as_deref(), Some(Path::new("req.json")));
+}
+
+#[test]
+fn the_help_text_names_the_default_model() {
+	use clap::CommandFactory;
+	let help = Cli::command().render_long_help().to_string();
+	assert!(help.contains(DEFAULT_MODEL), "{help}");
 }
 
 #[test]
@@ -55,16 +63,17 @@ fn parse_input_accepts_typed_questions_and_rejects_empty() {
 }
 
 #[tokio::test]
-async fn an_absent_or_empty_model_requires_an_explicit_model() {
+async fn an_empty_model_is_rejected() {
 	let request = tempfile::NamedTempFile::new().unwrap();
 	std::fs::write(request.path(), include_str!("../../config-templates/evaluate.json")).unwrap();
-	for model in [None, Some(String::new())] {
-		let error = execute(&EvaluateArgs {
-			model,
-			file: Some(request.path().to_path_buf()),
-		})
-		.await
-		.unwrap_err();
-		assert_eq!(error.to_string(), "model is absent or empty; pass --model");
-	}
+	let error = execute(&EvaluateArgs {
+		model: String::new(),
+		file: Some(request.path().to_path_buf()),
+	})
+	.await
+	.unwrap_err();
+	assert_eq!(
+		error.to_string(),
+		"model is empty; pass a `provider:model` name with --model"
+	);
 }

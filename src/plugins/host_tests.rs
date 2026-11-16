@@ -16,10 +16,10 @@
 
 use super::*;
 use crate::plugins::protocol::{
-	BackgroundOutput, Command, CompactBefore, PromptSubmit, RequestBefore, RequestPhase, SessionStart, SubagentStart,
-	ToolAfter, ToolBefore, ToolCall, ToolOutcome, TurnEnd, TurnKind,
+	BackgroundOutput, Command, CompactBefore, Judge, PromptSubmit, RequestBefore, RequestPhase, SessionStart,
+	SubagentStart, ToolAfter, ToolBefore, ToolCall, ToolOutcome, TurnEnd, TurnKind,
 };
-use crate::plugins::state::allowed_effects;
+use crate::plugins::state::{allowed_effects, FIRST_PAUSE, SESSION_END_WAIT};
 use crate::plugins::test_support::StubPlugin as FakePlugin;
 use async_trait::async_trait;
 use serde_json::json;
@@ -35,7 +35,10 @@ impl Connector for FakeConnector {
 	async fn connect(&self, config: &PluginConfig) -> Result<Arc<dyn Transport>> {
 		self.connects.fetch_add(1, Ordering::SeqCst);
 		match self.plugins.get(&config.name) {
-			Some(plugin) => Ok(Arc::new(plugin.clone())),
+			Some(plugin) => {
+				plugin.reopen();
+				Ok(Arc::new(plugin.clone()))
+			}
 			None => bail!("nothing to connect to for {}", config.name),
 		}
 	}
@@ -1157,8 +1160,27 @@ async fn an_answer_past_the_time_limit_counts_as_unanswered() {
 	assert!(notices[0].contains("within 1s"), "{}", notices[0]);
 }
 
+/// Make the pause of plugin `index` over, as if its time had passed.
+fn end_the_pause(rig: &Rig, index: usize) {
+	let mut sessions = rig.host.sessions.lock();
+	sessions.get_mut(SESSION).unwrap().slots[index].paused_until = Some(Instant::now() - Duration::from_secs(1));
+}
+
+fn pause_seconds(rig: &Rig) -> u64 {
+	rig.host.sessions.lock()[SESSION].slots[0].pause.as_secs()
+}
+
+/// A plugin that fails the first `MAX_CONSECUTIVE_FAILURES` events and answers every later one.
+async fn paused_rig() -> Rig {
+	let rig = rig(vec![plugin("a", failing_until(MAX_CONSECUTIVE_FAILURES as usize))]).await;
+	for _ in 0..MAX_CONSECUTIVE_FAILURES {
+		rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	}
+	rig
+}
+
 #[tokio::test]
-async fn three_failures_in_a_row_turn_the_plugin_off_for_the_session() {
+async fn three_failures_in_a_row_pause_the_plugin_and_its_events_are_skipped_with_one_notice() {
 	let rig = rig(vec![
 		plugin("a", failing_until(usize::MAX)),
 		plugin("b", FakePlugin::new(&[event::REQUEST_BEFORE])),
@@ -1170,20 +1192,195 @@ async fn three_failures_in_a_row_turn_the_plugin_off_for_the_session() {
 	let notices = rig.host.take_notices(SESSION);
 	assert_eq!(notices.len() as u32, MAX_CONSECUTIVE_FAILURES);
 	assert!(
-		notices.last().unwrap().contains("off for this session"),
+		notices.last().unwrap().contains("did not answer 3 events in a row")
+			&& notices.last().unwrap().contains("tries again in 30s"),
 		"{:?}",
 		notices
 	);
+
 	let sent_before = rig.fake(0).sent(event::REQUEST_BEFORE).len();
 	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+
 	assert_eq!(rig.fake(0).sent(event::REQUEST_BEFORE).len(), sent_before);
-	assert!(rig.host.sessions.lock()[SESSION].slots[0].off);
+	assert!(!rig.host.sessions.lock()[SESSION].slots[0].takes(event::REQUEST_BEFORE));
+	assert!(rig.host.active(SESSION), "a paused plugin is still part of the session");
 	assert!(rig.host.take_notices(SESSION).is_empty());
 	// The other plugin carries on.
 	assert_eq!(
 		rig.fake(1).sent(event::REQUEST_BEFORE).len() as u32,
 		MAX_CONSECUTIVE_FAILURES + 1
 	);
+}
+
+#[tokio::test]
+async fn a_paused_plugin_keeps_its_blocks_and_commands() {
+	let calls = AtomicUsize::new(0);
+	let fake = FakePlugin::new(&[event::REQUEST_BEFORE])
+		.init_field(
+			"commands",
+			json!([{"name": "learn", "hint": "", "description": "Learn"}]),
+		)
+		.respond(move |_, _| {
+			if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+				Ok(json!({"context": [{"name": "c", "text": "t"}], "pin": [{"name": "p", "text": "x"}]}))
+			} else {
+				bail!("boom")
+			}
+		});
+	let rig = rig(vec![plugin("a", fake)]).await;
+	for _ in 0..=MAX_CONSECUTIVE_FAILURES {
+		rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	}
+
+	assert!(rig.host.sessions.lock()[SESSION].slots[0].is_paused());
+	assert_eq!(rig.host.context_blocks(SESSION).len(), 1);
+	assert_eq!(rig.host.pinned_blocks(SESSION).len(), 1);
+	assert_eq!(rig.host.commands(SESSION).len(), 1);
+}
+
+#[tokio::test]
+async fn once_the_pause_is_over_the_next_event_is_sent_and_an_answer_brings_the_plugin_back() {
+	let rig = paused_rig().await;
+	rig.host.take_notices(SESSION);
+	end_the_pause(&rig, 0);
+
+	let effects = rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+
+	assert_eq!(effects.notes, vec!["alive".to_string()]);
+	assert_eq!(
+		rig.host.take_notices(SESSION),
+		vec!["plugin 'a' answers again".to_string()]
+	);
+	{
+		let sessions = rig.host.sessions.lock();
+		let slot = &sessions[SESSION].slots[0];
+		assert!(slot.paused_until.is_none() && slot.failures == 0);
+		assert_eq!(slot.pause, FIRST_PAUSE);
+	}
+	// Back for good: the next event is a plain one and tells nobody.
+	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	assert_eq!(
+		rig.fake(0).sent(event::REQUEST_BEFORE).len() as u32,
+		MAX_CONSECUTIVE_FAILURES + 2
+	);
+	assert!(rig.host.take_notices(SESSION).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_trial_doubles_the_pause_up_to_the_cap() {
+	let rig = rig(vec![plugin("a", failing_until(usize::MAX))]).await;
+	for _ in 0..MAX_CONSECUTIVE_FAILURES {
+		rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	}
+	rig.host.take_notices(SESSION);
+	assert_eq!(pause_seconds(&rig), FIRST_PAUSE.as_secs());
+
+	let mut pauses = Vec::new();
+	for _ in 0..6 {
+		end_the_pause(&rig, 0);
+		rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+		pauses.push(pause_seconds(&rig));
+	}
+
+	assert_eq!(
+		pauses,
+		vec![60, 120, 240, 480, LONGEST_PAUSE.as_secs(), LONGEST_PAUSE.as_secs()]
+	);
+	assert!(rig.host.sessions.lock()[SESSION].slots[0].is_paused());
+	assert!(
+		rig.host.take_notices(SESSION).is_empty(),
+		"a failed trial is logged, not shown"
+	);
+	assert_eq!(
+		rig.fake(0).sent(event::REQUEST_BEFORE).len() as u32,
+		MAX_CONSECUTIVE_FAILURES + 6
+	);
+}
+
+#[tokio::test]
+async fn a_failure_that_arrives_during_a_pause_does_not_lengthen_it() {
+	let rig = paused_rig().await;
+
+	rig.host.reject(SESSION, "a", event::REQUEST_BEFORE, &anyhow!("late"));
+
+	assert_eq!(pause_seconds(&rig), FIRST_PAUSE.as_secs());
+}
+
+#[tokio::test]
+async fn a_closed_connection_is_opened_again_and_the_next_event_carries_the_full_history() {
+	let rig = rig(vec![plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]))]).await;
+	let mut messages = vec![user("one"), user("two")];
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+	messages.push(user("three"));
+	rig.fake(0).disconnect();
+
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+	messages.push(user("four"));
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+
+	assert_eq!(rig.connects.load(Ordering::SeqCst), 2);
+	assert_eq!(rig.fake(0).sent(METHOD_INITIALIZE).len(), 2);
+	let sent = rig.fake(0).sent(event::REQUEST_BEFORE);
+	assert_eq!(sent[1]["messages"].as_array().unwrap().len(), 3);
+	assert_eq!(sent[1]["messages_reset"], true);
+	assert_eq!(sent[2]["messages"].as_array().unwrap().len(), 1);
+	assert_eq!(sent[2]["messages_reset"], false);
+	assert!(rig.host.take_notices(SESSION).is_empty());
+}
+
+/// A connector that can be told to refuse, to see what a failed reconnect does.
+struct RefusingConnector {
+	plugin: FakePlugin,
+	refuse: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait]
+impl Connector for RefusingConnector {
+	async fn connect(&self, _config: &PluginConfig) -> Result<Arc<dyn Transport>> {
+		if self.refuse.load(Ordering::SeqCst) {
+			bail!("nobody listens");
+		}
+		self.plugin.reopen();
+		Ok(Arc::new(self.plugin.clone()))
+	}
+}
+
+#[tokio::test]
+async fn a_connection_that_cannot_be_opened_again_counts_as_a_failed_event() {
+	let fake = FakePlugin::new(&[event::REQUEST_BEFORE]);
+	let refuse = Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let host = Host::new(Arc::new(RefusingConnector {
+		plugin: fake.clone(),
+		refuse: refuse.clone(),
+	}));
+	let dir = tempfile::tempdir().unwrap();
+	host.start_session(SESSION, ROLE, dir.path(), &[config("a")]).await;
+	let ctx = EventContext {
+		session_id: SESSION,
+		parent_session_id: None,
+		role: ROLE,
+		workdir: dir.path(),
+		project: "proj",
+		messages: &[],
+		detached: false,
+		status: None,
+		plan: None,
+		tools: None,
+		active_skills: Vec::new(),
+	};
+	fake.disconnect();
+	refuse.store(true, Ordering::SeqCst);
+
+	host.request_before(&ctx, request_before()).await;
+
+	assert!(fake.sent(event::REQUEST_BEFORE).is_empty());
+	let notices = host.take_notices(SESSION);
+	assert_eq!(notices.len(), 1);
+	assert!(notices[0].contains("nobody listens"), "{}", notices[0]);
+
+	refuse.store(false, Ordering::SeqCst);
+	host.request_before(&ctx, request_before()).await;
+	assert_eq!(fake.sent(event::REQUEST_BEFORE).len(), 1);
 }
 
 #[tokio::test]
@@ -1477,8 +1674,8 @@ struct StuckOnHistory(FakePlugin);
 
 #[async_trait]
 impl Transport for StuckOnHistory {
-	async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
-		self.0.request(method, params, timeout).await
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value> {
+		self.0.request(method, params, limit).await
 	}
 
 	async fn notify(&self, method: &str, params: Value) -> Result<()> {
@@ -1567,8 +1764,8 @@ struct SlowAnswers(FakePlugin);
 
 #[async_trait]
 impl Transport for SlowAnswers {
-	async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
-		let answer = self.0.request(method, params, timeout).await;
+	async fn request(&self, method: &str, params: Value, limit: WaitLimit) -> Result<Value> {
+		let answer = self.0.request(method, params, limit).await;
 		if method != METHOD_INITIALIZE {
 			tokio::time::sleep(Duration::from_secs(3)).await;
 		}
@@ -1623,4 +1820,248 @@ async fn what_the_plugin_is_due_to_hear_survives_a_send_that_is_dropped() {
 	assert_eq!(sent.len(), 2);
 	assert_eq!(sent[1]["rule_matches"][0]["id"], "r1");
 	assert_eq!(sent[1]["dropped_context"], json!(["c1"]));
+}
+
+// ---------------------------------------------------------------------------
+// Events from places without a message list, judgements, the count of judged answers
+// ---------------------------------------------------------------------------
+
+fn detached(rig: &Rig) -> EventContext<'_> {
+	EventContext {
+		detached: true,
+		..rig.ctx(&[])
+	}
+}
+
+fn message_counts(sent: &[Value]) -> Vec<usize> {
+	sent.iter()
+		.map(|params| params["messages"].as_array().unwrap().len())
+		.collect()
+}
+
+#[tokio::test]
+async fn an_event_without_a_message_list_carries_none_and_the_next_one_sends_only_what_is_new() {
+	let rig = rig(vec![plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]))]).await;
+	let mut messages = vec![user("one"), user("two")];
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+	messages.push(user("three"));
+
+	rig.host.request_before(&detached(&rig), request_before()).await;
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+
+	let sent = rig.fake(0).sent(event::REQUEST_BEFORE);
+	assert_eq!(message_counts(&sent), vec![2, 0, 1]);
+	assert_eq!(sent[1]["messages_reset"], false);
+	assert_eq!(sent[2]["messages"][0]["content"], "three");
+	assert_eq!(sent[2]["messages_reset"], false);
+}
+
+#[tokio::test]
+async fn an_event_without_a_message_list_leaves_a_pending_reset_for_the_next_event_with_one() {
+	let rig = rig(vec![plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]))]).await;
+	let messages = vec![user("one"), user("two")];
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+	rig.host.mark_history_reset(SESSION);
+
+	rig.host.request_before(&detached(&rig), request_before()).await;
+	assert!(rig.host.sessions.lock()[SESSION].slots[0].reset_pending);
+	rig.host.request_before(&rig.ctx(&messages), request_before()).await;
+
+	let sent = rig.fake(0).sent(event::REQUEST_BEFORE);
+	assert_eq!(message_counts(&sent), vec![2, 0, 2]);
+	assert_eq!(sent[1]["messages_reset"], false);
+	assert_eq!(sent[2]["messages_reset"], true);
+}
+
+fn judge_payload() -> Judge {
+	Judge {
+		purpose: "skills".into(),
+		subject: json!({}),
+		questions: BTreeMap::new(),
+		items: None,
+	}
+}
+
+fn judging_plugin() -> FakePlugin {
+	FakePlugin::new(&[event::JUDGE]).answer(json!({"judgements": {"q": {"type": "yes_no", "yes": 0.8}}}))
+}
+
+#[tokio::test]
+async fn the_first_plugin_that_judges_wins_and_a_plugin_with_no_judgement_is_skipped() {
+	let rig = rig(vec![
+		plugin("silent", FakePlugin::new(&[event::JUDGE])),
+		plugin("first", judging_plugin()),
+		plugin("second", judging_plugin()),
+	])
+	.await;
+
+	let judged = rig
+		.host
+		.judge(&rig.ctx(&[]), judge_payload())
+		.await
+		.expect("a plugin judged");
+
+	assert_eq!(judged.plugin, "first");
+	assert!(judged.judgements.contains_key("q"));
+	assert_eq!(rig.fake(0).sent(event::JUDGE).len(), 1, "the silent plugin was asked");
+	assert!(
+		rig.fake(2).sent(event::JUDGE).is_empty(),
+		"the second judge was not asked"
+	);
+}
+
+#[tokio::test]
+async fn a_judge_event_that_no_plugin_answers_with_a_judgement_gives_none() {
+	let rig = rig(vec![plugin("silent", FakePlugin::new(&[event::JUDGE]))]).await;
+
+	assert!(rig.host.judge(&rig.ctx(&[]), judge_payload()).await.is_none());
+
+	let nobody = self::rig(Vec::new()).await;
+	assert!(nobody.host.judge(&nobody.ctx(&[]), judge_payload()).await.is_none());
+}
+
+#[tokio::test]
+async fn judged_counts_go_out_with_the_next_event_and_stay_until_one_is_answered() {
+	let rig = rig(vec![plugin("a", failing_until(1))]).await;
+	rig.host.record_judged(SESSION, "a", "skills", 2);
+	rig.host.record_judged(SESSION, "a", "skills", 1);
+	rig.host.record_judged(SESSION, "a", "capabilities", 4);
+
+	for _ in 0..3 {
+		rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	}
+
+	let sent = rig.fake(0).sent(event::REQUEST_BEFORE);
+	assert_eq!(sent[0]["judged"], json!({"skills": 3, "capabilities": 4}));
+	assert_eq!(
+		sent[1]["judged"],
+		json!({"skills": 3, "capabilities": 4}),
+		"the first event failed"
+	);
+	assert!(sent[2].get("judged").is_none(), "the second event was answered");
+}
+
+#[tokio::test]
+async fn counts_added_while_an_event_runs_stay_for_the_next_one() {
+	let slow = FakePlugin::new(&[event::REQUEST_BEFORE]).delay(Duration::from_millis(300));
+	let rig = rig(vec![plugin("a", slow)]).await;
+	rig.host.record_judged(SESSION, "a", "skills", 2);
+
+	let ctx = rig.ctx(&[]);
+	tokio::join!(rig.host.request_before(&ctx, request_before()), async {
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		rig.host.record_judged(SESSION, "a", "skills", 1);
+	});
+	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+
+	let sent = rig.fake(0).sent(event::REQUEST_BEFORE);
+	assert_eq!(sent[0]["judged"], json!({"skills": 2}));
+	assert_eq!(sent[1]["judged"], json!({"skills": 1}));
+	assert!(sent[2].get("judged").is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Time the agent waited
+// ---------------------------------------------------------------------------
+
+const SLOW_ANSWER: Duration = Duration::from_millis(300);
+
+#[tokio::test]
+async fn the_time_of_an_awaited_event_is_counted_once_and_a_notification_counts_nothing() {
+	let slow = FakePlugin::new(&[event::REQUEST_BEFORE, event::COMPACT_AFTER]).delay(SLOW_ANSWER);
+	let rig = rig(vec![plugin("a", slow)]).await;
+
+	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+	let waited = rig.host.take_waited_ms(SESSION);
+	assert!(waited >= SLOW_ANSWER.as_millis() as u64, "{waited}");
+	assert_eq!(rig.host.take_waited_ms(SESSION), 0, "taking clears the time");
+
+	rig.host
+		.compact_after(
+			&rig.ctx(&[]),
+			protocol::CompactAfter {
+				carried_summary: None,
+				goal: None,
+			},
+		)
+		.await;
+	assert_eq!(rig.fake(0).sent(event::COMPACT_AFTER).len(), 1);
+	assert_eq!(rig.host.take_waited_ms(SESSION), 0);
+}
+
+#[tokio::test]
+async fn events_that_run_at_the_same_time_count_their_union() {
+	let slow = FakePlugin::new(&[event::REQUEST_BEFORE]).delay(SLOW_ANSWER);
+	let rig = rig(vec![plugin("a", slow)]).await;
+
+	let (first, second) = (rig.ctx(&[]), rig.ctx(&[]));
+	tokio::join!(
+		rig.host.request_before(&first, request_before()),
+		rig.host.request_before(&second, request_before())
+	);
+
+	let waited = rig.host.take_waited_ms(SESSION);
+	let one_answer = SLOW_ANSWER.as_millis() as u64;
+	assert!(waited >= one_answer && waited < 2 * one_answer, "{waited}");
+}
+
+#[tokio::test]
+async fn an_event_that_is_dropped_still_stops_the_clock() {
+	let slow = FakePlugin::new(&[event::REQUEST_BEFORE]).delay(Duration::from_secs(600));
+	let rig = rig(vec![plugin("a", slow)]).await;
+
+	let cancelled = tokio::time::timeout(
+		Duration::from_millis(100),
+		rig.host.request_before(&rig.ctx(&[]), request_before()),
+	)
+	.await;
+	assert!(cancelled.is_err());
+	let waited = rig.host.take_waited_ms(SESSION);
+	assert!(waited >= 100, "{waited}");
+
+	tokio::time::sleep(Duration::from_millis(200)).await;
+	assert_eq!(
+		rig.host.take_waited_ms(SESSION),
+		0,
+		"the clock kept running after the drop"
+	);
+}
+
+#[tokio::test]
+async fn usage_passes_to_the_same_plugin_of_another_session_and_the_rest_is_dropped() {
+	let answer = json!({"usage": [{"label": "judge", "calls": 1, "input_tokens": 1, "output_tokens": 1, "cost": 0.5}]});
+	let rig = rig(vec![
+		plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]).answer(answer.clone())),
+		plugin("b", FakePlugin::new(&[event::REQUEST_BEFORE]).answer(answer)),
+	])
+	.await;
+	rig.host
+		.start_session("parent", ROLE, rig.dir.path(), &[config("a")])
+		.await;
+	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
+
+	rig.host.pass_usage(SESSION, "parent");
+
+	assert!(rig.host.take_usage(SESSION).is_empty());
+	let passed = rig.host.take_usage("parent");
+	assert_eq!(passed.len(), 1);
+	assert_eq!((passed[0].0.as_str(), passed[0].1.cost), ("a", 0.5));
+}
+
+#[tokio::test]
+async fn session_end_waits_five_seconds_at_most_whatever_the_plugin_declares() {
+	let fake = FakePlugin::new(&[event::SESSION_END, event::TURN_END])
+		.init_field("timeouts", json!({"session.end": 3600, "turn.end": 120}));
+	let rig = rig(vec![(config_without_limit("a"), fake)]).await;
+	let limit_of = |event_name| rig.host.prepare(&rig.ctx(&[]), "a", event_name).unwrap().limit;
+
+	assert_eq!(
+		limit_of(event::SESSION_END),
+		WaitLimit {
+			silence: SESSION_END_WAIT,
+			total: SESSION_END_WAIT
+		}
+	);
+	assert_eq!(limit_of(event::TURN_END).silence, Duration::from_secs(120));
 }

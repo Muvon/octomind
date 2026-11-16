@@ -252,8 +252,10 @@ impl SupervisorAccounting {
 	}
 }
 
-/// Book what a plugin spent on models into the session: the per-label sums,
-/// the dollar total, and the time the agent waited for those calls.
+/// Book what a plugin spent on models into the session: the per-label sums and
+/// the dollar total. The time the agent waited is not booked here: octomind
+/// measures it itself (`plugins::take_waited_ms`), and it also covers waiting
+/// that is not a model call.
 pub fn record_plugin_usage(session: &mut Session, plugin: &str, usage: &protocol::Usage) {
 	crate::log_debug!("Plugin '{plugin}' spent {} on '{}'", usage.cost, usage.label);
 	let entry = Usage {
@@ -272,7 +274,6 @@ pub fn record_plugin_usage(session: &mut Session, plugin: &str, usage: &protocol
 		.entry(usage.label.clone())
 		.or_default()
 		.add(&entry);
-	accounting.blocking_wall_time_ms += entry.blocking_wall_time_ms;
 	session.info.total_cost += usage.cost;
 }
 

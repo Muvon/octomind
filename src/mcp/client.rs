@@ -610,7 +610,7 @@ pub(crate) fn missing_env_keys(server: &McpServerConfig) -> Vec<String> {
 /// Resolve `{{ENV:KEY}}` placeholders in a string from the parent environment.
 /// Unresolved placeholders are left as-is — callers should guard with
 /// `missing_env_keys` before relying on the result.
-fn resolve_env_placeholders(s: &str) -> String {
+pub(crate) fn resolve_env_placeholders(s: &str) -> String {
 	let mut result = s.to_string();
 	for key in crate::agent::inputs::extract_env_keys(s) {
 		if let Ok(val) = std::env::var(&key) {

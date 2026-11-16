@@ -127,7 +127,7 @@ Reference](../reference/02-session-commands.md) for detailed arguments.
 | Replying | `/reply`, `/reply 2`, `/reply parser fix`, `>` at the start of a prompt line |
 | Media and clipboard | `/image screenshot.png`, `/video demo.mp4`, `/copy all` |
 | Tools and planning | `/mcp`, `/run`, `/plan`, `/skill`, `/schedule` |
-| Account, learning, and viewing | `/usage`, `/login`, `/learning list`, `/share`, `/analyze` |
+| Account, learning, and viewing | `/usage`, `/login`, `/share`, `/analyze`; with the Besydr plugin also `/learning list` |
 
 `/?` is an alias for `/help`.
 
@@ -135,7 +135,7 @@ Reference](../reference/02-session-commands.md) for detailed arguments.
 command monitors. Use `/status agents`, `/status monitors`, or `/status jobs` for the full category view. Status is
 scoped to the current process and session.
 
-For example, inspect available tools, the supervisor-managed plan, and background activity:
+For example, inspect available tools, the current plan, and background activity:
 
 ```text
 /mcp
@@ -146,7 +146,7 @@ For example, inspect available tools, the supervisor-managed plan, and backgroun
 ```
 
 `/run`, `/prompt`, `/skill`, and `/schedule` with no arguments list their available entries. `/plan` inspects the plan;
-the supervisor owns plan updates. `/share` uploads the log for viewing. `/analyze` starts a localhost bridge for the
+a plugin owns plan updates. `/share` uploads the log for viewing. `/analyze` starts a localhost bridge for the
 browser viewer without uploading the log through the share endpoint.
 
 `/workflow` lists tap workflows; `/workflow <name> <input>` runs one — it shells out to `octomind workflow <name> --format jsonl` with the input on stdin and returns the final step's output. See [Workflows](09-workflows.md) for the file format and CLI examples.
@@ -195,10 +195,9 @@ Track token usage and spending:
 - Per-tool, per-response, per-request (input), and per-compression token averages (each shown only when nonzero)
 - Cache marker stats (system / tool / content markers, non-cached tokens)
 - Compression statistics (when any compression has happened)
-- Request/turn timings, learning usage, and available agent/supervisor statistics
+- Request/turn timings, plus one block of rows from each plugin that answers the status request
 
-Supervisor counters are process-global and reset on restart; concurrent ACP/WebSocket sessions can mix those counters.
-They are separate from persisted session totals.
+The plugin's own breakdown of model calls is also saved with the session's cost record, under `supervisor_accounting`.
 
 Edit these root keys before any table header to set USD thresholds (both default to `0.0`, disabled):
 
@@ -406,7 +405,7 @@ As sessions grow, manage context to control costs:
 
 | Command | Effect |
 |---------|--------|
-| `/done` | Force context compression; start lesson extraction when learning is enabled |
+| `/done` | Force context compression; with the Besydr plugin, also start lesson extraction |
 | `/context` | View current context (same as `/context all`) |
 | `/context all` | Show all messages |
 | `/context assistant` | Show only assistant messages |
@@ -421,11 +420,11 @@ Automatic compression also runs as sessions grow. See [Compression](08-compressi
 ```text
 /context large
 /done
-/learning list
+/learning list    # only with the Besydr plugin
 ```
 
-`/done` bypasses automatic compression thresholds and keeps the session open. Lesson extraction uses the pre-compression
-transcript and runs asynchronously; the learning list may not update immediately.
+`/done` bypasses automatic compression thresholds and keeps the session open. With the Besydr plugin, lesson extraction runs
+asynchronously on the pre-compression transcript; the learning list may not update immediately.
 
 ## Project Instructions
 

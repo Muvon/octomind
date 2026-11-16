@@ -20,7 +20,7 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 |---------|---------|
 | `run` | Start an interactive or non-interactive AI session (the main command). |
 | `login` | Sign in to an Octomind account or a ChatGPT subscription. |
-| `configure` | Choose a provider, credentials, and the main, supervisor, and compression models interactively. |
+| `configure` | Choose a provider, credentials, and the main and compression models interactively. |
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
@@ -28,11 +28,10 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 | `untap` | Remove a previously added tap. |
 | `vars` | Show placeholder variables and their resolved values. |
 | `send` | Inject a message into a running named session. |
-| `evaluate` | Ask the evaluation model typed questions about a JSON state; prints calibrated answers as JSON. See [Supervisor](../usage/14-supervisor.md#evaluation-gates). |
+| `evaluate` | Ask the evaluation model typed questions about a JSON state; prints calibrated answers as JSON. See [Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md). |
 | `workflow` | List tap workflows or run one by name/local TOML file. See [Workflows](../usage/09-workflows.md). |
 | `completion` | Generate shell completion scripts. |
 | `complete` | Hidden: print cached completion candidates. |
-| `distill` | Hidden: extract memories from a disposable transcript snapshot. |
 | `help [COMMAND]...` | Clap-generated help, including nested commands such as `help tap init`. |
 
 ### Global config overrides
@@ -43,8 +42,8 @@ keys and paths through arrays are errors. Array indexes are not supported. Overr
 and they cannot be combined with the `config` or `configure` subcommands.
 
 ```bash
-octomind -c supervisor.enabled=false run
-octomind run -c supervisor.enabled=false -c log_level=debug
+octomind -c max_identical_rounds=0 run
+octomind run -c max_identical_rounds=0 -c log_level=debug
 ```
 
 The global config file lives at `~/.local/share/octomind/config/config.toml` on macOS and Linux
@@ -74,14 +73,13 @@ filter, Enter to choose, Esc works like Skip. Hub setup reuses `octomind login` 
 models to `octohub:auto`. Providers whose key is already present are listed first. For a direct provider, setup prompts
 with hidden input for its key and any other required variable that is missing (empty input asks again), then offers a
 filterable model list with an "other" row for typing a model ID. OpenRouter's and Ollama Cloud's lists are fetched from
-their public model catalogs; if that fails, you type the ID. After the main model, setup asks `Use <model> for the supervisor and
-compression too? [Y/n]`; Enter keeps it for both, `n` opens a picker for each.
+their public model catalogs; if that fails, you type the ID. After the main model, setup asks `Use <model> for compression too? It shortens long conversations; a cheaper model often fits. [Y/n]`; Enter keeps it for both, `n` opens a picker for the compression model.
 
 ```bash
 octomind configure
 ```
 
-Only `[model].name`, `[supervisor.model].name`, and `[compression.model].name` change in the selected config file;
+Only `[model].name` and `[compression.model].name` change in the selected config file;
 comments and other settings are preserved. New configs use the embedded template. Credentials go into the user-scope
 `<data-dir>/config/.env`, with owner-only permissions on Unix, and never into `config.toml`.
 Skip leaves an existing config unchanged; on first run it writes the default template. The final summary shows each
@@ -415,14 +413,14 @@ octomind send --name ci-watcher "Check build status"
 
 ## `octomind evaluate [FILE]`
 
-Ask the evaluation model (the model `[decision]` uses at its gate seams) a set of typed questions about one
-JSON state and print the calibrated answers. There is no generated text: every question comes back as a probability.
-Use it to try question wording on a real state before it becomes a seam constant, to check provider credentials, or
+Ask an evaluation model a set of typed questions about one JSON state and print the calibrated answers. There is no
+generated text: every question comes back as a probability. Use it to try question wording on a real state, to check
+provider credentials, or
 from scripts and guardrail validators that need a calibrated yes/no without a session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Defaults to `[decision] model`; absent or empty requires `-m`. |
+| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Required; an absent or empty value is an error. |
 | `FILE` | | JSON request file. If omitted, reads from stdin. |
 
 The request is `{"state": <any JSON>, "questions": {"<id>": <question>, …}}`. A question is one of:
@@ -433,9 +431,8 @@ The request is `{"state": <any JSON>, "questions": {"<id>": <question>, …}}`. 
 
 Answers keyed by question id go to **stdout**: pretty-printed on a terminal, one compact line when piped, so `jq` works
 either way. One line with model, tokens, cost, and wall time goes to **stderr**. Credentials come from the environment
-as for the seams (`TYPESAFE_API_KEY`; `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`; `OCTOHUB_API_KEY`). An empty
-`questions` map is rejected before any call; a missing key, HTTP error, or unparseable response exits non-zero. Unlike
-the seams, the call uses octolib's defaults: two retries on 429/5xx and a 30-second timeout.
+(`TYPESAFE_API_KEY`; `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`; `OCTOHUB_API_KEY`). An empty
+`questions` map is rejected before any call; a missing key, HTTP error, or unparseable response exits non-zero. The call uses octolib's defaults: two retries on 429/5xx and a 30-second timeout.
 
 [config-templates/evaluate.json](../../config-templates/evaluate.json) is a runnable request with all three types;
 [Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md) wires the command into a validator and a pipe:
@@ -519,25 +516,15 @@ Elvish remain static.
 ## Hidden internal commands
 
 These commands are omitted from normal help but remain callable. `complete` reads cached tap data; an unknown subcommand
-prints nothing. `distill` reads and deletes its snapshot before parsing and extracting memories.
+prints nothing.
 
 | Command / argument | Required / default | Meaning |
 |---|---|---|
 | `complete SUBCOMMAND` | Required | `run` lists agent tags and configured roles; `workflow` lists public workflows. |
-| `distill --messages PATH` | Required | JSON array of session messages; consumed and deleted. |
-| `distill --session-file PATH` | Optional | Owning session journal for background usage; omit for standalone extraction. |
-| `distill --role ROLE` | Required | Originating role. |
-| `distill --project PROJECT` | `""` | Project storage scope. |
-| `distill --session SESSION` | `""` | Originating session name. |
-| `distill --outcome OUTCOME` | `unknown` | `verified`, `failed`, or `unknown` completion evidence. |
 
 ```bash
 octomind complete run
 octomind complete workflow
-# A disposable empty snapshot demonstrates the input shape without inventing a transcript.
-printf '[]\n' > /tmp/octomind-empty-transcript.json
-octomind distill --messages /tmp/octomind-empty-transcript.json --role developer:general \
-  --project demo --session demo --outcome unknown
 ```
 
 ## Sandbox
@@ -593,8 +580,7 @@ CLI registration: [main.rs](../../src/main.rs). Argument structs and behavior: [
 [acp.rs](../../src/commands/acp.rs), [tap.rs](../../src/commands/tap.rs), [untap.rs](../../src/commands/untap.rs),
 [login.rs](../../src/commands/login.rs), [send.rs](../../src/commands/send.rs), [evaluate.rs](../../src/commands/evaluate.rs),
 [vars.rs](../../src/commands/vars.rs),
-[workflow.rs](../../src/commands/workflow.rs), [complete.rs](../../src/commands/complete.rs),
-[distill.rs](../../src/commands/distill.rs). Workflow file schema: [schema.rs](../../src/workflow/schema.rs).
+[workflow.rs](../../src/commands/workflow.rs), [complete.rs](../../src/commands/complete.rs). Workflow file schema: [schema.rs](../../src/workflow/schema.rs).
 State paths: [directories.rs](../../src/directories.rs).
 
 ## See also

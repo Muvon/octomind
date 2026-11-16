@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 31
+version = 32
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -97,6 +97,12 @@ max_session_spending_threshold = 0.0
 # This tracks cost from user input until next user input or session end
 max_request_spending_threshold = 0.0
 
+# Hard stop for runaway tool loops: when this many tool rounds in a row repeat
+# calls and results already seen since the last new result (the previous round
+# again, or a cycle through a few), the turn ends with a notice instead of
+# another model request. 0 = off.
+max_identical_rounds = 10
+
 # ═══════════════════════════════════════════════════════════════════════
 # CAPABILITY AUTO-ACTIVATION
 # Enable/disable automatic capability activation on each user message.
@@ -105,6 +111,33 @@ max_request_spending_threshold = 0.0
 # Disable to require manual `capability(action="enable")` calls only.
 # ═══════════════════════════════════════════════════════════════════════
 auto_capabilities = true
+
+# ═══════════════════════════════════════════════════════════════════════
+# PLUGINS
+# A plugin is a separate program that takes part in the agent loop: octomind
+# sends it an event at fixed points and applies the effects it answers with.
+# A new configuration lists one plugin, Besydr (https://besydr.com): it checks
+# that finished work is finished, guards tool calls and learns from sessions.
+# Octomind downloads it on first use. To run without it, set `enabled = false`
+# on its entry or remove the entry.
+# Keep this key above the first [table] header.
+#
+# Example:
+# [[plugins]]
+# name = "my-plugin"         # unique
+# type = "stdio"             # stdio | socket | http
+# command = "my-plugin"      # stdio: required. socket: started only when nothing answers on `path`
+# args = []
+# # path = "/tmp/my-plugin.sock"                          # socket: required
+# # url = "http://localhost:8080/rpc"                     # http: required
+# # headers = { Authorization = "Bearer {{ENV:TOKEN}}" } # http: values support {{ENV:KEY}}
+# enabled = true
+# roles = []                 # empty = all roles
+# # install_manifest = "https://example.com/latest.json"  # stdio and socket: URL of a signed release; when `command` is not installed, octomind downloads the program for this machine from it, and never updates it later
+# # install_key = "base64 of the 32-byte Ed25519 public key"  # required with install_manifest: the release must be signed with this key, or nothing is installed
+# timeout_seconds = 30       # optional upper limit for one event; a plugin declares the time it needs per event (30s when it declares none), and the smaller value applies
+# ═══════════════════════════════════════════════════════════════════════
+plugins = []
 
 # Complete baseline model profile. Every role, tap, workflow step, dynamic
 # agent, and internal model profile inherits fields it does not override.
@@ -686,146 +719,3 @@ retry_timeout = 30
 request_timeout_seconds = 300
 # SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
 stream_timeout_seconds = 0
-
-# ═══════════════════════════════════════════════════════════════════════
-# SUPERVISOR - out-of-band control plane: learning, orientation, detectors, gate
-# Extracts generalizable lessons from conversations and injects relevant
-# ones into future sessions. Separate from memory — learning is narrower
-# and structured: actionable facts scored by confidence.
-# Storage: learning/{project}/{role}/ — project-scoped, role-filtered.
-# ═══════════════════════════════════════════════════════════════════════
-
-# Calibrated decisions: one attempt, 5 s timeout, no retries.
-# Missing or empty model disables routing. Supervisor decisions fail closed
-# on unavailable answers; writing remains on the supervisor model.
-# Keys: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID, TYPESAFE_API_KEY,
-# or OCTOHUB_API_KEY (+ OCTOHUB_API_URL), according to the provider.
-[decision]
-model = "cloudflare:typesafe/jev"
-# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.
-recall = false
-# Choose an inactive skill when rules abstain. Unavailable activates none.
-skills = false
-# Confirm or promote capability selection. Unavailable keeps the cosine result.
-capabilities = false
-# Pick the specialist for a delegated task among the best semantic matches. Unavailable keeps the cosine result.
-taps = false
-# Demote unneeded summarize packets before a fold. Unavailable keeps lanes.
-compression = false
-# Route supervisor decisions and evolution grading through this model.
-supervisor = false
-
-[supervisor]
-# Master switch for the whole control plane
-enabled = true
-
-# Hard stop for runaway tool loops: when this many tool rounds in a row repeat
-# calls and results already seen since the last new result (the previous round
-# again, or a cycle through a few), the turn ends with a notice instead of
-# another model request. Detector hints below this limit stay advisory.
-# Needs `enabled`. 0 = off.
-max_identical_rounds = 10
-
-# One shared profile for gate, resolve, plan, condense, and learning.
-[supervisor.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 8192
-temperature = 0.0
-top_p = 1.0
-top_k = 0
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
-# SSE/WebSocket response inactivity limit; 0 disables it. Does not extend the total deadline.
-stream_timeout_seconds = 0
-
-[supervisor.learning]
-# Enable the learning system (lessons + orientation memory, distill + recall)
-enabled = true
-
-[supervisor.learning.evolution]
-# Compile grounded memories into scoped skills and guardrail candidates.
-# Disabled by default: enable to allow detached synthesis and low-risk trials.
-enabled = false
-# Promotion is counterfactual: a trial randomizes each session into control
-# (trigger observed, artifact not applied) or treatment (artifact applied), so
-# both arms run concurrently on the same population; both are scored by the
-# execution-verified verify-gate verdict and API calls. A decision needs a
-# posterior difference beyond 2.5 standard deviations; with these defaults a
-# behavior with no real effect is promoted in under 5% of trials.
-# Verdicts required in each arm before the arms are compared.
-min_samples = 10
-# Smallest pass-rate gain worth promoting; also the non-inferiority bound a
-# cheaper behavior must hold.
-noise_margin = 0.15
-# Relative API-call increase tolerated for a negligible gain; also the saving
-# that promotes a behavior whose pass rate stays within the noise margin.
-cost_allowance = 0.10
-# Extra relative API-call increase allowed per unit of pass-rate gain.
-cost_per_gain = 2.0
-# Live uses after which an undecided trial retires as inconclusive.
-max_trial_uses = 40
-
-# Verify-gate: on self-reported `done`, run a checklist before accepting.
-# The free deterministic pre-gate (state changed but no successful check ran
-# since the change) and goal recitation are always on; detector thresholds
-# (loop / no-progress) are fixed constants.
-[supervisor.gate]
-enabled = true
-# Offer one nonblocking evidence advisory per genuine user turn, then re-gate.
-unsettled_advisory = true
-
-# Check role + user intent after native pre-call guards. Allow when uncertain.
-# Uses the shared supervisor model; only independently confirmed conflicts block.
-# Permanent learned guards remain controlled by learning.evolution.enabled.
-[supervisor.authorizer]
-enabled = false
-
-# hindsight: a local, calibrated verifier (octolib::hindsight, ONNX on CPU)
-# that reads the turn's event trace when the agent hands back and predicts
-# whether the user's next turn will be a correction, and of which class
-# (not_done, unrequested, rule_violation, ...). Observe-only: the scores are
-# logged, shown as a supervisor notice, tallied in /info and appended to
-# hindsight.jsonl in the data directory next to the verify-gate verdict.
-# `model` is a Hugging Face repo (files under onnx/; HF_TOKEN for a private
-# one) or a local directory holding the export.
-[supervisor.hindsight]
-enabled = false
-model = "muvon/hindsight"
-
-# advise: on a loop or recovery alarm the steer note can carry content. One
-# shared supervisor-model call reads the request, the last tool receipts and
-# any stuck-keyed experience records and answers with a short observation that
-# points at a receipt (`#N`), or skips — never a command, never code. One in
-# four eligible alarms gets the plain note instead (control arm), and every
-# note is logged to advise.jsonl in the data directory with the gate verdict
-# that followed, so the trigger can later be fit on whether advice helped.
-[supervisor.advise]
-enabled = false
-
-# Adaptive external plan manager. The specialist never receives a plan mutation
-# tool; it emits a sparse signal alongside real work and this manager makes one
-# structured decision from the request, specialist context, plan, and evidence.
-[supervisor.plan]
-enabled = true
-
-# Condense: task-aware narrowing of oversized tool outputs. A result whose own
-# output exceeds tokens_threshold becomes a candidate; results under it are kept
-# exactly as returned and never shown to the condenser. ONE cheap-model call per
-# round decides, for the candidates only, what the agent needs to see: all
-# relevant -> kept in full; partly relevant -> only the needed lines (selected by
-# ORIGINAL LINE RANGES and reconstructed verbatim -- never rewritten);
-# irrelevant -> a deterministic system notice. Runs AFTER the blunt
-# mcp_response_tokens_threshold prefix-cut, so it only ever narrows what the
-# agent would actually have received.
-[supervisor.condense]
-enabled = true
-# Learn a bounded per-session trigger from realized condenser savings. The
-# runtime multiplier starts at 1.0 and stays within 0.5x..2.0x of
-# tokens_threshold. False preserves the fixed threshold exactly.
-adaptive = false
-# Per-result trigger (estimated tokens of that single text result). 0 = off.
-# Keep well below mcp_response_tokens_threshold: that cap is the ceiling applied
-# first, this is the smart narrowing applied to what survives it.
-tokens_threshold = 5000

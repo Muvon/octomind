@@ -29,10 +29,13 @@ use anyhow::Result;
 /// agent also gets the delegated-run section.
 pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role: &Config, role: &str) -> String {
 	let mut system_prompt = create_system_prompt(current_dir, config_for_role, role).await;
-	// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
-	if config_for_role.supervisor.enabled {
+	// The status line stays octomind's own; plugins only add fields to it.
+	if config_for_role.has_plugins() {
+		let fields = crate::session::context::current_session_id()
+			.map(|session_id| crate::plugins::status_fields(&session_id))
+			.unwrap_or_default();
 		system_prompt.push_str("\n\n");
-		system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
+		system_prompt.push_str(&crate::session::self_report::status_instruction(&fields));
 	}
 	if crate::agent::inputs::is_delegated() {
 		system_prompt.push_str("\n\n");

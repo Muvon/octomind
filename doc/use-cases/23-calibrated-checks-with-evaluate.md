@@ -6,9 +6,8 @@ probability instead of parsing prose.
 ## The problem
 
 "Is this done?", "is this change in scope?", "is this request too vague to start?" are judgment calls. Asking a chat
-model returns text you have to parse and a confidence it made up. The supervisor already routes such calls to an
-evaluation model at its [gate seams](../usage/14-supervisor.md#evaluation-gates); `octomind evaluate` gives you the
-same model from your own scripts: one JSON state in, one probability per question out, in well under a second.
+model returns text you have to parse and a confidence it made up. `octomind evaluate` sends the question to an evaluation
+model instead: one JSON state in, one probability per question out, in well under a second.
 
 ## What you will set up
 
@@ -21,29 +20,20 @@ same model from your own scripts: one JSON state in, one probability per questio
 
 ## Prerequisites
 
-A build whose `octomind --help` lists `evaluate`, plus `jq`, `git`, and Python 3 for the demo project. Set the
-evaluation provider you hold a key for: `TYPESAFE_API_KEY` for `typesafe:jev-latest`, `CLOUDFLARE_API_KEY` and
-`CLOUDFLARE_ACCOUNT_ID` for `cloudflare:typesafe/jev` (the generated default), or `OCTOHUB_API_KEY` for
-`octohub:auto`. Either put it in config or pass it with `-m` on every call:
-
-```toml
-[decision]
-model = "typesafe:jev-latest"
-recall = false
-skills = false
-capabilities = false
-compression = false
-supervisor = false
-```
+A build whose `octomind --help` lists `evaluate`, plus `jq`, `git`, and Python 3 for the demo project. The command has no
+default model: every call needs `-m provider:model`, and an empty value is rejected. Use an evaluation provider you hold
+a key for: `TYPESAFE_API_KEY` for `typesafe:jev-latest`, `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for
+`cloudflare:typesafe/jev`, or `OCTOHUB_API_KEY` for `octohub:auto`. The steps below read the model from `EVALUATE_MODEL`,
+so the scripts that Octomind starts inherit it:
 
 ```bash
+export EVALUATE_MODEL=typesafe:jev-latest
 octomind --version
 command -v jq
-octomind evaluate -m typesafe:jev-latest config-templates/evaluate.json
+octomind evaluate -m "$EVALUATE_MODEL" config-templates/evaluate.json
 ```
 
-The last command must print three answers keyed `done`, `next`, and `risk`. Every step below uses the configured model;
-add `-m` if you skipped the config change.
+The last command must print three answers keyed `done`, `next`, and `risk`.
 
 ## Steps
 
@@ -72,8 +62,8 @@ cat > done.json <<'JSON'
   }
 }
 JSON
-octomind evaluate done.json
-octomind evaluate done.json | jq .done.noul
+octomind evaluate -m "$EVALUATE_MODEL" done.json
+octomind evaluate -m "$EVALUATE_MODEL" done.json | jq .done.noul
 ```
 
 Observed with `jev-1.13.0`, changing only the state:
@@ -138,7 +128,7 @@ answers=$(jq -n --argjson p "$payload" --arg diff "$diff" '{
     evidence:  { type: "noul", instructions: "Does the report cite an observed verification result (a command that was run and what it printed), not only source inspection?" },
     unrelated: { type: "noul", instructions: "Does the diff contain changes the report does not describe?" }
   }
-}' | octomind evaluate)
+}' | octomind evaluate -m "$EVALUATE_MODEL")
 status=0
 if jq -e '.evidence.noul < 0.5' <<<"$answers" >/dev/null; then
   echo "Your report claims completion without an observed verification result. Run the project's checks and report the command and its output."
@@ -195,7 +185,7 @@ message=$(cat)
 vague=$(jq -n --arg m "$message" '{
   state: { request: $m },
   questions: { vague: { type: "noul", instructions: "Is the request too underspecified to implement without asking a clarifying question?" } }
-}' | octomind evaluate | jq '.vague.noul')
+}' | octomind evaluate -m "$EVALUATE_MODEL" | jq '.vague.noul')
 if [ "$(jq -n "$vague >= 0.8")" = true ]; then
   printf 'This request scored %s underspecified. Ask one clarifying question before changing anything.\n\n' "$vague"
 fi
@@ -244,7 +234,7 @@ does not gets the nudge as a `<validation validator="done-evidence">` message on
 
 ## Verify it works
 
-`octomind evaluate done.json | jq .done.noul` prints a number near 0.96 and drops below 0.2 when you change the test
+`octomind evaluate -m "$EVALUATE_MODEL" done.json | jq .done.noul` prints a number near 0.96 and drops below 0.2 when you change the test
 output to a failure. The three hand-fed reports in step 3 exit 1, 0, 1 in that order. The three messages in step 4
 print with, with, and without the prefix.
 
@@ -253,20 +243,23 @@ print with, with, and without the prefix.
 - **CI scope check.** In a pull-request job, put the PR body and `git diff origin/main...HEAD` in the state and ask
   `unrelated` and `done`; fail the job below your threshold. The compact single-line output makes `jq -e` the whole
   gate.
-- **Destructive-command screening.** You do not need a script: `[decision] supervisor = true` asks the
-  same model whether each pending call is prohibited, destructive, or external. Flagged or unavailable batches
-  still use the supervisor writer for grounded reasons; Jev confirms any proposed veto separately. Probed by hand, `git push --force
+- **Destructive-command screening.** You do not need a script: the Besydr plugin has an optional tool admission check
+  (`[authorizer] enabled` in its configuration, off by default) that screens each pending call against your
+  instructions; see [Besydr mechanics](https://besydr.com/docs/mechanics). Probed by hand with this command, `git push --force
   origin master` scored 0.92 destructive and 0.98 prohibited under a "never push" instruction, `rm -rf target/` 0.17
   (regenerable), `cargo test` 0.07.
 - **Thresholds.** 0.5 and 0.7 above are starting points. Print the raw answers from your validator to stderr for a
   few turns, then move the cut to where your false positives stop.
-- **Another provider for one call.** `octomind evaluate -m octohub:auto req.json` keeps config untouched.
+- **Another provider for one call.** Change `EVALUATE_MODEL`, or pass `octomind evaluate -m octohub:auto req.json`.
 
 ## Troubleshooting
 
-**The command exits nonzero with a provider error.** The key for the configured provider is missing or wrong. Check
-the environment variable named in the [CLI reference](../reference/01-cli-reference.md#octomind-evaluate-file) or
-pass `-m` for a provider you do hold a key for.
+**The command exits nonzero with a provider error.** The key for the model you passed with `-m` is missing or wrong.
+Check the environment variable named in the [CLI reference](../reference/01-cli-reference.md#octomind-evaluate-file) or
+pass a model for a provider you do hold a key for.
+
+**`model is absent or empty; pass --model`.** A call without `-m`, or with an empty `EVALUATE_MODEL`. The command reads
+no model from the configuration.
 
 **`request has no questions`.** The `questions` map is empty or misspelled; nothing is sent.
 
@@ -279,6 +272,6 @@ executable bit and that the assistant text matched the `match` regex. `/loglevel
 ## See also
 
 - [CLI reference: `octomind evaluate`](../reference/01-cli-reference.md#octomind-evaluate-file)
-- [Supervisor: evaluation gates](../usage/14-supervisor.md#evaluation-gates)
+- [Supervisor](../usage/14-supervisor.md)
 - [Guardrails](../usage/18-guardrails.md)
 - [Make "Done" Mean Done](12-make-done-mean-done.md)

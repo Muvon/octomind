@@ -72,16 +72,16 @@ welcome = "Safety checks ready."
 
 Save `.octomind-config/90-safety.toml` with the following content. These complete override tables merge with
 the generated defaults. The named providers belong to the baseline tap and use the installed Octofs executable.
+The `plugins` line switches the generated `besydr` entry off for this exercise: entries merge by `name`, and the
+last one wins.
 
 ```toml
 auto_capabilities = false
+plugins = [{ name = "besydr", type = "stdio", command = "besydr", enabled = false }]
 
 [capabilities]
 shell = "octofs"
 filesystem-read = "octofs"
-
-[supervisor.learning]
-enabled = false
 ```
 
 Register your local directory and validate the merged settings:

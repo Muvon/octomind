@@ -68,7 +68,6 @@ fn active_memory_pack_is_single_runtime_message_and_clears_on_new_turn() {
 	session.ensure_active_memory_pack_message();
 
 	session.used_memory_ids.insert("M1".to_string());
-	session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
 	session.recalled_refs.push((
 		"M1".to_string(),
 		"rule".to_string(),
@@ -79,31 +78,11 @@ fn active_memory_pack_is_single_runtime_message_and_clears_on_new_turn() {
 	assert!(session.active_memory_pack.is_none());
 	assert!(session.used_memory_ids.is_empty());
 	assert!(session.recalled_refs.is_empty());
-	assert_eq!(
-		session.learning_outcome,
-		crate::supervisor::learning::TrajectoryOutcome::Unknown
-	);
 	assert!(!session
 		.session
 		.messages
 		.iter()
 		.any(|message| message.name.as_deref() == Some("__active_memory_pack")));
-}
-
-#[test]
-fn learning_session_stats_separate_use_from_outcome_credit() {
-	let mut stats = crate::session::LearningSessionStats::default();
-	stats.record_pack(3, 420);
-	stats.record_use(0.05);
-	stats.record_use(-0.15);
-	stats.record_use(0.0);
-	assert_eq!(stats.packs, 1);
-	assert_eq!(stats.items, 3);
-	assert_eq!(stats.tokens, 420);
-	assert_eq!(stats.used, 3);
-	assert_eq!(stats.credit_positive, 1);
-	assert_eq!(stats.credit_negative, 1);
-	assert_eq!(stats.used_without_verdict, 1);
 }
 
 #[test]
@@ -140,29 +119,6 @@ fn content_cache_indices(session: &ChatSession) -> Vec<usize> {
 		.filter(|(_, m)| m.cached && m.role != "system")
 		.map(|(i, _)| i)
 		.collect()
-}
-
-#[test]
-fn real_user_turn_resets_steer_streak() {
-	let mut cs = make_session(vec![msg("system", false)]);
-	cs.steer_attempt = 2;
-	cs.steer_last_signal = crate::supervisor::detect::DetectorSignal::Loop;
-
-	cs.add_user_message("new task after prior loop stopped").unwrap();
-
-	assert_eq!(cs.steer_attempt, 0);
-	assert_eq!(cs.steer_last_signal, crate::supervisor::detect::DetectorSignal::None);
-}
-
-#[test]
-fn real_user_turn_clears_advice_notes() {
-	let mut cs = make_session(vec![msg("system", false)]);
-	cs.advise_notes.push("the same path was read three times".to_string());
-
-	cs.add_user_message("new task after advice").unwrap();
-
-	assert!(cs.advise_notes.is_empty());
-	assert!(cs.advise_open.is_empty());
 }
 
 #[test]

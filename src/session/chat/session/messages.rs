@@ -16,6 +16,9 @@
 
 use super::core::{ChatSession, SpendingStop};
 use crate::config::Config;
+use crate::plugins::payload::{tool_infos, ContextParts};
+use crate::plugins::protocol::{event, PromptSubmit, RequestBefore, RequestPhase, TurnKind};
+use crate::plugins::PluginBlock;
 use crate::session::chat::response::tool_execution::shape_background_deliveries;
 use crate::session::inbox::InboxMessage;
 use crate::session::ProviderExchange;
@@ -23,6 +26,9 @@ use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::IsTerminal;
+
+/// Separator between the context texts of two plugins.
+const PLUGIN_CONTEXT_SEPARATOR: &str = "\n";
 
 impl ChatSession {
 	const ACTIVE_MEMORY_MESSAGE_NAME: &'static str = "__active_memory_pack";
@@ -64,9 +70,97 @@ impl ChatSession {
 	pub fn clear_active_memory_pack(&mut self) {
 		self.remove_active_memory_pack_message();
 		self.active_memory_pack = None;
-		self.active_user_rules.clear();
 		self.recalled_refs.clear();
 		self.used_memory_ids.clear();
+	}
+
+	/// `request.before`: tell the plugins a model request is about to be made
+	/// and apply their answer. Notes stay queued; the caller writes them at its
+	/// own safe point with [`Self::deliver_plugin_notes`].
+	pub async fn send_request_before(&mut self, config: &Config, phase: RequestPhase) -> Result<()> {
+		let session_id = self.session.info.name.clone();
+		if !crate::plugins::subscribed(&session_id, event::REQUEST_BEFORE) {
+			return Ok(());
+		}
+		// The tool list changes rarely, so only the first request of a turn carries it.
+		let tools = match phase {
+			RequestPhase::TurnStart => Some(tool_infos(config).await),
+			RequestPhase::FollowUp | RequestPhase::Continuation => None,
+		};
+		let payload = RequestBefore {
+			phase,
+			turn: if self.completion_gate_eligible {
+				TurnKind::User
+			} else {
+				TurnKind::System
+			},
+			free_context_tokens: None,
+			pending_async: crate::session::has_pending_async_work(),
+		};
+		let parts = ContextParts::of(self);
+		let effects = crate::plugins::request_before(&parts.context(&self.session.messages, tools), payload).await;
+		crate::plugins::apply::apply(self, effects).await
+	}
+
+	/// Hand the plugins' context blocks to the request about to be made, through
+	/// the same transient message the built-in memory pack uses. With no blocks the
+	/// transient text is cleared. When the context does not fit with every block,
+	/// only the blocks marked `keep` stay and the plugins hear about the others.
+	pub async fn set_plugin_context(&mut self, config: &Config) {
+		let session_id = self.session.info.name.clone();
+		if !crate::plugins::active(&session_id) {
+			return;
+		}
+		let blocks = crate::plugins::context_blocks(&session_id);
+		self.set_active_memory_pack((!blocks.is_empty()).then(|| join_context_blocks(&blocks)));
+		if self.active_memory_pack.is_none()
+			|| crate::session::chat::conversation_compression::ensure_context_within_ceiling(self, config)
+				.await
+				.is_ok()
+		{
+			return;
+		}
+		log_debug!("Plugin context cut to the blocks marked keep: insufficient context headroom");
+		let (kept, dropped): (Vec<_>, Vec<_>) = blocks.into_iter().partition(|block| block.keep);
+		if !dropped.is_empty() {
+			crate::plugins::record_dropped_context(&session_id, &dropped);
+		}
+		self.set_active_memory_pack((!kept.is_empty()).then(|| join_context_blocks(&kept)));
+		if self.active_memory_pack.is_some()
+			&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(self, config)
+				.await
+				.is_err()
+		{
+			crate::plugins::record_dropped_context(&session_id, &kept);
+			self.set_active_memory_pack(None);
+		}
+	}
+
+	/// `prompt.submit`: let plugins rewrite or stop a user prompt before it
+	/// reaches the history. `raw_input` is what the user typed, `prompt` the same
+	/// text after the built-in pipe. Notes the plugins answer with are written at
+	/// once, so they land before the user message. A plugin that blocks the prompt
+	/// makes this an error carrying its message, as a pipe that rejects input does.
+	pub async fn submit_prompt(&mut self, prompt: String, raw_input: &str) -> Result<String> {
+		let session_id = self.session.info.name.clone();
+		if !crate::plugins::subscribed(&session_id, event::PROMPT_SUBMIT) {
+			return Ok(prompt);
+		}
+		let anchor = &self.session.info.anchor;
+		let payload = PromptSubmit {
+			original: (prompt != raw_input).then(|| raw_input.to_string()),
+			carried_summary: (!anchor.is_empty()).then(|| anchor.to_xml()),
+			goal: (!anchor.intent.is_empty()).then(|| anchor.intent.clone()),
+			prompt,
+		};
+		let parts = ContextParts::of(self);
+		let outcome = crate::plugins::prompt_submit(&parts.context(&self.session.messages, None), payload).await;
+		crate::plugins::apply::apply(self, outcome.effects).await?;
+		self.deliver_plugin_notes()?;
+		match outcome.block {
+			Some(message) => Err(anyhow::Error::new(crate::plugins::PromptBlocked(message))),
+			None => Ok(outcome.prompt),
+		}
 	}
 
 	/// Compression summaries persist every folded unit; the provider receives
@@ -96,12 +190,8 @@ impl ChatSession {
 
 	// Sync runtime state from ChatSession fields to session.info (for persistence)
 	fn sync_runtime_state(&mut self) {
-		crate::supervisor::authorizer::sync(self);
 		self.session.info.role = self.role.clone();
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
-		// Snapshot the verify-gate's ground truth so a resume restores the
-		// still-open turn's recorded actions instead of an empty ledger.
-		self.session.info.evidence = self.evidence.clone();
 	}
 
 	// Save the session (syncs runtime state first)
@@ -308,16 +398,11 @@ impl ChatSession {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
-		let previous_request = crate::session::latest_real_user_task_content(&self.session.messages)
-			.unwrap_or_default()
-			.to_string();
-		crate::supervisor::authorizer::record_user_input(self, &message);
 		self.session.messages.push(message);
 		self.begin_turn_timing();
 		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime
 		// pack only after persistence succeeds, preserving the atomic-add contract.
 		self.clear_active_memory_pack();
-		self.pending_recall = true;
 		// A genuine user turn starts a new adaptive-compression phase. Preserve
 		// the exact post-compression watermark, but reset autonomous runway
 		// expansion so this request gets the normal short safety horizon. Keeping
@@ -335,30 +420,12 @@ impl ChatSession {
 		// this one.
 		self.fold_deferral = None;
 		self.session.info.note_turn_start();
-		self.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.
 		self.completion_gate_eligible = true;
 		self.gate_deferred = false;
-		self.steer_attempt = 0;
-		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
-		self.last_steered_calls = None;
-		crate::supervisor::advise::record_outcome(&mut self.advise_open, &self.session.info.name, "unverified");
-		self.advise_notes.clear();
-		// New genuine task: the verify-gate's evidence ledger starts fresh (gate and
-		// steer re-runs arrive as system-managed messages and keep accumulating), and
-		// the gate's per-turn re-entry budget resets — a previous turn's exhaustion
-		// must not latch the gate off for the rest of the session. `gate_failed` is
-		// deliberately NOT reset: it labels the trajectory for distill and is cleared
-		// only by a later PASS.
-		self.evidence.begin_turn(&previous_request);
-		self.gate_task = None;
-		// The previous turn's resolution no longer applies; dropping its job cancels the call.
-		self.resolve_job = None;
-		self.gate_iterations = 0;
-		self.nudge_iterations = 0;
-		self.last_gate_gaps.clear();
+		self.reset_plugin_turn_state();
 		// Gate findings shown in /info belong to the latest turn only; fold the
 		// pending bank first so the previous turn's findings cannot resurface.
 		self.session.fold_external_spend();
@@ -367,20 +434,13 @@ impl ChatSession {
 			.info
 			.supervisor_accounting
 			.kinds
-			.get_mut(&crate::supervisor::stats::CallKind::Gate)
+			.get_mut(&crate::session::accounting::CallKind::Gate)
 		{
 			gate.reported_findings.clear();
 		}
-		self.pending_plan_signal = None;
-		self.plan_evaluated = false;
-		self.planner_failed = false;
-		self.plan_evidence_checkpoint = 0;
 		// New genuine task: the turn-answer ledger starts fresh — the previous
 		// turn's deliverable must not pad this turn's verification.
 		self.turn_answers.clear();
-		// Reset per-task detector state (loop / no-progress / truncation / dedup /
-		// drift streaks and the prior task's unverified-mutation latch).
-		self.detectors.reset_streak();
 		// Keep bounded analysis findings across real user turns. A new turn may be
 		// a continuation ("continue", a correction, or an answer), so clearing
 		// here loses load-bearing context before task resolution exists. The next
@@ -390,7 +450,7 @@ impl ChatSession {
 		// reported after the parent's last tool round). It vouches for the PREVIOUS
 		// task's tree, so letting it reach this turn's first round fold could clear
 		// a change it never saw.
-		let _ = crate::supervisor::delegate::take_handback();
+		let _ = crate::mcp::agent::handback::take_handback();
 
 		Ok(())
 	}
@@ -431,19 +491,32 @@ impl ChatSession {
 		&mut self,
 		mut batch: Vec<InboxMessage>,
 		config: &Config,
-		operation_cancelled: tokio::sync::watch::Receiver<bool>,
+		_operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<()> {
-		shape_background_deliveries(&mut batch, self, config, operation_cancelled).await?;
-		let Some((head, rest)) = batch.split_first() else {
+		shape_background_deliveries(&mut batch, self, config).await?;
+		// A plugin may refuse an item. It is dropped with the plugin's message
+		// shown, and the next one takes its place at the head of the batch.
+		let mut pending = batch.as_slice();
+		while let Some((head, rest)) = pending.split_first() {
+			if !crate::session::inbox::batch_starts_user_turn(pending) {
+				self.add_system_managed_turn_message(&head.content)?;
+			} else {
+				match self.submit_prompt(head.content.clone(), &head.content).await {
+					Ok(prompt) => self.add_user_message(&prompt)?,
+					Err(error) => match error.downcast::<crate::plugins::PromptBlocked>() {
+						Ok(blocked) => {
+							crate::session::notice::supervisor_notice(&blocked.0);
+							pending = rest;
+							continue;
+						}
+						Err(error) => return Err(error),
+					},
+				}
+			}
+			for msg in rest {
+				self.add_system_managed_user_message(&msg.content)?;
+			}
 			return Ok(());
-		};
-		if crate::session::inbox::batch_starts_user_turn(&batch) {
-			self.add_user_message(&head.content)?;
-		} else {
-			self.add_system_managed_turn_message(&head.content)?;
-		}
-		for msg in rest {
-			self.add_system_managed_user_message(&msg.content)?;
 		}
 		Ok(())
 	}
@@ -455,9 +528,9 @@ impl ChatSession {
 		&mut self,
 		mut batch: Vec<InboxMessage>,
 		config: &Config,
-		operation_cancelled: tokio::sync::watch::Receiver<bool>,
+		_operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<()> {
-		shape_background_deliveries(&mut batch, self, config, operation_cancelled).await?;
+		shape_background_deliveries(&mut batch, self, config).await?;
 		for msg in &batch {
 			self.add_system_managed_user_message(&msg.content)?;
 		}
@@ -629,6 +702,24 @@ impl ChatSession {
 
 		Ok(())
 	}
+}
+
+/// The text of the plugins' context blocks as one transient message: one
+/// plugin's blocks follow each other with nothing between them, and the texts
+/// of two plugins are one line apart.
+fn join_context_blocks(blocks: &[PluginBlock]) -> String {
+	let mut per_plugin: Vec<(&str, String)> = Vec::new();
+	for block in blocks {
+		match per_plugin.iter_mut().find(|(plugin, _)| *plugin == block.plugin) {
+			Some((_, text)) => text.push_str(&block.text),
+			None => per_plugin.push((&block.plugin, block.text.clone())),
+		}
+	}
+	per_plugin
+		.into_iter()
+		.map(|(_, text)| text)
+		.collect::<Vec<_>>()
+		.join(PLUGIN_CONTEXT_SEPARATOR)
 }
 
 #[cfg(test)]

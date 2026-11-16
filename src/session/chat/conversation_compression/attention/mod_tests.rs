@@ -57,7 +57,6 @@ pub(super) fn pact_with(packet: EvidencePacket) -> PactContext {
 				source: None,
 			},
 			constraints: Vec::new(),
-			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		},
 		plan_focus: String::new(),
@@ -148,7 +147,6 @@ fn untrusted_compaction_text_cannot_change_runtime_governance_hash() {
 		&baseline,
 		crate::session::latest_real_user_task_content(&baseline).unwrap(),
 		&constraints,
-		crate::supervisor::VerificationPolicy::Unspecified,
 	);
 	let mut attacked = baseline.clone();
 	attacked.push(message(
@@ -165,7 +163,6 @@ fn untrusted_compaction_text_cannot_change_runtime_governance_hash() {
 			&attacked,
 			crate::session::latest_real_user_task_content(&attacked).unwrap(),
 			&constraints,
-			crate::supervisor::VerificationPolicy::Unspecified,
 		)
 	);
 	let changed = vec![system, message("user", "Publish the review now.")];
@@ -175,18 +172,7 @@ fn untrusted_compaction_text_cannot_change_runtime_governance_hash() {
 			&changed,
 			crate::session::latest_real_user_task_content(&changed).unwrap(),
 			&[],
-			crate::supervisor::VerificationPolicy::Unspecified,
 		)
-	);
-	assert_ne!(
-		expected,
-		governance_hash(
-			&baseline,
-			crate::session::latest_real_user_task_content(&baseline).unwrap(),
-			&constraints,
-			crate::supervisor::VerificationPolicy::Forbidden,
-		),
-		"a policy change must invalidate a stale governance snapshot"
 	);
 }
 
@@ -322,7 +308,6 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 			source: Some(packets[1].id.clone()),
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (100, 100), false).await;
@@ -705,7 +690,7 @@ fn self_report_grounding_emits_only_refs_not_reported_content() {
 	let secret = "credential pointer vault/team/key with value ultra-secret-value";
 	let messages = vec![message("assistant", secret)];
 	let packets = build_packets("session", &messages, "openrouter:test");
-	let handoff = crate::supervisor::detect::SelfReportHandoff {
+	let handoff = crate::session::self_report::SelfReportHandoff {
 		focus: String::new(),
 		next: secret.into(),
 		carry: Vec::new(),
@@ -725,7 +710,7 @@ fn self_report_cannot_reactivate_state_before_a_new_real_user_boundary() {
 		message("user", "Use the corrected trajectory from this point forward."),
 	];
 	let packets = build_packets("session", &messages, "openrouter:test");
-	let handoff = crate::supervisor::detect::SelfReportHandoff {
+	let handoff = crate::session::self_report::SelfReportHandoff {
 		focus: stale.into(),
 		next: String::new(),
 		carry: Vec::new(),
@@ -764,7 +749,6 @@ async fn active_frontier_allocation_obeys_total_token_budget() {
 			source: None,
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (30, 30), false).await;
@@ -840,7 +824,6 @@ async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
 			source: None,
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (1000, 1000), true).await;
@@ -875,7 +858,6 @@ async fn tight_budget_keeps_recoverable_spans_for_late_small_frontier_packets() 
 			source: None,
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", (40, 40), false).await;
@@ -934,7 +916,6 @@ fn selected_packets_require_live_dependency_closure() {
 				source: None,
 			},
 			constraints: Vec::new(),
-			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		},
 		plan_focus: String::new(),
@@ -1043,7 +1024,6 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 			source: None,
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	};
 
@@ -1121,7 +1101,6 @@ fn pinned_task(text: &str) -> PinnedState {
 			source: None,
 		},
 		constraints: Vec::new(),
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		governance_hash: "hash".into(),
 	}
 }
@@ -1734,7 +1713,7 @@ fn live_pinned_band_points_at_a_request_the_user_turn_carries() {
 #[test]
 fn ground_self_report_requires_handoff_and_grounds_candidates() {
 	let mut session = ChatSession::for_tests(vec![message("user", "stabilise the deploy pipeline now")]);
-	session.last_self_report_handoff = Some(crate::supervisor::detect::SelfReportHandoff {
+	session.last_self_report_handoff = Some(crate::session::self_report::SelfReportHandoff {
 		focus: "stabilise the deploy pipeline now".to_string(),
 		next: String::new(),
 		carry: Vec::new(),
@@ -1819,71 +1798,41 @@ async fn verify_governance_rejects_a_request_rewritten_inside_the_fold_point() {
 	assert!(pact.verify_governance(&session, fold_point).is_err());
 }
 
-/// A rule the user set on an earlier turn is pinned through the fold although
-/// the latest request never mentions it. It cites no packet: the turn that set
-/// it may already be folded. Revoking it before commit changes governance.
+/// With a plugin the fold keeps the items of its pinned blocks and nothing else.
 #[tokio::test]
-async fn standing_session_rules_are_pinned_and_governed() {
+async fn plugin_pin_items_replace_the_supervisor_state_in_the_fold() {
+	let name = "pins-fold-unit";
 	let mut session = ChatSession::for_tests(vec![
 		message("system", "system prompt"),
-		message("user", "From now on, never push to main."),
-		message("assistant", "Understood."),
 		message("user", "write the briefing"),
 		message("assistant", "drafted section one"),
 	]);
-	session.session.info.name = "gov-session-rules-unit".to_string();
-	session.session.info.session_rules = vec!["never push to main".to_string()];
-	let pact = build(&session, 1, 4, 2.0, false, false)
+	session.session.info.name = name.to_string();
+
+	let stub = crate::plugins::test_support::StubPlugin::new(&[]);
+	crate::plugins::test_support::connect_stub(name, "developer", std::path::Path::new("/tmp"), &stub).await;
+	crate::plugins::restore_pinned_blocks(
+		name,
+		vec![crate::plugins::PluginBlock {
+			plugin: stub.name().to_string(),
+			name: "rules".to_string(),
+			text: "section text".to_string(),
+			keep: false,
+			items: vec!["pinned rule".to_string(), "pinned policy".to_string()],
+		}],
+	);
+
+	let pact = build(&session, 1, 2, 2.0, false, false)
 		.await
 		.expect("pact context builds");
-	assert!(
-		pact.pinned
-			.constraints
-			.iter()
-			.any(|item| item.text == "never push to main" && item.source.is_none()),
-		"{:?}",
-		pact.pinned.constraints
-	);
+	let texts: Vec<&str> = pact.pinned.constraints.iter().map(|item| item.text.as_str()).collect();
+	assert_eq!(texts, vec!["pinned rule", "pinned policy"]);
 	let (pinned_band, _) = pact.render_live_bands(None, None, "");
-	assert!(pinned_band.contains("constraint: never push to main"), "{pinned_band}");
+	assert!(pinned_band.contains("constraint: pinned policy"), "{pinned_band}");
+	assert!(!pinned_band.contains("verification_policy:"), "{pinned_band}");
+	assert!(pact.verify_governance(&session, session.session.messages.len()).is_ok());
 
-	let fold_point = session.session.messages.len();
-	assert!(pact.verify_governance(&session, fold_point).is_ok());
-	session.session.info.session_rules.clear();
-	assert!(pact.verify_governance(&session, fold_point).is_err());
-}
-
-/// A turn with a resolved checklist pins that checklist whole through the fold,
-/// not the keyword excerpts of its request: a subset pinned as the task's
-/// constraints steers the folded session toward the lines it kept.
-#[tokio::test]
-async fn a_resolved_checklist_is_pinned_in_place_of_request_excerpts() {
-	let request = "Match the reference ordering. Preserve the existing style.";
-	let mut session = ChatSession::for_tests(vec![
-		message("system", "system prompt"),
-		message("user", "earlier turn"),
-		message("assistant", "done"),
-		message("user", request),
-		message("assistant", "drafted section one"),
-	]);
-	session.session.info.name = "gov-checklist-unit".to_string();
-	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(request);
-	resolved.evidence_conditions = vec![
-		"The ordering matches the reference.".to_string(),
-		"The existing style is unchanged.".to_string(),
-	];
-	session.gate_task = Some(resolved);
-	let pact = build(&session, 1, 4, 2.0, false, false)
-		.await
-		.expect("pact context builds");
-	let pinned: Vec<&str> = pact.pinned.constraints.iter().map(|item| item.text.as_str()).collect();
-	assert_eq!(
-		pinned,
-		vec![
-			"The ordering matches the reference.",
-			"The existing style is unchanged."
-		]
-	);
+	crate::plugins::end_session(name);
 }
 
 #[test]
@@ -1919,7 +1868,7 @@ fn write_degraded_telemetry_records_fallback_without_archive() {
 }
 
 #[test]
-fn render_pinned_lines_covers_sources_and_every_policy_variant() {
+fn render_pinned_lines_covers_sources() {
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: "ship the release".to_string(),
@@ -1929,26 +1878,13 @@ fn render_pinned_lines_covers_sources_and_every_policy_variant() {
 			text: "no force pushes".to_string(),
 			source: None,
 		}],
-		verification_policy: crate::supervisor::VerificationPolicy::Forbidden,
 		governance_hash: "abc".to_string(),
 	};
 	let lines = render_pinned_lines(&pinned, false);
 	assert!(lines.contains("task (source: b:task): ship the release"));
 	assert!(lines.contains("constraint: no force pushes"));
-	assert!(lines.contains("verification_policy: forbidden"));
+	assert!(!lines.contains("verification_policy:"));
 	assert!(lines.contains("governance_hash: abc"));
-
-	let allowed = PinnedState {
-		verification_policy: crate::supervisor::VerificationPolicy::Allowed,
-		..pinned.clone()
-	};
-	assert!(render_pinned_lines(&allowed, false).contains("verification_policy: allowed"));
-
-	let unspecified = PinnedState {
-		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
-		..pinned.clone()
-	};
-	assert!(!render_pinned_lines(&unspecified, false).contains("verification_policy:"));
 }
 
 #[test]
@@ -1999,6 +1935,36 @@ fn hash_block_id(digit: char) -> String {
 	format!("b:{}", digit.to_string().repeat(32))
 }
 
+fn tool_packet(id: &str, lane: Lane, content: &str) -> EvidencePacket {
+	let mut packet = packet(id, Provenance::ToolObserved, lane);
+	packet.prompt_content = content.to_string();
+	packet.tokens = crate::session::estimate_tokens(content) * 2;
+	packet.depends_on = vec!["b:root".to_string()];
+	packet.descriptor = format!(
+		"ToolInteraction / ToolObserved; 2 message(s), approximately {} tokens",
+		packet.tokens
+	);
+	if lane == Lane::Summarize {
+		packet.exact_spans = vec![SourceSpan {
+			start_line: 1,
+			end_line: 1,
+			content_digest: "digest".into(),
+		}];
+	}
+	packet
+}
+
+fn pact_with_packets(packets: Vec<EvidencePacket>) -> PactContext {
+	let mut pact = pact_with(packet("b:seed", Provenance::ToolObserved, Lane::KeepExact));
+	pact.known_provenance = packets
+		.iter()
+		.map(|packet| (packet.id.clone(), packet.provenance))
+		.collect();
+	pact.source_tokens = packets.iter().map(|packet| packet.tokens).sum();
+	pact.target_tokens = pact.source_tokens.max(1);
+	pact.packets = packets;
+	pact
+}
 #[test]
 fn fold_prompt_shows_short_block_ids_and_the_reply_gets_the_hashes_back() {
 	let first = hash_block_id('a');
@@ -2107,365 +2073,4 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 	assert!(recall.is_empty());
 	let (_, attended_recall) = attended.render_live_bands(None, None, "");
 	assert!(!attended_recall.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Pre-fold pruning through the compression seam
-// ---------------------------------------------------------------------------
-
-use crate::session::chat::test_support::{evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep};
-use crate::supervisor::evaluate::{compression_question_id, Seam, COMPRESSION_SAMPLE_TOKENS};
-
-fn supervisor(compression: bool) -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("default template must deserialize");
-	config.supervisor.enabled = true;
-	config.decision.compression = compression;
-	config
-}
-
-fn tool_packet(id: &str, lane: Lane, content: &str) -> EvidencePacket {
-	let mut packet = packet(id, Provenance::ToolObserved, lane);
-	packet.prompt_content = content.to_string();
-	packet.tokens = crate::session::estimate_tokens(content) * 2;
-	packet.depends_on = vec!["b:root".to_string()];
-	packet.descriptor = format!(
-		"ToolInteraction / ToolObserved; 2 message(s), approximately {} tokens",
-		packet.tokens
-	);
-	if lane == Lane::Summarize {
-		packet.exact_spans = vec![SourceSpan {
-			start_line: 1,
-			end_line: 1,
-			content_digest: "digest".into(),
-		}];
-	}
-	packet
-}
-
-fn pact_with_packets(packets: Vec<EvidencePacket>) -> PactContext {
-	let mut pact = pact_with(packet("b:seed", Provenance::ToolObserved, Lane::KeepExact));
-	pact.known_provenance = packets
-		.iter()
-		.map(|packet| (packet.id.clone(), packet.provenance))
-		.collect();
-	pact.source_tokens = packets.iter().map(|packet| packet.tokens).sum();
-	pact.target_tokens = pact.source_tokens.max(1);
-	pact.packets = packets;
-	pact
-}
-
-fn unit_answers(count: usize, probability: impl Fn(usize) -> f64) -> FakeEvaluationStep {
-	let pairs: Vec<(String, f64)> = (0..count)
-		.map(|slot| (compression_question_id(slot), probability(slot)))
-		.collect();
-	let borrowed: Vec<(&str, f64)> = pairs.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-	FakeEvaluationStep::Answers(nouls(&borrowed))
-}
-
-fn long_output(label: &str, lines: usize) -> String {
-	(1..=lines)
-		.map(|i| format!("{label} output line {i} with some tool text"))
-		.collect::<Vec<_>>()
-		.join("\n")
-}
-
-#[tokio::test]
-async fn prune_seam_off_makes_no_call_and_keeps_the_view_byte_identical() {
-	let fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.1)]).await;
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
-		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
-	]);
-	let before = pact.prompt_view();
-	pact.prune_dead_tool_packets(&supervisor(false)).await;
-	assert!(fake.requests().is_empty());
-	assert_eq!(pact.prompt_view(), before);
-}
-
-#[tokio::test]
-async fn prune_scores_only_summarize_tool_packets_with_bounded_samples() {
-	let fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.9)]).await;
-	let big = long_output("cargo", 600);
-	let mut user_note = tool_packet("b:user", Lane::Summarize, "never touch main");
-	user_note.kind = PacketKind::UserConstraintOrCorrection;
-	let mut real = tool_packet("b:real", Lane::Summarize, "typed by a person");
-	real.provenance = Provenance::RealUser;
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:exact", Lane::KeepExact, &long_output("frontier", 30)),
-		tool_packet("b:s1", Lane::Summarize, &big),
-		user_note,
-		tool_packet("b:ref", Lane::ArchiveReference, ""),
-		tool_packet("b:s2", Lane::Summarize, &long_output("view", 20)),
-		real,
-	]);
-	pact.plan_focus = "[ ] add retry with backoff".to_string();
-	let before = pact.prompt_view();
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-
-	let requests = fake.requests();
-	assert_eq!(requests.len(), 1);
-	let state = requests[0].state.as_object().expect("object state");
-	let mut keys: Vec<&str> = state.keys().map(String::as_str).collect();
-	keys.sort_unstable();
-	assert_eq!(keys, ["constraints", "plan", "task", "units"]);
-	assert_eq!(state["task"], "continue the task");
-	assert_eq!(state["plan"], "[ ] add retry with backoff");
-	let units = state["units"].as_array().unwrap();
-	let ids: Vec<&str> = units.iter().map(|u| u["id"].as_str().unwrap()).collect();
-	assert_eq!(ids, ["b:s1", "b:s2"]);
-	let sample = units[0]["sample"].as_str().unwrap();
-	assert!(crate::session::estimate_tokens(sample) <= COMPRESSION_SAMPLE_TOKENS);
-	assert!(sample.starts_with("cargo output line 1 with"));
-	assert!(sample.ends_with("cargo output line 600 with some tool text"));
-	assert!(!requests[0].state.to_string().contains("frontier output"));
-	assert!(!requests[0].state.to_string().contains("typed by a person"));
-	assert_eq!(requests[0].questions.len(), 2);
-	assert_eq!(requests[0].max_retries, 0);
-	// Every unit scored as needed: nothing changes.
-	assert_eq!(pact.prompt_view(), before);
-}
-
-#[tokio::test]
-async fn prune_demotes_below_threshold_with_the_unadmitted_shape() {
-	let _fake = install_fake_evaluation(vec![unit_answers(2, |slot| if slot == 0 { 0.1 } else { 0.9 })]).await;
-	let applied_before = evaluate_counter(Seam::Compression, "applied");
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:dead", Lane::Summarize, &long_output("build", 40)),
-		tool_packet("b:live", Lane::Summarize, &long_output("view", 40)),
-	]);
-	let live_before = pact.packets[1].clone();
-	let dead_before = pact.packets[0].clone();
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-
-	let dead = &pact.packets[0];
-	assert_eq!(dead.lane, Lane::ArchiveReference);
-	assert!(dead.prompt_content.is_empty());
-	assert!(dead.exact_spans.is_empty());
-	assert_eq!(dead.descriptor, dead_before.descriptor);
-	assert_eq!(dead.depends_on, dead_before.depends_on);
-	assert_eq!(dead.tokens, dead_before.tokens);
-	assert_eq!(
-		serde_json::to_value(dead.lane).unwrap(),
-		serde_json::json!("archive_reference")
-	);
-	let live = &pact.packets[1];
-	assert_eq!(live.lane, live_before.lane);
-	assert_eq!(live.prompt_content, live_before.prompt_content);
-	assert_eq!(live.exact_spans, live_before.exact_spans);
-
-	let view = pact.prompt_view();
-	let dead_header = view.find("[b:dead archive_reference").expect("demoted header");
-	let descriptor = view.find(&format!("descriptor: {}", dead.descriptor)).unwrap();
-	let live_header = view.find("[b:live summarize").expect("kept header");
-	assert!(dead_header < descriptor && descriptor < live_header);
-	assert!(!view.contains("build output line 1 with"));
-	assert!(view.contains("view output line 1 with"));
-	assert_eq!(evaluate_counter(Seam::Compression, "applied") - applied_before, 1);
-}
-
-#[tokio::test]
-async fn prune_keeps_a_unit_the_model_refused() {
-	let ids = [compression_question_id(0), compression_question_id(1)];
-	let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
-	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
-		crate::session::chat::test_support::refusals(&borrowed),
-	)])
-	.await;
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
-		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
-	]);
-	let before = pact.prompt_view();
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	assert_eq!(pact.prompt_view(), before);
-}
-
-#[tokio::test]
-async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
-	let _fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.1), unit_answers(2, |_| 0.1)]).await;
-	let applied_before = evaluate_counter(Seam::Compression, "applied");
-	let mut checkpoint = packet("b:check", Provenance::AssistantReported, Lane::Summarize);
-	checkpoint.kind = PacketKind::AssistantCheckpoint;
-	checkpoint.depends_on = vec!["b:tool".to_string()];
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
-		checkpoint.clone(),
-		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
-	]);
-	pact.packets[2].depends_on = vec!["b:tool".to_string()];
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	// b:chain is dead and unreferenced → demoted; b:tool is dead but the live
-	// checkpoint depends on it → kept, so the validator's dependency rule holds.
-	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
-	assert_eq!(pact.packets[0].lane, Lane::Summarize);
-	assert!(!pact.packets[0].prompt_content.is_empty());
-	assert_eq!(evaluate_counter(Seam::Compression, "applied") - applied_before, 1);
-	pact.validate_summary(&CompressionSummary {
-		should_compress: true,
-		current_task: "continue the task".to_string(),
-		folded_units: vec![FoldedUnit {
-			text: "build finished".to_string(),
-			kind: "observation".to_string(),
-			status: "established".to_string(),
-			refs: vec!["b:tool".to_string(), "b:check".to_string()],
-		}],
-		..Default::default()
-	})
-	.expect("dependency rule intact after pruning");
-
-	// Once the dependent is itself a recall pointer, the unit can go.
-	checkpoint.lane = Lane::ArchiveReference;
-	checkpoint.prompt_content.clear();
-	checkpoint.exact_spans.clear();
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
-		checkpoint,
-		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
-	]);
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	assert_eq!(pact.packets[0].lane, Lane::ArchiveReference);
-	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
-}
-
-#[tokio::test]
-async fn prune_windows_many_units_in_packet_order() {
-	let fake = install_fake_evaluation(vec![unit_answers(96, |_| 0.9), unit_answers(34, |_| 0.9)]).await;
-	let calls_before = evaluate_counter(Seam::Compression, "calls");
-	let packets: Vec<EvidencePacket> = (0..130)
-		.map(|i| tool_packet(&format!("b:u{i}"), Lane::Summarize, &format!("unit {i} output")))
-		.collect();
-	let mut pact = pact_with_packets(packets);
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	let requests = fake.requests();
-	assert_eq!(requests.len(), 2);
-	let sizes: Vec<usize> = requests
-		.iter()
-		.map(|request| request.state["units"].as_array().unwrap().len())
-		.collect();
-	assert_eq!(sizes, [96, 34]);
-	let ids: Vec<String> = requests
-		.iter()
-		.flat_map(|request| request.state["units"].as_array().unwrap().clone())
-		.map(|unit| unit["id"].as_str().unwrap().to_string())
-		.collect();
-	assert_eq!(ids, (0..130).map(|i| format!("b:u{i}")).collect::<Vec<_>>());
-	for request in &requests {
-		assert!(
-			crate::session::estimate_tokens(&request.state.to_string())
-				<= crate::supervisor::evaluate::MAX_STATE_TOKENS
-		);
-	}
-	assert_eq!(evaluate_counter(Seam::Compression, "calls") - calls_before, 2);
-	assert!(pact.packets.iter().all(|p| p.lane == Lane::Summarize));
-}
-
-#[tokio::test]
-async fn prune_unavailable_window_demotes_nothing() {
-	let fake = install_fake_evaluation(vec![
-		unit_answers(96, |_| 0.1),
-		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
-	])
-	.await;
-	let unavailable_before = evaluate_counter(Seam::Compression, "unavailable");
-	let applied_before = evaluate_counter(Seam::Compression, "applied");
-	let packets: Vec<EvidencePacket> = (0..100)
-		.map(|i| tool_packet(&format!("b:u{i}"), Lane::Summarize, &format!("unit {i} output")))
-		.collect();
-	let mut pact = pact_with_packets(packets);
-	let before = pact.prompt_view();
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	assert_eq!(fake.requests().len(), 2);
-	assert_eq!(pact.prompt_view(), before);
-	assert_eq!(
-		evaluate_counter(Seam::Compression, "unavailable") - unavailable_before,
-		1
-	);
-	assert_eq!(evaluate_counter(Seam::Compression, "applied"), applied_before);
-}
-
-#[tokio::test]
-async fn prune_without_summarize_tool_packets_makes_no_call() {
-	let fake = install_fake_evaluation(vec![unit_answers(1, |_| 0.1)]).await;
-	let calls_before = evaluate_counter(Seam::Compression, "calls");
-	let mut pact = pact_with_packets(vec![
-		tool_packet("b:exact", Lane::KeepExact, "frontier"),
-		tool_packet("b:ref", Lane::ArchiveReference, ""),
-	]);
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	assert!(fake.requests().is_empty());
-	assert_eq!(evaluate_counter(Seam::Compression, "calls"), calls_before);
-}
-
-#[tokio::test]
-#[serial_test::serial]
-async fn prune_leaves_archive_verification_and_validation_intact() {
-	let _data = crate::session::chat::test_support::DataDirGuard::new();
-	let _fake = install_fake_evaluation(vec![unit_answers(1, |_| 0.1)]).await;
-	// A user turn right after the tool round keeps the checkpoint from
-	// depending on it, and a trailing user turn empties the exact frontier,
-	// so the tool round is a summarize unit nothing selected depends on.
-	let mut session = tool_session("prune-archive-unit");
-	session
-		.session
-		.messages
-		.insert(4, message("user", "ok, what did you find?"));
-	session
-		.session
-		.messages
-		.push(message("user", "keep going with the race fix"));
-	let end = session.session.messages.len() - 1;
-	let mut pact = build(&session, 1, end, 1.0, true, false)
-		.await
-		.expect("pact context builds");
-	let tool_id = pact
-		.packets
-		.iter()
-		.find(|p| p.kind == PacketKind::ToolInteraction && p.lane == Lane::Summarize)
-		.map(|p| p.id.clone())
-		.expect("fixture has a summarize tool packet");
-	pact.prune_dead_tool_packets(&supervisor(true)).await;
-	let demoted = pact.packets.iter().find(|p| p.id == tool_id).unwrap();
-	assert_eq!(demoted.lane, Lane::ArchiveReference);
-
-	let drained = &session.session.messages[1..=end];
-	let bundle = super::super::archive::archive_messages_with_index(
-		&session.session.info.name,
-		"prune-archive-cid",
-		drained,
-		&pact.packets,
-	)
-	.expect("archive writes");
-	pact.verify_archive(&bundle, drained).expect("archive verifies");
-	let archived = std::fs::read_to_string(&bundle.path).expect("archive readable");
-	assert!(archived.contains("thread panicked at src/deploy.rs:42"));
-
-	// Every packet still in the summarize lane must be cited; the demoted
-	// tool round must not be.
-	let cited: Vec<String> = pact
-		.packets
-		.iter()
-		.filter(|p| p.lane == Lane::Summarize)
-		.map(|p| p.id.clone())
-		.collect();
-	assert!(!cited.contains(&tool_id));
-	let summary = CompressionSummary {
-		should_compress: true,
-		current_task: pact.pinned.task.text.clone(),
-		// Only assistant checkpoints remain in the summarize lane (real-user
-		// packets are never admitted), so the unit cannot claim established.
-		folded_units: vec![FoldedUnit {
-			text: "the race was found in src/deploy.rs".to_string(),
-			kind: "observation".to_string(),
-			status: "pending".to_string(),
-			refs: cited,
-		}],
-		..Default::default()
-	};
-	pact.validate_summary(&summary)
-		.expect("a summary that omits the demoted id validates");
-	if let Ok(sessions) = crate::directories::get_sessions_dir() {
-		let _ = std::fs::remove_dir_all(sessions.join("archive").join("prune-archive-unit"));
-	}
 }

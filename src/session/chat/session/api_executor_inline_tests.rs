@@ -16,105 +16,41 @@ use serial_test::serial;
 
 #[serial]
 #[tokio::test]
-async fn outcome_credit_updates_only_materially_used_memory() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let data = tempfile::tempdir().unwrap();
-	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
-	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
-	let role = "__credit_role";
-	let project = "__credit_project";
-	let backend = crate::supervisor::learning::backend::FileBackend;
-	for content in ["exposed but unused", "materially used", "used without verdict"] {
-		backend
-			.store(&crate::supervisor::learning::Lesson {
-				content: content.to_string(),
-				role: role.to_string(),
-				project: project.to_string(),
-				created: chrono::Utc::now().to_rfc3339(),
-				..Default::default()
-			})
-			.await
-			.unwrap();
-	}
-	let config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+async fn a_pack_that_does_not_fit_keeps_the_plugin_blocks_marked_keep_and_tells_the_plugin_the_rest() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let id = "o11-pack-ceiling";
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE]).answer(serde_json::json!({"context": [
+		{"name": "small", "text": "keep me", "keep": true},
+		{"name": "big", "text": "word ".repeat(4000)},
+	]}));
+	let mut config = crate::session::chat::test_support::fake_provider_config();
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.recalled_refs = vec![
-		(
-			"M1".to_string(),
-			"exposed but unused".to_string(),
-			role.to_string(),
-			project.to_string(),
-		),
-		(
-			"M2".to_string(),
-			"materially used".to_string(),
-			role.to_string(),
-			project.to_string(),
-		),
-	];
-	session.used_memory_ids.insert("M2".to_string());
-	reinforce_recalled(&mut session, &config, 0.05).await;
-	session.recalled_refs = vec![(
-		"M3".to_string(),
-		"used without verdict".to_string(),
-		role.to_string(),
-		project.to_string(),
-	)];
-	session.used_memory_ids.insert("M3".to_string());
-	reinforce_recalled(&mut session, &config, 0.0).await;
-	let memories = backend.retrieve_all(role, project).await.unwrap();
-	let unused = memories
-		.iter()
-		.find(|memory| memory.content == "exposed but unused")
-		.unwrap();
-	let used = memories
-		.iter()
-		.find(|memory| memory.content == "materially used")
-		.unwrap();
-	let unused_importance = unused.importance;
-	let used_importance = used.importance;
-	let used_count = used.use_count;
-	let used_last_used = used.last_used.clone();
-	let neutral = memories
-		.iter()
-		.find(|memory| memory.content == "used without verdict")
-		.unwrap();
-	let neutral_importance = neutral.importance;
-	let neutral_count = neutral.use_count;
+	session.session.info.name = id.to_string();
+	session.model = "notaprovider:no-such-model".to_string();
+	connect_stub(id, "assistant", std::path::Path::new("."), &stub).await;
+	session
+		.send_request_before(&config, RequestPhase::TurnStart)
+		.await
+		.expect("the plugin answers");
 
-	match previous {
-		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
-		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
-	}
-	assert_eq!(unused_importance, 0.5);
-	assert!((used_importance - 0.55).abs() < f64::EPSILON);
-	assert_eq!(used_count, 1);
-	assert!(!used_last_used.is_empty());
-	assert_eq!(neutral_importance, 0.5);
-	assert_eq!(neutral_count, 1);
-	assert_eq!(session.session.info.learning_stats.used, 2);
-	assert_eq!(session.session.info.learning_stats.credit_positive, 1);
-	assert_eq!(session.session.info.learning_stats.used_without_verdict, 1);
-}
+	// Room for the small block and nothing like the big one.
+	let baseline = session.get_full_context_tokens(&config).await;
+	config.max_session_tokens_threshold = baseline + 600;
+	session.set_active_memory_pack(Some(format!("keep me{}", "word ".repeat(4000))));
 
-#[test]
-fn turn_answer_joins_every_pass_oldest_first() {
-	// Turn-boundary and tool-call filtering happen at the append/clear
-	// sites (the ledger is state); assembly joins the passes in order.
-	let answers = vec![
-		"THE BRIEF".to_string(),
-		"The link is grounded; the brief stands.".to_string(),
-	];
+	make_room_for_memory(&mut session, &config).await;
+
+	assert_eq!(session.active_memory_pack.as_deref(), Some("keep me"));
+	session
+		.send_request_before(&config, RequestPhase::FollowUp)
+		.await
+		.expect("the plugin answers");
 	assert_eq!(
-		current_turn_answer(&answers, 8192),
-		format!("THE BRIEF{ANSWER_PART_SEPARATOR}The link is grounded; the brief stands.")
+		stub.sent(event::REQUEST_BEFORE)[1]["dropped_context"],
+		serde_json::json!(["big"])
 	);
-}
 
-#[test]
-fn turn_answer_keeps_the_newest_pass_when_over_budget() {
-	// The older pass alone exceeds the token budget; the newest is always kept.
-	let old = "many different words fill the older pass ".repeat(50);
-	let answers = vec![old, "the amendment".to_string()];
-	assert_eq!(current_turn_answer(&answers, 16), "the amendment");
+	crate::plugins::end_session(id);
 }

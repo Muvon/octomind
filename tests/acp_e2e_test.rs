@@ -30,10 +30,6 @@ type CapturedRequests = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>
 /// it answers.
 type ScriptedReply = (Option<&'static str>, serde_json::Value);
 
-/// Opening words of the supervisor's task-resolution prompt. Resolution runs
-/// in the background, so its request races the main turn to the stub.
-const RESOLUTION_PROMPT: &str = "Classify ONE current user turn";
-
 /// Serves the scripted assistant messages, one per provider call, or the
 /// default marker answer to every call when no script is given. A tagged
 /// message answers the request whose body contains its tag; untagged messages
@@ -136,7 +132,6 @@ fn write_sandbox_config(home: &std::path::Path) {
 		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
-	config.supervisor.enabled = false;
 	config.telemetry = false;
 	config.auto_capabilities = false;
 	config.skills.auto_activation = false;
@@ -401,7 +396,6 @@ async fn test_acp_initialize_new_session_prompt() {
 		("/info", serde_json::json!([])),
 		("/context", serde_json::json!(["all"])),
 		("/status", serde_json::json!([])),
-		("/learning", serde_json::json!([])),
 		("/plan", serde_json::json!([])),
 		("/mcp", serde_json::json!(["list"])),
 		("/effort", serde_json::json!(["low"])),
@@ -564,91 +558,6 @@ async fn test_acp_tool_round_updates() {
 			panic!("acp agent did not exit after stdin EOF");
 		}
 	}
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
-	let (stub_url, _) = spawn_openai_stub(Some(vec![
-		(
-			Some(RESOLUTION_PROMPT),
-			text_message(
-				r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
-			),
-		),
-		(None, text_message("ACP-GATE-TIMING: finished")),
-		(
-			None,
-			text_message(
-				r#"<shape name="circular" found="no">independent evidence</shape>
-<shape name="context-stripped" found="no">representative context</shape>
-<shape name="acceptance-only" found="no">not applicable</shape>
-<shape name="unenumerated-category" found="no">bounded scope</shape>
-<verdict>PASS</verdict>"#,
-			),
-		),
-	]))
-	.await;
-	let home = tempfile::tempdir().expect("sandbox home");
-	write_sandbox_config(home.path());
-	let path = home.path().join(".local/share/octomind/config/config.toml");
-	let mut config: octomind::config::Config = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-	config.supervisor.enabled = true;
-	config.supervisor.model.model = Some("ollama:fake-model".into());
-	config.supervisor.learning.enabled = false;
-	config.supervisor.plan.enabled = false;
-	// Condense compacts a specialist brief concurrently with task resolution;
-	// that extra, unordered call would steal a scripted response.
-	config.supervisor.condense.enabled = false;
-	config.decision.model = None;
-	std::fs::write(path, toml::to_string(&config).unwrap()).unwrap();
-	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
-	client
-		.request(
-			"initialize",
-			serde_json::json!({"protocolVersion":1,"clientCapabilities":{}}),
-		)
-		.await;
-	let (created, _) = client
-		.request("session/new", serde_json::json!({"cwd":home.path(),"mcpServers":[]}))
-		.await;
-	let id = created["sessionId"].as_str().unwrap();
-	let (_, notifications) = client
-		.request(
-			"session/prompt",
-			serde_json::json!({"sessionId":id,"prompt":[{"type":"text","text":"Answer with ACP-GATE-TIMING"}]}),
-		)
-		.await;
-	let usage = notifications
-		.iter()
-		.filter_map(|message| message["params"]["_meta"].get("octomind.usage"))
-		.next_back()
-		.expect("final usage notification");
-	assert!(
-		usage["supervisor_accounting"]["mechanics"]["gate"]["chat_calls"]
-			.as_u64()
-			.unwrap() > 0
-	);
-	assert!(
-		usage["supervisor_accounting"]["mechanics"]["gate"]["cost"]
-			.as_f64()
-			.unwrap() > 0.0
-	);
-	assert_eq!(usage["supervisor_accounting"]["turn_time"]["completed"], 1);
-	let (info, _) = client
-		.request(
-			"_octomind/command",
-			serde_json::json!({"session_id":id,"command":"/info","args":[]}),
-		)
-		.await;
-	assert_eq!(usage["supervisor_accounting"], info["output"]["supervisor_accounting"]);
-	assert_eq!(usage["session_cost"], info["output"]["total_cost"]);
-	let AcpClient { mut child, stdin, .. } = client;
-	drop(stdin);
-	assert!(tokio::time::timeout(Duration::from_secs(30), child.wait())
-		.await
-		.unwrap()
-		.unwrap()
-		.success());
 }
 
 /// An in-process `agent_*` sub-agent that runs its own tool round under ACP.

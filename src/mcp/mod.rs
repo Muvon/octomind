@@ -35,6 +35,7 @@ pub enum McpInitProgress {
 // Modules
 pub mod hint_accumulator;
 pub mod tool_map;
+pub mod tool_shape;
 pub mod utils;
 pub mod workdir;
 
@@ -212,7 +213,7 @@ pub struct McpFunction {
 	pub parameters: Value,
 	/// MCP tool annotations. External servers send theirs; builtin, dynamic and
 	/// local tools declare them in code. Only `readOnlyHint` drives behaviour
-	/// (mutation classification, see `supervisor::detect::is_mutation_call`).
+	/// (mutation classification, see `tool_shape::is_mutation_call`).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub annotations: Option<rmcp::model::ToolAnnotations>,
 }
@@ -550,7 +551,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// Builtin, dynamic and local tools declare their annotations in code rather
 	// than over the wire; register them the way an external inventory is.
 	for function in &functions {
-		crate::supervisor::detect::register_tool_read_only_hint(
+		crate::mcp::tool_shape::register_tool_read_only_hint(
 			&function.name,
 			function
 				.annotations

@@ -53,6 +53,9 @@ octomind config --show
 Save the entire block as `.octomind-config/90-budget.toml`. Root keys must precede every table header.
 The USD values below are exercise thresholds, not estimates of what a particular task will cost.
 
+The `plugins` line replaces the generated `besydr` entry with a disabled one: the plugin makes its own model calls, which
+would mix into this comparison. Entries merge by `name`, and the last one wins.
+
 The session threshold asks whether to continue after the accumulated cost since its last checkpoint reaches $1.
 Accepting resets that checkpoint. The request threshold stops further execution at a checked boundary after $0.10
 has accrued since the current user request began. Setting either threshold to `0.0` disables it.
@@ -62,6 +65,7 @@ max_session_spending_threshold = 1.0
 max_request_spending_threshold = 0.10
 cache_keepalive_enabled = false
 auto_capabilities = false
+plugins = [{ name = "besydr", type = "stdio", command = "besydr", enabled = false }]
 
 [model]
 name = "octohub:auto"
@@ -77,12 +81,6 @@ request_timeout_seconds = 300
 [taps]
 "spend:brief" = "octohub:auto"
 "spend" = "octohub:auto"   # bare domain: every agent of the domain; the exact tag above wins
-
-[supervisor]
-enabled = false
-
-[supervisor.learning]
-enabled = false
 
 [[roles]]
 name = "budget"
@@ -155,7 +153,7 @@ spending and quotas; it is not a per-session total and does not summarize bills 
 `/info` includes session cost and tokens. `/report` reads the session log and groups costs and tool use by request.
 
 Look for the two requests in the report. Exact dollar amounts depend on actual provider accounting; no fixed amount
-is expected. Keepalive is disabled, and supervisor and learning calls are disabled for this isolated comparison.
+is expected. Keepalive is disabled, and the Besydr plugin is switched off for this isolated comparison.
 
 ```text
 /mcp full
@@ -224,14 +222,15 @@ With a custom config path, its displayed path can still be the default path; kee
 The threshold notice from step 6 is the behavioral check, while `/report` supplies the observed request costs.
 
 These thresholds use costs already recorded at checkpoints. In-flight requests can overshoot, and a single final
-answer need not reach a tool-follow-up check. They are not prepaid per-task reservations. Detached exit learning and
-independent external services also do not become part of a shared hard ceiling.
+answer need not reach a tool-follow-up check. They are not prepaid per-task reservations. Background work of a plugin
+and independent external services also do not become part of a shared hard ceiling.
 
 ## Variations
 
 - With your own OpenAI credential, check `test -n "$OPENAI_API_KEY"` and use `openai:gpt-5.6-sol` as the role model
   name or the `"spend:brief"` mapping. Follow [provider setup](../usage/04-providers.md); compare measured reports.
-- Enable supervision for tasks that need completion checks, then include its calls in your spending comparison.
+- Remove the `plugins` override to run the Besydr plugin again for tasks that need completion checks, then include its
+  model calls in your spending comparison. See [Supervisor](../usage/14-supervisor.md).
 - Enable `cache_keepalive_enabled = true` only when you want supported-provider cache refreshes; the ping budget is
   derived from model pricing and stops on its own. Providers without a keepalive policy are skipped.
 

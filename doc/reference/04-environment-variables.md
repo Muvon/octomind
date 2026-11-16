@@ -182,12 +182,12 @@ export CLI_CODEX_REASONING_EFFORT="high"
 octomind run --model cli:codex/gpt-5
 ```
 
-## Evaluation and hindsight variables
+## Evaluation variables
 
-The evaluation variables are read only by the evaluation model: `[decision] model` (default `cloudflare:typesafe/jev`)
-and `octomind evaluate`. Chat models never read them. The Cloudflare evaluation provider uses the same
+The evaluation variables are read only by `octomind evaluate`, which calls the evaluation model named by its `--model`
+flag. Chat models never read them. The Cloudflare evaluation provider uses the same
 `CLOUDFLARE_API_KEY` as the chat provider; the `octohub` evaluation provider reuses `OCTOHUB_API_KEY` and
-`OCTOHUB_API_URL`. The optional `HF_TOKEN` is read when loading the `[supervisor.hindsight]` model.
+`OCTOHUB_API_URL`.
 
 | Variable | When read / effect |
 |---|---|
@@ -195,13 +195,12 @@ and `octomind evaluate`. Chat models never read them. The Cloudflare evaluation 
 | `TYPESAFE_BASE_URL` | Optional TypeSafe API root; default `https://api.typesafe.ai`. |
 | `CLOUDFLARE_API_KEY` | Required by the Cloudflare evaluation provider, together with `CLOUDFLARE_ACCOUNT_ID` unless `CLOUDFLARE_EVALUATION_API_URL` is set. |
 | `CLOUDFLARE_EVALUATION_API_URL` | Optional full override of the Cloudflare evaluation run URL; the default is constructed from `CLOUDFLARE_ACCOUNT_ID`. |
-| `HF_TOKEN` | Hugging Face token for loading a private hindsight model repository. Public repositories load without it. |
 
 ## Octomind Configuration
 
 | Variable | Description |
 |----------|-------------|
-| `OCTOMIND_DATA_DIR` | Override the directory holding durable Octomind state — config, sessions, logs, cache, learning. Host-local run sockets and dependency-owned model caches are separate. Read whenever a data path is resolved. Default: `~/.local/share/octomind` (Linux/macOS) or `%LOCALAPPDATA%\octomind` (Windows). Redirecting `HOME` does not work on Windows, so this is the portable way to run octomind against a throwaway state directory. |
+| `OCTOMIND_DATA_DIR` | Override the directory holding durable Octomind state — config, sessions, logs, cache. Host-local run sockets and dependency-owned model caches are separate. Read whenever a data path is resolved. Default: `~/.local/share/octomind` (Linux/macOS) or `%LOCALAPPDATA%\octomind` (Windows). Redirecting `HOME` does not work on Windows, so this is the portable way to run octomind against a throwaway state directory. |
 | `OCTOMIND_CONFIG_PATH` | Read at startup to choose the primary config load/migration/save path. The value is the path to the primary config TOML; its parent directory becomes the config directory for multi-file merge (all `*.toml` files there are merged). Default file: `~/.local/share/octomind/config/config.toml` (Linux/macOS) or `%LOCALAPPDATA%\octomind\config\config.toml` (Windows). |
 | `OCTOMIND_SKILLS` | Comma-delimited **exact skill names** to preload at session start. No aliases, globs, or semantic lookup; unknown names fail individually. |
 | `OCTOMIND_CAPABILITIES` | Comma-delimited **exact installed capability names** to force-enable at session start. No provider/tool aliases or fuzzy matching; domain and required-environment gates still apply. |
@@ -274,11 +273,11 @@ The exact wire keys are:
 Empty/default optional fields are omitted; cost is integer micro-USD.
 
 Everything transmitted is a named field on a struct in `src/telemetry.rs`; the declared agent/model/workflow identifiers
-are strings. Local supervisor statistics and learning-pack counters are not part of that wire schema. Events are
+are strings. Local accounting is not part of that wire schema. Events are
 buffered in memory and sent once at exit behind a 2-second timeout — flush can add up to that timeout to exit, and
 failures are only debug-logged.
 
-`complete` and `distill` skip telemetry initialization. WebSocket has no dedicated session-exit event. Start rows also
+`complete` and `compact` skip telemetry initialization. WebSocket has no dedicated session-exit event. Start rows also
 read `CI` (truthy by the same rule as `DO_NOT_TRACK`) and `GITHUB_ACTIONS` (any present Unicode value, including empty);
 these set the `ci` field and do not change session operation.
 
@@ -433,26 +432,13 @@ These are present in `src/` but are not production CLI settings. Setting them do
 | Variable | When read / default / purpose |
 |---|---|
 | `CARGO_PKG_VERSION` | Compile-time `env!`; embedded in CLI version, branding, ACP/MCP implementation info, account client info, and telemetry. Cargo supplies it. |
-| `CARGO_MANIFEST_DIR` | Compile-time `env!` in condenser tests; locates repository fixtures. |
-| `LEARNING_BENCH_LIVE` | Ignored live learning benchmarks require exactly `1` before paid model calls. |
-| `LEARNING_BENCH_MODEL` | Live retrieval/retention benchmarks; overrides the configured supervisor model name. |
-| `LEARNING_BENCH_SPLIT` | Retrieval benchmark split: `calibration` (default), `holdout`, `challenge`, or `all`. |
-| `LEARNING_BENCH_REWRITE_CACHE` | Retrieval benchmark cache path; default `target/learning-benchmark/rewrite-cache.json`. |
-| `LEARNING_BENCH_REPORT` | Retrieval benchmark report output; default `target/learning-benchmark/{split}.json`. |
-| `LONGMEMEVAL_ORACLE_JSON` | Required path to the oracle dataset in the ignored LongMemEval benchmark. |
-| `LONGMEMEVAL_EXPECTED_SHA256` | Optional override of the benchmark’s pinned dataset checksum. |
-| `OCTOMIND_LEARNING_REPLAY_SESSION` | Required real JSONL/ZST transcript path in ignored extraction replay tests. |
+| `CARGO_MANIFEST_DIR` | Compile-time `env!` in tests; locates repository fixtures. |
 | `OCTOMIND_ACP_TEST_FIXTURE` | Nonempty marker selects the child-process ACP fixture; normally absent. |
 | `OCTOMIND_RESOLVER_PROBE` | Temporary resolver test marker; saved/restored to verify dependency isolation. |
-| `GIT_DIR`, `GIT_WORK_TREE` | Saved/restored in supervisor tests to isolate Git checks; not Octomind config overrides. |
+| `GIT_DIR`, `GIT_WORK_TREE` | Saved/restored in plugin tests to isolate Git checks; not Octomind config overrides. |
 
 Test environment guards also read/save/restore arbitrary test-selected names, including the runtime/provider variables
 above. Those fixture names and values do not add production configuration options.
-
-```bash
-export LEARNING_BENCH_SPLIT=holdout
-export LEARNING_BENCH_REPORT=/tmp/octomind-learning-report.json
-```
 
 ## Common questions
 
@@ -464,7 +450,7 @@ export LEARNING_BENCH_REPORT=/tmp/octomind-learning-report.json
   `AWS_ACCESS_KEY_ID`; the provider requires `AWS_BEARER_TOKEN_BEDROCK`.
 - **Why does OAuth fail before the first request?** CLI preflight requires `get_api_key()`; see the OAuth caveat.
 - **Why does disabling telemetry still leave local files?** Telemetry opt-out does not disable session logs,
-  local accounting, compression archives, or learning storage.
+  local accounting, or compression archives.
 
 ## Source map
 
@@ -476,7 +462,7 @@ Direct reads: [env_source.rs](../../src/config/env_source.rs), [loading.rs](../.
 [providers.rs](../../src/providers.rs), [setup.rs](../../src/session/chat/session/setup.rs). Provider names and
 variables were checked in the locked `octolib 0.43.1` source, `src/llm/factory.rs` and `src/llm/providers/*.rs`
 (including `cli/mod.rs`); evaluation variables in its `src/evaluation/providers/typesafe.rs` and
-`src/evaluation/providers/cloudflare.rs`; hindsight loading in its `src/hindsight/mod.rs`. Model-cache behavior is
+`src/evaluation/providers/cloudflare.rs`. Model-cache behavior is
 in its `src/embedding/provider/huggingface/mod.rs` and `src/storage.rs`.
 
 ## See also

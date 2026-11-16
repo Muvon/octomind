@@ -20,7 +20,6 @@ use anyhow::{bail, Context, Result};
 use clap::Args;
 use colored::Colorize;
 use octolib::evaluation::{EvaluationRequest, Question};
-use octomind::config::Config;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Read};
@@ -29,7 +28,7 @@ use std::path::{Path, PathBuf};
 #[derive(Args, Debug)]
 pub struct EvaluateArgs {
 	/// Evaluation model as `provider:model` (e.g. `typesafe:jev-latest`).
-	/// Defaults to `[decision].model` from config.
+	/// Required; an empty value is rejected.
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 
@@ -46,14 +45,13 @@ struct Input {
 	questions: BTreeMap<String, Question>,
 }
 
-pub async fn execute(args: &EvaluateArgs, config: &Config) -> Result<()> {
+pub async fn execute(args: &EvaluateArgs) -> Result<()> {
 	let input = parse_input(&read_input(args.file.as_deref())?)?;
 	let model = args
 		.model
 		.as_deref()
-		.or(config.decision.model.as_deref())
 		.filter(|model| !model.is_empty())
-		.context("decision.model is absent or empty; pass --model")?;
+		.context("model is absent or empty; pass --model")?;
 
 	let mut request = EvaluationRequest::new(input.state);
 	request.questions = input.questions;

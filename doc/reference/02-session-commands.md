@@ -44,7 +44,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 | `/loglevel [LEVEL]` | Set the log level (runtime only) |
 | `/context [FILTER]` | Inspect the conversation context |
 | `/reply [N\|WORDS]` | Start the next prompt with an earlier assistant reply quoted, to answer it point by point |
-| `/done [INSTRUCTIONS]` | Force-compress context and extract lessons |
+| `/done [INSTRUCTIONS]` | Force-compress context |
 | `/image [PATH]` | Attach an image (from path or clipboard) |
 | `/video [PATH]` | Attach a video |
 | `/mcp [ACTION]` | Inspect MCP servers and tools |
@@ -54,7 +54,9 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 | `/skill [NAME\|PAGE\|PATTERN]` | List or toggle skills |
 | `/schedule [SUBCOMMAND]` | Schedule a future/recurring injected message |
 | `/workflow [NAME [INPUT...]]` | List tap workflows, show one's definition (name only), or run one with the rest of the line as its input |
-| `/learning [ACTION]` | Manage cross-session lessons |
+
+Commands that a [plugin](../usage/14-supervisor.md) registers (for example `/learning` from Besydr) are listed after
+this table; see [Commands from plugins](#commands-from-plugins).
 
 ## Transport support
 
@@ -77,7 +79,8 @@ or `success: false`; inspect it, not just the transport envelope.
 
 ACP discovery advertises exactly the commands the dispatcher routes (`build_available_commands()` is
 checked against `COMMANDS` in `acp/agent_tests.rs`), so a client can trust the advertised list — including
-`/reply`, `/new`, `/rename`, `/status`, `/learning`, `/share`, `/analyze` and `/workflow`.
+`/reply`, `/new`, `/rename`, `/status`, `/share`, `/analyze` and `/workflow`. The commands of connected plugins are
+advertised too, once the plugin has answered its handshake.
 
 For an existing session whose ID is `demo`, these are complete command envelopes:
 
@@ -149,14 +152,14 @@ Without an argument, show the current level and valid options. With an argument,
 
 Debug output favors one compact event per provider response, usage update, and tool dispatch. Tool parameters are
 serialized on one line and capped at 200 tokens; routine animation transitions and full raw provider responses are not
-printed. Learning recall is the deliberate exception: its bounded final Active Memory Pack is printed exactly so
-injection correctness can be inspected.
+printed.
 
 ## Session Management
 
 ### `/help`
 
-Show 31 built-ins with descriptions plus custom `/run` commands.
+Show the 30 built-ins with descriptions, custom `/run` commands, and the commands of connected plugins in their own
+`plugin` section.
 
 ```text
 /help
@@ -248,9 +251,9 @@ Display comprehensive session statistics:
 - Saved tap-agent history and reported usage; historical runs without a live handle are shown as unattached
 - Cache savings (tokens and accounting estimate)
 - Compression statistics (if compression has occurred)
-- Learning packs, items/tokens shown, materially used memories, outcome credit,
-  active-pack state, and maintenance activity. Cumulative learning usage is
-  persisted with the named session and survives resume.
+- One block per connected plugin, with the label and value rows the plugin reports. Besydr shows its checks, lessons
+  and cost there; see [Besydr's documentation](https://besydr.com/docs).
+- A `supervisor` block with the plugin's own cost breakdown, when a plugin reports one
 - Model information
 
 ```text
@@ -405,13 +408,12 @@ Quoted lines are dimmed in the prompt and in the submitted message.
 
 ### `/done [INSTRUCTIONS]`
 
-Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then (when
-`[supervisor.learning].enabled`) spawn fire-and-forget lesson extraction. Use it to manually reclaim context after
-finishing a unit of work.
+Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then tell
+connected plugins that the session starts over. Use it to manually reclaim context after finishing a unit of work.
 
 - The forced compression preserves no injected skills, including env-loaded ones.
-- Lesson extraction runs in the background and stores lessons for the current role + project — see [Learning Guide](../usage/13-learning.md).
-- It does **not** touch the active plan or auto-commit; enabled lesson extraction may write grounded learning records asynchronously.
+- Before folding anything away, octomind sends connected plugins a notice; after a successful fold it starts the plugin's session over. Octomind itself extracts no lessons any more; see [Learning](../usage/13-learning.md).
+- It does **not** touch the active plan or auto-commit.
 
 ```text
 /done
@@ -524,9 +526,8 @@ Display the runtime-owned structured task plan.
 |-------|-------------|
 | `/plan` or `/plan show` | Show current plan with progress and critical knowledge retained from compression |
 
-**Note**: `/plan` is display-only. The specialist has no plan mutation tool. For complex work it emits sparse hidden
-signals alongside normal work; the external planner creates, advances, revises, and finalizes runtime plan state.
-Focused work stays plan-free.
+**Note**: `/plan` is display-only. The model has no plan tool. A plan exists only when a plugin creates, advances,
+revises, or finishes it; without a plugin, `/plan` reports that there is no plan.
 
 ```text
 /plan
@@ -597,54 +598,21 @@ Examples:
 Replace `abc12345` with an ID returned by `/schedule list`. The schedule response includes an ID or error message for
 each operation; entries live in the current process/session.
 
-### `/learning [ACTION]`
+## Commands from plugins
 
-Browse and manage the lessons stored for the current role + project by the cross-session learning system. See [Learning
-Guide](../usage/13-learning.md) for full details.
+A plugin can register slash commands when it connects. They appear in `/help` under a `plugin` section and in the
+command list ACP clients receive. A plugin command with the same name as a built-in wins. Octomind sends the arguments
+to the plugin and shows the text it answers with; what the command does is up to the plugin.
 
-| Usage | Description |
-|-------|-------------|
-| `/learning` or `/learning list` | List project/domain and global hot memories plus hot/cold retention totals, 15 per page |
-| `/learning list <page>` | Show page N of the lesson list |
-| `/learning list *pattern*` | Glob-filter lessons by content, title, or tags (combinable with a page number) |
-| `/learning show <index>` | Show full content, provenance, relationships, outcome, use metadata, and storage path (alias: `get`) |
-| `/learning delete <index>` | Delete the lesson at the 1-based `<index>` in the current unfiltered combined list, not the last filtered page (aliases: `rm`, `remove`) |
-| `/learning clear` | Delete current project/domain hot memories and its cold archive; preserve global rules |
-| `/learning evolution [list]` | List generated behavior records matching the current project/domain |
-| `/learning evolution show <id>` | Inspect one record and its native artifact |
-| `/learning evolution approve <id>` | Authorize a shadow candidate for a bounded live trial. |
-| `/learning evolution reject <id>` | Mark a generated record rejected. |
-| `/learning evolution rollback <id>` | Return a trial or active behavior to shadow and reset counters. |
-| `/learning evolution distill` | Start cross-store behavior synthesis in the background, bypassing the daily stamp. |
-
-Any other subcommand returns an error listing `list`, `show`, `delete`, `clear`, and `evolution`.
-
-```text
-/learning
-/learning list 2
-/learning list *commit*
-/learning delete 3
-/learning clear
-```
-
-Use the ID returned by `/learning evolution list` for lifecycle actions:
-
-```text
-/learning list
-/learning show 1
-/learning evolution list
-/learning evolution show EVOLUTION_ID
-/learning evolution approve EVOLUTION_ID
-/learning evolution reject EVOLUTION_ID
-/learning evolution rollback EVOLUTION_ID
-```
-
-`EVOLUTION_ID` is a user-supplied existing record ID; choose the lifecycle action appropriate to that record.
+With the default Besydr plugin, `/learning` lists, shows and deletes the lessons Besydr has stored, and manages the
+rules and skills it generated (`/learning evolution`). Octomind no longer has a built-in `/learning`. The
+subcommands and their effects are documented by Besydr: [Learning](https://besydr.com/docs/learning). Without a
+connected plugin, the command does not exist.
 
 ## Common questions
 
-- **Why is the wrong learning item selected?** `show` and `delete` rebuild the unfiltered list. Run
-  `/learning list` without a pattern immediately before selecting an index.
+- **Why is there no `/learning`?** The command is provided by the Besydr plugin, so it exists only while Besydr is
+  connected to the session. See [Learning](../usage/13-learning.md).
 - **Why is media not sent yet?** Attachments are queued for the next user message; send text after attaching.
 - **Why does copy or analyze fail remotely?** Clipboard and loopback access belong to the Octomind host. Use
   your client attachment/clipboard UI, or `/share` when uploading the log is intended.

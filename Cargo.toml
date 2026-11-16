@@ -51,7 +51,7 @@ opt-level = "s"         # Optimize for size while keeping vectorization ("z" dis
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-octolib = { version = "0.53.1", default-features = false, features = ["llm", "websockets", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
+octolib = { version = "0.53.1", default-features = false, features = ["llm", "websockets", "embeddings", "huggingface", "onnx", "evaluation"] }
 rmcp = { version = "3.10.0", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process
@@ -123,6 +123,8 @@ agent-client-protocol = "5.3.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 which = "8.0.6"
 tempfile = "3.27.0"
+ed25519-dalek = "2" # Verifies the signature of a plugin release manifest
+tar = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -132,6 +134,7 @@ proctitle = "0.1"
 landlock = "0.4"
 
 [target.'cfg(windows)'.dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
@@ -146,7 +149,3 @@ lto = false            # Disable Link Time Optimization to speed up builds
 codegen-units = 256    # Use more codegen units for faster parallel compilation
 incremental = true     # Enable incremental compilation
 rpath = false          # Disable runtime search path
-
-[[test]]
-name = "hindsight_shared_test"
-harness = false

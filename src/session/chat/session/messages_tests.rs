@@ -38,16 +38,7 @@ fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
 		.recalled_refs
 		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
 	session.used_memory_ids.insert("M1".into());
-	let lesson = crate::supervisor::learning::Lesson {
-		content: "Build remotely".into(),
-		..Default::default()
-	};
-	session.active_user_rules.push((
-		"M1".into(),
-		crate::supervisor::learning::mod_tests::user_rule(&lesson, "Build remotely."),
-	));
 	session.clear_active_memory_pack();
-	assert!(session.active_user_rules.is_empty());
 	assert!(session.session.messages.is_empty());
 	assert!(session.recalled_refs.is_empty());
 	assert!(session.used_memory_ids.is_empty());
@@ -340,7 +331,7 @@ fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
 
 #[test]
 fn user_turn_clears_gate_findings_but_keeps_their_count() {
-	use crate::supervisor::{accounting::Usage, report::Outcome, stats::CallKind};
+	use crate::session::accounting::{report::Outcome, CallKind, Usage};
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.session.info.supervisor_accounting.kinds.insert(
 		CallKind::Gate,
@@ -445,53 +436,177 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 }
 
 #[test]
-fn genuine_turn_archives_evidence_but_system_messages_do_not() {
-	use crate::supervisor::resolve::ResolutionScope::FollowUp;
+fn a_real_user_turn_clears_the_active_memory_pack() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.add_user_message("audit every provider").unwrap();
-	let seq = session
-		.evidence
-		.record("view", &serde_json::json!({"path":"providers"}), false, false, 16);
-	session.evidence.record_ground(seq, "anthropic.rs\nopenai.rs");
+	session.set_active_memory_pack(Some("previous turn's memory".into()));
+	session.add_user_message("Next task").unwrap();
+	assert!(session.active_memory_pack.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Plugin events at the prompt
+// ---------------------------------------------------------------------------
+
+use crate::plugins::test_support::{connect_stub, StubPlugin};
+use serde_json::json;
+
+/// A session under its own id: stubs attach to the process-wide plugin host by
+/// session id, and tests run in parallel.
+async fn plugin_session(id: &str, stub: &StubPlugin) -> ChatSession {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.name = id.to_string();
+	connect_stub(id, "assistant", std::path::Path::new("."), stub).await;
 	session
-		.add_system_managed_user_message("<pay-attention>verify</pay-attention>")
-		.unwrap();
-	assert!(!session.evidence.render().is_empty());
-	assert!(session.evidence.verification_evidence(FollowUp).0.is_empty());
-	session.add_user_message("so we are good?").unwrap();
-	assert!(session.evidence.render().is_empty());
-	assert!(session.evidence.grounds().is_empty());
-	let (history, grounds) = session.evidence.verification_evidence(FollowUp);
-	assert!(history.contains("audit every provider"));
-	assert!(!history.contains("so we are good?"));
-	assert_eq!(grounds, vec![(seq, "anthropic.rs\nopenai.rs".into())]);
+}
+
+#[tokio::test]
+async fn plugin_rewrites_the_prompt_and_its_note_lands_before_the_user_message() {
+	let stub =
+		StubPlugin::new(&[event::PROMPT_SUBMIT]).answer(json!({"replace_prompt": "rewritten", "note": ["NOTE-FIRST"]}));
+	let mut session = plugin_session("o5-prompt-rewrite", &stub).await;
+	session.session.info.anchor.intent = "ship the release".to_string();
+
+	let prompt = session.submit_prompt("piped".to_string(), "typed").await.unwrap();
+	session.add_user_message(&prompt).unwrap();
+
+	assert_eq!(prompt, "rewritten");
+	let heard = &stub.sent(event::PROMPT_SUBMIT)[0];
+	assert_eq!(heard["prompt"], "piped");
+	assert_eq!(heard["original"], "typed");
+	assert_eq!(heard["goal"], "ship the release");
+	assert!(heard["carried_summary"]
+		.as_str()
+		.unwrap()
+		.contains("<intent>ship the release</intent>"));
+	assert!(session.session.messages[0].content.contains("NOTE-FIRST"));
+	assert_eq!(session.session.messages[1].content, "rewritten");
+
+	crate::plugins::end_session("o5-prompt-rewrite");
+}
+
+#[tokio::test]
+async fn unchanged_prompt_carries_no_original_and_an_empty_anchor_no_summary() {
+	let stub = StubPlugin::new(&[event::PROMPT_SUBMIT]);
+	let mut session = plugin_session("o5-prompt-plain", &stub).await;
+
+	let prompt = session.submit_prompt("same".to_string(), "same").await.unwrap();
+
+	assert_eq!(prompt, "same");
+	let heard = &stub.sent(event::PROMPT_SUBMIT)[0];
+	assert!(heard.get("original").is_none());
+	assert!(heard.get("carried_summary").is_none());
+	assert!(heard.get("goal").is_none());
+
+	crate::plugins::end_session("o5-prompt-plain");
+}
+
+#[tokio::test]
+async fn plugin_block_stops_the_prompt_with_its_message() {
+	let stub = StubPlugin::new(&[event::PROMPT_SUBMIT]).answer(json!({"block": "not on a Friday"}));
+	let mut session = plugin_session("o5-prompt-block", &stub).await;
+
+	let error = session.submit_prompt("deploy".to_string(), "deploy").await.unwrap_err();
+
+	assert_eq!(error.to_string(), "not on a Friday");
+	assert!(session.session.messages.is_empty());
+
+	crate::plugins::end_session("o5-prompt-block");
+}
+
+#[tokio::test]
+async fn prompt_goes_unchanged_to_a_plugin_that_did_not_ask_for_it() {
+	let stub = StubPlugin::new(&[event::TURN_END]).answer(json!({"replace_prompt": "never used"}));
+	let mut session = plugin_session("o5-prompt-unsubscribed", &stub).await;
+
+	let prompt = session.submit_prompt("as typed".to_string(), "as typed").await.unwrap();
+
+	assert_eq!(prompt, "as typed");
+	assert!(stub.sent(event::PROMPT_SUBMIT).is_empty());
+
+	crate::plugins::end_session("o5-prompt-unsubscribed");
+}
+
+#[tokio::test]
+async fn inbox_head_that_becomes_a_user_turn_is_submitted_to_plugins() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+
+	let stub = StubPlugin::new(&[event::PROMPT_SUBMIT]).answer(json!({"replace_prompt": "rewritten request"}));
+	let mut session = plugin_session("o5-prompt-inbox", &stub).await;
+	let batch = vec![InboxMessage {
+		source: InboxSource::Inject,
+		content: "a new request".to_string(),
+	}];
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	session.add_inbox_batch(batch, &config, rx).await.unwrap();
+
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(session.session.messages[0].content, "rewritten request");
+	assert_eq!(stub.sent(event::PROMPT_SUBMIT)[0]["prompt"], "a new request");
+
+	crate::plugins::end_session("o5-prompt-inbox");
+}
+
+#[tokio::test]
+async fn inbox_item_a_plugin_blocks_is_dropped_and_the_rest_of_the_batch_goes_on() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+
+	let stub = StubPlugin::new(&[event::PROMPT_SUBMIT]).respond(|_, params| {
+		Ok(if params["prompt"] == "forbidden" {
+			json!({"block": "not on a Friday"})
+		} else {
+			json!({})
+		})
+	});
+	let mut session = plugin_session("o5-prompt-inbox-block", &stub).await;
+	let item = |content: &str| InboxMessage {
+		source: InboxSource::Inject,
+		content: content.to_string(),
+	};
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	session
+		.add_inbox_batch(vec![item("forbidden"), item("fine request")], &config, rx)
+		.await
+		.expect("a refused item does not end the batch");
+
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(session.session.messages[0].content, "fine request");
+
+	crate::plugins::end_session("o5-prompt-inbox-block");
 }
 
 #[test]
-fn real_user_turns_request_recall_at_the_shared_message_boundary() {
+fn a_user_turn_resets_what_plugins_track_per_turn() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.learning_injected = true;
-	session.set_active_memory_pack(Some("previous turn's memory".into()));
-	session.add_user_message("Next task").unwrap();
-	assert!(session.pending_recall);
-	assert!(session.active_memory_pack.is_none());
-	session.pending_recall = false;
+	session.plugin_continuations = 3;
+	session.turn_mutated_paths.insert("/work/a.rs".to_string());
+	session.plugin_verified = Some(true);
+
 	session
-		.add_user_message_with_attachments("Client request", Vec::new(), Vec::new())
+		.add_system_managed_user_message("<system-note>note</system-note>")
 		.unwrap();
-	assert!(session.pending_recall);
-	session.pending_recall = false;
-	session
-		.add_system_managed_user_message("<system-note>tool follow-up</system-note>")
-		.unwrap();
-	assert!(!session.pending_recall);
-	session
-		.add_system_managed_turn_message("Scheduled background result")
-		.unwrap();
-	assert!(!session.pending_recall);
-	let config = crate::session::chat::test_support::fake_provider_config();
-	session
-		.add_tool_message("Tool result", "call-1", "shell", &config, Vec::new())
-		.unwrap();
-	assert!(!session.pending_recall);
+	assert_eq!(session.plugin_continuations, 3, "a note does not start a turn");
+
+	session.add_user_message("new request").unwrap();
+	assert_eq!(session.plugin_continuations, 0);
+	assert!(session.turn_mutated_paths.is_empty());
+	assert_eq!(session.plugin_verified, None);
+}
+
+#[test]
+fn context_blocks_join_per_plugin_with_one_line_between_plugins() {
+	let block = |plugin: &str, text: &str| PluginBlock {
+		plugin: plugin.to_string(),
+		name: text.to_string(),
+		text: text.to_string(),
+		keep: false,
+		items: Vec::new(),
+	};
+	let blocks = [block("a", "x"), block("a", "y"), block("b", "z")];
+
+	assert_eq!(join_context_blocks(&blocks), "xy\nz");
+	assert_eq!(join_context_blocks(&[]), "");
 }

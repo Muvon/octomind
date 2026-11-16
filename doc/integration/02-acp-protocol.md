@@ -193,8 +193,8 @@ After a normal AI prompt the agent also emits notification metadata:
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"editor-session","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.verified":false,"octomind.pending_work":false}}}
 ```
 
-`octomind.verified` is true only when supervisor verification tracking is enabled and the detector reports no
-outstanding verification need. It is not proof that every task requirement passed. `octomind.pending_work` indicates
+`octomind.verified` is true only when a plugin reported the work as verified at the end of its last turn; without any
+plugin it is false, and with plugins that gave no verdict it is left out. It is not proof that every task requirement passed. `octomind.pending_work` indicates
 outstanding async work and also appears in the successful prompt result's `_meta`; `end_turn` alone does not mean
 background work has finished. The inbox monitor also emits this field after draining its work, so a client keeping
 input open can observe when that background work becomes idle.
@@ -202,9 +202,8 @@ input open can observe when that background work becomes idle.
 Clients that preserve ACP `_meta` can read this extension; clients that discard `_meta` still receive the normal session
 updates but not this usage payload.
 
-Grounded behavior lifecycle changes are delivered as `SessionInfoUpdate` notifications with an `octomind.evolution`
-`_meta` object, preserving the same action/id/name/kind/state/scope fields without rendering control-plane text as an
-assistant message.
+The `octomind.evolution` `_meta` object is still defined for grounded behavior lifecycle changes, carrying action/id/name/kind/state/scope fields,
+but the current octomind code does not produce these events.
 
 ### Session creation: `new_session` vs `load_session`
 
@@ -420,7 +419,7 @@ operation; API failures may still return a JSON-RPC error rather than a successf
 | Host waits forever after `/exit` | `/exit` reports intent; close the subprocess stdin to end ACP. |
 | Webhook receives no requests | ACP has no `--hook` flag and starts no HTTP listener; use the run daemon. |
 | Extension method not found | Send `_octomind/command` on the wire and `/info` or another slash-prefixed command. |
-| No usage, verification, or evolution data | Preserve `params._meta` on notifications and `result._meta` on results. |
+| No usage or verification data | Preserve `params._meta` on notifications and `result._meta` on results. |
 | No startup response | Inspect the three log files above and captured bootstrap stderr. |
 
 ## Agent Capabilities
@@ -455,7 +454,7 @@ distinct from the full interactive CLI command set:
 | `help` | — | Show available commands |
 | `role` | `<role_name>` | View or change current role |
 | `model` | `<provider:model>` | View or change current AI model |
-| `done` | — | Force-compress the conversation context and, when learning is enabled, start lesson extraction in the background |
+| `done` | — | Force-compress the conversation context; with a plugin that learns from sessions, also start lesson extraction in the background |
 | `info` | — | Display token and cost breakdown for this session |
 | `clear` | — | Clear the screen |
 | `copy` | — | Copy last response to clipboard |
@@ -465,7 +464,7 @@ distinct from the full interactive CLI command set:
 | `run` | `<command_name>` | Execute a command |
 | `workflow` | `<workflow_name> [input]` | Advertised for client compatibility, but not implemented; run workflows via `octomind workflow <name-or-file>` instead |
 | `mcp` | `[info\|list\|full\|health\|dump\|validate]` | MCP server management |
-| `plan` | — | Display the current supervisor-owned plan |
+| `plan` | — | Display the current plan |
 | `prompt` | `[template_name]` | Manage prompt templates |
 | `image` | `<path>` | Attach image to next message |
 | `video` | `<path>` | Attach video to next message |
@@ -493,7 +492,7 @@ For example, request MCP information through the prompt channel:
 
 Use the [Session Commands](../reference/02-session-commands.md) reference for argument examples. The advertised list is
 not a dispatch guarantee: `session`, `workflow`, and `agents` are unsupported. `/done` compresses and may start
-learning; despite its advertised description, this handler does not auto-commit. Remote `clear`/`copy` commands run on
+lesson extraction when a plugin provides it; despite its advertised description, this handler does not auto-commit. Remote `clear`/`copy` commands run on
 the agent host and do not clear your editor or copy to its clipboard. The unadvertised `/reply` returns the quoted reply
 as JSON text; it cannot fill the editor's input.
 

@@ -26,6 +26,8 @@ use crate::config::Config;
 use crate::session::context::SessionId;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 static RULES: RwLock<Option<HashMap<SessionId, Arc<Guardrails>>>> = RwLock::new(None);
@@ -63,36 +65,136 @@ static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>>
 /// Per-session message counter (total user messages including current).
 static MESSAGE_COUNTS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(None);
 
+/// Where the session's files are: its working directory, else the process's.
+fn session_workdir(session_id: &SessionId) -> PathBuf {
+	crate::session::context::get_current_workdir(session_id)
+		.or_else(|| std::env::current_dir().ok())
+		.unwrap_or_default()
+}
+
 /// Load `.agents/guardrails.toml` from the session's working directory and
 /// install it for the current session. No-op when not in a session context.
 pub fn init_for_session() {
 	let Some(sid) = crate::session::context::current_session_id() else {
 		return;
 	};
-	let workdir = crate::session::context::get_current_workdir(&sid)
-		.or_else(|| std::env::current_dir().ok())
-		.unwrap_or_default();
+	let workdir = session_workdir(&sid);
 	let mut rules = Guardrails::load_from_workdir(&workdir);
 	rules.snapshot_scripts(&workdir);
-	let mut guard = RULES.write().unwrap();
-	let registry = guard.get_or_insert_with(HashMap::new);
-	registry.insert(sid, Arc::new(rules));
+	RULES
+		.write()
+		.unwrap()
+		.get_or_insert_with(HashMap::new)
+		.insert(sid.clone(), Arc::new(rules));
+	// The fresh set holds no plugin rules, so what plugins registered before is compiled again.
+	if let Some(registry) = PLUGIN_RULES.write().unwrap().as_mut() {
+		registry.remove(&sid);
+	}
+	sync_plugin_rules(&sid);
 }
 
 /// Append generated rules after the already-loaded project authority. Invalid
 /// generated artifacts are rejected before this boundary, so they cannot make
 /// a valid project guardrail set disappear.
 pub fn merge_generated_for_session(session_id: &SessionId, mut generated: Guardrails) {
-	let workdir = crate::session::context::get_current_workdir(session_id)
-		.or_else(|| std::env::current_dir().ok())
-		.unwrap_or_default();
-	generated.snapshot_scripts(&workdir);
+	generated.snapshot_scripts(&session_workdir(session_id));
 	let mut guard = RULES.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
 	let current = registry.entry(session_id.clone()).or_default();
 	let mut merged = (**current).clone();
 	merged.append_compiled(generated);
 	registry.insert(session_id.clone(), Arc::new(merged));
+}
+
+/// Rules plugins registered, as compiled for one session.
+struct PluginRules {
+	/// Of the registered texts the rules were compiled from: a change means compile again.
+	fingerprint: u64,
+	/// Plugin that registered each rule id.
+	owners: HashMap<String, String>,
+}
+
+static PLUGIN_RULES: RwLock<Option<HashMap<SessionId, PluginRules>>> = RwLock::new(None);
+
+fn fingerprint_of(registered: &[(String, String)]) -> u64 {
+	let mut hasher = DefaultHasher::new();
+	registered.hash(&mut hasher);
+	hasher.finish()
+}
+
+/// Rebuild the session's generated rules from what plugins registered. A
+/// later registration replaces the earlier one; nothing accumulates.
+pub fn sync_plugin_rules(session_id: &str) {
+	let registered = crate::plugins::registered_rules(session_id);
+	let fingerprint = fingerprint_of(&registered);
+	let compiled = PLUGIN_RULES
+		.read()
+		.unwrap()
+		.as_ref()
+		.and_then(|registry| registry.get(session_id))
+		.map_or_else(|| fingerprint_of(&[]), |state| state.fingerprint);
+	if compiled == fingerprint {
+		return;
+	}
+
+	let mut generated = Guardrails::default();
+	let mut owners = HashMap::new();
+	for (plugin, text) in &registered {
+		match Guardrails::parse_plugin_rules(text) {
+			Ok(parsed) => {
+				owners.extend(parsed.bindings().map(|binding| (binding.id.clone(), plugin.clone())));
+				generated.append_compiled(parsed);
+			}
+			Err(error) => crate::log_debug!("Rules of plugin '{}' are not valid TOML: {}", plugin, error),
+		}
+	}
+
+	let session_id: SessionId = session_id.to_string();
+	generated.snapshot_scripts(&session_workdir(&session_id));
+	{
+		let mut guard = RULES.write().unwrap();
+		let registry = guard.get_or_insert_with(HashMap::new);
+		let mut merged = (**registry.entry(session_id.clone()).or_default()).clone();
+		merged.drop_plugin_rules();
+		// Same filter as for evolution's pipes: a pipe of the user's own wins.
+		if merged.has_user_pipe() && !generated.pipes.is_empty() {
+			crate::log_debug!("Registered pipes disabled because a user-authored pipe is active");
+			generated.pipes.clear();
+		}
+		merged.append_compiled(generated);
+		registry.insert(session_id.clone(), Arc::new(merged));
+	}
+	PLUGIN_RULES
+		.write()
+		.unwrap()
+		.get_or_insert_with(HashMap::new)
+		.insert(session_id, PluginRules { fingerprint, owners });
+}
+
+/// The plugin that registered the rule with this id, if one did.
+pub fn plugin_of_rule(session_id: &str, rule_id: &str) -> Option<String> {
+	PLUGIN_RULES
+		.read()
+		.unwrap()
+		.as_ref()?
+		.get(session_id)?
+		.owners
+		.get(rule_id)
+		.cloned()
+}
+
+/// A generated rule matched in observe mode: the plugin that registered it hears of it.
+pub fn mark_shadow_match(session_id: &str, id: &str) {
+	if let Some(plugin) = plugin_of_rule(session_id, id) {
+		crate::plugins::record_rule_match(session_id, &plugin, id, crate::plugins::protocol::RuleOutcome::Observed)
+	}
+}
+
+/// A generated rule matched and took effect: the plugin that registered it hears of it.
+pub fn mark_behavior_used(session_id: &str, id: &str) {
+	if let Some(plugin) = plugin_of_rule(session_id, id) {
+		crate::plugins::record_rule_match(session_id, &plugin, id, crate::plugins::protocol::RuleOutcome::Applied)
+	}
 }
 
 pub fn get_rules(session_id: &SessionId) -> Option<Arc<Guardrails>> {
@@ -127,6 +229,11 @@ pub fn clear_for_session(session_id: &SessionId) {
 		}
 	}
 	if let Ok(mut guard) = MESSAGE_COUNTS.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = PLUGIN_RULES.write() {
 		if let Some(r) = guard.as_mut() {
 			r.remove(session_id);
 		}
@@ -296,6 +403,14 @@ pub fn preview_batch(
 	}
 }
 
+/// What a plugin decided about one call of a batch: a denial of its own, and
+/// the ids of rule bindings it lifted for that call.
+#[derive(Default)]
+pub struct Admission {
+	pub message: Option<String>,
+	pub overridden_guards: Vec<String>,
+}
+
 /// Re-evaluate in original order against ONLY finally admitted predecessors.
 /// A semantic denial cannot pollute guard/validator history, including within
 /// the same parallel batch. This is the sole commit of native side effects.
@@ -303,7 +418,7 @@ pub fn check_batch_admitted(
 	session_id: &SessionId,
 	config: &crate::config::Config,
 	calls: &[crate::mcp::McpToolCall],
-	admissions: &[crate::supervisor::authorizer::Admission],
+	admissions: &[Admission],
 ) -> Vec<Option<String>> {
 	// Two reasons to traverse the batch:
 	//   1. Evaluate [[guard]] rules and produce per-call deny messages.
@@ -340,11 +455,11 @@ pub fn check_batch_admitted(
 				&loaded,
 			);
 			for id in evaluation.shadow_ids {
-				crate::supervisor::learning::evolution::mark_shadow_match(&id);
+				mark_shadow_match(session_id, &id);
 			}
 			if let Some((message, binding)) = evaluation.blocked {
 				if let Some(binding) = binding {
-					crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+					mark_behavior_used(session_id, &binding.id);
 				}
 				Some(message)
 			} else {
@@ -396,3 +511,7 @@ pub fn increment_pipe_run_count(session_id: &SessionId, pipe_name: &str) -> u64 
 #[cfg(test)]
 #[path = "guardrails_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "guardrails_plugin_tests.rs"]
+pub(crate) mod plugin_tests;

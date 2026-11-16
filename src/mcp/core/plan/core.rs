@@ -14,9 +14,9 @@
 
 //! Runtime-owned plan storage, rendering, and sidecar transitions.
 //!
-//! Lifecycle changes enter through the `sidecar_*` functions under
-//! `supervisor::plan`. The specialist can only observe injected plan state and
-//! emit sparse hidden signals; there is no MCP command surface.
+//! Lifecycle changes enter through the `sidecar_*` functions, which apply a
+//! plan change a plugin answered with. The agent can only observe injected
+//! plan state; there is no MCP command surface.
 use super::memory_storage::MemoryPlanStorage;
 use super::storage::{PlanStorage, TaskData, TaskStatus};
 use anyhow::Result;
@@ -152,7 +152,14 @@ fn persist_plan_cleared() {
 	}
 }
 
-fn sidecar_tasks(tasks: &[crate::supervisor::plan::PlanTaskDirective], minimum: usize) -> Result<Vec<TaskData>> {
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanTaskDirective {
+	pub title: String,
+	pub done_when: String,
+}
+
+fn sidecar_tasks(tasks: &[PlanTaskDirective], minimum: usize) -> Result<Vec<TaskData>> {
 	if tasks.len() < minimum {
 		anyhow::bail!("A sidecar plan needs at least {minimum} meaningful task(s)");
 	}
@@ -178,7 +185,7 @@ fn sidecar_tasks(tasks: &[crate::supervisor::plan::PlanTaskDirective], minimum: 
 }
 
 /// Start a runtime-owned plan without a tool result or compression side effect.
-pub fn sidecar_start(title: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
+pub fn sidecar_start(title: &str, tasks: &[PlanTaskDirective]) -> Result<()> {
 	let title = title.trim();
 	if title.is_empty() {
 		anyhow::bail!("Plan title must be non-empty");
@@ -217,7 +224,7 @@ pub fn sidecar_advance(summary: &str) -> Result<()> {
 }
 
 /// Revise only the open tail after new evidence invalidates the route.
-pub fn sidecar_revise(reason: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
+pub fn sidecar_revise(reason: &str, tasks: &[PlanTaskDirective]) -> Result<()> {
 	if reason.trim().is_empty() {
 		anyhow::bail!("Plan revision reason must be non-empty");
 	}

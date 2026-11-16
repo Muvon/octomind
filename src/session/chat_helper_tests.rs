@@ -432,20 +432,6 @@ fn test_complete_schedule_subcommands() {
 }
 
 #[test]
-fn test_complete_learning_subcommands() {
-	let config = test_config();
-	let completer = CommandCompleter::new(&config, "developer");
-
-	let (start, candidates) = completer.complete("/learning ", 10);
-	assert_eq!(start, 10);
-	assert_eq!(candidates.len(), 5);
-
-	let (_, candidates) = completer.complete("/learning ev", 12);
-	assert_eq!(candidates.len(), 1);
-	assert_eq!(candidates[0].replacement, "evolution");
-}
-
-#[test]
 fn test_complete_video_file_completion() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let base = tmp.path();
@@ -474,7 +460,6 @@ fn test_argument_candidates_cover_alias_and_unknown() {
 	// Aliases the handlers accept must be present, or highlighting would mark
 	// a valid argument red
 	assert!(CC::argument_candidates("/schedule").expect("schedule").contains(&"rm"));
-	assert!(CC::argument_candidates("/learning").expect("learning").contains(&"get"));
 	assert!(CC::argument_candidates("/effort").expect("effort").contains(&"x-high"));
 	// `off` is the alias of `none`; without it the highlighter marks a
 	// valid argument red.
@@ -531,10 +516,6 @@ fn test_hint_extended() {
 		completer.hint("/schedule"),
 		Some(" [list|remove|add|edit|help]".to_string())
 	);
-	assert_eq!(
-		completer.hint("/learning"),
-		Some(" [list|show|delete|clear|evolution]".to_string())
-	);
 	assert_eq!(completer.hint("/video"), Some(" <path_to_video>".to_string()));
 	assert_eq!(completer.hint("/workflow"), Some(" <name> [input...]".to_string()));
 	assert_eq!(completer.hint("/skill"), Some(" [<name>|<page>|*pattern*]".to_string()));
@@ -580,10 +561,6 @@ fn test_hint_extended() {
 		Some("list|remove|add|edit|help".to_string())
 	);
 	assert_eq!(
-		completer.hint("/learning "),
-		Some("list|show|delete|clear|evolution".to_string())
-	);
-	assert_eq!(
 		completer.hint("/video "),
 		Some("Start typing video file path...".to_string())
 	);
@@ -607,7 +584,6 @@ fn test_hint_extended() {
 	assert_eq!(completer.hint("/effort x"), None);
 	assert_eq!(completer.hint("/status x"), None);
 	assert_eq!(completer.hint("/schedule x"), None);
-	assert_eq!(completer.hint("/learning x"), None);
 	assert_eq!(completer.hint("/video x"), None);
 	assert_eq!(completer.hint("/workflow x"), None);
 	assert_eq!(completer.hint("/skill x"), None);
@@ -744,4 +720,32 @@ fn test_complete_bare_slash_inserts_partial_candidate() {
 	assert_eq!(start, 0);
 	assert!(candidates[0].display.contains("(partial)"));
 	assert_eq!(candidates[0].replacement, "/");
+}
+
+#[tokio::test]
+async fn plugin_commands_are_found_on_an_input_thread_that_is_given_the_session() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let sid = "chat-helper-plugin-commands".to_string();
+	let dir = tempfile::tempdir().expect("tempdir");
+	let stub = StubPlugin::new(&[event::COMMAND]).init_field(
+		"commands",
+		serde_json::json!([{"name": "learn", "hint": "[x]", "description": "Learn"}]),
+	);
+	connect_stub(&sid, "developer", dir.path(), &stub).await;
+
+	let thread_sid = sid.clone();
+	let (without_scope, with_scope) = tokio::task::spawn_blocking(move || {
+		(
+			plugin_command_names(),
+			crate::session::context::with_session_id_sync(thread_sid, plugin_command_names),
+		)
+	})
+	.await
+	.expect("the input thread runs");
+
+	assert!(without_scope.is_empty());
+	assert_eq!(with_scope, vec!["/learn".to_string()]);
+	crate::plugins::end_session(&sid);
 }

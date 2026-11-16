@@ -231,7 +231,7 @@ async fn available_functions_cover_each_builtin_server_arm() {
 #[tokio::test]
 async fn builtin_annotations_drive_mutation_classification() {
 	clear_function_cache();
-	let is_mutation = crate::supervisor::detect::is_mutation_call;
+	let is_mutation = crate::mcp::tool_shape::is_mutation_call;
 	let mut agent_cfg = config_with_servers(vec![
 		McpServerConfig::builtin("orchestration", 30, vec![]),
 		McpServerConfig::builtin("agent", 30, vec![]),
@@ -1104,7 +1104,7 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 			assert!(matches!(&image.data, crate::session::image::ImageData::Base64(value) if value == data));
 			assert_eq!(image.media_type, mime);
 		}
-		assert!(!crate::supervisor::condense::is_plain_text_result(&result));
+		assert!(!crate::mcp::tool_shape::is_plain_text_result(&result));
 	}
 	assert!(McpToolResult::success("view".into(), "call-text".into(), "body".into())
 		.extract_images()

@@ -13,9 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::session::chat::test_support::{
-	fake_provider_config, fake_session, final_response, spawn_stub, tool_call_response, ENV_LOCK,
-};
+use crate::session::chat::test_support::{fake_provider_config, fake_session, final_response, spawn_stub, ENV_LOCK};
 use serde_json::json;
 
 #[test]
@@ -95,7 +93,7 @@ fn test_capture_self_report_credits_only_ids_in_active_pack() {
 		),
 	];
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.supervisor.enabled = true;
+	config.plugins.push(plugin_config());
 	let content = r#"answer
 <sup>{"state":"progressing","focus":"used one memory","next":"continue","carry":[],"plan":null,"memories":["M2","M9"]}</sup>"#;
 	let visible = capture_self_report(&mut session, &config, content);
@@ -106,6 +104,11 @@ fn test_capture_self_report_credits_only_ids_in_active_pack() {
 
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template")
+}
+
+/// The status line is read only when a plugin is configured.
+fn plugin_config() -> crate::config::PluginConfig {
+	toml::from_str("name = \"status-reader\"\ntype = \"stdio\"\ncommand = \"stub\"\n").expect("plugin config parses")
 }
 
 /// OutputSink that records every emitted message for inspection.
@@ -242,12 +245,10 @@ fn test_add_assistant_message_without_tool_calls_records_turn_answer() {
 
 #[test]
 fn test_capture_self_report_disabled_hides_report_and_clears_state() {
-	let mut config = template_config();
-	config.supervisor.enabled = false;
+	let config = template_config();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
-	session.last_self_report = Some(crate::supervisor::detect::SelfReport::Progressing);
+	session.last_self_report = Some(crate::session::self_report::SelfReport::Progressing);
 	session.last_self_report_reason = Some("stale".to_string());
-	session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
 
 	let content = "answer\n<sup>{\"state\":\"done\",\"focus\":\"f\",\"next\":null,\"carry\":[],\"plan\":null,\"memories\":[],\"behaviors\":[]}</sup>";
 	let visible = capture_self_report(&mut session, &config, content);
@@ -256,13 +257,12 @@ fn test_capture_self_report_disabled_hides_report_and_clears_state() {
 	assert!(session.last_self_report.is_none());
 	assert!(session.last_self_report_reason.is_none());
 	assert!(session.last_self_report_handoff.is_none());
-	assert!(session.pending_plan_signal.is_none());
 }
 
 #[test]
 fn test_capture_self_report_no_token_keeps_state_clear() {
 	let mut config = template_config();
-	config.supervisor.enabled = true;
+	config.plugins.push(plugin_config());
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 
 	let visible = capture_self_report(&mut session, &config, "plain answer");
@@ -270,13 +270,12 @@ fn test_capture_self_report_no_token_keeps_state_clear() {
 	assert_eq!(visible, "plain answer");
 	assert!(session.last_self_report.is_none());
 	assert!(session.last_self_report_reason.is_none());
-	assert!(session.pending_plan_signal.is_none());
 }
 
 #[test]
-fn test_capture_self_report_captures_plan_signal_and_state() {
+fn test_capture_self_report_captures_state_and_ignores_plan_signal() {
 	let mut config = template_config();
-	config.supervisor.enabled = true;
+	config.plugins.push(plugin_config());
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 
 	let content = "answer\n<sup>{\"state\":\"progressing\",\"focus\":\"mid turn\",\"next\":\"keep going\",\"carry\":[],\"plan\":\"request\",\"memories\":[],\"behaviors\":[]}</sup>";
@@ -284,12 +283,8 @@ fn test_capture_self_report_captures_plan_signal_and_state() {
 
 	assert_eq!(visible, "answer");
 	assert_eq!(
-		session.pending_plan_signal,
-		Some(crate::supervisor::plan::PlanSignal::Request)
-	);
-	assert_eq!(
 		session.last_self_report,
-		Some(crate::supervisor::detect::SelfReport::Progressing)
+		Some(crate::session::self_report::SelfReport::Progressing)
 	);
 	assert_eq!(session.last_self_report_reason.as_deref(), Some("mid turn"));
 	assert!(session.last_self_report_handoff.is_some());
@@ -298,7 +293,7 @@ fn test_capture_self_report_captures_plan_signal_and_state() {
 #[test]
 fn test_capture_self_report_blocked_state() {
 	let mut config = template_config();
-	config.supervisor.enabled = true;
+	config.plugins.push(plugin_config());
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 
 	let content = "stuck\n<sup>{\"state\":\"blocked\",\"focus\":\"waiting on perms\",\"next\":null,\"carry\":[],\"plan\":null,\"memories\":[],\"behaviors\":[]}</sup>";
@@ -307,7 +302,7 @@ fn test_capture_self_report_blocked_state() {
 	assert_eq!(visible, "stuck");
 	assert_eq!(
 		session.last_self_report,
-		Some(crate::supervisor::detect::SelfReport::Blocked)
+		Some(crate::session::self_report::SelfReport::Blocked)
 	);
 	assert_eq!(session.last_self_report_reason.as_deref(), Some("waiting on perms"));
 }
@@ -439,7 +434,7 @@ async fn test_process_response_hides_internal_notes_in_all_modes_but_preserves_s
 	let provider_items = json!([
 		{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": content}]}
 	]);
-	for supervisor_enabled in [false, true] {
+	for plugin_configured in [false, true] {
 		for mode in [
 			OutputMode::Interactive,
 			OutputMode::NonInteractive,
@@ -452,7 +447,9 @@ async fn test_process_response_hides_internal_notes_in_all_modes_but_preserves_s
 			session.session.session_file = Some(path.clone());
 			session.session.save().expect("initialize session log");
 			let mut config = fake_provider_config();
-			config.supervisor.enabled = supervisor_enabled;
+			if plugin_configured {
+				config.plugins.push(plugin_config());
+			}
 			let (_tx, rx) = tokio::sync::watch::channel(false);
 			let sink = recording_sink();
 			process_response(ResponseProcessingParams {
@@ -480,13 +477,13 @@ async fn test_process_response_hides_internal_notes_in_all_modes_but_preserves_s
 					_ => None,
 				})
 				.collect();
-			assert_eq!(answers, vec!["Answer."], "{mode:?}, supervisor={supervisor_enabled}");
+			assert_eq!(answers, vec!["Answer."], "{mode:?}, plugin={plugin_configured}");
 			assert!(matches!(messages.last(), Some(ServerMessage::Cost(_))));
 			assert_eq!(session.last_response, "Answer.");
 			assert_eq!(session.turn_answers, vec!["Answer."]);
 			assert_eq!(
 				session.last_self_report,
-				supervisor_enabled.then_some(crate::supervisor::detect::SelfReport::Progressing)
+				plugin_configured.then_some(crate::session::self_report::SelfReport::Progressing)
 			);
 			let stored = crate::session::load_session(&path).expect("reload session log");
 			let answer = stored.messages.last().expect("stored response");
@@ -716,334 +713,6 @@ async fn test_process_response_tool_round_without_keepalive_policy_records_no_to
 
 #[tokio::test]
 #[cfg(unix)]
-async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
-	let _guard = ENV_LOCK.lock().await;
-	// Three identical tool rounds: round 1 comes from params, rounds 2-3 from
-	// the stub; the loop detector fires on round 3 and an advisory is
-	// injected before the final follow-up.
-	let url = spawn_stub(vec![
-		tool_call_response("loopdump", json!({})),
-		tool_call_response("loopdump", json!({})),
-		final_response("done"),
-	])
-	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let tmp = tempfile::tempdir().expect("tempdir");
-	write_local_tool(
-		tmp.path(),
-		"loopdump",
-		"#!/bin/sh\n# @description Print a fixed line.\nprintf 'identical output\\n'\n",
-	);
-
-	let mut config = config_with_core_server(fake_provider_config());
-	config.supervisor.enabled = true;
-	// The planner would issue its own scripted-queue LLM calls; no plan signal
-	// is emitted here, so disabling keeps the stub queue in sync.
-	config.supervisor.plan.enabled = false;
-
-	let session_id = "resp-steer-loop-test".to_string();
-	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-
-		let mut session = fake_session("keep dumping");
-		session.session.info.name = session_id.clone();
-		let (_tx, rx) = tokio::sync::watch::channel(false);
-		let sink = recording_sink();
-
-		let params = ResponseProcessingParams {
-			content: String::new(),
-			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
-			tool_calls: Some(vec![crate::mcp::McpToolCall {
-				tool_name: "loopdump".to_string(),
-				parameters: json!({}),
-				tool_id: "c1".to_string(),
-			}]),
-			thinking: None,
-			finish_reason: Some("tool_calls".to_string()),
-			response_id: None,
-			chat_session: &mut session,
-			config: &config,
-			role: "assistant",
-			operation_cancelled: rx,
-			sink,
-			mode: OutputMode::Jsonl,
-		};
-
-		process_response(params)
-			.await
-			.expect("loop turn completes under the supervisor");
-
-		let advisories: Vec<_> = session
-			.session
-			.messages
-			.iter()
-			.enumerate()
-			.filter(|(_, m)| m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:"))
-			.collect();
-		assert_eq!(
-			advisories.len(),
-			1,
-			"expected one loop advisory: {:?}",
-			session
-				.session
-				.messages
-				.iter()
-				.map(|m| (&m.role, &m.content))
-				.collect::<Vec<_>>()
-		);
-		let (index, advisory) = advisories[0];
-		assert!(crate::session::is_system_managed_user_content(&advisory.content));
-		assert!(advisory.content.contains("identical calls"));
-		assert!(advisory
-			.content
-			.contains("arrives on its own as your next user message"));
-		assert!(advisory
-			.content
-			.contains("If the tool registered automatic background-result delivery"));
-		assert!(advisory
-			.content
-			.contains("polling may be necessary when no automatic delivery was registered"));
-		assert!(advisory
-			.content
-			.contains("does not require extra work or a blocked handback"));
-		assert_eq!(
-			session.session.messages[..index]
-				.iter()
-				.filter(|m| m.role == "tool")
-				.count(),
-			3,
-			"the advisory follows the three recorded tool results"
-		);
-		assert!(session.session.messages[index + 1..]
-			.iter()
-			.any(|m| m.role == "assistant" && m.content == "done"));
-		assert!(session.steer_pending.is_none());
-		assert_eq!(session.steer_attempt, 0);
-		assert!(matches!(
-			session.steer_last_signal,
-			crate::supervisor::detect::DetectorSignal::Loop
-		));
-		assert_eq!(session.last_response, "done");
-
-		crate::session::context::cleanup_session(&session_id);
-	})
-	.await;
-}
-
-#[tokio::test]
-#[cfg(unix)]
-async fn test_process_response_loop_stop_ends_the_turn_without_another_request() {
-	let _guard = ENV_LOCK.lock().await;
-	// The 2026-10-23 runaway shape: the model re-issues one call that keeps
-	// returning the same short receipt. Round 1 comes from params, rounds 2-3
-	// from the stub; with the limit at 3 the turn must end on round 3, so the
-	// queued final answer is never requested.
-	let url = spawn_stub(vec![
-		tool_call_response("loopdump", json!({})),
-		tool_call_response("loopdump", json!({})),
-		final_response("never requested"),
-	])
-	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let tmp = tempfile::tempdir().expect("tempdir");
-	write_local_tool(
-		tmp.path(),
-		"loopdump",
-		"#!/bin/sh\n# @description Print a fixed line.\nprintf 'False\\n'\n",
-	);
-
-	let mut config = config_with_core_server(fake_provider_config());
-	config.supervisor.enabled = true;
-	config.supervisor.plan.enabled = false;
-	config.supervisor.max_identical_rounds = 3;
-
-	let session_id = "resp-loop-stop-test".to_string();
-	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-
-		let mut session = fake_session("keep checking");
-		session.session.info.name = session_id.clone();
-		let (_tx, rx) = tokio::sync::watch::channel(false);
-		let sink = recording_sink();
-
-		let params = ResponseProcessingParams {
-			content: String::new(),
-			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
-			tool_calls: Some(vec![crate::mcp::McpToolCall {
-				tool_name: "loopdump".to_string(),
-				parameters: json!({}),
-				tool_id: "c1".to_string(),
-			}]),
-			thinking: None,
-			finish_reason: Some("tool_calls".to_string()),
-			response_id: None,
-			chat_session: &mut session,
-			config: &config,
-			role: "assistant",
-			operation_cancelled: rx,
-			sink: sink.clone(),
-			mode: OutputMode::Jsonl,
-		};
-
-		process_response(params).await.expect("loop stop ends the turn cleanly");
-
-		let roles: Vec<&str> = session.session.messages.iter().map(|m| m.role.as_str()).collect();
-		assert_eq!(
-			roles,
-			vec![
-				"user",
-				"assistant",
-				"tool",
-				"assistant",
-				"tool",
-				"assistant",
-				"tool",
-				"assistant"
-			],
-			"every tool call is answered and the stop notice is the final answer"
-		);
-		let last = session.session.messages.last().expect("final message");
-		assert!(last
-			.content
-			.starts_with("Stopped by the supervisor: the last 3 tool rounds"));
-		assert!(last.content.contains("Repeated: `loopdump`"));
-		assert!(last.content.contains("Result: False"));
-		assert!(last.tool_calls.is_none());
-		assert!(!session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content == "never requested" || m.content.starts_with("<pay-attention>")));
-		assert!(session.steer_pending.is_none(), "no hint is carried into the next turn");
-		assert_eq!(session.turn_answers, vec![last.content.clone()]);
-
-		let messages = sink.0.lock().expect("sink lock");
-		assert!(messages
-			.iter()
-			.any(|m| matches!(m, ServerMessage::Assistant(a) if a.content.starts_with("Stopped by the supervisor"))));
-		assert!(
-			matches!(messages.last(), Some(ServerMessage::Cost(_))),
-			"the turn closes with its cost frame like any other"
-		);
-		drop(messages);
-
-		crate::session::context::cleanup_session(&session_id);
-	})
-	.await;
-}
-
-#[tokio::test]
-#[cfg(unix)]
-async fn test_process_response_supervisor_no_progress_fires_on_reworded_calls() {
-	let _guard = ENV_LOCK.lock().await;
-	// The 2026-10-06 CI brief runaway shape: every round widens one argument
-	// while the tool prints the same receipt. Round 1 comes from params, rounds
-	// 2-6 from the stub; the calls differ, so the loop detector stays quiet, and
-	// the no-progress advisory is injected before the final follow-up.
-	let url = spawn_stub(vec![
-		tool_call_response("windowdump", json!({"window": 400})),
-		tool_call_response("windowdump", json!({"window": 600})),
-		tool_call_response("windowdump", json!({"window": 800})),
-		tool_call_response("windowdump", json!({"window": 1000})),
-		tool_call_response("windowdump", json!({"window": 1200})),
-		final_response("done"),
-	])
-	.await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	let tmp = tempfile::tempdir().expect("tempdir");
-	write_local_tool(
-		tmp.path(),
-		"windowdump",
-		"#!/bin/sh\n# @description Print a fixed line.\n\
-		 # @param window integer Lines of context to show.\n\
-		 printf 'identical output\\n'\n",
-	);
-
-	let mut config = config_with_core_server(fake_provider_config());
-	config.supervisor.enabled = true;
-	config.supervisor.plan.enabled = false;
-
-	let session_id = "resp-steer-no-progress-test".to_string();
-	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-
-		let mut session = fake_session("show more context");
-		session.session.info.name = session_id.clone();
-		let (_tx, rx) = tokio::sync::watch::channel(false);
-		let sink = recording_sink();
-
-		let params = ResponseProcessingParams {
-			content: String::new(),
-			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
-			tool_calls: Some(vec![crate::mcp::McpToolCall {
-				tool_name: "windowdump".to_string(),
-				parameters: json!({"window": 200}),
-				tool_id: "c1".to_string(),
-			}]),
-			thinking: None,
-			finish_reason: Some("tool_calls".to_string()),
-			response_id: None,
-			chat_session: &mut session,
-			config: &config,
-			role: "assistant",
-			operation_cancelled: rx,
-			sink,
-			mode: OutputMode::Jsonl,
-		};
-
-		process_response(params)
-			.await
-			.expect("reworded turn completes under the supervisor");
-
-		let advisories: Vec<_> = session
-			.session
-			.messages
-			.iter()
-			.enumerate()
-			.filter(|(_, m)| m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:"))
-			.collect();
-		assert_eq!(
-			advisories.len(),
-			1,
-			"expected one no-progress advisory: {:?}",
-			session
-				.session
-				.messages
-				.iter()
-				.map(|m| (&m.role, &m.content))
-				.collect::<Vec<_>>()
-		);
-		let (index, advisory) = advisories[0];
-		assert!(advisory
-			.content
-			.contains("recent calls have repeated previously observed results"));
-		assert_eq!(
-			session.session.messages[..index]
-				.iter()
-				.filter(|m| m.role == "tool")
-				.count(),
-			6,
-			"the advisory follows the sixth identical receipt"
-		);
-		assert!(matches!(
-			session.steer_last_signal,
-			crate::supervisor::detect::DetectorSignal::NoProgress
-		));
-		assert_eq!(session.last_response, "done");
-
-		crate::session::context::cleanup_session(&session_id);
-	})
-	.await;
-}
-
-#[tokio::test]
-#[cfg(unix)]
 async fn test_process_response_cancelled_mid_execution_skips_assistant_message() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	// The tool touches a marker file first, giving the test a deterministic
@@ -1145,13 +814,13 @@ async fn test_process_response_request_spending_stop_ends_turn_without_final_ans
 
 #[tokio::test]
 async fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
-	crate::supervisor::accounting::isolated(async {
+	crate::session::accounting::isolated(async {
 		let mut session = fake_session("hi");
 		session.session.info.compression_stats.input_tokens = 1_000;
 		session.session.info.compression_stats.cost = 0.002;
 		session.session.info.supervisor_accounting.kinds.insert(
-			crate::supervisor::stats::CallKind::Gate,
-			crate::supervisor::accounting::Usage {
+			crate::session::accounting::CallKind::Gate,
+			crate::session::accounting::Usage {
 				calls: 1,
 				input_tokens: 50,
 				cost: 0.003,
@@ -1162,10 +831,7 @@ async fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
 		let frame = session_cost_payload(&mut session, "s".to_string());
 		assert_eq!(frame.aux_cost, 0.005);
 		assert_eq!(frame.aux_input_tokens, 1_050);
-		assert_eq!(
-			frame.supervisor_accounting.mechanics[&crate::supervisor::report::Mechanic::Gate].wall_blocking_ms,
-			400
-		);
+		assert_eq!(frame.supervisor_accounting.mechanics["gate"]["wall_blocking_ms"], 400);
 	})
 	.await;
 }

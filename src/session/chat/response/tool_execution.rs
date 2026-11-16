@@ -469,6 +469,8 @@ fn detached_context_parts(session_id: &String) -> ContextParts {
 		session_id: session_id.clone(),
 		parent_session_id: None,
 		role: crate::session::context::get_session_role(session_id).unwrap_or_default(),
+		// The model of a session without a chat session is not readable here.
+		model: None,
 		project: crate::plugins::project::project_name(&workdir),
 		workdir,
 		status: None,

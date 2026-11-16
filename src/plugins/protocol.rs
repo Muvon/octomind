@@ -278,6 +278,9 @@ pub struct Event<P> {
 	pub project: String,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub git_remote: Option<String>,
+	/// The model the agent's requests go to, when the host knows it.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub model: Option<String>,
 	/// Messages added to the session since the previous event sent to this
 	/// plugin. With `messages_reset` it is the full list instead.
 	#[serde(default)]

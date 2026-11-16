@@ -58,6 +58,7 @@ impl Rig {
 			session_id: &self.id,
 			parent_session_id: None,
 			role: ROLE,
+			model: None,
 			workdir: self.dir.path(),
 			project: "proj",
 			messages: &[],

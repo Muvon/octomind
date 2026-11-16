@@ -529,6 +529,23 @@ async fn test_attach_image_from_png_file_sets_pending_image() {
 	assert!(!session.has_pending_image(), "take clears the pending slot");
 }
 
+// Serial: other tests point HOME at a temp dir, and this one reads HOME twice.
+#[tokio::test]
+#[serial_test::serial]
+async fn test_attach_image_from_tilde_path_sets_pending_image() {
+	let dir = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+	let png = dir.path().join("tiny.png");
+	std::fs::write(&png, tiny_png_bytes()).expect("write png");
+	let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+
+	let mut session = multimodal_session();
+	session
+		.attach_image_from_path(&format!("~/{dir_name}/tiny.png"))
+		.await
+		.expect("attach png file from a ~/ path");
+	assert!(session.has_pending_image());
+}
+
 #[tokio::test]
 async fn test_attach_image_from_unsupported_file_errors() {
 	let dir = tempfile::tempdir().unwrap();
@@ -599,6 +616,23 @@ async fn test_attach_video_from_file_and_url() {
 		.attach_video_from_path(&format!("{url}/clip.mp4"))
 		.await
 		.expect("attach video from url");
+	assert!(session.has_pending_video());
+}
+
+// Serial: other tests point HOME at a temp dir, and this one reads HOME twice.
+#[tokio::test]
+#[serial_test::serial]
+async fn test_attach_video_from_tilde_path_sets_pending_video() {
+	let dir = tempfile::tempdir_in(dirs::home_dir().unwrap()).unwrap();
+	let mp4 = dir.path().join("clip.mp4");
+	std::fs::write(&mp4, b"\x00\x00\x00\x18ftypmp42fake-bytes").expect("write mp4");
+	let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+
+	let mut session = multimodal_session();
+	session
+		.attach_video_from_path(&format!("~/{dir_name}/clip.mp4"))
+		.await
+		.expect("attach mp4 file from a ~/ path");
 	assert!(session.has_pending_video());
 }
 

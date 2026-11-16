@@ -772,7 +772,6 @@ impl ChatSession {
 	/// Attach image from file path
 	pub async fn attach_image_from_path(&mut self, path: &str) -> Result<()> {
 		use crate::session::image::ImageProcessor;
-		use std::path::Path;
 
 		self.ensure_model_supports_vision()?;
 
@@ -786,7 +785,8 @@ impl ChatSession {
 			return Ok(());
 		}
 
-		let file_path = Path::new(path);
+		let expanded = crate::session::chat_helper::CommandCompleter::expand_tilde(path, dirs::home_dir().as_deref());
+		let file_path = expanded.as_path();
 		if !file_path.exists() {
 			return Err(anyhow::anyhow!("Image file not found: {}", path));
 		}
@@ -857,7 +857,6 @@ impl ChatSession {
 	/// Attach video from file path
 	pub async fn attach_video_from_path(&mut self, path: &str) -> Result<()> {
 		use crate::session::video::VideoProcessor;
-		use std::path::Path;
 
 		self.ensure_model_supports_video()?;
 
@@ -871,7 +870,8 @@ impl ChatSession {
 			return Ok(());
 		}
 
-		let file_path = Path::new(path);
+		let expanded = crate::session::chat_helper::CommandCompleter::expand_tilde(path, dirs::home_dir().as_deref());
+		let file_path = expanded.as_path();
 		if !file_path.exists() {
 			return Err(anyhow::anyhow!("Video file not found: {}", path));
 		}

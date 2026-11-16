@@ -161,7 +161,7 @@ impl<'a> CommandCompleter<'a> {
 	}
 
 	/// Expand tilde (~) to home directory
-	fn expand_tilde(path: &str, home: Option<&Path>) -> PathBuf {
+	pub(crate) fn expand_tilde(path: &str, home: Option<&Path>) -> PathBuf {
 		if let Some(home) = home {
 			if let Some(stripped) = path.strip_prefix("~/") {
 				return home.join(stripped);

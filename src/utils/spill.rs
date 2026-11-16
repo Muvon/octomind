@@ -29,6 +29,11 @@ use std::path::PathBuf;
 
 use crate::session::context::current_session_id;
 
+/// The extension of a spill file. File readers such as octofs show a `.spill`
+/// file as stored: it is a tool's earlier result, already carrying whatever
+/// line numbers that tool printed, and it is never edited.
+const SPILL_EXTENSION: &str = "spill";
+
 /// Root spill directory for the current session, or `None` when there is no
 /// session context (CLI/test paths never spill — they fall back to lossy
 /// truncation, keeping those paths IO-free).
@@ -80,7 +85,7 @@ fn spill_path(tool_name: &str, content: &str) -> Option<PathBuf> {
 		.chars()
 		.map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
 		.collect();
-	Some(dir.join(format!("{safe_tool}-{:016x}.txt", h.finish())))
+	Some(dir.join(format!("{safe_tool}-{:016x}.{SPILL_EXTENSION}", h.finish())))
 }
 
 /// Whether this exact `(tool_name, content)` was already spilled in the

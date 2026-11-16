@@ -79,6 +79,11 @@ async fn test_spill_lives_with_the_session_not_in_temp() {
 			"spill must live under the sessions directory, got {}",
 			path.display()
 		);
+		assert_eq!(
+			path.extension().and_then(|extension| extension.to_str()),
+			Some("spill"),
+			"file readers show a .spill file as stored, without adding line ids"
+		);
 		clear_current_session();
 	})
 	.await;

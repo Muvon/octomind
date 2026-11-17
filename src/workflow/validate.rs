@@ -248,8 +248,14 @@ fn structural_check(step: &Step) -> Result<()> {
 						source
 					);
 				}
-				Regex::new(pattern)
+				let re = Regex::new(pattern)
 					.map_err(|e| anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {}", name, e))?;
+				if re.captures_len() < 2 {
+					bail!(
+						"dynamic parallel '{}': match regex must define a capture group (group 1 supplies the item text)",
+						name
+					);
+				}
 				let template = &run[0];
 				validate_fields(template)?;
 				validate_expansion(template)?;

@@ -284,6 +284,30 @@ fn dynamic_parallel_invalid_regex_fails() {
 }
 
 #[test]
+fn dynamic_parallel_match_without_capture_group_fails() {
+	let wf = parse(
+		r#"
+			name = "wf"
+			[[steps]]
+			name = "plan"
+			role = "researcher:general"
+			prompt = "{{input}}"
+			[[steps]]
+			name = "research"
+			parallel = true
+			source = "plan"
+			match = "TASK-[0-9]+"
+			  [[steps.run]]
+			  name = "researcher"
+			  role = "researcher:general"
+			  prompt = "Research:\n{{research}}"
+			"#,
+	);
+	let err = validate(&wf).expect_err("match regex without a capture group must fail");
+	assert!(err.to_string().contains("capture group"), "got: {err}");
+}
+
+#[test]
 fn parallel_block_name_reference_resolves() {
 	// The parallel block's own name is referenceable downstream (it now
 	// aggregates every sub-step's output at runtime).

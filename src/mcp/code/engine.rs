@@ -195,7 +195,7 @@ async fn call_tool(
 		return Err(format!(
 			"{}\n  expected: {}",
 			violations.join("; "),
-			call_form(server, tool, 1)
+			call_form(server, tool)
 		));
 	}
 	host.call(&server.name, &tool.name, arguments).await

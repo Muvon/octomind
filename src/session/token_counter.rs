@@ -308,7 +308,7 @@ pub async fn calculate_minimum_session_tokens(
 
 	// Get tool definitions tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
-		let tools = crate::mcp::get_available_functions(config).await;
+		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {
 		0
@@ -351,7 +351,7 @@ pub async fn validate_session_token_threshold(
 
 	// Calculate tool tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
-		let tools = crate::mcp::get_available_functions(config).await;
+		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {
 		0

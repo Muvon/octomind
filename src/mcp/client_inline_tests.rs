@@ -226,6 +226,22 @@ async fn context_epoch_rides_only_in_modern_session_context() {
 	crate::session::context::clear_context_epoch(&sid);
 }
 
+/// A server is told which calls a script makes, and only those.
+#[tokio::test]
+async fn script_calls_are_marked_in_the_session_context() {
+	let session = || {
+		build_client_info(ProtocolVersion::V_2026_07_28, true)
+			.capabilities
+			.experimental
+			.expect("session context")
+			.remove("session")
+			.expect("session object")
+	};
+	assert!(!session().contains_key("script"));
+	let marked = crate::mcp::code::as_script_call(async { session() }).await;
+	assert_eq!(marked["script"].as_bool(), Some(true));
+}
+
 /// The `shell` grant rides in the session context of both handshakes.
 #[test]
 fn shell_grant_rides_in_the_session_context() {

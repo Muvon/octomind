@@ -305,6 +305,7 @@ Global MCP (Model Context Protocol) configuration.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `allowed_tools` | string[] | `[]` | Global tool filter; role merging replaces it with that role’s `allowed_tools`, including an empty list. |
+| `direct_tools` | string[] | `[]` | External MCP tools (stdio/http) sent to the model as tool definitions. Every other external tool is called from a script through the builtin `code` tool. Patterns: `"server:*"`, `"server:tool"`, `"tool"`, `"prefix*"`; `["*"]` sends every tool as a definition and turns `code` off. |
 
 ### `[[mcp.servers]]`
 
@@ -359,6 +360,7 @@ entry.
 ```toml
 [mcp]
 allowed_tools = []
+direct_tools = []
 
 [[mcp.servers]]
 name = "search"

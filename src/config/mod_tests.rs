@@ -161,17 +161,20 @@ fn compression_attention_defaults() {
 fn mcp_config_serialization_default_check() {
 	assert!(McpConfig {
 		servers: vec![],
-		allowed_tools: vec![]
+		allowed_tools: vec![],
+		direct_tools: vec![]
 	}
 	.is_default_for_serialization());
 	assert!(!McpConfig {
 		servers: vec![McpServerConfig::builtin("s", 1, vec![])],
-		allowed_tools: vec![]
+		allowed_tools: vec![],
+		direct_tools: vec![]
 	}
 	.is_default_for_serialization());
 	assert!(!McpConfig {
 		servers: vec![],
-		allowed_tools: vec!["s:*".to_string()]
+		allowed_tools: vec!["s:*".to_string()],
+		direct_tools: vec![]
 	}
 	.is_default_for_serialization());
 }

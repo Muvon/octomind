@@ -300,6 +300,19 @@ fn single_file_search_hits_keep_their_own_line_numbers() {
 }
 
 #[test]
+fn several_file_view_keeps_each_section_under_its_own_file() {
+	let messages = interaction(
+		"view",
+		serde_json::json!({"path":"src/a.rs|src/b.rs"}),
+		"src/a.rs:\n1:ab|alpha\n\nsrc/b.rs:\n1:cd|beta",
+		"pair",
+	);
+	let (packets, _) = selected(&messages, 2000);
+	assert!(unretained_ranges(&packets, "src/a.rs", 1, 1).is_empty());
+	assert!(unretained_ranges(&packets, "src/b.rs", 1, 1).is_empty());
+}
+
+#[test]
 fn closure_read_larger_than_the_budget_is_trimmed_not_dropped() {
 	let big: Vec<String> = (1..=200)
 		.map(|n| format!("line {n} of the big artifact body"))

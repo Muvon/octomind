@@ -65,22 +65,26 @@ pub fn extract_file_refs_from_args(tool_name: &str, args: &serde_json::Value, re
 		return;
 	}
 
-	let call_path = args.get("path").and_then(|p| p.as_str());
+	// `view` names several files in one call as `a.rs|b.rs`.
+	let call_paths: Vec<&str> = args
+		.get("path")
+		.and_then(|p| p.as_str())
+		.map(|p| p.split('|').map(str::trim).collect())
+		.unwrap_or_default();
 	let parts = PART_KEYS
 		.iter()
 		.find_map(|key| args.get(*key).and_then(|v| v.as_array()))
 		.filter(|parts| !parts.is_empty());
 
 	let Some(parts) = parts else {
-		if let Some(path) = call_path {
-			refs.push(file_ref(path, args));
-		}
+		refs.extend(call_paths.iter().map(|path| file_ref(path, args)));
 		return;
 	};
 
 	for part in parts {
-		if let Some(path) = part.get("path").and_then(|p| p.as_str()).or(call_path) {
-			refs.push(file_ref(path, part));
+		match part.get("path").and_then(|p| p.as_str()) {
+			Some(path) => refs.push(file_ref(path, part)),
+			None => refs.extend(call_paths.iter().map(|path| file_ref(path, part))),
 		}
 	}
 }

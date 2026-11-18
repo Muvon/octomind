@@ -93,7 +93,11 @@ fn calls(messages: &[Message]) -> BTreeMap<String, (String, Value)> {
 }
 
 fn paths(args: &Value) -> Vec<String> {
-	let mut found = crate::mcp::tool_shape::param_paths(args);
+	// `view` names several files in one call as `a.rs|b.rs`.
+	let mut found: Vec<String> = crate::mcp::tool_shape::param_paths(args)
+		.iter()
+		.flat_map(|p| p.split('|').map(|part| part.trim().to_string()))
+		.collect();
 	for key in ["edits", "operations"] {
 		if let Some(items) = args.get(key).and_then(Value::as_array) {
 			for item in items {

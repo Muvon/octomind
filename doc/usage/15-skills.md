@@ -118,7 +118,7 @@ description: "Rust conventions, idiomatic patterns, and cargo tooling. Auto-acti
 license: Apache-2.0
 compatibility: "Requires cargo and rustc."
 domains: developer
-allowed-tools: shell edit
+allowed-tools: shell text_edit
 rules:
   - file(Cargo.toml)
   - content(rust)

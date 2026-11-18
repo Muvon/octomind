@@ -68,7 +68,7 @@ welcome = ""
 
 [roles.mcp]
 server_refs = ["tutorial-fs"]
-allowed_tools = ["tutorial-fs:view", "tutorial-fs:edit", "tutorial-fs:shell"]
+allowed_tools = ["tutorial-fs:view", "tutorial-fs:text_edit", "tutorial-fs:shell"]
 
 [[roles]]
 name = "tutorial-review"
@@ -90,7 +90,7 @@ type = "stdio"
 command = "{{ENV:TUTORIAL_OCTOFS_BIN}}"
 args = ["mcp"]
 timeout_seconds = 60
-tools = ["view", "edit", "shell"]
+tools = ["view", "text_edit", "shell"]
 ```
 
 ### 3. Save the behavior checks

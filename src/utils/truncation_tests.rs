@@ -343,7 +343,7 @@ fn test_truncate_tool_output_line_limit_wins_over_chars() {
 #[test]
 fn test_truncation_hint_matches_each_tool_family() {
 	// Reader tools share the line-range advice
-	for tool in ["view", "batch", "read"] {
+	for tool in ["view", "batch_edit", "read"] {
 		assert!(truncation_hint(tool).contains("line range"), "{tool}");
 	}
 	assert!(truncation_hint("view_signatures").contains("fewer files"));

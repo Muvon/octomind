@@ -607,8 +607,9 @@ inside a session, where those checks live. If a script fails half way, the error
 A server is told which calls a script makes: octomind sends `script: true` in the session context of such a call
 (`experimental.session` in the client capabilities). The result of that call goes to the script, and the model sees only
 what the script prints. `octofs` uses this: a file a script views is not counted as seen by the model, so the model's
-own later view of it is complete. Everything else is the same for a script: `octofs` rejects a shell command that
-starts with `ls`, `cat` or `grep` and points to `view`.
+own later view of it is complete. Everything else is the same for a script, including the line ids `octofs` puts on
+numbered file lines in shell output (`grep -n`, `nl -ba`): a script that prints such lines hands the model ids it can
+edit by.
 
 **Keeping tools as definitions (`direct_tools`).** The `[mcp] direct_tools` list (default `[]`) names external tools that
 stay plain tool definitions. Patterns: `"server:*"`, `"server:tool"`, `"tool"`, `"prefix*"`. `["*"]` keeps every tool a

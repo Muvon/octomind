@@ -56,7 +56,46 @@ fn index_lists_how_to_call_each_tool_and_what_it_does() {
 		catalog().index(),
 		"files.read({path: string, limit?: number}) // Read a file. Returns its text.\n\
 		 files.write({content: string, path: string}) // Write a file.\n\
-		 my_search.find_all({query: string, mode?: \"code\"|\"docs\", page?: object}) // Search the index."
+		 my_search.find_all({query: string, mode?: \"code\"|\"docs\", page?: {size: number, after?: string|null}}) // Search the index."
+	);
+}
+
+/// The list is all a model has when it writes a call, so it names the fields
+/// of an object inside a list too.
+#[test]
+fn the_list_names_the_fields_of_nested_arguments() {
+	let mut catalog = Catalog::default();
+	catalog.add(
+		"files",
+		"edit",
+		"Edit a file.",
+		json!({
+			"type": "object",
+			"properties": {
+				"operations": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"operation": {"enum": ["insert", "replace"]},
+							"start": {"type": "string"},
+							"copy_from": {
+								"type": "object",
+								"properties": {"path": {"type": "string"}},
+								"required": ["path"]
+							}
+						},
+						"required": ["operation", "start"]
+					}
+				},
+				"path": {"type": "string"}
+			},
+			"required": ["operations", "path"]
+		}),
+	);
+	assert_eq!(
+		catalog.index(),
+		"files.edit({operations: ({operation: \"insert\"|\"replace\", start: string, copy_from?: {path: string}})[], path: string}) // Edit a file."
 	);
 }
 

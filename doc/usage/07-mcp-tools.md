@@ -560,14 +560,17 @@ server.
 
 **What the model is sent.** Builtin tools (`recall`, `tap`, `mcp`, ...) are sent as usual, plus `code`. External tools are
 not sent as tool definitions. The `code` description lists each one on a line: how to call it,
-`server.tool({arg: type, ...})`, then the first sentences of its description. Inside a script, `help("server")` and
+`server.tool({arg: type, ...})` with the fields of nested objects and list items written out, then the first sentences
+of its description. The text also says why one script should hold several calls: each `code` call sends the
+conversation again. Inside a script, `help("server")` and
 `help("server.tool")` print the full descriptions on demand. If no external tool is listed (none connected, or all kept
 as definitions), `code` is not sent.
 
 A tool that is listed this way is meant to be called from a script, where calls can be combined. A model may still call
 it as a tool of its own, by the listed name (`server.tool`) or by the tool's own name. Such a call runs when its
-arguments fit the tool's schema; text that spells a number, a boolean or null is read as one, because the model wrote
-the call without the schema. When the arguments do not fit, the call does not run and the answer says what is wrong.
+arguments fit the tool's schema; text that spells a number, a boolean, null, a list or an object is read as one, because
+the model wrote the call without the schema. When the arguments do not fit, the call does not run and the answer says
+what is wrong. A call that names a server instead of a tool is answered with the names of that server's tools.
 The first time a tool is called this way, the model is also given the tool's full description and what each argument
 means, and again after a compaction removed it. So a tool's full description costs context only once the model starts
 to use that tool step by step.

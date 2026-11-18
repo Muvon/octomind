@@ -66,7 +66,10 @@ const NO_OUTPUT: &str = "(the script finished without printing or returning anyt
 const UNKNOWN_NAME: &str = "Cannot find name '";
 const UNTYPED_VALUE: &str = "implicitly has an 'any' type";
 
-const DESCRIPTION: &str = "Run a script that calls the tools listed under \"Tools\" below: one call, or many with loops, conditions and `Promise.all`. Only what the script prints or returns comes back to you, so filter and summarize large results inside the script instead of returning them whole.\n\
+// The first paragraph says why one script should hold many calls. Without the
+// reason models wrote one call per script: 19 of 23 scripts in the Sonnet file
+// tasks of 2026-11-18, none with `Promise.all`.
+const DESCRIPTION: &str = "Run a script that calls the tools listed under \"Tools\" below. Every call of this tool is a round trip that sends the whole conversation again, so one script does everything you can already write: calls that do not depend on each other go together into one `await Promise.all([...])`, calls that do go one after another, and a change goes with the command that checks it. Write a second script only where you have to read a result before you can write the next call. Only what the script prints or returns comes back to you, so filter and summarize large results inside the script instead of returning them whole.\n\
 \n\
 - Language: TypeScript (plain JavaScript is valid TypeScript). Top-level `await` and `return` work.\n\
 - A tool is an async function that takes one object of arguments. Call it by the name written in the list and `await` it. It resolves to the tool's text output; use `JSON.parse` when that text is JSON. A tool that fails throws an `Error` carrying the tool's message.\n\

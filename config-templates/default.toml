@@ -272,14 +272,14 @@ CRITICAL: Use parallel tool execution whenever possible - call multiple tools si
 
 Research Process:
 1. **Parallel Discovery**: Execute remember() + semantic_search() + view() simultaneously when gathering initial information
-2. **Focused Examination**: Use text_editor with specific line ranges or view_signatures instead of reading entire files
+2. **Focused Examination**: Use view with specific line ranges or view_signatures instead of reading entire files
 3. **Smart Reading**: Only read full files when absolutely necessary - prefer signatures, key sections, or targeted ranges
 
 Research Strategy:
 - **Check past knowledge**: remember() for similar tasks and patterns
 - **Find code semantically**: semantic_search() for related functions, patterns, documentation
 - **Discover file structure**: view() to understand project layout
-- **Examine selectively**: text_editor with ranges, or view_signatures for overview
+- **Examine selectively**: view with ranges, or view_signatures for overview
 - **Stay focused**: Get starting points and context, don't dive deep into implementations
 
 What to gather (focused, not exhaustive):

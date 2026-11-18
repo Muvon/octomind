@@ -267,7 +267,7 @@ Call `agent` with the following payloads in order. The filesystem server must al
   "description": "Writes unit tests for given code",
   "system": "Write focused unit tests for the supplied task. Report changed paths and validation results.",
   "server_refs": ["filesystem"],
-  "allowed_tools": ["filesystem:view", "filesystem:text_editor"]
+  "allowed_tools": ["filesystem:view", "filesystem:edit"]
 }
 ```
 
@@ -331,7 +331,7 @@ temperature = 0.1
 Octomind has two model purposes: main and compression. Agent role overrides belong to the main
 purpose; they do not introduce another purpose. The shipped default for both is `octohub:auto` after `octomind
 login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the specialist roles above do. The
-`filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_editor` for
+`filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:edit` for
 edits. Verify the complete effective tool surface before relying on a restricted role.
 
 ## See also

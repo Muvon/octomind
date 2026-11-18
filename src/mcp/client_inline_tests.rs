@@ -257,7 +257,7 @@ fn handler_advertises_the_shell_grant_of_its_server() {
 	};
 	assert_eq!(shell_in_session(&[]), Some(true));
 	assert_eq!(shell_in_session(&["shell"]), Some(true));
-	assert_eq!(shell_in_session(&["view", "text_editor"]), Some(false));
+	assert_eq!(shell_in_session(&["view", "edit"]), Some(false));
 }
 
 #[test]

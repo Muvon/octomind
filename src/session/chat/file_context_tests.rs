@@ -81,6 +81,11 @@ fn test_extract_file_refs_from_args() {
 	);
 	assert_eq!(out, vec!["x.rs:1:4", "x.rs:80:95"]);
 
+	// view of several files in one call
+	out.clear();
+	extract_file_refs_from_args("view", &json!({"path": "p.rs | q.rs"}), &mut out);
+	assert_eq!(out, vec!["p.rs", "q.rs"]);
+
 	// batch_edit: an operation names its own file or works on the call's
 	out.clear();
 	extract_file_refs_from_args(

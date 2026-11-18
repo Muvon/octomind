@@ -280,6 +280,33 @@ async fn a_direct_call_of_a_script_tool_runs_and_brings_its_description() {
 	stop();
 }
 
+/// A model sometimes calls a server by its name (`octofs` with a `command`).
+/// The answer names the server's tools, so the next call can be one of them.
+#[serial]
+#[tokio::test]
+async fn a_call_of_a_server_name_is_answered_with_its_tools() {
+	let stub = Stub::new();
+	let config = stub.config();
+	start(&config).await;
+
+	let call = McpToolCall {
+		tool_name: SERVER.to_string(),
+		parameters: json!({"command": "greet"}),
+		tool_id: "id".to_string(),
+	};
+	let (calls, answers) = super::settle_direct_calls(&config, vec![call]).await;
+	assert_eq!(calls[0].tool_name, SERVER);
+	let answer = answers[0].as_deref().expect("the call is answered, not run");
+	assert!(
+		answer.starts_with(&format!("`{SERVER}` is a server, not a tool. Its tools: ")),
+		"{answer}"
+	);
+	for tool in ["greet", "explode"] {
+		assert!(answer.contains(&format!("{SERVER}.{tool}")), "{answer}");
+	}
+	stop();
+}
+
 #[serial]
 #[tokio::test]
 async fn a_script_calls_a_stub_tool_and_returns_its_output() {

@@ -306,7 +306,7 @@ impl Catalog {
 				server.tool_idents().join(", ")
 			);
 		};
-		let mut text = call_form(server, tool, schema::FULL_DEPTH);
+		let mut text = call_form(server, tool);
 		if !tool.description.trim().is_empty() {
 			text.push_str("\n\n");
 			text.push_str(tool.description.trim());
@@ -320,13 +320,16 @@ impl Catalog {
 	}
 }
 
-/// `server.tool({...})` with nested objects spelled out `depth` levels deep.
-pub fn call_form(server: &Server, tool: &Tool, depth: usize) -> String {
+/// `server.tool({...})` with the fields of nested objects spelled out. Every place
+/// that shows a call shows this one form. The list of tools once printed a nested
+/// object as `object`, and models then made its fields up: `{op, target}` for the
+/// `{operation, start}` of an edit operation.
+pub fn call_form(server: &Server, tool: &Tool) -> String {
 	format!(
 		"{}.{}({})",
 		server.ident,
 		tool.ident,
-		schema::signature(&tool.schema, depth)
+		schema::signature(&tool.schema, schema::FULL_DEPTH)
 	)
 }
 
@@ -353,9 +356,9 @@ fn summary(description: &str) -> String {
 fn listing(server: &Server, tool: &Tool) -> String {
 	let summary = summary(&tool.description);
 	if summary.is_empty() {
-		call_form(server, tool, 0)
+		call_form(server, tool)
 	} else {
-		format!("{} // {}", call_form(server, tool, 0), summary)
+		format!("{} // {}", call_form(server, tool), summary)
 	}
 }
 

@@ -66,23 +66,20 @@ const MAX_KEYS: usize = 64;
 /// reduced to a static category by [`bucket_tool`].
 const BUILTIN_TOOLS: &[&str] = &[
 	"agent",
-	"ast_grep",
-	"batch_edit",
+	"batch",
 	"capability",
 	"core",
-	"extract_lines",
+	"edit",
 	"image",
-	"list_files",
 	"mcp",
 	"plan",
 	"read",
 	"schedule",
 	"shell",
 	"skill",
+	"symbol",
 	"tap",
-	"text_editor",
 	"view",
-	"workdir",
 	"write",
 ];
 

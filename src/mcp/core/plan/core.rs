@@ -270,10 +270,7 @@ pub fn sidecar_finish(summary: &str) -> Result<()> {
 
 /// Put a plan read back from the session log into session-scoped storage.
 /// Called once, by the session load from disk.
-pub fn restore_plan(
-	session_id: &crate::session::context::SessionId,
-	plan: super::storage::ExecutionPlan,
-) {
+pub fn restore_plan(session_id: &crate::session::context::SessionId, plan: super::storage::ExecutionPlan) {
 	let storage = crate::session::context::get_plan_storage(session_id);
 	let mut storage = storage.lock().unwrap();
 	if let Err(e) = storage.load_plan(plan) {

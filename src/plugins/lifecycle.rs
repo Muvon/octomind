@@ -36,7 +36,7 @@ pub const REASON_EXIT: &str = "exit";
 pub const REASON_SWITCH: &str = "switch";
 
 /// Tools that can open a file the host saved a full tool output to.
-const SPILL_READER_TOOLS: [&str; 4] = ["view", "text_editor", "extract_lines", "shell"];
+const SPILL_READER_TOOLS: [&str; 3] = ["view", "batch", "shell"];
 
 /// `_meta` key of ACP `session/new` that carries the parent's session id to a
 /// child process.

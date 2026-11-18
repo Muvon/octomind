@@ -77,7 +77,7 @@ fn non_region_closure_keeps_shell_evidence_and_checkpoint() {
 fn keeps_current_regions_and_post_edit_text_with_shifted_coordinates() {
 	let mut messages = read("artifact", 1, &["first", "old", "tail"], "read");
 	messages.extend(interaction(
-		"text_editor",
+		"edit",
 		serde_json::json!({"path":"artifact","old_text":"old","new_text":"new\nadded"}),
 		"-2:ab (1 line)\n+2:ab|new\n+3:ab|added\nshift: lines after 2:ab +1",
 		"edit",

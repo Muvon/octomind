@@ -160,7 +160,7 @@ choosing a filter:
 
 - `"server:*"` — all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent`
   server)
-- `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:text_*` matches `text_editor`)
+- `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:sh*` matches `shell`)
 - `"server:tool_name"` — one specific tool
 - `"tool_name"` (no colon) — backward-compat form: matches that tool name across **all** referenced servers
 - Empty array `[]` — no role-level filter; each registered server's `tools` filter still applies
@@ -232,7 +232,7 @@ octomind run developer:general
 ## Example Roles
 
 Add these entries to `roles.toml`. They assume you have registered a `filesystem` server exposing `view` and
-`text_editor`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
+`edit`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
 executable. They demonstrate server grants, not a complete sandbox.
 
 ### Full Developer Access
@@ -291,7 +291,7 @@ top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:text_editor"]
+allowed_tools = ["filesystem:view", "filesystem:edit"]
 ```
 
 

@@ -221,17 +221,13 @@ pub const TRUNCATION_NOTICE_TAG: &str = "⚠️ MCP RESPONSE TRUNCATED";
 /// instead of blindly re-running or tweaking arguments.
 pub fn truncation_hint(tool_name: &str) -> &'static str {
 	match tool_name {
-		"view" | "text_editor" | "read" | "extract_lines" => {
-			"request a specific line range (view_range / offset+limit) or a single symbol instead of the whole file"
+		"view" | "batch" | "read" => {
+			"request a specific line range (start/end or offset+limit) or a single symbol instead of the whole file"
 		}
 		"view_signatures" => "request fewer files — pass specific paths, one or a few at a time",
 		"shell" => {
 			"narrow the output: pipe through grep/head/tail, target a subpath, or redirect to a file and read ranges"
 		}
-		"list_files" | "workdir" => {
-			"target a specific subdirectory or add a name/glob filter instead of listing everything"
-		}
-		"ast_grep" => "tighten the pattern or restrict the search to a specific path",
 		name if name.contains("search") || name.contains("find") || name.contains("graphrag") => {
 			"use a more specific query and request fewer results"
 		}

@@ -377,7 +377,7 @@ fn test_render_mcp_list_full_validate_payloads() {
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "list".to_string(),
 		data: json!({"subcommand": "list", "servers": {
-			"developer": ["shell", "text_editor"],
+			"developer": ["shell", "edit"],
 			"orchestration": ["schedule", "monitor"]
 		}}),
 	});
@@ -391,7 +391,7 @@ fn test_render_mcp_list_full_validate_payloads() {
 			"subcommand": "full",
 			"servers": [
 				{"name": "developer", "health": "healthy", "connection_type": "builtin",
-				 "tools": ["shell", "text_editor"]},
+				 "tools": ["shell", "edit"]},
 				{"name": "flaky", "health": "dead", "connection_type": "stdio",
 				 "restart_count": 2, "consecutive_failures": 1}
 			],

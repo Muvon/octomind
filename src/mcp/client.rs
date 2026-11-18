@@ -437,6 +437,10 @@ fn build_client_info(protocol_version: ProtocolVersion, shell: bool) -> ClientCo
 	// would pin the value it had at connect time.
 	if protocol_version >= ProtocolVersion::V_2026_07_28 {
 		session["context_epoch"] = crate::session::context::context_epoch().into();
+		// True for one call only, so it too needs per-request capabilities.
+		if super::code::is_script_call() {
+			session["script"] = true.into();
+		}
 	}
 
 	let mut capabilities = ClientCapabilities::default();

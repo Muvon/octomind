@@ -91,7 +91,7 @@ The default config declares four builtin servers:
 
 | Server | Tool surface |
 |--------|--------------|
-| `core` | `recall` when attention or attention governance is enabled; planning is done by a plugin, not a tool |
+| `core` | `code`; `recall` when attention or attention governance is enabled; planning is done by a plugin, not a tool |
 | `orchestration` | `tap`, `schedule`, `monitor` |
 | `runtime` | `mcp`, `agent`, `skill`, `capability` management |
 | `agent` | generated `agent_<name>` execution tools |
@@ -100,6 +100,12 @@ The default config declares four builtin servers:
 `tool_map::initialize_tool_map` then maps each visible tool name to its server configuration. A call flows through
 `execute_tool_call` and `try_execute_tool_call`; builtin calls reach `route_builtin_tool`, while external calls are
 forwarded through `mcp::server::execute_tool_call`.
+
+Two inventories exist. `get_available_functions` returns every callable tool and serves routing and display.
+`get_model_functions` returns what the model is sent: builtin tools, `code`, and the external tools named in
+`[mcp] direct_tools`; the other external tools become a catalog of script signatures inside the `code` description
+(`src/mcp/code/`). A script's tool calls go back through `execute_tool_call`, so guardrails and the `tool.before` check
+apply to each of them.
 
 Dynamic MCP servers and dynamic agents update the tool map at runtime. Their registries are session-keyed when a session
 context is active, and execution checks reject a dynamic tool owned by another session. Project-local executable tools

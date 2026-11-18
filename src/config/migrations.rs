@@ -224,6 +224,11 @@ fn plan() -> MigrationPlan {
 				to: 32,
 				apply: replace_v32_supervisor_with_plugin,
 			},
+			VersionMigration {
+				from: 32,
+				to: 33,
+				apply: add_v33_direct_tools,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -412,6 +417,13 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 		}
 	}
 	Ok(())
+}
+
+/// Add the `mcp.direct_tools` list (empty: external tools go through the `code` tool); an existing value is kept.
+fn add_v33_direct_tools(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_mcp = required_table(template.as_table(), "mcp", "embedded config")?;
+	let mcp = ensure_table(document.as_table_mut(), template.as_table(), "mcp", "user config")?;
+	merge_missing(mcp, template_mcp, "direct_tools")
 }
 
 /// Add the required `compression.idle` switch (on); an existing value is kept.

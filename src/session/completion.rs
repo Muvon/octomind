@@ -279,7 +279,7 @@ pub async fn chat_completion_with_validation(
 		// Skip the tool fetch when tools are disabled — they won't be sent,
 		// so counting them would overestimate and reject valid requests.
 		let tools = if params.tools {
-			crate::mcp::get_available_functions(params.config).await
+			crate::mcp::get_model_functions(params.config).await
 		} else {
 			Vec::new()
 		};

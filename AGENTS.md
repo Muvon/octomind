@@ -27,6 +27,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 | Response / tool execution | `src/session/chat/response.rs`, `response/tool_execution.rs`, `response/tool_result_processor.rs` |
 | Skill auto-activation / validators | `src/mcp/runtime/skill_auto.rs` (`run_activation`, `run_validators`) |
 | Compression | `src/session/chat/conversation_compression/` (`decision.rs`, `apply.rs`, `schema.rs`, `attention/`) |
+| Code mode (`code` tool: scripts that call external MCP tools) | `src/mcp/code/` (`mod.rs` split + execute, `catalog.rs` signatures, `check.rs` + `checker.js` type check, `engine.rs` sandbox) → definitions sent to the model: `get_model_functions` in `src/mcp/mod.rs` → compiler bundle: `assets/typescript/vendor.sh` |
 | Plugin host (events, protocol, transports, install, workdir) | `src/plugins/` (`host.rs`, `protocol.rs`, `events.rs`, `install.rs`, `state.rs`, `workdir.rs`) + config `src/config/plugins.rs` |
 | Session pieces that outlived the built-in supervisor | `src/session/accounting/`, `src/session/self_report.rs`, `src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`, `src/mcp/agent/handback.rs` |
 | Workflows | `src/workflow/` (`schema.rs`, `run.rs`, `validate.rs`) + templates `config-templates/workflow*.toml` |
@@ -119,7 +120,8 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 - In TOML config files, scalar keys must come BEFORE nested table headers in a section — a scalar placed after `[x.y]` is parsed as a field of that table and silently ignored
 - The compression decision/summary model is `[compression.model]`, separate from `model` (the legacy `[compression.decision]` spelling is migrated away)
 - Log macros live in `src/config/mod.rs`; `src/lib.rs` only shadows the print macros
-- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
+- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (`code`, incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
+- `get_available_functions` is every callable tool; `get_model_functions` is what the model is sent — pick by purpose (routing/display vs request size)
 - Dynamic tools are session-owned — a tool registered in one session is rejected when called from another (intentional isolation)
 
 ## Never

@@ -56,6 +56,7 @@ pub mod oauth;
 
 pub mod agent;
 pub mod client;
+pub mod code;
 pub mod core;
 pub mod elicitation;
 pub mod health_monitor;
@@ -517,6 +518,29 @@ async fn server_functions_for(
 // Gather available functions from enabled servers WITHOUT spawning servers
 // This is used for system prompt generation and should be fast
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
+	sourced_functions(config)
+		.await
+		.into_iter()
+		.map(|(_, function)| function)
+		.collect()
+}
+
+/// The tool definitions sent to the model. Tools of external servers that go
+/// through the `code` tool are left out; `code` lists them by signature
+/// instead (see `code::split`).
+pub async fn get_model_functions(config: &crate::config::Config) -> Vec<McpFunction> {
+	let (definitions, scripted) = code::split(config, sourced_functions(config).await);
+	if !scripted.is_empty() {
+		// The model is about to be offered scripts: load the type checker
+		// while it thinks, so its first script does not wait for it.
+		code::check::warm();
+	}
+	definitions
+}
+
+/// Every tool the session can call, each with the external (stdio/http)
+/// server it comes from; `None` for builtin, agent and project-local tools.
+pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Option<String>, McpFunction)> {
 	if config.mcp.servers.is_empty() {
 		crate::log_debug!("MCP has no servers configured, no functions available");
 		return Vec::new();
@@ -533,7 +557,16 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 				}
 			}
 		}
-		functions.extend(server_functions_for(server, config).await);
+		let source = match server.connection_type() {
+			McpConnectionType::Builtin => None,
+			McpConnectionType::Http | McpConnectionType::Stdin => Some(server.name().to_string()),
+		};
+		functions.extend(
+			server_functions_for(server, config)
+				.await
+				.into_iter()
+				.map(|function| (source.clone(), function)),
+		);
 	}
 
 	// Include functions from dynamically added servers and agents.
@@ -541,16 +574,33 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// servers that are already in the role's static config (see
 	// `handle_enable` / `activate_capability_inline` in `runtime::capability`),
 	// so this extend doesn't double-count tools.
-	functions.extend(crate::mcp::runtime::dynamic::get_all_functions());
-	functions.extend(crate::mcp::runtime::dynamic_agents::get_all_functions());
+	functions.extend(
+		crate::mcp::runtime::dynamic::get_all_functions()
+			.into_iter()
+			.map(|function| {
+				(
+					crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&function.name),
+					function,
+				)
+			}),
+	);
+	functions.extend(
+		crate::mcp::runtime::dynamic_agents::get_all_functions()
+			.into_iter()
+			.map(|function| (None, function)),
+	);
 
 	// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
 	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
-	functions.extend(crate::mcp::core::local_tool::get_all_functions());
+	functions.extend(
+		crate::mcp::core::local_tool::get_all_functions()
+			.into_iter()
+			.map(|function| (None, function)),
+	);
 
 	// Builtin, dynamic and local tools declare their annotations in code rather
 	// than over the wire; register them the way an external inventory is.
-	for function in &functions {
+	for (_, function) in &functions {
 		crate::mcp::tool_shape::register_tool_read_only_hint(
 			&function.name,
 			function
@@ -776,6 +826,8 @@ async fn route_builtin_tool(
 	match server_name {
 		"core" => {
 			let result = match call.tool_name.as_str() {
+				// Runs other tools, so it carries the turn's cancellation into them.
+				code::TOOL_NAME => return Ok(code::execute(call, config, cancellation_token).await),
 				"recall" => core::recall::execute_recall(call)
 					.await
 					.map_err(|e| format!("Recall failed: {}", e)),

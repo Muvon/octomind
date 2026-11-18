@@ -19,7 +19,7 @@ fn test_guess_tool_category() {
 	// Exact names
 	assert_eq!(guess_tool_category("core"), "system");
 	assert_eq!(guess_tool_category("shell"), "filesystem");
-	assert_eq!(guess_tool_category("edit"), "filesystem");
+	assert_eq!(guess_tool_category("text_edit"), "filesystem");
 	assert_eq!(guess_tool_category("plan"), "core");
 	// Contains-based rules
 	assert_eq!(guess_tool_category("web_fetch"), "web");

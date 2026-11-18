@@ -221,7 +221,7 @@ pub const TRUNCATION_NOTICE_TAG: &str = "⚠️ MCP RESPONSE TRUNCATED";
 /// instead of blindly re-running or tweaking arguments.
 pub fn truncation_hint(tool_name: &str) -> &'static str {
 	match tool_name {
-		"view" | "batch" | "read" => {
+		"view" | "batch_edit" | "read" => {
 			"request a specific line range (start/end or offset+limit) or a single symbol instead of the whole file"
 		}
 		"view_signatures" => "request fewer files — pass specific paths, one or a few at a time",

@@ -53,9 +53,9 @@ pub fn generate_file_context_content(file_contexts: &[(String, usize, usize)]) -
 }
 
 /// octofs tools whose arguments name the files and lines a call read or changed.
-const FILE_TOOLS: [&str; 3] = ["view", "edit", "batch"];
+const FILE_TOOLS: [&str; 4] = ["view", "symbol", "text_edit", "batch_edit"];
 /// Arguments that split one call into parts, each with its own file or lines:
-/// `view` spans, `batch` operations, `edit` replacements.
+/// `view` spans, `batch_edit` operations, `text_edit` replacements.
 const PART_KEYS: [&str; 3] = ["ranges", "operations", "edits"];
 
 /// Extract file references from tool call arguments

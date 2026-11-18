@@ -163,10 +163,7 @@ fn persist_schedule_snapshot() {
 
 /// Put schedule entries read back from the session log into session-scoped storage.
 /// Called once, by the session load from disk.
-pub fn restore_schedule(
-	session_id: &crate::session::context::SessionId,
-	entries: Vec<ScheduleEntry>,
-) {
+pub fn restore_schedule(session_id: &crate::session::context::SessionId, entries: Vec<ScheduleEntry>) {
 	let count = entries.len();
 	let storage = crate::session::context::get_schedule_storage(session_id);
 	storage.lock().unwrap().seed_entries(entries);

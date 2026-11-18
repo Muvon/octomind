@@ -18,7 +18,7 @@ use crate::session::chat::test_support::EnvGuard;
 #[test]
 fn builtin_tools_pass_through_and_mcp_tools_collapse_to_a_category() {
 	assert_eq!(bucket_tool("shell"), "shell");
-	assert_eq!(bucket_tool("text_editor"), "text_editor");
+	assert_eq!(bucket_tool("edit"), "edit");
 	// The whole point: a user-named MCP tool must not survive as itself.
 	assert_eq!(bucket_tool("acme_internal_billing"), "ext:external");
 	assert_eq!(bucket_tool("github_create_pr"), "ext:github");

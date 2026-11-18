@@ -1123,7 +1123,7 @@ fn shell_granted_follows_the_server_tool_filter() {
 	assert!(granted(&["view", "shell"]));
 	assert!(granted(&["sh*"]), "prefix pattern covers shell");
 	assert!(granted(&["*"]));
-	assert!(!granted(&["view", "text_editor"]));
+	assert!(!granted(&["view", "edit"]));
 	assert!(!granted(&["shell_jobs"]), "a longer name is not shell");
 }
 

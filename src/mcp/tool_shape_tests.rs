@@ -50,7 +50,7 @@ fn param_paths_collects_paths_nested_in_item_lists() {
 #[test]
 fn mutation_classification_uses_call_intent_and_mcp_hint() {
 	use serde_json::json;
-	assert!(is_mutation_call("text_editor", &json!({"command":"str_replace"})));
+	assert!(is_mutation_call("text_tool", &json!({"command":"str_replace"})));
 	assert!(is_mutation_call("generic_runner", &json!({"command":"deploy release"})));
 	assert!(!is_mutation_call(
 		"generic_runner",

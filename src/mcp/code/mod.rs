@@ -191,12 +191,12 @@ pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> 
 /// So a tool's full description enters the context when the model starts
 /// to call the tool directly, and not before.
 pub async fn settle_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> (Vec<McpToolCall>, Vec<Option<String>>) {
-	// Only a tool of an external server, or a name with a server in front of
-	// it, can be a script tool. Most batches hold neither, and then the list
-	// of script tools is not built.
-	let may_be_scripted = |call: &McpToolCall| match crate::mcp::tool_map::get_server_for_tool(&call.tool_name) {
-		Some(server) => server.connection_type() != crate::config::McpConnectionType::Builtin,
-		None => call.tool_name.contains('.'),
+	// Only a tool of an external server, or a name no tool has (`octofs.view`,
+	// or a server's own name), can concern the script tools. Most batches hold
+	// neither, and then the list of script tools is not built.
+	let may_be_scripted = |call: &McpToolCall| {
+		crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
+			.is_none_or(|server| server.connection_type() != crate::config::McpConnectionType::Builtin)
 	};
 	if !calls.iter().any(may_be_scripted) {
 		let answers = vec![None; calls.len()];
@@ -208,7 +208,20 @@ pub async fn settle_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> (V
 		.into_iter()
 		.map(|mut call| {
 			let Some((server, tool)) = catalog.find(&call.tool_name) else {
-				answers.push(None);
+				// A server called by its name (`octofs` with a `command`): the
+				// answer names its tools, so the next call can be one of them.
+				answers.push(catalog.server(&call.tool_name).map(|server| {
+					let tools: Vec<String> = server
+						.tool_idents()
+						.iter()
+						.map(|tool| format!("{}.{tool}", server.ident))
+						.collect();
+					format!(
+						"`{}` is a server, not a tool. Its tools: {}",
+						server.ident,
+						tools.join(", ")
+					)
+				}));
 				return call;
 			};
 			if call.parameters.is_null() {

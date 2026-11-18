@@ -119,6 +119,7 @@ impl Config {
 		merged.mcp = McpConfig {
 			servers: enabled_servers,
 			allowed_tools: patched_allowed_tools.clone(),
+			direct_tools: self.mcp.direct_tools.clone(),
 		};
 
 		// Patch the role entry in role_map so downstream readers of

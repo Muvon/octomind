@@ -26,7 +26,7 @@ server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) |
+| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) and `code` (scripts that call external tools; see [below](#calling-external-tools-from-scripts-code-tool)) |
 | `orchestration` | builtin | Delegation (`tap`), scheduled messages/tool calls (`schedule`), and event streams (`monitor`) |
 | `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
@@ -550,6 +550,89 @@ installed capability named `database-postgres`:
 ```bash
 OCTOMIND_CAPABILITIES=database-postgres octomind run
 ```
+
+## Calling external tools from scripts (`code` tool)
+
+Instead of one JSON tool call per step, the model can write one short script that calls the tools of your external MCP
+servers (`stdio` or `http`), including servers added at runtime with the `mcp` tool or a capability. The `code` tool
+runs the script and returns only what the script prints or returns. The `code` tool is part of the `core` builtin
+server.
+
+**What the model is sent.** Builtin tools (`recall`, `tap`, `mcp`, ...) are sent as usual, plus `code`. External tools are
+not sent as tool definitions. The `code` description lists each one on a line: how to call it,
+`server.tool({arg: type, ...})`, then the first sentences of its description. Inside a script, `help("server")` and
+`help("server.tool")` print the full descriptions on demand. If no external tool is listed (none connected, or all kept
+as definitions), `code` is not sent.
+
+A tool that is listed this way is meant to be called from a script, where calls can be combined. A model may still call
+it as a tool of its own, by the listed name (`server.tool`) or by the tool's own name. Such a call runs when its
+arguments fit the tool's schema; text that spells a number, a boolean or null is read as one, because the model wrote
+the call without the schema. When the arguments do not fit, the call does not run and the answer says what is wrong.
+The first time a tool is called this way, the model is also given the tool's full description and what each argument
+means, and again after a compaction removed it. So a tool's full description costs context only once the model starts
+to use that tool step by step.
+
+**Example.** Read two files in parallel, then replace a config file with multi-line text passed through `input`:
+
+```ts
+const [a, b] = await Promise.all([
+  files.read({ path: "src/a.rs" }),
+  files.read({ path: "src/b.rs" }),
+]);
+print(`a: ${a.split("\n").length} lines, b: ${b.split("\n").length} lines`);
+await files.write({ path: "notes.txt", content: input });
+```
+
+The `files` server and its tools stand for whatever your servers expose. The `input` argument of the `code` call holds
+the long text, so it does not need quoting inside the script.
+
+**Script rules.**
+- TypeScript; plain JavaScript is valid. Top-level `await` and `return` work.
+- `await server.tool({...})` resolves to the tool's text output. A failed tool throws an `Error`.
+- The value of the last expression, or of `return`, is the result. `print(...)` adds lines to it.
+- `Promise.all` runs calls at the same time. `sleep(ms)` waits.
+- No imports, files, network or process access. Tools are the only way out.
+- Limits: 256 MB of script memory, 1 MB of printed and returned text, one hour in total. A script that computes for
+  10 seconds without calling a tool, sleeping or finishing is stopped.
+
+**Checks before a script runs.** The script is type-checked in strict mode by the TypeScript compiler (version 6.0.3). The
+compiler is embedded in the Octomind binary and runs in an embedded QuickJS engine, so Node.js is not needed. An unknown
+tool, a wrong or missing argument, a missing `await`, or a text result used as a list rejects the whole script, and no
+tool is called. Right before each call, the arguments are checked again against the tool's JSON schema. This catches
+values typed `any` and integer versus number.
+
+Each call a script makes passes the same guardrails and `tool.before` plugin check as a direct call; scripts run only
+inside a session, where those checks live. If a script fails half way, the error says which tool calls ran.
+
+A server is told which calls a script makes: octomind sends `script: true` in the session context of such a call
+(`experimental.session` in the client capabilities). The result of that call goes to the script, and the model sees only
+what the script prints. `octofs` uses this: a file a script views is not counted as seen by the model, so the model's
+own later view of it is complete. Everything else is the same for a script: `octofs` rejects a shell command that
+starts with `ls`, `cat` or `grep` and points to `view`.
+
+**Keeping tools as definitions (`direct_tools`).** The `[mcp] direct_tools` list (default `[]`) names external tools that
+stay plain tool definitions. Patterns: `"server:*"`, `"server:tool"`, `"tool"`, `"prefix*"`. `["*"]` keeps every tool a
+definition and removes `code`. A role that does not grant `code` (no `core` server, or `allowed_tools` excludes it)
+gets every tool as a definition. Two tools of one server whose script names collide: the second stays a definition.
+
+The default needs no tuning per model. Scripts pay off when a server has many tools or a task needs many calls. A model
+that prefers to call the file tools one at a time does that with the default too: it calls a listed tool directly and
+receives the tool's description with the first result. Name a server in `direct_tools` when the model should have the
+full schemas of its tools from the first request, at the price of sending them with every request.
+
+```toml
+[mcp]
+direct_tools = ["search:*", "fetch_page"]
+```
+
+**Known limits.**
+- The terminal shows the `code` call with its script and output, not one block per tool call made inside the script.
+- The `tool.after` plugin event fires for the `code` call, not for each call inside it.
+- The first script of a process waits about one second while the compiler loads. Loading starts in the background as soon
+  as a request offers the `code` tool.
+
+The embedded compiler is rebuilt with `assets/typescript/vendor.sh` (pinned version, checksum-verified), which writes
+the files next to it.
 
 ## External Filesystem Tools
 

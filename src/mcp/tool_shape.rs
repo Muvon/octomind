@@ -110,6 +110,10 @@ fn collect_param_paths(value: &serde_json::Value, out: &mut Vec<String>) {
 ///    that ship no annotation, and the only signal available for a runner's
 ///    concrete command.
 pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
+	// A script is as write-capable as the tools it names.
+	if tool == crate::mcp::code::TOOL_NAME {
+		return crate::mcp::code::can_write(parameters);
+	}
 	if executes_free_form_command(tool) {
 		// The command only. A runner's NAME describes the tool the same way its
 		// `readOnlyHint` does — `deploy_shell` running `ls` changes nothing — so

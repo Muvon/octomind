@@ -177,6 +177,7 @@ fn mcp_config_deserializes_servers_and_allowed_tools() {
 	let config: McpConfig = toml::from_str(
 		r#"
 allowed_tools = ["core:*"]
+direct_tools = ["octofs:*"]
 
 [[servers]]
 type = "builtin"
@@ -187,6 +188,7 @@ tools = ["plan"]
 	)
 	.expect("McpConfig must deserialize");
 	assert_eq!(config.allowed_tools, ["core:*"]);
+	assert_eq!(config.direct_tools, ["octofs:*"]);
 	assert_eq!(config.servers.len(), 1);
 	assert_eq!(config.servers[0].name(), "core");
 }

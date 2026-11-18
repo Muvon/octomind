@@ -589,6 +589,44 @@ pub fn clear_hints_for_session(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// Session-keyed record of script tools whose description the model was shown
+// ---------------------------------------------------------------------------
+
+/// The script tools whose full description a session's model was shown (see
+/// `mcp::code::settle_direct_calls`) in one context epoch. A new epoch means
+/// the model may have lost what it was shown, so the record starts over.
+#[derive(Default)]
+struct ShownToolHelp {
+	epoch: u64,
+	tools: std::collections::HashSet<String>,
+}
+
+static SHOWN_TOOL_HELP: RwLock<Option<HashMap<SessionId, ShownToolHelp>>> = RwLock::new(None);
+
+/// Record that the calling session's model is shown the description of
+/// `tool`. Returns whether its context did not hold it yet.
+pub fn note_tool_help_shown(tool: &str) -> bool {
+	let epoch = context_epoch();
+	let session_id = current_session_id().unwrap_or_default();
+	let mut guard = SHOWN_TOOL_HELP.write().unwrap();
+	let shown = guard.get_or_insert_with(HashMap::new).entry(session_id).or_default();
+	if shown.epoch != epoch {
+		shown.epoch = epoch;
+		shown.tools.clear();
+	}
+	shown.tools.insert(tool.to_string())
+}
+
+/// Forget which descriptions a session was shown, when it ends.
+pub fn clear_shown_tool_help(session_id: &SessionId) {
+	if let Ok(mut guard) = SHOWN_TOOL_HELP.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Session-keyed dynamic agent manager
 // ---------------------------------------------------------------------------
 
@@ -1148,6 +1186,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_context_epoch(session_id);
 	clear_schedule_storage(session_id);
 	clear_hints_for_session(session_id);
+	clear_shown_tool_help(session_id);
 	clear_dynamic_agents_for_session(session_id);
 	clear_dynamic_servers_for_session(session_id);
 	crate::mcp::runtime::capability::clear_session_capabilities(session_id);

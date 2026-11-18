@@ -232,7 +232,7 @@ octomind run developer:general
 ## Example Roles
 
 Add these entries to `roles.toml`. They assume you have registered a `filesystem` server exposing `view` and
-`edit`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
+`text_edit`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
 executable. They demonstrate server grants, not a complete sandbox.
 
 ### Full Developer Access
@@ -291,7 +291,7 @@ top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:edit"]
+allowed_tools = ["filesystem:view", "filesystem:text_edit"]
 ```
 
 

@@ -38,13 +38,13 @@ mod tests {
 
 	#[test]
 	fn test_parse_skill_meta_all_fields() {
-		let content = "---\nname: full-skill\ndescription: A complete skill\ncompatibility: developer\nlicense: MIT\nallowed-tools: shell view edit\n---\n\n# Instructions\n";
+		let content = "---\nname: full-skill\ndescription: A complete skill\ncompatibility: developer\nlicense: MIT\nallowed-tools: shell view text_edit\n---\n\n# Instructions\n";
 		let meta = parse_skill_meta(content).expect("should parse");
 		assert_eq!(meta.name, "full-skill");
 		assert_eq!(meta.description, "A complete skill");
 		assert_eq!(meta.compatibility.as_deref(), Some("developer"));
 		assert_eq!(meta.license.as_deref(), Some("MIT"));
-		assert_eq!(meta.allowed_tools, vec!["shell", "view", "edit"]);
+		assert_eq!(meta.allowed_tools, vec!["shell", "view", "text_edit"]);
 	}
 
 	#[test]
@@ -159,12 +159,12 @@ mod tests {
 
 	#[test]
 	fn test_parse_skill_meta_all_new_fields() {
-		let content = "---\nname: rust-dev\ndescription: Rust development\ncapabilities: git memory\ndomains: developer\nallowed-tools: shell edit\n---\n";
+		let content = "---\nname: rust-dev\ndescription: Rust development\ncapabilities: git memory\ndomains: developer\nallowed-tools: shell text_edit\n---\n";
 		let meta = parse_skill_meta(content).expect("should parse");
 		assert_eq!(meta.name, "rust-dev");
 		assert_eq!(meta.capabilities, vec!["git", "memory"]);
 		assert_eq!(meta.domains, vec!["developer"]);
-		assert_eq!(meta.allowed_tools, vec!["shell", "edit"]);
+		assert_eq!(meta.allowed_tools, vec!["shell", "text_edit"]);
 	}
 
 	// ---------------------------------------------------------------------------

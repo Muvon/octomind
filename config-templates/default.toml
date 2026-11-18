@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 32
+version = 33
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -389,6 +389,13 @@ allowed_tools = []
 [mcp]
 # Global tool restrictions (empty = no restrictions)
 allowed_tools = []
+
+# Tools of external MCP servers (stdio/http) sent to the model as tool
+# definitions. Every other external tool is called from a script through the
+# builtin `code` tool, which lists it by signature only.
+# Patterns: "server:*", "server:tool", "tool", "prefix*". ["*"] sends every
+# tool as a definition and turns the `code` tool off.
+direct_tools = []
 
 # Per-operation timeout. For tool calls this is an idle deadline: each MCP
 # progress notification resets it. Set a larger explicit value only for a

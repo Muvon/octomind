@@ -1282,7 +1282,7 @@ impl ChatSession {
 	pub async fn get_full_context_tokens(&mut self, config: &Config) -> usize {
 		// Fetch and cache tools if not already cached
 		if self.cached_tools.is_none() {
-			self.cached_tools = Some(crate::mcp::get_available_functions(config).await);
+			self.cached_tools = Some(crate::mcp::get_model_functions(config).await);
 		}
 		let raw = self.raw_context_estimate().expect("tool definitions cached above");
 		self.calibrated(raw)

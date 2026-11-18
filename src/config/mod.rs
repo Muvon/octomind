@@ -72,7 +72,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 32;
+pub const CURRENT_CONFIG_VERSION: u32 = 33;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -503,7 +503,7 @@ impl McpConfig {
 	/// Check if this config should be skipped during serialization
 	/// This helps avoid writing empty [mcp] sections when only internal servers exist
 	pub fn is_default_for_serialization(&self) -> bool {
-		self.servers.is_empty() && self.allowed_tools.is_empty()
+		self.servers.is_empty() && self.allowed_tools.is_empty() && self.direct_tools.is_empty()
 	}
 
 	/// Get all servers from the registry (for populating role configs)
@@ -584,6 +584,7 @@ impl McpConfig {
 		Self {
 			servers: servers_vec,
 			allowed_tools: allowed_tools.unwrap_or_default(),
+			direct_tools: Vec::new(),
 		}
 	}
 }

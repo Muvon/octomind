@@ -342,7 +342,7 @@ async fn execute_tap_capability_inline(
 // Implementation that works with execution context
 /// Shared admission, including inline capability calls. Native prechecks are
 /// previewed before the model, then committed against the final allowed batch.
-async fn admit_tool_batch(
+pub(crate) async fn admit_tool_batch(
 	session_id: &str,
 	config: &Config,
 	calls: &[crate::mcp::McpToolCall],
@@ -487,6 +487,18 @@ async fn execute_tools_with_context(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
+	// A tool the `code` tool lists may be called as a tool of its own. Such
+	// a call is renamed to the tool it means before anything else looks at
+	// it; one whose arguments do not fit the tool is answered instead of run,
+	// and kept out of admission: guardrail history holds only calls that
+	// could run.
+	let (current_tool_calls, unfit) = crate::mcp::code::settle_direct_calls(config, current_tool_calls).await;
+	let admissible: Vec<crate::mcp::McpToolCall> = current_tool_calls
+		.iter()
+		.zip(&unfit)
+		.filter(|(_, answer)| answer.is_none())
+		.map(|(call, _)| call.clone())
+		.collect();
 
 	// Guardrails run sequentially over the ordered batch before any tool is
 	// spawned. Tools arrive in the order the model emitted them, so `+/-`
@@ -501,16 +513,23 @@ async fn execute_tools_with_context(
 		ToolExecutionContext::MainSession { .. } => plugin_tree_fingerprint(config),
 		_ => None,
 	};
-	let block_messages = admit_tool_batch(
+	let mut verdicts = admit_tool_batch(
 		&session_id_for_guardrails,
 		config,
-		&current_tool_calls,
+		&admissible,
 		match context {
 			ToolExecutionContext::MainSession { chat_session, .. } => Some(&mut **chat_session),
 			_ => None,
 		},
 	)
-	.await;
+	.await
+	.into_iter();
+	// One answer per call, in call order: why its arguments do not fit, or
+	// the verdict of admission for a call that went through it.
+	let block_messages: Vec<Option<String>> = unfit
+		.into_iter()
+		.map(|answer| answer.or_else(|| verdicts.next().flatten()))
+		.collect();
 	if operation_cancelled.as_ref().is_some_and(|rx| *rx.borrow()) {
 		return Ok((Vec::new(), 0));
 	}

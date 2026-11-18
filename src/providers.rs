@@ -362,7 +362,7 @@ impl<'a> ChatCompletionParams<'a> {
 
 		// Fetch and add MCP tools if MCP is configured
 		if self.tools && !self.config.mcp.servers.is_empty() {
-			let mcp_functions = crate::mcp::get_available_functions(self.config).await;
+			let mcp_functions = crate::mcp::get_model_functions(self.config).await;
 			if !mcp_functions.is_empty() {
 				// Convert MCP functions to octolib FunctionDefinitions
 				let mut octolib_tools: Vec<octolib::llm::FunctionDefinition> = mcp_functions

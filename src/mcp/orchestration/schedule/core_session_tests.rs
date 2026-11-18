@@ -443,6 +443,11 @@ async fn test_add_rejects_idle_mix_zero_and_invalid_every() {
 				serde_json::json!({"command": "add", "message": "x", "when": 7}),
 				"'when' must be a non-empty string",
 			),
+			(
+				serde_json::json!({"command": "add", "message": "x", "when": "in 5m",
+					"every": 600}),
+				"'every' must be a string",
+			),
 		] {
 			let result = execute_schedule_tool(&call(params.clone()))
 				.await

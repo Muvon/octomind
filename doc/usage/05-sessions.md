@@ -309,7 +309,7 @@ The reading, review and typing speeds and the flag thresholds are fixed research
 ### Limitations
 
 - Work outside sessions — reading docs, reviewing in the IDE, meetings — is invisible.
-- Changed lines are the rows of the agent's own edits as a line-id editor (octofs `edit`, `batch`) reports
+- Changed lines are the rows of the agent's own edits as a line-id editor (octofs `text_edit`, `batch_edit`) reports
   them. Diffs the agent only reads, such as `git diff` in a shell, are not counted, and files written through `shell` or
   created whole are invisible.
 - Reading and typing speeds are population averages; complex code reads slower than 400 lines/h.

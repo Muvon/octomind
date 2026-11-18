@@ -81,10 +81,10 @@ fn test_extract_file_refs_from_args() {
 	);
 	assert_eq!(out, vec!["x.rs:1:4", "x.rs:80:95"]);
 
-	// batch: an operation names its own file or works on the call's
+	// batch_edit: an operation names its own file or works on the call's
 	out.clear();
 	extract_file_refs_from_args(
-		"batch",
+		"batch_edit",
 		&json!({"path": "e.rs", "operations": [
 			{"operation": "view", "path": "s.rs", "start": 1, "end": 4},
 			{"operation": "insert", "start": "7:0c", "content": "x"}
@@ -93,15 +93,20 @@ fn test_extract_file_refs_from_args() {
 	);
 	assert_eq!(out, vec!["s.rs:1:4", "e.rs"]);
 
-	// edit: the call's file, or one file per replacement
+	// text_edit: the call's file, or one file per replacement
 	out.clear();
-	extract_file_refs_from_args("edit", &json!({"path": "c.rs", "command": "create"}), &mut out);
+	extract_file_refs_from_args("text_edit", &json!({"path": "c.rs", "command": "create"}), &mut out);
 	extract_file_refs_from_args(
-		"edit",
+		"text_edit",
 		&json!({"edits": [{"path": "m.rs", "old_text": "a", "new_text": "b"}]}),
 		&mut out,
 	);
 	assert_eq!(out, vec!["c.rs", "m.rs"]);
+
+	// symbol: the file it read definitions from
+	out.clear();
+	extract_file_refs_from_args("symbol", &json!({"name": "load", "path": "src/config.rs"}), &mut out);
+	assert_eq!(out, vec!["src/config.rs"]);
 }
 
 #[test]

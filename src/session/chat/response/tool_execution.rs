@@ -487,18 +487,10 @@ async fn execute_tools_with_context(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
-	// A tool the `code` tool lists may be called as a tool of its own. Such
-	// a call is renamed to the tool it means before anything else looks at
-	// it; one whose arguments do not fit the tool is answered instead of run,
-	// and kept out of admission: guardrail history holds only calls that
-	// could run.
-	let (current_tool_calls, unfit) = crate::mcp::code::settle_direct_calls(config, current_tool_calls).await;
-	let admissible: Vec<crate::mcp::McpToolCall> = current_tool_calls
-		.iter()
-		.zip(&unfit)
-		.filter(|(_, answer)| answer.is_none())
-		.map(|(call, _)| call.clone())
-		.collect();
+	// A tool the `code` tool lists may be called as a tool of its own; such a
+	// call becomes the `code` script it means before anything else looks at it.
+	// Layers and scheduled runs reach this without the main loop's rewrite.
+	let current_tool_calls = crate::mcp::code::script_direct_calls(config, current_tool_calls).await;
 
 	// Guardrails run sequentially over the ordered batch before any tool is
 	// spawned. Tools arrive in the order the model emitted them, so `+/-`
@@ -513,23 +505,16 @@ async fn execute_tools_with_context(
 		ToolExecutionContext::MainSession { .. } => plugin_tree_fingerprint(config),
 		_ => None,
 	};
-	let mut verdicts = admit_tool_batch(
+	let block_messages = admit_tool_batch(
 		&session_id_for_guardrails,
 		config,
-		&admissible,
+		&current_tool_calls,
 		match context {
 			ToolExecutionContext::MainSession { chat_session, .. } => Some(&mut **chat_session),
 			_ => None,
 		},
 	)
-	.await
-	.into_iter();
-	// One answer per call, in call order: why its arguments do not fit, or
-	// the verdict of admission for a call that went through it.
-	let block_messages: Vec<Option<String>> = unfit
-		.into_iter()
-		.map(|answer| answer.or_else(|| verdicts.next().flatten()))
-		.collect();
+	.await;
 	if operation_cancelled.as_ref().is_some_and(|rx| *rx.borrow()) {
 		return Ok((Vec::new(), 0));
 	}

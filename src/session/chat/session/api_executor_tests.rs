@@ -609,6 +609,9 @@ async fn test_large_tool_result_truncation_and_dedup() {
 
 		let mut config = fake_provider_config();
 		config.mcp_response_tokens_threshold = 50;
+		// Other tests in this binary rewrite the process tool map while this one
+		// runs; a map of the session's own keeps `skill` routable.
+		crate::mcp::tool_map::isolate_session_tool_map(&sid);
 		crate::mcp::tool_map::initialize_tool_map(&config)
 			.await
 			.expect("init tool map");

@@ -68,6 +68,7 @@ impl MessageHandler {
 			videos: None,
 			thinking: None,
 			id: response_id,
+			script_calls: Vec::new(),
 		};
 
 		// ATOMIC ADD: persist BEFORE pushing to in-memory Vec.

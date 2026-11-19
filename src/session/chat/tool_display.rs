@@ -220,6 +220,37 @@ fn format_parameter_value_smart(value: &serde_json::Value) -> String {
 	}
 }
 
+/// One rail line per tool call a `code` script made, in call order: which
+/// tool, with what, and how it went. The script's output follows them.
+pub fn display_script_calls(calls: &[crate::mcp::ScriptCall]) {
+	for made in calls {
+		let arguments = match &made.arguments {
+			serde_json::Value::Object(fields) => fields
+				.iter()
+				.map(|(name, value)| format!("{name}: {}", format_parameter_value_smart(value)))
+				.collect::<Vec<_>>()
+				.join(", "),
+			other => format_parameter_value_smart(other),
+		};
+		let outcome = if made.denied {
+			"denied".red()
+		} else if made.error {
+			"✗".red()
+		} else {
+			"✓".green()
+		};
+		println!(
+			"{} {} {}.{}({}) {}",
+			RAIL.bright_black(),
+			"▸".bright_black(),
+			made.server,
+			made.tool,
+			arguments,
+			outcome
+		);
+	}
+}
+
 /// Format a parameter value for full display (debug mode)
 fn format_parameter_value_full(value: &serde_json::Value) -> String {
 	// Debug mode: Show everything without truncation

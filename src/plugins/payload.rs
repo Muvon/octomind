@@ -26,6 +26,7 @@ use crate::session::self_report;
 use crate::session::Message;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Length of a result hash. Sixteen hex characters (64 bits) tell two result
 /// texts apart within one session; the hash is never used as a secret.
@@ -37,6 +38,7 @@ const DONE_WHEN_PREFIX: &str = "Done when: ";
 
 /// The fields common to every event, read from the session. It owns its
 /// values, so a call site can build it, change the session, then borrow.
+#[derive(Clone)]
 pub struct ContextParts {
 	pub session_id: String,
 	pub parent_session_id: Option<String>,
@@ -100,6 +102,32 @@ impl ContextParts {
 			active_skills: self.active_skills.clone(),
 		}
 	}
+}
+
+/// The session as a round of tool calls found it. The round holds the chat
+/// session while its tools run, so the plugin events of the calls a `code`
+/// script makes read this instead; nothing is added to the session until the
+/// round ends, so it is what the session holds.
+pub struct RoundSnapshot {
+	pub parts: ContextParts,
+	pub messages: Vec<Message>,
+}
+
+tokio::task_local! {
+	static ROUND_SNAPSHOT: Arc<RoundSnapshot>;
+}
+
+/// Run `work`, one tool of a round, with the round's snapshot readable.
+pub async fn with_round_snapshot<F: std::future::Future>(snapshot: Option<Arc<RoundSnapshot>>, work: F) -> F::Output {
+	match snapshot {
+		Some(snapshot) => ROUND_SNAPSHOT.scope(snapshot, work).await,
+		None => work.await,
+	}
+}
+
+/// The snapshot of the round the running tool belongs to, when it has one.
+pub fn round_snapshot() -> Option<Arc<RoundSnapshot>> {
+	ROUND_SNAPSHOT.try_with(Arc::clone).ok()
 }
 
 /// The status line of an assistant message in wire form; `None` when the
@@ -185,6 +213,7 @@ pub fn tool_call(
 	capability: Option<String>,
 	denied: Option<String>,
 	rules: Vec<String>,
+	script_call_id: Option<String>,
 ) -> ToolCall {
 	ToolCall {
 		id: call.tool_id.clone(),
@@ -194,6 +223,7 @@ pub fn tool_call(
 		arguments: call.parameters.clone(),
 		denied,
 		rules,
+		script_call_id,
 	}
 }
 
@@ -244,6 +274,30 @@ pub fn tool_outcome(
 			.collect(),
 		replaceable,
 		returned,
+		script_calls: result
+			.script_calls
+			.iter()
+			.map(|made| script_call_outcome(made, workdir))
+			.collect(),
+	}
+}
+
+/// A call a `code` script made, in the form of a call the agent made. It can
+/// never be replaced: the script, not the agent, read its result.
+fn script_call_outcome(made: &crate::mcp::ScriptCall, workdir: &Path) -> ToolOutcome {
+	let call = McpToolCall {
+		tool_name: made.tool.clone(),
+		parameters: made.arguments.clone(),
+		tool_id: made.id.clone(),
+	};
+	let result = if made.error {
+		McpToolResult::error(made.tool.clone(), made.id.clone(), made.output.clone())
+	} else {
+		McpToolResult::success(made.tool.clone(), made.id.clone(), made.output.clone())
+	};
+	ToolOutcome {
+		server: made.server.clone(),
+		..tool_outcome(&call, &result, workdir, made.denied, false, None)
 	}
 }
 

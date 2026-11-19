@@ -33,6 +33,7 @@ fn msg(role: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -51,6 +52,7 @@ fn assistant_with_tool_calls(content: &str, tool_calls: serde_json::Value) -> Me
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -69,6 +71,7 @@ fn tool_response(call_id: &str, name: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 

@@ -79,6 +79,28 @@ pub struct McpToolResult {
 	pub result: rmcp::model::CallToolResult,
 	#[serde(default)]
 	pub tool_id: String,
+	/// For a `code` call: every tool call its script made, in call order.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub script_calls: Vec<ScriptCall>,
+}
+
+/// One tool call a `code` script made. The model sees only what the script
+/// printed; this is what the call itself was, for the parts of the session
+/// that follow tool calls (compression, plugins, the terminal).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScriptCall {
+	/// `<code call id>:<n>`, numbered in the order the script started its calls.
+	pub id: String,
+	pub server: String,
+	/// The name the server knows the tool by.
+	pub tool: String,
+	pub arguments: Value,
+	/// The tool's text output, or why the call did not run or failed.
+	pub output: String,
+	pub error: bool,
+	/// A guardrail or plugin denied the call, so it never ran.
+	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
+	pub denied: bool,
 }
 
 // MCP Protocol-compliant result creation helpers
@@ -89,6 +111,7 @@ impl McpToolResult {
 			tool_name,
 			tool_id,
 			result: rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(content)]),
+			script_calls: Vec::new(),
 		}
 	}
 
@@ -107,6 +130,7 @@ impl McpToolResult {
 				r.structured_content = Some(metadata);
 				r
 			},
+			script_calls: Vec::new(),
 		}
 	}
 
@@ -116,6 +140,7 @@ impl McpToolResult {
 			tool_name,
 			tool_id,
 			result: rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(error_message)]),
+			script_calls: Vec::new(),
 		}
 	}
 

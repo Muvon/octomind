@@ -288,18 +288,48 @@ pub(super) fn has_regions(messages: &[Message], packet: &EvidencePacket) -> bool
 
 pub(super) fn canonical_result(message: &Message, packet_messages: &[Message]) -> String {
 	let calls = calls(packet_messages);
-	let Some((_, args)) = message.tool_call_id.as_ref().and_then(|id| calls.get(id)) else {
-		return message.content.trim().to_string();
-	};
-	let regions = observations(&message.content, args);
-	if regions.is_empty() {
-		return message.content.trim().to_string();
+	let mut text = message.content.trim().to_string();
+	// Each output the model was shown becomes its regions; a script's result
+	// keeps whatever else it printed around them.
+	for (_, args, output) in reported(message, &calls) {
+		let output = output.trim();
+		if output.is_empty() || !text.contains(output) {
+			continue;
+		}
+		let regions = observations(output, args);
+		if regions.is_empty() {
+			continue;
+		}
+		let rendered = regions
+			.iter()
+			.map(|r| render_region(&r.path, r.start, &r.lines))
+			.collect::<Vec<_>>()
+			.join("\n");
+		text = text.replacen(output, &rendered, 1);
 	}
-	regions
-		.iter()
-		.map(|r| render_region(&r.path, r.start, &r.lines))
-		.collect::<Vec<_>>()
-		.join("\n")
+	text
+}
+
+/// The calls a tool message reports, each as `(tool, arguments, output)`: the
+/// calls its script made when it is the result of a `code` call that recorded
+/// them, else its own call with the message as the output.
+fn reported<'a>(
+	message: &'a Message,
+	calls: &'a BTreeMap<String, (String, Value)>,
+) -> Vec<(&'a str, &'a Value, &'a str)> {
+	if !message.script_calls.is_empty() {
+		return message
+			.script_calls
+			.iter()
+			.map(|made| (made.tool.as_str(), &made.arguments, made.output.as_str()))
+			.collect();
+	}
+	message
+		.tool_call_id
+		.as_ref()
+		.and_then(|id| calls.get(id))
+		.map(|(name, args)| vec![(name.as_str(), args, message.content.as_str())])
+		.unwrap_or_default()
 }
 
 fn region_lines(content: &str) -> Vec<(RegionHeader, usize, Vec<String>)> {
@@ -424,8 +454,8 @@ fn current_lines(packets: &[EvidencePacket], messages: &[Message]) -> Artifacts 
 		// Result order matters inside a batch too: a later mutation must not
 		// resurrect an earlier read just because they share an atomic packet.
 		for (offset, message) in slice.iter().enumerate().filter(|(_, m)| m.role == "tool") {
-			if let Some((name, args)) = message.tool_call_id.as_ref().and_then(|id| calls.get(id)) {
-				invalidate(&mut artifacts, name, args, &message.content);
+			for (name, args, output) in reported(message, &calls) {
+				invalidate(&mut artifacts, name, args, output);
 			}
 			let marker = format!("[MESSAGE {} TOOL RESULT", packet.message_start + offset + 1);
 			if let Some(line) = canonical.lines().position(|line| line.starts_with(&marker)) {
@@ -658,6 +688,15 @@ pub(super) fn describe(messages: &[Message]) -> String {
 			subjects.extend(paths);
 		}
 	}
+	// The files a script worked on are the subjects of its `code` call.
+	for made in messages.iter().flat_map(|message| &message.script_calls) {
+		let paths = paths(&made.arguments);
+		if paths.is_empty() {
+			subjects.insert(made.tool.clone());
+		} else {
+			subjects.extend(paths);
+		}
+	}
 	crate::session::truncate_to_tokens(&subjects.into_iter().collect::<Vec<_>>().join(", "), DESCRIPTOR_TOKENS)
 }
 
@@ -709,8 +748,8 @@ pub(super) fn revalidate(packets: &mut [EvidencePacket], source: &[Message], tai
 	}
 	let calls = calls(tail);
 	for message in tail.iter().filter(|m| m.role == "tool") {
-		if let Some((name, args)) = message.tool_call_id.as_ref().and_then(|id| calls.get(id)) {
-			invalidate(&mut artifacts, name, args, &message.content);
+		for (name, args, output) in reported(message, &calls) {
+			invalidate(&mut artifacts, name, args, output);
 		}
 	}
 	let canonical: Vec<_> = packets.iter().map(|p| render_packet(source, p, usize::MAX)).collect();

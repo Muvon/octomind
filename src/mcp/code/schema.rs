@@ -246,6 +246,11 @@ pub fn parameter(schema: &Value) -> String {
 	}
 }
 
+/// The type of what a tool with this output schema resolves to.
+pub fn result_type(schema: &Value) -> String {
+	type_of(schema, schema, FULL_DEPTH, &mut Vec::new())
+}
+
 /// The TypeScript type of a JSON value, as exact as the value: short text,
 /// numbers and booleans keep their literal type, so a value read from `input`
 /// still fits an argument that only accepts certain values.

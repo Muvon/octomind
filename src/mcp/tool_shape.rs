@@ -275,6 +275,33 @@ pub fn register_tool_command_params(tool: &str, params: Vec<String>) {
 	}
 }
 
+fn tool_output_schemas() -> &'static std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>> {
+	static SCHEMAS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>> =
+		std::sync::OnceLock::new();
+	SCHEMAS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Register the MCP `outputSchema` a tool declares, read when its inventory
+/// arrives. A tool with one returns structured content of that shape, which
+/// a script then gets as a typed value instead of text.
+pub fn register_tool_output_schema(tool: &str, schema: Option<serde_json::Value>) {
+	if let Ok(mut schemas) = tool_output_schemas().write() {
+		match schema {
+			Some(schema) => {
+				schemas.insert(tool.to_string(), schema);
+			}
+			// A refreshed inventory without one must not keep an old promise.
+			None => {
+				schemas.remove(tool);
+			}
+		}
+	}
+}
+
+pub fn tool_output_schema(tool: &str) -> Option<serde_json::Value> {
+	tool_output_schemas().read().ok()?.get(tool).cloned()
+}
+
 /// Top-level parameters this input schema marks as an executed command.
 /// `contentMediaType` is the standard JSON Schema annotation for what a string
 /// holds, so the mark is a schema fact like the `command` shape above: no tool

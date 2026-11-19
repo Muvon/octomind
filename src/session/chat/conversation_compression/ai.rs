@@ -104,6 +104,7 @@ pub(super) async fn run_decision_call(
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 		crate::session::Message {
 			role: "user".to_string(),
@@ -119,6 +120,7 @@ pub(super) async fn run_decision_call(
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 	];
 

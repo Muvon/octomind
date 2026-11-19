@@ -23,10 +23,9 @@ use super::recall::get_recall_function;
 // `orchestration` builtin server; tool-surface controls (`mcp`, `agent`,
 // `skill`, `capability`) are the `runtime` builtin server.
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
-	// `code` is how the model reaches external tools, so it lives on the one
-	// builtin server every role has. It is dropped from a request that has
-	// no tool for a script to call (see `code::split`).
-	let mut functions = vec![crate::mcp::code::get_code_function()];
+	// `code` is not listed here: code mode attaches it to every session that
+	// has external tools (see `sourced_functions`), whatever the role grants.
+	let mut functions = Vec::new();
 	// `recall` dereferences the PACT block registry; the sidecar index is only
 	// written when the attention/governance machinery runs, so don't advertise
 	// a tool that could only error.

@@ -453,11 +453,10 @@ fn build_agent_config(
 			agent.server_refs
 		);
 
-		let direct_tools = merged.mcp.direct_tools.clone();
 		merged.mcp = crate::config::McpConfig {
 			servers: enabled_servers,
 			allowed_tools: agent.allowed_tools.clone(),
-			direct_tools,
+			code_mode: merged.mcp.code_mode,
 		};
 	} else {
 		// No server_refs — disable MCP for this agent

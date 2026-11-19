@@ -406,6 +406,7 @@ fn a_call_before_it_ran_carries_what_the_caller_decided() {
 		Some("write".to_string()),
 		Some("no".to_string()),
 		vec!["r1".to_string()],
+		None,
 	);
 
 	assert_eq!(wire.id, "id-payload_before");

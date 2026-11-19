@@ -74,6 +74,51 @@ fn the_code_tool_lists_what_scripts_can_call() {
 	));
 }
 
+/// A list longer than a tool result may be is not sent with every request:
+/// the `code` tool names the servers and how to find their tools instead.
+#[test]
+fn a_list_too_long_to_send_becomes_the_servers() {
+	let mut config = config(&[]);
+	config.mcp_response_tokens_threshold = 1;
+	let (definitions, catalog) = split(&config, session_tools());
+	let code = definitions.iter().find(|function| function.name == TOOL_NAME).unwrap();
+	assert!(code.description.ends_with("\nfiles (2 tools)\nsearch (1 tool)"));
+	assert!(code.description.contains("search_tools(\"words\")"));
+	assert!(!code.description.contains("Does view."));
+	assert!(catalog
+		.search("edit text")
+		.starts_with("files.text_edit({path: string})"));
+}
+
+fn made(tool: &str, output: &str, error: bool) -> ScriptCall {
+	ScriptCall {
+		id: format!("code-1:{tool}"),
+		server: "files".to_string(),
+		tool: tool.to_string(),
+		arguments: json!({"path": "a.rs"}),
+		output: output.to_string(),
+		error,
+		denied: false,
+	}
+}
+
+/// The session keeps what the model saw and what changed files; the output
+/// of a read the script did not print is dropped.
+#[test]
+fn kept_calls_drop_only_unprinted_read_output() {
+	let calls = vec![
+		made("kept_test_view", "1:aa|shown line", false),
+		made("kept_test_view", "1:bb|never printed", false),
+		made("kept_test_text_edit", "+1:cc|edited", false),
+		made("kept_test_view", "no such file", true),
+	];
+	let kept = kept_calls(&calls, "before\n1:aa|shown line\nafter");
+	let outputs: Vec<&str> = kept.iter().map(|made| made.output.as_str()).collect();
+	assert_eq!(outputs, vec!["1:aa|shown line", "", "+1:cc|edited", "no such file"]);
+	assert_eq!(kept.len(), calls.len());
+	assert!(kept.iter().all(|made| made.arguments == json!({"path": "a.rs"})));
+}
+
 #[test]
 fn direct_tools_keeps_named_tools_as_definitions() {
 	let (definitions, catalog) = split(&config(&["files:*"]), session_tools());

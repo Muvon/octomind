@@ -390,6 +390,7 @@ pub fn add_tool_results(
 			&tool_result.tool_name,
 			config,
 			tool_result.extract_images(),
+			crate::mcp::code::kept_calls(&tool_result.script_calls, &tool_content),
 		)?;
 	}
 	Ok(())

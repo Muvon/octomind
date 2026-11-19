@@ -42,8 +42,10 @@ impl Host for Arc<Recorder> {
 				.push((server.clone(), tool.clone(), arguments.clone()));
 			match arguments.get("path").and_then(Value::as_str) {
 				Some("missing.txt") => Err("no such file: missing.txt".to_string()),
-				Some(path) => Ok(format!("contents of {path}")),
-				None => Ok(format!("{server}.{tool} ran")),
+				// A tool with an output schema resolves to its structured result.
+				Some("stats.json") => Ok(json!({"lines": 3, "names": ["a", "b"]})),
+				Some(path) => Ok(Value::String(format!("contents of {path}"))),
+				None => Ok(Value::String(format!("{server}.{tool} ran"))),
 			}
 		})
 	}
@@ -103,6 +105,15 @@ async fn a_single_call_is_its_own_result() {
 			serde_json::json!({"path": "a.txt"})
 		)]
 	);
+}
+
+/// A structured result reaches the script as the value it is, not as text.
+#[tokio::test]
+async fn a_structured_result_arrives_as_a_value() {
+	let script = "const stats: any = await files.read({path: 'stats.json'});\nreturn stats.lines + stats.names.length";
+	let (run, _) = run_script(script, Value::Null).await;
+	assert_eq!(run.error, None);
+	assert_eq!(run.output, "5");
 }
 
 #[tokio::test]

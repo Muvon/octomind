@@ -528,6 +528,9 @@ pub struct ToolCall {
 	/// Ids of rules this plugin registered that would deny the call.
 	#[serde(default)]
 	pub rules: Vec<String>,
+	/// Set for a call a `code` script made: the id of that `code` call.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub script_call_id: Option<String>,
 }
 
 /// `tool.after`: after a round of tool calls, before the model sees the
@@ -599,6 +602,11 @@ pub struct ToolOutcome {
 	/// [`PluginOptions::returned_chars`].
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub returned: Option<Returned>,
+	/// For a `code` call: every tool call its script made, in call order. The
+	/// agent saw only what the script printed (`result`), so only the `code`
+	/// call can be replaced.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub script_calls: Vec<ToolOutcome>,
 }
 
 /// A tool result as the tool returned it.

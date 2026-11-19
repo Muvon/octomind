@@ -346,10 +346,14 @@ Before a round of tool calls runs.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `calls` | list | The calls of the round. Each has `id`, `tool`, `server`, `capability` (optional), `arguments`, `denied` (optional) and `rules`. |
+| `calls` | list | The calls of the round. Each has `id`, `tool`, `server`, `capability` (optional), `arguments`, `denied` (optional), `rules` and `script_call_id` (optional). |
 
 `denied` is set when a built-in rule already denied the call; the plugin is not asked about it. `rules` lists the ids of
 rules this plugin registered that would deny the call.
+
+A call a `code` script makes is judged on its own, as it is about to run, with `script_call_id` set to the id of the
+`code` call. Its `messages` are the conversation as the round found it. Notes and a plan change in the answer are
+applied when the round ends.
 
 Extra effects: `deny`, `lift`. The first plugin that sends a `deny` wins, and later plugins are not asked. A `deny` or
 `lift` that names a `call_id` outside this round is ignored. A `lift` only counts for rules the same plugin registered.
@@ -362,7 +366,7 @@ output of detached jobs that arrived between rounds.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `intent` | string, optional | What the assistant said, or thought, when it made the calls. |
-| `calls` | list | One entry per call: `id`, `tool`, `server`, `arguments`, `error`, `denied`, `result`, `result_hash`, `size_tokens`, `size_bytes`, `mutation`, `command`, `free_form`, `paths`, `replaceable` and `returned`. See below. |
+| `calls` | list | One entry per call: `id`, `tool`, `server`, `arguments`, `error`, `denied`, `result`, `result_hash`, `size_tokens`, `size_bytes`, `mutation`, `command`, `free_form`, `paths`, `replaceable`, `returned` and `script_calls`. See below. |
 | `tree` | object, optional | `before` and `after`, fingerprints of the working tree around the round. Both are empty when the host cannot measure the tree. |
 | `subagents` | object, optional | Subagent runs that finished in this round: `finished` and `verified`. |
 | `background` | list | Output of detached jobs that arrived since the previous event: `call_id`, `label` and `output`. |
@@ -384,6 +388,7 @@ Fields of a call:
 | `paths` | Paths named in the arguments, made absolute. |
 | `replaceable` | The host can replace this result and keep the original readable. |
 | `returned` | `{error, text}`: what the tool returned, when the agent sees something else. The host replaces a result that repeats an earlier one with a short note marked as an error, and cuts a large result; `returned` then holds the tool's own error flag and the start of its own text. Sent only to a plugin that set `returned_chars`, and only when `error` or the start of the text differs from what `result` shows. |
+| `script_calls` | For a `code` call: every tool call its script made, in call order, each an entry with the same fields. `result` of the `code` call is what the script printed, the only text the agent saw. Script calls are never `replaceable`: the script, not the agent, read their results. |
 
 Extra effects: `replace`, `stop`, `result_note`. Each plugin sees the results that the plugins before it replaced. For
 one call, a later plugin's text replaces an earlier one's. The first plugin that sends a `stop` wins, and later plugins

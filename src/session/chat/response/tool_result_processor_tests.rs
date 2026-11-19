@@ -449,6 +449,7 @@ async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
 		.map(|(index, text)| crate::mcp::McpToolResult {
 			tool_name: "screenshot".into(),
 			tool_id: format!("call-{index}"),
+			script_calls: Vec::new(),
 			result: serde_json::from_value(serde_json::json!({"content": [
 				{"type": "text", "text": text},
 				{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}

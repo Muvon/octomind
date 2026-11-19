@@ -324,6 +324,9 @@ pub struct SessionState {
 	pub notices: Vec<String>,
 	/// Time the agent waited for plugins since it was last taken.
 	pub wait: WaitClock,
+	/// Effects of events answered while a round held the chat session (the
+	/// tool calls of a script), applied when the round ends.
+	pub deferred: Vec<super::host::Effects>,
 }
 
 /// Effects `event` allows. A notification allows none.

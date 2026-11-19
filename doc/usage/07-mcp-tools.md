@@ -566,6 +566,11 @@ conversation again. Inside a script, `help("server")` and
 `help("server.tool")` print the full descriptions on demand. If no external tool is listed (none connected, or all kept
 as definitions), `code` is not sent.
 
+When the list would be longer than one tool result may be (`mcp_response_tokens_threshold`, 20,000 tokens by default),
+it is not sent with every request. The `code` description then names each server with its number of tools, and a script
+finds tools with `search_tools("words")`, which prints the five that match best (BM25 over each tool's server, name,
+description and argument names), or with `help("server")`. Only the role's own tools are listed and searched.
+
 Every call of a listed tool runs through a script. A model may still write such a call as a tool of its own, by the
 listed name (`server.tool`) or by the tool's own name; octomind turns it into the `code` call it means,
 `return await server.tool({...})`, before it is shown or run. Text that spells a number, a boolean, null, a list or an
@@ -590,7 +595,9 @@ the long text, so it does not need quoting inside the script.
 
 **Script rules.**
 - TypeScript; plain JavaScript is valid. Top-level `await` and `return` work.
-- `await server.tool({...})` resolves to the tool's text output. A failed tool throws an `Error`.
+- `await server.tool({...})` resolves to the tool's text output. A tool that declares an MCP `outputSchema` resolves to
+  its structured result instead, typed from that schema; the list shows the type after `->`. A failed tool throws an
+  `Error`, and so does a tool that declares an output schema but returns no structured result.
 - The value of the last expression, or of `return`, is the result. `print(...)` adds lines to it.
 - `Promise.all` runs calls at the same time. `sleep(ms)` waits.
 - No imports, files, network or process access. Tools are the only way out.
@@ -604,7 +611,17 @@ tool is called. Right before each call, the arguments are checked again against 
 values typed `any` and integer versus number.
 
 Each call a script makes passes the same guardrails and `tool.before` plugin check as a direct call; scripts run only
-inside a session, where those checks live. If a script fails half way, the error says which tool calls ran.
+inside a session, where those checks live. If a script fails half way, the error says which tool calls ran. The plugin
+is shown the conversation as it was when the round started, and marks such a call with `script_call_id`, the id of the
+`code` call. Notes or a plan change it returns for such a call are applied when the round ends.
+
+**What the rest of the session sees of a script.** The `code` result keeps a record of every call the script made: the
+tool, its arguments, whether it failed or was denied, and its output. The output of a read is kept only when the script
+printed it, because the model never saw the rest. With it:
+- the terminal shows one line per call under the `code` call (`▸ server.tool(arguments) ✓`);
+- compaction treats a file a script read and printed, or edited, like a file the model read or edited directly;
+- the `tool.after` plugin event lists each call under its `code` call in `script_calls`. A plugin can replace only the
+  `code` call's output: the script, not the model, read each call's result.
 
 A server is told which calls a script makes: octomind sends `script: true` in the session context of such a call
 (`experimental.session` in the client capabilities). The result of that call goes to the script, and the model sees only
@@ -629,8 +646,6 @@ direct_tools = ["search:*", "fetch_page"]
 ```
 
 **Known limits.**
-- The terminal shows the `code` call with its script and output, not one block per tool call made inside the script.
-- The `tool.after` plugin event fires for the `code` call, not for each call inside it.
 - The first script of a process waits about one second while the compiler loads. Loading starts in the background as soon
   as a request offers the `code` tool.
 

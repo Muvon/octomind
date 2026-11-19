@@ -24,6 +24,7 @@ use serde_json::Value;
 const RESERVED_GLOBALS: &[&str] = &[
 	"print",
 	"help",
+	"search_tools",
 	"input",
 	"sleep",
 	"console",
@@ -113,11 +114,58 @@ const SANDBOX_DECLARATIONS: &str = "\
 declare function print(...values: unknown[]): void;
 declare const console: { log(...values: unknown[]): void; info(...values: unknown[]): void; warn(...values: unknown[]): void; error(...values: unknown[]): void; debug(...values: unknown[]): void };
 declare function help(target?: string): void;
+declare function search_tools(words: string): void;
 declare function sleep(milliseconds: number): Promise<void>;
 declare function setTimeout(callback: (...args: any[]) => void, milliseconds?: number, ...args: any[]): number;
 declare function __ok(value: unknown): void;
 declare function __fail(error: unknown): void;
 ";
+
+/// How many tools `search_tools` prints: Anthropic's tool search tool returns 3 to 5
+/// of the best matches, enough to pick from without a second search.
+const SEARCH_RESULTS: usize = 5;
+
+/// The standard BM25 parameters (Robertson and Zaragoza, 2009): how fast
+/// repeats of a word stop adding to a score, and how much a long description
+/// counts against it.
+const BM25_SATURATION: f64 = 1.2;
+const BM25_LENGTH_WEIGHT: f64 = 0.75;
+
+/// The words of a text for search: lowercase runs of letters and digits,
+/// `find_all` and `findAll` alike split into their words.
+fn search_terms(text: &str) -> Vec<String> {
+	let mut terms = Vec::new();
+	let mut current = String::new();
+	let mut previous_lowercase = false;
+	for character in text.chars() {
+		let boundary = !character.is_alphanumeric() || (character.is_uppercase() && previous_lowercase);
+		if boundary && !current.is_empty() {
+			terms.push(std::mem::take(&mut current));
+		}
+		if character.is_alphanumeric() {
+			current.extend(character.to_lowercase());
+		}
+		previous_lowercase = character.is_lowercase();
+	}
+	if !current.is_empty() {
+		terms.push(current);
+	}
+	terms
+}
+
+/// What `search_tools` matches a tool on.
+fn search_document(server: &Server, tool: &Tool) -> Vec<String> {
+	let arguments = tool
+		.schema
+		.get("properties")
+		.and_then(Value::as_object)
+		.map(|properties| properties.keys().cloned().collect::<Vec<_>>().join(" "))
+		.unwrap_or_default();
+	search_terms(&format!(
+		"{} {} {} {}",
+		server.name, tool.name, tool.description, arguments
+	))
+}
 
 /// One tool of a server.
 #[derive(Debug, Clone)]
@@ -129,6 +177,18 @@ pub struct Tool {
 	pub description: String,
 	/// The tool's JSON input schema.
 	pub schema: Value,
+	/// The MCP `outputSchema` it declares: the shape of the value its call
+	/// resolves to. Without one a call resolves to the tool's text.
+	pub output: Option<Value>,
+}
+
+impl Tool {
+	/// What a call of the tool resolves to.
+	pub fn result_type(&self) -> String {
+		self.output
+			.as_ref()
+			.map_or_else(|| "string".to_string(), schema::result_type)
+	}
 }
 
 /// One MCP server and the tools a script may call on it.
@@ -214,6 +274,7 @@ impl Catalog {
 			ident,
 			description: description.to_string(),
 			schema,
+			output: crate::mcp::tool_shape::tool_output_schema(tool),
 		});
 		true
 	}
@@ -228,7 +289,7 @@ impl Catalog {
 
 	/// What the type checker knows a script may use: the sandbox's functions,
 	/// `input` with the type of the value passed for it, and every tool as a
-	/// method that takes its arguments and resolves to its text output.
+	/// method that takes its arguments and resolves to its result.
 	pub fn declarations(&self, input: Option<&Value>) -> String {
 		let mut text = String::from(SANDBOX_DECLARATIONS);
 		text.push_str(&format!(
@@ -239,9 +300,10 @@ impl Catalog {
 			text.push_str(&format!("interface {} {{\n", server.type_name()));
 			for tool in &server.tools {
 				text.push_str(&format!(
-					"\t{}({}): Promise<string>;\n",
+					"\t{}({}): Promise<{}>;\n",
 					tool.ident,
-					schema::parameter(&tool.schema)
+					schema::parameter(&tool.schema),
+					tool.result_type()
 				));
 			}
 			text.push_str(&format!(
@@ -258,6 +320,70 @@ impl Catalog {
 		self.servers
 			.iter()
 			.flat_map(|server| server.tools.iter().map(move |tool| listing(server, tool)))
+			.collect::<Vec<_>>()
+			.join("\n")
+	}
+
+	/// One line per server with how many tools it has: what the list of tools
+	/// becomes when the full one is too long to send with every request.
+	pub fn server_index(&self) -> String {
+		self.servers
+			.iter()
+			.map(|server| match server.tools.len() {
+				1 => format!("{} (1 tool)", server.ident),
+				count => format!("{} ({count} tools)", server.ident),
+			})
+			.collect::<Vec<_>>()
+			.join("\n")
+	}
+
+	/// What `search_tools(words)` prints: the tools that match the words best, as
+	/// the list of tools shows them. Ranked by BM25 over each tool's server,
+	/// name, description and argument names, the ranking Anthropic's tool
+	/// search tool offers for the same job.
+	pub fn search(&self, words: &str) -> String {
+		let query = search_terms(words);
+		let documents: Vec<(&Server, &Tool, Vec<String>)> = self
+			.servers
+			.iter()
+			.flat_map(|server| {
+				server
+					.tools
+					.iter()
+					.map(move |tool| (server, tool, search_document(server, tool)))
+			})
+			.collect();
+		let count = documents.len() as f64;
+		let average_length = documents.iter().map(|(_, _, terms)| terms.len()).sum::<usize>() as f64 / count.max(1.0);
+		let mut ranked: Vec<(f64, &Server, &Tool)> = documents
+			.iter()
+			.map(|(server, tool, terms)| {
+				let score = query
+					.iter()
+					.map(|term| {
+						let frequency = terms.iter().filter(|known| *known == term).count() as f64;
+						if frequency == 0.0 {
+							return 0.0;
+						}
+						let holding = documents.iter().filter(|(_, _, other)| other.contains(term)).count() as f64;
+						let rarity = ((count - holding + 0.5) / (holding + 0.5) + 1.0).ln();
+						let length =
+							1.0 - BM25_LENGTH_WEIGHT + BM25_LENGTH_WEIGHT * terms.len() as f64 / average_length;
+						rarity * frequency * (BM25_SATURATION + 1.0) / (frequency + BM25_SATURATION * length)
+					})
+					.sum::<f64>();
+				(score, *server, *tool)
+			})
+			.filter(|(score, _, _)| *score > 0.0)
+			.collect();
+		ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+		if ranked.is_empty() {
+			return format!("No tool matches `{}`. Servers:\n{}", words.trim(), self.server_index());
+		}
+		ranked
+			.into_iter()
+			.take(SEARCH_RESULTS)
+			.map(|(_, server, tool)| listing(server, tool))
 			.collect::<Vec<_>>()
 			.join("\n")
 	}
@@ -316,6 +442,9 @@ impl Catalog {
 			text.push_str("\n\nArguments:\n");
 			text.push_str(&arguments);
 		}
+		if tool.output.is_some() {
+			text.push_str(&format!("\n\nResolves to: {}", tool.result_type()));
+		}
 		text
 	}
 }
@@ -354,12 +483,15 @@ fn summary(description: &str) -> String {
 
 /// A tool as the list of tools shows it: how to call it, then what it does.
 fn listing(server: &Server, tool: &Tool) -> String {
-	let summary = summary(&tool.description);
-	if summary.is_empty() {
-		call_form(server, tool)
-	} else {
-		format!("{} // {}", call_form(server, tool), summary)
+	let mut text = call_form(server, tool);
+	if tool.output.is_some() {
+		text.push_str(&format!(" -> {}", tool.result_type()));
 	}
+	let summary = summary(&tool.description);
+	if !summary.is_empty() {
+		text.push_str(&format!(" // {summary}"));
+	}
+	text
 }
 
 #[cfg(test)]

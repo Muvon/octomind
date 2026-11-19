@@ -132,6 +132,7 @@ fn handle_final_response(
 		videos: None,
 		thinking: None,
 		id: response_id, // CRITICAL: Set the response_id for conversation continuity
+		script_calls: Vec::new(),
 	};
 
 	chat_session.session.messages.push(assistant_message.clone());
@@ -347,6 +348,7 @@ fn add_assistant_message_with_tool_calls(
 		videos: None,
 		thinking: thinking_value,
 		id: response_id.clone(),
+		script_calls: Vec::new(),
 	};
 
 	// ATOMIC ADD: persist BEFORE pushing to in-memory Vec.

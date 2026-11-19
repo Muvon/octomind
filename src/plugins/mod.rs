@@ -247,3 +247,13 @@ pub fn take_reports(session_id: &str) -> Vec<(String, protocol::Report)> {
 pub fn take_notices(session_id: &str) -> Vec<String> {
 	host().take_notices(session_id)
 }
+
+/// Keep `effects` of an event answered while a round held the chat session.
+pub fn defer_effects(session_id: &str, effects: Effects) {
+	host().defer_effects(session_id, effects)
+}
+
+/// The effects kept by [`defer_effects`] since the last call, oldest first.
+pub fn take_deferred_effects(session_id: &str) -> Vec<Effects> {
+	host().take_deferred_effects(session_id)
+}

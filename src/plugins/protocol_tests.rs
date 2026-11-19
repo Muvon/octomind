@@ -212,6 +212,7 @@ fn every_payload_round_trips_inside_an_event_with_every_common_field_set() {
 			arguments: json!({"a": 1}),
 			denied: Some("no".into()),
 			rules: vec!["r".into()],
+			script_call_id: None,
 		}],
 	});
 	assert_round_trip(ToolAfter {
@@ -236,6 +237,7 @@ fn every_payload_round_trips_inside_an_event_with_every_common_field_set() {
 				error: false,
 				text: "raw".into(),
 			}),
+			script_calls: Vec::new(),
 		}],
 		tree: Some(TreeChange {
 			before: "a".into(),

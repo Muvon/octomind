@@ -75,19 +75,40 @@ fn the_code_tool_lists_what_scripts_can_call() {
 }
 
 /// A list longer than a tool result may be is not sent with every request:
-/// the `code` tool names the servers and how to find their tools instead.
+/// the `code` tool names the servers, and the `search_tools` tool comes with
+/// it to find their tools.
 #[test]
 fn a_list_too_long_to_send_becomes_the_servers() {
 	let mut config = config(true);
 	config.mcp_response_tokens_threshold = 1;
-	let (definitions, catalog) = split(&config, session_tools());
+	let (definitions, _) = split(&config, session_tools());
+	assert_eq!(names(&definitions), vec!["plan", "code", SEARCH_TOOL_NAME]);
 	let code = definitions.iter().find(|function| function.name == TOOL_NAME).unwrap();
 	assert!(code.description.ends_with("\nfiles (2 tools)\nsearch (1 tool)"));
-	assert!(code.description.contains("search_tools(\"words\")"));
+	assert!(code.description.contains("the `search_tools` tool"));
 	assert!(!code.description.contains("Does view."));
+}
+
+#[test]
+fn a_list_short_enough_to_send_needs_no_search_tool() {
+	let (definitions, _) = split(&config(true), session_tools());
+	assert!(!names(&definitions).contains(&SEARCH_TOOL_NAME));
+}
+
+/// Search fuses the two rankings: a tool whose words match comes first, and a
+/// tool no word matches is still found by what it means.
+#[test]
+fn search_ranks_by_words_and_by_meaning() {
+	let (_, catalog) = split(&config(true), session_tools());
+	// Tools in list order: files.view, files.text_edit, search.find.
+	let flat = [0.0, 0.0, 0.0];
 	assert!(catalog
-		.search("edit text")
+		.ranked("edit text", &flat)
 		.starts_with("files.text_edit({path: string})"));
+	let meaning = [0.1, 0.2, 0.9];
+	assert!(catalog
+		.ranked("locate something", &meaning)
+		.starts_with("search.find({path: string})"));
 }
 
 fn made(tool: &str, output: &str, error: bool) -> ScriptCall {
@@ -203,26 +224,6 @@ fn a_rejection_for_an_unknown_name_lists_the_servers_and_drops_follow_on_problem
 	);
 	// Without an unknown name, an untyped value is a problem of its own.
 	assert!(rejection(&catalog, &problems[1..]).contains("TS7006"));
-}
-
-#[test]
-fn a_script_that_mentions_a_writing_tool_may_have_written() {
-	let writers = vec!["text_edit".to_string(), "shell".to_string()];
-	assert!(names_any("await files.text_edit(input)", &writers));
-	assert!(names_any(
-		"const run = files . shell;\nawait run({command: 'ls'})",
-		&writers
-	));
-	assert!(names_any("await files['text_edit'](input)", &writers));
-	assert!(names_any(
-		"const {shell} = files;\nawait shell({command: 'ls'})",
-		&writers
-	));
-	assert!(!names_any(
-		"const text = await files.view({path: 'a'});\ntext.split('\\n').map(String)",
-		&writers
-	));
-	assert!(!names_any("print('text_editor shells')", &writers));
 }
 
 #[tokio::test]

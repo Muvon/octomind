@@ -301,6 +301,60 @@ fn a_read_changes_nothing_and_keeps_an_absolute_path() {
 	assert_eq!(outcome.paths, vec!["/etc/hosts".to_string()]);
 }
 
+fn script_call(id: &str, tool: &str, arguments: Value, denied: bool) -> crate::mcp::ScriptCall {
+	crate::mcp::ScriptCall {
+		id: id.to_string(),
+		server: "files".to_string(),
+		tool: tool.to_string(),
+		arguments,
+		output: "out".to_string(),
+		error: false,
+		denied,
+	}
+}
+
+fn script_outcome(made: Vec<crate::mcp::ScriptCall>) -> ToolOutcome {
+	let call = call(
+		crate::mcp::code::TOOL_NAME,
+		json!({"script": "await files.payload_script_shell({})"}),
+	);
+	let mut result = McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), "done".to_string());
+	result.script_calls = made;
+	tool_outcome(&call, &result, Path::new("/work"), false, false, None)
+}
+
+/// A script is judged by the calls it made, as if the agent had made them:
+/// one that only ran a command changed nothing it can vouch for, whatever
+/// tools its text names; one that edited a file did; a denied edit never ran.
+#[test]
+fn a_script_is_judged_by_the_calls_it_made() {
+	register_tool_command_shape("payload_script_shell", true);
+	register_tool_read_only_hint("payload_script_shell", Some(false));
+	register_tool_command_shape("payload_script_edit", false);
+	register_tool_read_only_hint("payload_script_edit", Some(false));
+	let read = || {
+		script_call(
+			"c:1",
+			"payload_script_shell",
+			json!({"command": "sed -n '1,9p' a.js"}),
+			false,
+		)
+	};
+	let edit = |denied| script_call("c:2", "payload_script_edit", json!({"path": "a.js"}), denied);
+
+	let outcome = script_outcome(vec![read()]);
+	assert!(!outcome.mutation);
+	assert!(outcome.free_form);
+
+	let outcome = script_outcome(vec![edit(false)]);
+	assert!(outcome.mutation);
+	assert!(!outcome.free_form);
+	assert_eq!(outcome.script_calls[0].paths, vec!["/work/a.js".to_string()]);
+
+	let outcome = script_outcome(vec![edit(true)]);
+	assert!(!outcome.mutation);
+}
+
 #[test]
 fn an_outcome_carries_the_result_text_and_its_measures() {
 	let call = call("payload_measure", json!({"path": "a"}));

@@ -57,6 +57,10 @@ use tokio::sync::watch;
 
 pub const TOOL_NAME: &str = "code";
 
+/// The tool that finds script tools by what they do, sent with `code` when
+/// the list of tools is too long to send whole.
+pub const SEARCH_TOOL_NAME: &str = "search_tools";
+
 /// What a script that printed and returned nothing sends back, so the model
 /// can tell "ran, no output" from a lost result.
 const NO_OUTPUT: &str = "(the script finished without printing or returning anything)";
@@ -105,6 +109,64 @@ pub fn get_code_function() -> McpFunction {
 	}
 }
 
+/// The `search_tools` tool as the core server declares it.
+pub fn get_search_function() -> McpFunction {
+	McpFunction {
+		name: SEARCH_TOOL_NAME.to_string(),
+		description: "Find the tools a `code` script can call when the list is too long to send: describe what you want done, in your own words or by name. Prints the five tools that match best, each as the list shows it, ready to call in the next script.".to_string(),
+		parameters: json!({
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "What the tool should do, such as \"delete a file\" or \"list open issues\"."
+				}
+			},
+			"required": ["query"],
+			"additionalProperties": false
+		}),
+		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(true).open_world(false)),
+	}
+}
+
+/// Start embedding the catalog's tools for `search_tools`, once per distinct
+/// list: the list is rebuilt for every request.
+pub fn prewarm_search(catalog: &Catalog) {
+	static PREWARMED: std::sync::OnceLock<Mutex<std::collections::HashSet<u64>>> = std::sync::OnceLock::new();
+	let key = {
+		use std::hash::{Hash, Hasher};
+		let mut hasher = std::collections::hash_map::DefaultHasher::new();
+		catalog.index().hash(&mut hasher);
+		hasher.finish()
+	};
+	if PREWARMED.get_or_init(Default::default).lock().insert(key) {
+		crate::embeddings::prewarm(catalog.search_texts());
+	}
+}
+
+/// Run one `search_tools` call over the session's script tools.
+pub async fn execute_search(call: &McpToolCall, config: &Config) -> McpToolResult {
+	let query = match call.parameters.get("query") {
+		Some(Value::String(query)) if !query.trim().is_empty() => query,
+		_ => {
+			return McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"query: non-empty string required".to_string(),
+			)
+		}
+	};
+	let (_, catalog) = split(config, crate::mcp::sourced_functions(config).await);
+	match catalog.search(query).await {
+		Ok(found) => McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), found),
+		Err(error) => McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("search_tools failed: {error:#}"),
+		),
+	}
+}
+
 /// Split the session's tools into the definitions sent to the model and the
 /// catalog of tools reached through scripts.
 ///
@@ -139,20 +201,25 @@ pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> 
 		// may be costs more each turn than the scripts that look tools up.
 		let too_long = config.mcp_response_tokens_threshold > 0
 			&& crate::session::estimate_tokens(&index) > config.mcp_response_tokens_threshold;
-		code.description = if too_long {
+		let collapsed = too_long.then(|| {
 			format!(
-				"{}\n\nServers, their tools called like `await {}.{}({{...}})`. The full list is too long to send: find tools with `search_tools(\"words\")` or `help(\"server\")`, then call them in the next script.\n{}",
+				"{}\n\nServers, their tools called like `await {}.{}({{...}})`. The full list is too long to send: find tools with the `{}` tool or with `help(\"server\")` in a script, then call them.\n{}",
 				code.description,
 				server.ident,
 				server.tools[0].ident,
+				SEARCH_TOOL_NAME,
 				catalog.server_index()
 			)
-		} else {
+		});
+		code.description = collapsed.clone().unwrap_or_else(|| {
 			format!(
 				"{}\n\nTools, called like `await {}.{}({{...}})`:\n{}",
 				code.description, server.ident, server.tools[0].ident, index
 			)
-		};
+		});
+		if collapsed.is_some() {
+			definitions.push(get_search_function());
+		}
 	}
 	(definitions, catalog)
 }
@@ -211,42 +278,6 @@ pub async fn script_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> Ve
 			call
 		})
 		.collect()
-}
-
-/// Whether a script mentions a tool from `writers` (script names of the
-/// tools that may change something), as a word anywhere in its text.
-///
-/// A tool can be reached in more ways than a call written out in full
-/// (`const {write} = files`, `files["write"]`), so any mention counts: a
-/// variable that happens to share a tool's name only errs towards "may have".
-fn names_any(script: &str, writers: &[String]) -> bool {
-	script
-		.split(|character: char| !(character.is_alphanumeric() || character == '_' || character == '$'))
-		.any(|word| writers.iter().any(|writer| writer == word))
-}
-
-/// Whether a `code` call may have changed something: its script mentions at
-/// least one external tool that is not declared read-only.
-///
-/// The rest of the session asks this about every tool call to decide whether
-/// the working tree may have moved. For a script the answer comes from the
-/// tools it names, not from what it did: it is asked again when a session is
-/// resumed, long after the run is gone. A mentioned tool counts even when the
-/// script never reached the call, so the answer errs towards "may have".
-pub fn can_write(parameters: &Value) -> bool {
-	let Some(script) = parameters.get("script").and_then(Value::as_str) else {
-		return false;
-	};
-	let writers: Vec<String> = crate::mcp::tool_map::get_all_tool_names()
-		.into_iter()
-		.filter(|tool| crate::mcp::tool_shape::tool_read_only_hint(tool) != Some(true))
-		.filter(|tool| {
-			crate::mcp::tool_map::get_server_for_tool(tool)
-				.is_some_and(|server| server.connection_type() != crate::config::McpConnectionType::Builtin)
-		})
-		.map(|tool| catalog::js_ident(&tool))
-		.collect();
-	names_any(script, &writers)
 }
 
 /// What the session keeps of the calls a script made, next to the text the

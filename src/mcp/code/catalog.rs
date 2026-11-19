@@ -24,7 +24,6 @@ use serde_json::Value;
 const RESERVED_GLOBALS: &[&str] = &[
 	"print",
 	"help",
-	"search_tools",
 	"input",
 	"sleep",
 	"console",
@@ -114,7 +113,6 @@ const SANDBOX_DECLARATIONS: &str = "\
 declare function print(...values: unknown[]): void;
 declare const console: { log(...values: unknown[]): void; info(...values: unknown[]): void; warn(...values: unknown[]): void; error(...values: unknown[]): void; debug(...values: unknown[]): void };
 declare function help(target?: string): void;
-declare function search_tools(words: string): void;
 declare function sleep(milliseconds: number): Promise<void>;
 declare function setTimeout(callback: (...args: any[]) => void, milliseconds?: number, ...args: any[]): number;
 declare function __ok(value: unknown): void;
@@ -131,8 +129,20 @@ const SEARCH_RESULTS: usize = 5;
 const BM25_SATURATION: f64 = 1.2;
 const BM25_LENGTH_WEIGHT: f64 = 0.75;
 
+/// Reciprocal rank fusion constant (Cormack, Clarke and Buettcher, 2009): a
+/// tool's fused score is the sum of `1 / (RRF_K + rank)` over the rankings.
+const RRF_K: f64 = 60.0;
+
+/// Lucene's English stop words (`EnglishAnalyzer.ENGLISH_STOP_WORDS_SET`).
+/// Rank fusion counts a tool's place in the word ranking, not its score, so
+/// one shared "a" would rank a tool as high as a shared name does.
+const STOP_WORDS: &[&str] = &[
+	"a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is", "it", "no", "not", "of",
+	"on", "or", "such", "that", "the", "their", "then", "there", "these", "they", "this", "to", "was", "will", "with",
+];
+
 /// The words of a text for search: lowercase runs of letters and digits,
-/// `find_all` and `findAll` alike split into their words.
+/// `find_all` and `findAll` alike split into their words, stop words left out.
 fn search_terms(text: &str) -> Vec<String> {
 	let mut terms = Vec::new();
 	let mut current = String::new();
@@ -150,21 +160,28 @@ fn search_terms(text: &str) -> Vec<String> {
 	if !current.is_empty() {
 		terms.push(current);
 	}
+	terms.retain(|term| !STOP_WORDS.contains(&term.as_str()));
 	terms
 }
 
-/// What `search_tools` matches a tool on.
-fn search_document(server: &Server, tool: &Tool) -> Vec<String> {
+/// The text of a tool that `search_tools` matches against: its server, name,
+/// description and argument names.
+fn search_text(server: &Server, tool: &Tool) -> String {
 	let arguments = tool
 		.schema
 		.get("properties")
 		.and_then(Value::as_object)
 		.map(|properties| properties.keys().cloned().collect::<Vec<_>>().join(" "))
 		.unwrap_or_default();
-	search_terms(&format!(
-		"{} {} {} {}",
-		server.name, tool.name, tool.description, arguments
-	))
+	format!("{} {}: {} {}", server.name, tool.name, tool.description, arguments)
+}
+
+/// Positions `0..scores.len()` ordered from the highest score down, ties in
+/// list order.
+fn by_score(scores: &[f64]) -> Vec<usize> {
+	let mut order: Vec<usize> = (0..scores.len()).collect();
+	order.sort_by(|a, b| scores[*b].total_cmp(&scores[*a]));
+	order
 }
 
 /// One tool of a server.
@@ -339,53 +356,97 @@ impl Catalog {
 			.join("\n")
 	}
 
-	/// What `search_tools(words)` prints: the tools that match the words best, as
-	/// the list of tools shows them. Ranked by BM25 over each tool's server,
-	/// name, description and argument names, the ranking Anthropic's tool
-	/// search tool offers for the same job.
-	pub fn search(&self, words: &str) -> String {
-		let query = search_terms(words);
-		let documents: Vec<(&Server, &Tool, Vec<String>)> = self
-			.servers
+	/// Every tool of the catalog, in list order.
+	fn tools(&self) -> impl Iterator<Item = (&Server, &Tool)> {
+		self.servers
 			.iter()
-			.flat_map(|server| {
-				server
-					.tools
-					.iter()
-					.map(move |tool| (server, tool, search_document(server, tool)))
+			.flat_map(|server| server.tools.iter().map(move |tool| (server, tool)))
+	}
+
+	/// The text `search_tools` embeds for each tool, in list order, cut to what
+	/// the embedding model reads.
+	pub fn search_texts(&self) -> Vec<String> {
+		self.tools()
+			.map(|(server, tool)| {
+				// Never empty: the text holds the server and tool names.
+				crate::embeddings::chunk_to_token_limit(
+					&search_text(server, tool),
+					crate::embeddings::EMBED_MAX_INPUT_TOKENS,
+				)
+				.swap_remove(0)
 			})
+			.collect()
+	}
+
+	/// What `search_tools(words)` prints: the tools that match the words best,
+	/// as the list of tools shows them. Two rankings are fused: BM25 over each
+	/// tool's words, which finds the exact names a model types, and cosine
+	/// similarity of embeddings, which finds a tool described in other words
+	/// ("remove a file" for `delete_path`). Anthropic's tool search offers the
+	/// first, embedding search the second; together they miss less than either.
+	pub async fn search(&self, words: &str) -> anyhow::Result<String> {
+		let Some(query) = crate::embeddings::chunk_to_token_limit(words, crate::embeddings::EMBED_MAX_INPUT_TOKENS)
+			.into_iter()
+			.next()
+		else {
+			anyhow::bail!("search_tools takes the words to look for: search_tools(\"edit a file\")");
+		};
+		let texts = self.search_texts();
+		let query_vector = crate::embeddings::embed(&query).await?;
+		let tool_vectors = crate::embeddings::embed_many(&texts).await?;
+		let similarity: Vec<f64> = tool_vectors
+			.iter()
+			.map(|vector| f64::from(crate::embeddings::cosine(&query_vector, vector)))
+			.collect();
+		Ok(self.ranked(words, &similarity))
+	}
+
+	/// [`Self::search`] once each tool's similarity to the words is known, in
+	/// list order.
+	pub fn ranked(&self, words: &str, similarity: &[f64]) -> String {
+		let tools: Vec<(&Server, &Tool)> = self.tools().collect();
+		let query = search_terms(words);
+		let documents: Vec<Vec<String>> = tools
+			.iter()
+			.map(|(server, tool)| search_terms(&search_text(server, tool)))
 			.collect();
 		let count = documents.len() as f64;
-		let average_length = documents.iter().map(|(_, _, terms)| terms.len()).sum::<usize>() as f64 / count.max(1.0);
-		let mut ranked: Vec<(f64, &Server, &Tool)> = documents
+		let average_length = documents.iter().map(Vec::len).sum::<usize>() as f64 / count.max(1.0);
+		let keyword: Vec<f64> = documents
 			.iter()
-			.map(|(server, tool, terms)| {
-				let score = query
+			.map(|terms| {
+				query
 					.iter()
 					.map(|term| {
 						let frequency = terms.iter().filter(|known| *known == term).count() as f64;
 						if frequency == 0.0 {
 							return 0.0;
 						}
-						let holding = documents.iter().filter(|(_, _, other)| other.contains(term)).count() as f64;
+						let holding = documents.iter().filter(|other| other.contains(term)).count() as f64;
 						let rarity = ((count - holding + 0.5) / (holding + 0.5) + 1.0).ln();
 						let length =
 							1.0 - BM25_LENGTH_WEIGHT + BM25_LENGTH_WEIGHT * terms.len() as f64 / average_length;
 						rarity * frequency * (BM25_SATURATION + 1.0) / (frequency + BM25_SATURATION * length)
 					})
-					.sum::<f64>();
-				(score, *server, *tool)
+					.sum::<f64>()
 			})
-			.filter(|(score, _, _)| *score > 0.0)
 			.collect();
-		ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-		if ranked.is_empty() {
-			return format!("No tool matches `{}`. Servers:\n{}", words.trim(), self.server_index());
+
+		let mut fused = vec![0.0; tools.len()];
+		// A tool no query word appears in has no keyword rank at all.
+		let keyword_ranking = by_score(&keyword)
+			.into_iter()
+			.filter(|position| keyword[*position] > 0.0);
+		for (rank, position) in keyword_ranking.enumerate() {
+			fused[position] += 1.0 / (RRF_K + rank as f64 + 1.0);
 		}
-		ranked
+		for (rank, position) in by_score(similarity).into_iter().enumerate() {
+			fused[position] += 1.0 / (RRF_K + rank as f64 + 1.0);
+		}
+		by_score(&fused)
 			.into_iter()
 			.take(SEARCH_RESULTS)
-			.map(|(_, server, tool)| listing(server, tool))
+			.map(|position| listing(tools[position].0, tools[position].1))
 			.collect::<Vec<_>>()
 			.join("\n")
 	}

@@ -403,6 +403,18 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 	let mut tool_map = HashMap::new();
 	let enabled_servers: Vec<McpServerConfig> = config.mcp.servers.to_vec();
 	let session_id = crate::session::context::current_session_id();
+	// Code mode's `code` tool runs on the core server whatever the role
+	// grants, and an external tool of the same name does not shadow it.
+	if config.mcp.code_mode {
+		tool_map.insert(
+			crate::mcp::code::TOOL_NAME.to_string(),
+			McpServerConfig::builtin(
+				"core",
+				crate::config::DEFAULT_MCP_TIMEOUT_SECONDS,
+				vec![crate::mcp::code::TOOL_NAME.to_string()],
+			),
+		);
+	}
 
 	for server in enabled_servers {
 		// Skip config servers that are disabled in the dynamic registry
@@ -523,6 +535,7 @@ fn calculate_config_hash(config: &Config) -> u64 {
 		server.connection_type().hash(&mut hasher);
 		server.tools().hash(&mut hasher);
 	}
+	config.mcp.code_mode.hash(&mut hasher);
 
 	hasher.finish()
 }

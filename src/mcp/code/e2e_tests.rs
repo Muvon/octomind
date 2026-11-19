@@ -108,8 +108,7 @@ impl Stub {
 		}
 	}
 
-	/// The builtin `core` server (it carries `code`) and the stub as an
-	/// external server.
+	/// The builtin `core` server and the stub as an external server.
 	fn config(&self) -> Config {
 		let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
 			.expect("parse default config template");
@@ -439,10 +438,10 @@ async fn a_failing_tool_call_stops_the_script_and_lists_what_ran() {
 
 #[serial]
 #[tokio::test]
-async fn direct_tools_wildcard_turns_the_code_tool_off() {
+async fn code_mode_off_sends_the_stub_tools_and_no_code_tool() {
 	let stub = Stub::new();
 	let mut config = stub.config();
-	config.mcp.direct_tools = vec!["*".to_string()];
+	config.mcp.code_mode = false;
 	start(&config).await;
 
 	let model = get_model_functions(&config).await;
@@ -450,6 +449,24 @@ async fn direct_tools_wildcard_turns_the_code_tool_off() {
 	assert!(!model_names.contains(&"code"), "{model_names:?}");
 	assert!(model_names.contains(&"greet"), "{model_names:?}");
 	assert!(model_names.contains(&"explode"), "{model_names:?}");
+	stop();
+}
+
+/// Code mode does not depend on what the role grants: with no `core` server
+/// at all, the model still gets `code`, and a script call reaches the stub.
+#[serial]
+#[tokio::test]
+async fn code_mode_works_for_a_role_without_the_core_server() {
+	let stub = Stub::new();
+	let mut config = stub.config();
+	config.mcp.servers.retain(|server| server.name() != "core");
+	start(&config).await;
+
+	let model = get_model_functions(&config).await;
+	assert_eq!(names(&model), vec!["code"]);
+	let result = run_script(&config, &format!("return await {SERVER}.greet({{name: 'ada'}})")).await;
+	assert!(!result.is_error(), "{}", result.extract_content());
+	assert_eq!(result.extract_content(), "hello ada");
 	stop();
 }
 
@@ -488,6 +505,30 @@ async fn a_guardrail_denial_makes_the_script_call_fail_and_the_tool_does_not_run
 		tool_map::initialize_tool_map(&config)
 			.await
 			.expect("init session tool map");
+
+		// In a batch, the denied call throws and the rest of the batch still
+		// runs to its end; the result names both.
+		let batch = format!("await Promise.all([{SERVER}.greet({{name: 'ada'}}), {SERVER}.explode({{}})]);");
+		let result = call_code(&config, &batch).await;
+		let text = result.extract_content();
+		assert!(result.is_error(), "{text}");
+		assert!(
+			text.starts_with("Error: ") && text.contains("stub greetings forbidden"),
+			"{text}"
+		);
+		assert_eq!(
+			stub.calls(),
+			vec!["explode"],
+			"only the allowed call reaches the server"
+		);
+		let made: Vec<(&str, bool)> = result
+			.script_calls
+			.iter()
+			.map(|made| (made.tool.as_str(), made.denied))
+			.collect();
+		assert_eq!(made, vec![("greet", true), ("explode", false)]);
+		assert!(result.script_calls[1].error);
+		std::fs::remove_file(stub.calls_file()).expect("reset the call log");
 
 		let result = call_code(&config, &format!("{SERVER}.greet({{name: 'ada'}})")).await;
 		let text = result.extract_content();

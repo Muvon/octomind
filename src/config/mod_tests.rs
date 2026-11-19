@@ -162,19 +162,19 @@ fn mcp_config_serialization_default_check() {
 	assert!(McpConfig {
 		servers: vec![],
 		allowed_tools: vec![],
-		direct_tools: vec![]
+		code_mode: true
 	}
 	.is_default_for_serialization());
 	assert!(!McpConfig {
 		servers: vec![McpServerConfig::builtin("s", 1, vec![])],
 		allowed_tools: vec![],
-		direct_tools: vec![]
+		code_mode: true
 	}
 	.is_default_for_serialization());
 	assert!(!McpConfig {
 		servers: vec![],
 		allowed_tools: vec!["s:*".to_string()],
-		direct_tools: vec![]
+		code_mode: true
 	}
 	.is_default_for_serialization());
 }
@@ -204,17 +204,19 @@ fn mcp_config_with_servers_renames_entries_to_map_keys() {
 		McpServerConfig::stdin("wrong-s", "cmd", vec!["--flag".to_string()], 5, vec![]),
 	);
 
-	let mcp = McpConfig::with_servers(servers, Some(vec!["b:*".to_string()]));
+	let mcp = McpConfig::with_servers(servers, Some(vec!["b:*".to_string()]), true);
 	let names: Vec<&str> = mcp.servers.iter().map(|s| s.name()).collect();
 	assert_eq!(names.len(), 3);
 	for expected in ["b", "h", "s"] {
 		assert!(names.contains(&expected), "missing renamed server {expected}");
 	}
 	assert_eq!(mcp.allowed_tools, vec!["b:*".to_string()]);
+	assert!(mcp.code_mode);
 
-	let mcp = McpConfig::with_servers(HashMap::new(), None);
+	let mcp = McpConfig::with_servers(HashMap::new(), None, false);
 	assert!(mcp.servers.is_empty());
 	assert!(mcp.allowed_tools.is_empty());
+	assert!(!mcp.code_mode);
 }
 
 // --- Config getters ------------------------------------------------------------------

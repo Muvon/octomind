@@ -25,9 +25,29 @@ fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
 }
 
 /// Single builtin server whose name no branch in `build_tool_server_map_impl`
-/// recognizes — initializes to a deterministic, empty tool map.
+/// recognizes, with code mode off — initializes to a deterministic, empty
+/// tool map.
 fn empty_map_config() -> Config {
-	config_with_servers(vec![McpServerConfig::builtin("no-such-builtin", 30, vec![])])
+	let mut config = config_with_servers(vec![McpServerConfig::builtin("no-such-builtin", 30, vec![])]);
+	config.mcp.code_mode = false;
+	config
+}
+
+/// Code mode routes `code` to the core server even when the role lists no
+/// `core`: a server added later in the session is reached through it.
+#[serial]
+#[tokio::test]
+async fn code_mode_routes_code_to_core_without_a_core_server() {
+	reset_tool_map();
+	let mut config = empty_map_config();
+	config.mcp.code_mode = true;
+	initialize_tool_map(&config).await.expect("init");
+	assert_eq!(get_all_tool_names(), vec![crate::mcp::code::TOOL_NAME.to_string()]);
+	assert_eq!(
+		get_tool_server_name(crate::mcp::code::TOOL_NAME).as_deref(),
+		Some("core")
+	);
+	reset_tool_map();
 }
 
 /// The `core` builtin server with attention enabled, so

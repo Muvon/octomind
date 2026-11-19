@@ -320,9 +320,9 @@ pub struct McpConfig {
 	// Tool filtering - allows limiting tools across all enabled servers
 	pub allowed_tools: Vec<String>,
 
-	// Tools of external MCP servers sent to the model as tool definitions; every other
-	// external tool is called from a script through the builtin `code` tool. ["*"] sends all.
-	pub direct_tools: Vec<String>,
+	// On: external MCP tools are reached only through scripts in the builtin `code`
+	// tool, in every session. Off: every tool is sent to the model as a definition.
+	pub code_mode: bool,
 }
 
 // Role-specific MCP configuration with server_refs

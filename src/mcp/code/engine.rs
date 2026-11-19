@@ -82,7 +82,6 @@ globalThis.help = (target) =>
 	print(typeof target === "string" || target === undefined
 		? __help(target === undefined ? "" : target)
 		: 'help takes a name: help("server") or help("server.tool")');
-globalThis.search_tools = (words) => print(__search(typeof words === "string" ? words : ""));
 globalThis.sleep = (ms) => __sleep(Number(ms) || 0);
 globalThis.setTimeout = (callback, ms, ...args) => {
 	sleep(ms).then(() => callback(...args));
@@ -225,12 +224,6 @@ fn install(ctx: &Ctx<'_>, state: &Arc<State>, catalog: &Arc<Catalog>, host: &Arc
 	globals.set(
 		"__help",
 		Function::new(ctx.clone(), move |target: String| help_catalog.help(&target))?,
-	)?;
-
-	let search_catalog = catalog.clone();
-	globals.set(
-		"__search",
-		Function::new(ctx.clone(), move |words: String| search_catalog.search(&words))?,
 	)?;
 
 	let done_state = state.clone();

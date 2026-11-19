@@ -33,8 +33,9 @@ fn empty_map_config() -> Config {
 	config
 }
 
-/// Code mode routes `code` to the core server even when the role lists no
-/// `core`: a server added later in the session is reached through it.
+/// Code mode routes `code` and `search_tools` to the core server even when the
+/// role lists no `core`: a server added later in the session is reached
+/// through them.
 #[serial]
 #[tokio::test]
 async fn code_mode_routes_code_to_core_without_a_core_server() {
@@ -42,11 +43,11 @@ async fn code_mode_routes_code_to_core_without_a_core_server() {
 	let mut config = empty_map_config();
 	config.mcp.code_mode = true;
 	initialize_tool_map(&config).await.expect("init");
-	assert_eq!(get_all_tool_names(), vec![crate::mcp::code::TOOL_NAME.to_string()]);
-	assert_eq!(
-		get_tool_server_name(crate::mcp::code::TOOL_NAME).as_deref(),
-		Some("core")
-	);
+	let tools = [crate::mcp::code::TOOL_NAME, crate::mcp::code::SEARCH_TOOL_NAME];
+	assert_eq!(sorted(get_all_tool_names()), sorted(tools.map(String::from).to_vec()));
+	assert!(tools
+		.iter()
+		.all(|tool| get_tool_server_name(tool).as_deref() == Some("core")));
 	reset_tool_map();
 }
 

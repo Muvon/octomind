@@ -567,9 +567,14 @@ conversation again. Inside a script, `help("server")` and
 as definitions), `code` is not sent.
 
 When the list would be longer than one tool result may be (`mcp_response_tokens_threshold`, 20,000 tokens by default),
-it is not sent with every request. The `code` description then names each server with its number of tools, and a script
-finds tools with `search_tools("words")`, which prints the five that match best (BM25 over each tool's server, name,
-description and argument names), or with `help("server")`. Only the role's own tools are listed and searched.
+it is not sent with every request. The `code` description then names each server with its number of tools, and a
+second builtin tool, `search_tools`, is sent with it. Given what a tool should do, in the model's own words or by name,
+it prints the five tools that match best, ready to call in the next script; `help("server")` inside a script lists a
+server's tools too. The match fuses two rankings with reciprocal rank fusion: BM25 over each tool's server, name,
+description and argument names, which finds the exact words a model types, and cosine similarity of embeddings from
+octomind's local embedding model, which finds a tool described in other words ("remove a file" for `delete_path`).
+Only the role's own tools are listed and searched. Like `code`, `search_tools` comes with code mode whatever the role
+grants, and is not sent while the whole list fits.
 
 Every call of a listed tool runs through a script. A model may still write such a call as a tool of its own, by the
 listed name (`server.tool`) or by the tool's own name; octomind turns it into the `code` call it means,

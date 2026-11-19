@@ -403,17 +403,20 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 	let mut tool_map = HashMap::new();
 	let enabled_servers: Vec<McpServerConfig> = config.mcp.servers.to_vec();
 	let session_id = crate::session::context::current_session_id();
-	// Code mode's `code` tool runs on the core server whatever the role
-	// grants, and an external tool of the same name does not shadow it.
+	// Code mode's `code` and `search_tools` tools run on the core server
+	// whatever the role grants, and an external tool of the same name does not
+	// shadow them.
 	if config.mcp.code_mode {
-		tool_map.insert(
-			crate::mcp::code::TOOL_NAME.to_string(),
-			McpServerConfig::builtin(
-				"core",
-				crate::config::DEFAULT_MCP_TIMEOUT_SECONDS,
-				vec![crate::mcp::code::TOOL_NAME.to_string()],
-			),
-		);
+		for tool in [crate::mcp::code::TOOL_NAME, crate::mcp::code::SEARCH_TOOL_NAME] {
+			tool_map.insert(
+				tool.to_string(),
+				McpServerConfig::builtin(
+					"core",
+					crate::config::DEFAULT_MCP_TIMEOUT_SECONDS,
+					vec![tool.to_string()],
+				),
+			);
+		}
 	}
 
 	for server in enabled_servers {

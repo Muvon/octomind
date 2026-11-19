@@ -593,7 +593,7 @@ pub fn clear_hints_for_session(session_id: &SessionId) {
 // ---------------------------------------------------------------------------
 
 /// The script tools whose full description a session's model was shown (see
-/// `mcp::code::settle_direct_calls`) in one context epoch. A new epoch means
+/// `mcp::code::script_direct_calls`) in one context epoch. A new epoch means
 /// the model may have lost what it was shown, so the record starts over.
 #[derive(Default)]
 struct ShownToolHelp {

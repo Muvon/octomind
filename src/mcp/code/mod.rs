@@ -172,25 +172,22 @@ pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> 
 	(definitions, catalog)
 }
 
-/// Settle the calls that name a script tool as if it were a tool of its own,
-/// by the name in the list (`octofs.view`) or by the bare tool name.
+/// Turn the calls that name a script tool as if it were a tool of its own
+/// into the `code` calls they mean, so every call of an external tool runs
+/// through a script: type-checked, marked as a script call, and shown and
+/// recorded as the script it is.
 ///
-/// Models do this, small ones on most steps, and refusing costs a round each
-/// time. The model was sent no schema for such a call, so its arguments are
-/// guesses: numbers and booleans arrive as text, one argument is taken for
-/// another. So the arguments are read the way the tool's schema types them
-/// and checked against it. A call that fits runs as the tool it means,
-/// under the tool's real name, so every later check sees that name. A call
-/// that does not fit is not run: its answer (the second value, `None` for
-/// every other call) says what is wrong.
+/// The model may call a tool by the name in the list (`octofs.view`), by the
+/// bare tool name, or a server by its name (`octofs`). It was sent no schema
+/// for such a call, so text that spells a number, a boolean or a list is read
+/// the way the tool's schema types it before it goes into the script; the type
+/// check answers what still does not fit. A server's name becomes
+/// `help("server")`, which lists its tools.
 ///
-/// Either way the model is shown what `help` prints for the tool, once for
-/// as long as its context keeps it: a schema that accepts a call does not
-/// stop a model from using an argument for the wrong purpose, and the one
-/// line the tool has in the list is not enough to use it step after step.
-/// So a tool's full description enters the context when the model starts
-/// to call the tool directly, and not before.
-pub async fn settle_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> (Vec<McpToolCall>, Vec<Option<String>>) {
+/// The first time a tool is called this way in a context epoch, the model is
+/// shown what `help` prints for it: the one line the tool has in the list is
+/// not enough to use it step after step.
+pub async fn script_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> Vec<McpToolCall> {
 	// Only a tool of an external server, or a name no tool has (`octofs.view`,
 	// or a server's own name), can concern the script tools. Most batches hold
 	// neither, and then the list of script tools is not built.
@@ -199,60 +196,36 @@ pub async fn settle_direct_calls(config: &Config, calls: Vec<McpToolCall>) -> (V
 			.is_none_or(|server| server.connection_type() != crate::config::McpConnectionType::Builtin)
 	};
 	if !calls.iter().any(may_be_scripted) {
-		let answers = vec![None; calls.len()];
-		return (calls, answers);
+		return calls;
 	}
 	let (_, catalog) = split(config, crate::mcp::sourced_functions(config).await);
-	let mut answers = Vec::with_capacity(calls.len());
-	let calls = calls
+	calls
 		.into_iter()
 		.map(|mut call| {
-			let Some((server, tool)) = catalog.find(&call.tool_name) else {
-				// A server called by its name (`octofs` with a `command`): the
-				// answer names its tools, so the next call can be one of them.
-				answers.push(catalog.server(&call.tool_name).map(|server| {
-					let tools: Vec<String> = server
-						.tool_idents()
-						.iter()
-						.map(|tool| format!("{}.{tool}", server.ident))
-						.collect();
-					format!(
-						"`{}` is a server, not a tool. Its tools: {}",
-						server.ident,
-						tools.join(", ")
-					)
-				}));
-				return call;
-			};
-			if call.parameters.is_null() {
-				call.parameters = json!({});
-			}
-			schema::coerce(&tool.schema, &mut call.parameters);
-			let violations = schema::validate(&tool.schema, &call.parameters);
-			let script_name = format!("{}.{}", server.ident, tool.ident);
-			let unseen = crate::session::context::note_tool_help_shown(&script_name);
-			if violations.is_empty() {
-				if unseen {
+			let script = if let Some((server, tool)) = catalog.find(&call.tool_name) {
+				if !call.parameters.is_object() {
+					call.parameters = json!({});
+				}
+				schema::coerce(&tool.schema, &mut call.parameters);
+				let script_name = format!("{}.{}", server.ident, tool.ident);
+				if crate::session::context::note_tool_help_shown(&script_name) {
 					crate::mcp::hint_accumulator::push_hint(&format!(
-						"You called `{}` without its description. Read it before the next call:\n{}",
+						"`{}` ran as a `code` script. Call tools inside `code`, several in one script. Its description:\n{}",
 						call.tool_name,
 						catalog.help(&script_name)
 					));
 				}
-				call.tool_name = tool.name.clone();
-				answers.push(None);
+				format!("return await {script_name}({});", call.parameters)
+			} else if let Some(server) = catalog.server(&call.tool_name) {
+				format!("help({:?});", server.ident)
 			} else {
-				let mut answer = format!("`{}` was not called: {}", call.tool_name, violations.join("; "));
-				if unseen {
-					answer.push_str("\n\n");
-					answer.push_str(&catalog.help(&script_name));
-				}
-				answers.push(Some(answer));
-			}
+				return call;
+			};
+			call.tool_name = TOOL_NAME.to_string();
+			call.parameters = json!({ "script": script });
 			call
 		})
-		.collect();
-	(calls, answers)
+		.collect()
 }
 
 /// Whether a script mentions a tool from `writers` (script names of the

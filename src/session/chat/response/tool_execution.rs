@@ -1198,9 +1198,12 @@ async fn plugin_round(
 		.repeat_guard
 		.note_round_returned(&shown_round, &returned_round);
 	let tree_after = plugin_tree_fingerprint(config);
-	let write_capable = calls
+	// A call that ran and could have moved the tree: a mutation, or a command,
+	// which may write before it fails. A script could when one of its calls could.
+	let write_capable = outcomes
 		.iter()
-		.any(|call| super::call_can_write(&call.tool_name, &call.parameters));
+		.flat_map(|outcome| std::iter::once(outcome).chain(&outcome.script_calls))
+		.any(|outcome| !outcome.denied && (outcome.mutation || outcome.command.is_some()));
 	if super::round_moved_tree(write_capable, tree_before, tree_after) {
 		chat_session.repeat_guard.note_tree_moved();
 	}

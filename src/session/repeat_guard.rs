@@ -146,13 +146,9 @@ impl RepeatGuard {
 		let (shown_hash, shown_fresh) = self.note_view(shown, View::Shown);
 		let (returned_hash, returned_fresh) = self.note_view(returned, View::Returned);
 		// A successful write is progress even when its output repeats. A free-form
-		// command only looks like a write, and so does a script: it is marked a
-		// mutation when it names a tool that can write (`code::can_write`), not
-		// when it wrote. Neither earns such credit; a write either of them really
-		// made moves the tree, which `note_tree_moved` credits. Judged on what
-		// the tool returned: a repeat note shown instead does not undo it.
-		let only_looks_like_a_write = returned.free_form || returned.tool == crate::mcp::code::TOOL_NAME;
-		let wrote = !returned.is_error && returned.is_mutation && !only_looks_like_a_write;
+		// command only looks like a write, so it earns no such credit. Judged on
+		// what the tool returned: a repeat note shown instead does not undo it.
+		let wrote = !returned.is_error && returned.is_mutation && !returned.free_form;
 		NotedCall {
 			shown: shown_hash,
 			returned: returned_hash,

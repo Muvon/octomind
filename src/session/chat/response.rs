@@ -418,14 +418,6 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 	visible_assistant_content(content)
 }
 
-/// A mutation-shaped call or a command execution could have moved the working
-/// tree, errored ones included: a command may write before failing. A round of
-/// pure reads cannot.
-fn call_can_write(tool_name: &str, parameters: &serde_json::Value) -> bool {
-	crate::mcp::tool_shape::is_mutation_call(tool_name, parameters)
-		|| crate::mcp::tool_shape::executed_command(tool_name, parameters).is_some()
-}
-
 /// The tree moved across a round that could write. Fingerprint drift across a
 /// round of pure reads is external (a dev server, a build), not the agent's.
 fn round_moved_tree(write_capable: bool, before: Option<u64>, after: Option<u64>) -> bool {

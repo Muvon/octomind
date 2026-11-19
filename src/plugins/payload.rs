@@ -242,6 +242,10 @@ pub fn returned_by_tool(result: &McpToolResult, limit: usize) -> Returned {
 /// `returned` is what the tool returned when that differs from it: another
 /// error flag, or a text that does not start the way the tool's did. An
 /// ordinary result carries none.
+///
+/// A `code` call changed what its script's calls changed, and runs a free-form
+/// command when one of them did: it is judged as those calls would be if the
+/// agent had made them, not by the tools its script mentions.
 pub fn tool_outcome(
 	call: &McpToolCall,
 	result: &McpToolResult,
@@ -254,6 +258,20 @@ pub fn tool_outcome(
 	let returned = tool_returned
 		.filter(|returned| returned.error != result.is_error() || !text.starts_with(&returned.text))
 		.cloned();
+	let script_calls: Vec<ToolOutcome> = result
+		.script_calls
+		.iter()
+		.map(|made| script_call_outcome(made, workdir))
+		.collect();
+	let ran = || script_calls.iter().filter(|made| !made.denied);
+	let (mutation, free_form) = if call.tool_name == crate::mcp::code::TOOL_NAME {
+		(ran().any(|made| made.mutation), ran().any(|made| made.free_form))
+	} else {
+		(
+			tool_shape::is_mutation_call(&call.tool_name, &call.parameters),
+			tool_shape::executes_free_form_command(&call.tool_name),
+		)
+	};
 	ToolOutcome {
 		id: call.tool_id.clone(),
 		tool: call.tool_name.clone(),
@@ -265,20 +283,16 @@ pub fn tool_outcome(
 		size_tokens: crate::session::estimate_tokens(&text),
 		size_bytes: text.len(),
 		result: Some(text),
-		mutation: tool_shape::is_mutation_call(&call.tool_name, &call.parameters),
+		mutation,
 		command: tool_shape::executed_command(&call.tool_name, &call.parameters).map(str::to_string),
-		free_form: tool_shape::executes_free_form_command(&call.tool_name),
+		free_form,
 		paths: tool_shape::param_paths(&call.parameters)
 			.iter()
 			.map(|path| workdir.join(path).to_string_lossy().into_owned())
 			.collect(),
 		replaceable,
 		returned,
-		script_calls: result
-			.script_calls
-			.iter()
-			.map(|made| script_call_outcome(made, workdir))
-			.collect(),
+		script_calls,
 	}
 }
 

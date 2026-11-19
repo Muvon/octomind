@@ -419,9 +419,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.13.1"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+checksum = "a680398c10c7bc0488067c4612226ea905a85f607134b69f3068d505d58c4214"
 dependencies = [
  "memchr",
  "regex-automata",
@@ -3324,9 +3324,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.54.0"
+version = "0.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44862b687a0ef468cd7b0ba7bc0a08191ea7e553edeb326f5369847b3203b422"
+checksum = "4b7732fc20d32baf250fc169c4ffd65b266c24bcaf570a7556e57cf6f4b14f82"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3934,9 +3934,9 @@ dependencies = [
 
 [[package]]
 name = "rand_pcg"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
+checksum = "eb95882a1e14462c69aea9984bb261293ccfe6022ef8de0eda18bd5afb0052df"
 dependencies = [
  "rand_core 0.10.1",
 ]
@@ -6366,9 +6366,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.7.0"
+version = "9.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08687262e7c0f1284b259686f322805a8adaa8ef4d7210e76448950b3f083bf7"
+checksum = "63e50f7b2212e4635244be3c363b53273d159f2523eb7db3096c1d2861c1b603"
 dependencies = [
  "constant_time_eq",
  "crc32fast",

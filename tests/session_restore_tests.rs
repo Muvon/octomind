@@ -63,6 +63,7 @@ mod session_restore_tests {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}
 	}
 

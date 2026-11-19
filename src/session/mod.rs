@@ -125,6 +125,10 @@ pub struct Message {
 	pub thinking: Option<serde_json::Value>, // For assistant messages: thinking/reasoning content
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub id: Option<String>, // Provider's response ID (for assistant messages)
+	/// For the result of a `code` call: the tool calls its script made, as
+	/// [`crate::mcp::code::kept_calls`] keeps them.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub script_calls: Vec<crate::mcp::ScriptCall>,
 }
 
 fn default_cache_marker() -> bool {
@@ -151,6 +155,7 @@ impl Default for Message {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}
 	}
 }

@@ -43,7 +43,7 @@ pub mod schema;
 mod fixtures;
 
 use crate::config::Config;
-use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
+use crate::mcp::{McpFunction, McpToolCall, McpToolResult, ScriptCall};
 use catalog::Catalog;
 use engine::{CallFuture, Host, Run};
 use parking_lot::Mutex;
@@ -72,7 +72,7 @@ const UNTYPED_VALUE: &str = "implicitly has an 'any' type";
 const DESCRIPTION: &str = "Run a script that calls the tools listed under \"Tools\" below. Every call of this tool is a round trip that sends the whole conversation again, so one script does everything you can already write: calls that do not depend on each other go together into one `await Promise.all([...])`, calls that do go one after another, and a change goes with the command that checks it. Write a second script only where you have to read a result before you can write the next call. Only what the script prints or returns comes back to you, so filter and summarize large results inside the script instead of returning them whole.\n\
 \n\
 - Language: TypeScript (plain JavaScript is valid TypeScript). Top-level `await` and `return` work.\n\
-- A tool is an async function that takes one object of arguments. Call it by the name written in the list and `await` it. It resolves to the tool's text output; use `JSON.parse` when that text is JSON. A tool that fails throws an `Error` carrying the tool's message.\n\
+- A tool is an async function that takes one object of arguments. Call it by the name written in the list and `await` it. It resolves to the tool's text output (use `JSON.parse` when that text is JSON), or to a value of the type the list shows after `->`. A tool that fails throws an `Error` carrying the tool's message.\n\
 - The value of the last expression, or of `return`, is the result. `print(...)` adds lines to it.\n\
 - `help(name)` prints a tool's full description and arguments when given a name from the list, and every tool of a server with a summary when given only the part before the dot. Read it before the first use of a tool whose arguments the list does not make obvious.\n\
 - `input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`.\n\
@@ -161,13 +161,25 @@ pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> 
 		// The example names a tool of this session: a made-up name in the
 		// text gets copied into scripts.
 		let server = &catalog.servers[0];
-		code.description = format!(
-			"{}\n\nTools, called like `await {}.{}({{...}})`:\n{}",
-			code.description,
-			server.ident,
-			server.tools[0].ident,
-			catalog.index()
-		);
+		let index = catalog.index();
+		// The list goes out with every request. One longer than a tool result
+		// may be costs more each turn than the scripts that look tools up.
+		let too_long = config.mcp_response_tokens_threshold > 0
+			&& crate::session::estimate_tokens(&index) > config.mcp_response_tokens_threshold;
+		code.description = if too_long {
+			format!(
+				"{}\n\nServers, their tools called like `await {}.{}({{...}})`. The full list is too long to send: find tools with `search_tools(\"words\")` or `help(\"server\")`, then call them in the next script.\n{}",
+				code.description,
+				server.ident,
+				server.tools[0].ident,
+				catalog.server_index()
+			)
+		} else {
+			format!(
+				"{}\n\nTools, called like `await {}.{}({{...}})`:\n{}",
+				code.description, server.ident, server.tools[0].ident, index
+			)
+		};
 	}
 	(definitions, catalog)
 }
@@ -264,6 +276,29 @@ pub fn can_write(parameters: &Value) -> bool {
 	names_any(script, &writers)
 }
 
+/// What the session keeps of the calls a script made, next to the text the
+/// script returned: every call, without the output of a read the script did
+/// not print. The model never saw that output, and only the round that ran
+/// the script needs it. Edits keep theirs: it says what changed where.
+pub fn kept_calls(calls: &[ScriptCall], printed: &str) -> Vec<ScriptCall> {
+	calls
+		.iter()
+		.map(|made| {
+			let output = made.output.trim();
+			let shown = !output.is_empty() && printed.contains(output);
+			let edit = crate::mcp::tool_shape::is_mutation_call(&made.tool, &made.arguments);
+			if shown || edit || made.error {
+				made.clone()
+			} else {
+				ScriptCall {
+					output: String::new(),
+					..made.clone()
+				}
+			}
+		})
+		.collect()
+}
+
 /// The rejection the model reads when a script fails the type check.
 ///
 /// The compiler's messages are completed with what it cannot know: a tool
@@ -331,12 +366,16 @@ struct Session {
 	started: AtomicUsize,
 	/// Tools that ran, `server.tool` in call order.
 	ran: Mutex<Vec<String>>,
+	/// Every call the script made, with its output, as each one finished.
+	made: Mutex<Vec<(usize, ScriptCall)>>,
+	/// The session as the round found it, for the plugins that judge each call.
+	round_snapshot: Option<Arc<crate::plugins::payload::RoundSnapshot>>,
 	/// Images returned by the tools, passed on with the script's result.
 	images: Mutex<Vec<ContentBlock>>,
 }
 
 impl Session {
-	async fn dispatch(self: Arc<Self>, server: String, tool: String, arguments: Value) -> Result<String, String> {
+	async fn dispatch(self: Arc<Self>, server: String, tool: String, arguments: Value) -> Result<Value, String> {
 		// Tool names are unique in a session, but a script names the server too.
 		if crate::mcp::tool_map::get_tool_server_name(&tool).as_deref() != Some(server.as_str()) {
 			return Err(format!("`{tool}` is not a tool of server `{server}`"));
@@ -348,14 +387,30 @@ impl Session {
 			parameters: arguments,
 			tool_id: format!("{}:{}", self.call_id, number),
 		};
+		let record = |output: &str, error: bool, denied: bool| {
+			let made = ScriptCall {
+				id: call.tool_id.clone(),
+				server: server.clone(),
+				tool: call.tool_name.clone(),
+				arguments: call.parameters.clone(),
+				output: output.to_string(),
+				error,
+				denied,
+			};
+			self.made.lock().push((number, made));
+		};
 		let verdicts = crate::session::chat::response::tool_execution::admit_tool_batch(
 			&self.session_id,
 			&self.config,
 			std::slice::from_ref(&call),
-			None,
+			crate::session::chat::response::tool_execution::CallOrigin::Script {
+				code_call_id: &self.call_id,
+				snapshot: self.round_snapshot.clone(),
+			},
 		)
 		.await;
 		if let Some(Some(denial)) = verdicts.into_iter().next() {
+			record(&denial, true, true);
 			return Err(denial);
 		}
 		self.ran.lock().push(label.clone());
@@ -372,15 +427,26 @@ impl Session {
 						.cloned(),
 				);
 				let text = result.extract_content();
+				record(&text, result.is_error(), false);
 				if result.is_error() {
 					// The script stops here unless it catches this, so the
 					// message must say which of its calls failed.
-					Err(format!("{label} failed: {text}"))
-				} else {
-					Ok(text)
+					return Err(format!("{label} failed: {text}"));
 				}
+				// The script was told this tool resolves to its output schema's
+				// shape, which only its structured content has.
+				if crate::mcp::tool_shape::tool_output_schema(&call.tool_name).is_none() {
+					return Ok(Value::String(text));
+				}
+				result.result.structured_content.clone().ok_or_else(|| {
+					format!("{label} failed: it declares an output schema but returned no structured content")
+				})
 			}
-			Err(error) => Err(format!("{label} failed: {error}")),
+			Err(error) => {
+				let text = error.to_string();
+				record(&text, true, false);
+				Err(format!("{label} failed: {text}"))
+			}
 		}
 	}
 
@@ -470,6 +536,8 @@ pub async fn execute(
 		call_id: call.tool_id.clone(),
 		started: AtomicUsize::new(0),
 		ran: Mutex::new(Vec::new()),
+		made: Mutex::new(Vec::new()),
+		round_snapshot: crate::plugins::payload::round_snapshot(),
 		images: Mutex::new(Vec::new()),
 	});
 	let Run { output, error } = engine::run(
@@ -504,6 +572,8 @@ pub async fn execute(
 	};
 	let mut content = vec![ContentBlock::text(text)];
 	content.append(&mut session.images.lock());
+	let mut made = std::mem::take(&mut *session.made.lock());
+	made.sort_by_key(|(number, _)| *number);
 	McpToolResult {
 		tool_name: call.tool_name.clone(),
 		tool_id: call.tool_id.clone(),
@@ -512,6 +582,7 @@ pub async fn execute(
 		} else {
 			CallToolResult::success(content)
 		},
+		script_calls: made.into_iter().map(|(_, made)| made).collect(),
 	}
 }
 

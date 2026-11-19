@@ -873,6 +873,7 @@ async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
 		.map(|(index, data)| crate::mcp::McpToolResult {
 			tool_name: "screenshot".into(),
 			tool_id: format!("call-{index}"),
+			script_calls: Vec::new(),
 			result: serde_json::from_value(serde_json::json!({"content": [
 				{"type": "text", "text": "identical caption\n".repeat(500)},
 				{"type": "image", "data": data, "mimeType": "image/png"}
@@ -1152,7 +1153,15 @@ async fn a_lift_of_a_rule_the_plugin_registered_goes_to_the_admission() {
 	crate::plugins::request_before(&ctx, request).await;
 
 	let calls = [plugin_call("guarded", "c1", json!({}))];
-	let verdict = plugin_tool_verdict(&rig.id, &rig.config, &calls, &[None], &[Vec::new()], None).await;
+	let verdict = plugin_tool_verdict(
+		&rig.id,
+		&rig.config,
+		&calls,
+		&[None],
+		&[Vec::new()],
+		CallOrigin::Model(None),
+	)
+	.await;
 
 	assert_eq!(verdict.lifts, vec![(0, vec!["no-write".to_string()])]);
 	assert!(verdict.denials.is_empty());

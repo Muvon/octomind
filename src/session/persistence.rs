@@ -241,6 +241,7 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 				videos: None,
 				thinking: None,
 				id: None,
+				script_calls: Vec::new(),
 			},
 		);
 	}

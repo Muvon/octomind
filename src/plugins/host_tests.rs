@@ -155,6 +155,7 @@ fn tool_before(call_id: &str) -> ToolBefore {
 			arguments: json!({}),
 			denied: None,
 			rules: Vec::new(),
+			script_call_id: None,
 		}],
 	}
 }
@@ -177,6 +178,7 @@ fn outcome(call_id: &str, result: &str, size_tokens: usize) -> ToolOutcome {
 		paths: Vec::new(),
 		replaceable: true,
 		returned: None,
+		script_calls: Vec::new(),
 	}
 }
 

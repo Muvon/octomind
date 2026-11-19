@@ -480,6 +480,9 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 		if !params.config.mcp.servers.is_empty() {
 			// Resolve current tool calls for this iteration
 			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
+			// A listed external tool called as a tool of its own becomes its `code`
+			// script here, before it is shown, announced or run.
+			let current_tool_calls = crate::mcp::code::script_direct_calls(params.config, current_tool_calls).await;
 
 			if !current_tool_calls.is_empty() {
 				let session_id = params.chat_session.session.info.name.clone();

@@ -224,12 +224,13 @@ async fn the_model_sees_the_code_tool_and_none_of_the_stub_tools() {
 	stop();
 }
 
-/// A script tool called as a tool of its own, by either name, becomes a call
-/// of that tool when its arguments fit and is answered when they do not. The
-/// model is shown the tool's description once, until its context loses it.
+/// A script tool called as a tool of its own, by either name, and a server
+/// called by its name, become the `code` scripts they mean. Every other call
+/// is left alone. The model is shown the tool's description once, until its
+/// context loses it.
 #[serial]
 #[tokio::test]
-async fn a_direct_call_of_a_script_tool_runs_and_brings_its_description() {
+async fn a_direct_call_of_a_script_tool_becomes_its_script() {
 	let stub = Stub::new();
 	let config = stub.config();
 	start(&config).await;
@@ -242,68 +243,122 @@ async fn a_direct_call_of_a_script_tool_runs_and_brings_its_description() {
 	let listed = format!("{SERVER}.greet");
 	let description =
 		format!("{SERVER}.greet({{name: string}})\n\ngreet someone by name\n\nArguments:\n  name: string");
-	let unfit =
-		format!("`{listed}` was not called: missing required argument `name`; unknown argument `nam` (known: name)");
+	let hint = format!("`greet` ran as a `code` script. Call tools inside `code`, several in one script. Its description:\n{description}");
 	let session = format!("code-e2e-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session.clone(), async {
 		crate::session::context::init_session_services("assistant");
-		let (calls, answers) = super::settle_direct_calls(
+		let calls = super::script_direct_calls(
 			&config,
 			vec![
 				call("greet", json!({"name": "ada"})),
 				call(&listed, json!({"name": "ada"})),
 				call(&listed, json!({"nam": "ada"})),
+				call(SERVER, json!({"command": "greet"})),
 				call("code", json!({"script": "1"})),
 				call("nope", json!({})),
 			],
 		)
 		.await;
-		let called: Vec<&str> = calls.iter().map(|call| call.tool_name.as_str()).collect();
-		assert_eq!(called, vec!["greet", "greet", listed.as_str(), "code", "nope"]);
-		assert_eq!(answers, vec![None, None, Some(unfit.clone()), None, None]);
+		let called: Vec<(&str, serde_json::Value)> = calls
+			.iter()
+			.map(|call| (call.tool_name.as_str(), call.parameters.clone()))
+			.collect();
 		assert_eq!(
-			crate::mcp::hint_accumulator::drain_hints(),
-			vec![format!(
-				"You called `greet` without its description. Read it before the next call:\n{description}"
-			)]
+			called,
+			vec![
+				(
+					"code",
+					json!({"script": format!("return await {SERVER}.greet({{\"name\":\"ada\"}});")})
+				),
+				(
+					"code",
+					json!({"script": format!("return await {SERVER}.greet({{\"name\":\"ada\"}});")})
+				),
+				(
+					"code",
+					json!({"script": format!("return await {SERVER}.greet({{\"nam\":\"ada\"}});")})
+				),
+				("code", json!({"script": format!("help(\"{SERVER}\");")})),
+				("code", json!({"script": "1"})),
+				("nope", json!({})),
+			]
 		);
+		assert_eq!(crate::mcp::hint_accumulator::drain_hints(), vec![hint.clone()]);
 
-		// The context lost what it was shown: the description comes again,
-		// here with the answer of a call that does not fit.
+		// Rewriting a batch again changes nothing: the main loop and the
+		// executor both run it.
+		let again: Vec<(String, serde_json::Value)> = super::script_direct_calls(&config, calls.clone())
+			.await
+			.into_iter()
+			.map(|call| (call.tool_name, call.parameters))
+			.collect();
+		let once: Vec<(String, serde_json::Value)> = calls
+			.into_iter()
+			.map(|call| (call.tool_name, call.parameters))
+			.collect();
+		assert_eq!(again, once);
+
+		// The context lost what it was shown: the description comes again.
 		crate::session::context::bump_context_epoch();
-		let (_, answers) = super::settle_direct_calls(&config, vec![call(&listed, json!({"nam": "ada"}))]).await;
-		assert_eq!(answers, vec![Some(format!("{unfit}\n\n{description}"))]);
-		assert!(crate::mcp::hint_accumulator::drain_hints().is_empty());
+		super::script_direct_calls(&config, vec![call("greet", json!({"name": "ada"}))]).await;
+		assert_eq!(crate::mcp::hint_accumulator::drain_hints(), vec![hint]);
 	})
 	.await;
 	crate::session::context::cleanup_session(&session);
 	stop();
 }
 
-/// A model sometimes calls a server by its name (`octofs` with a `command`).
-/// The answer names the server's tools, so the next call can be one of them.
+/// The scripts a direct call becomes run like any script: a fitting call
+/// runs the tool, one that does not fit is rejected by the type check before
+/// any tool runs, and a server's name lists the server's tools.
 #[serial]
 #[tokio::test]
-async fn a_call_of_a_server_name_is_answered_with_its_tools() {
+async fn a_direct_call_runs_as_a_script() {
 	let stub = Stub::new();
 	let config = stub.config();
 	start(&config).await;
 
-	let call = McpToolCall {
-		tool_name: SERVER.to_string(),
-		parameters: json!({"command": "greet"}),
-		tool_id: "id".to_string(),
-	};
-	let (calls, answers) = super::settle_direct_calls(&config, vec![call]).await;
-	assert_eq!(calls[0].tool_name, SERVER);
-	let answer = answers[0].as_deref().expect("the call is answered, not run");
-	assert!(
-		answer.starts_with(&format!("`{SERVER}` is a server, not a tool. Its tools: ")),
-		"{answer}"
-	);
-	for tool in ["greet", "explode"] {
-		assert!(answer.contains(&format!("{SERVER}.{tool}")), "{answer}");
-	}
+	let session = format!("code-e2e-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let run = |name: String, parameters: serde_json::Value| {
+			let config = &config;
+			async move {
+				let call = McpToolCall {
+					tool_name: name,
+					parameters,
+					tool_id: "id".to_string(),
+				};
+				let scripted = super::script_direct_calls(config, vec![call]).await.remove(0);
+				assert_eq!(scripted.tool_name, super::TOOL_NAME);
+				let (result, _) = execute_tool_call(&scripted, config, None)
+					.await
+					.expect("code reports failures as results");
+				result
+			}
+		};
+
+		let greeted = run(format!("{SERVER}.greet"), json!({"name": "ada"})).await;
+		let text = greeted.extract_content();
+		assert!(!greeted.is_error(), "{text}");
+		assert!(text.contains("hello ada"), "{text}");
+		assert_eq!(stub.calls(), vec!["greet"]);
+
+		let unfit = run(format!("{SERVER}.greet"), json!({"nam": "ada"})).await;
+		let text = unfit.extract_content();
+		assert!(unfit.is_error(), "{text}");
+		assert!(text.starts_with(REJECTION_PREFIX), "{text}");
+		assert_eq!(stub.calls(), vec!["greet"], "a rejected script calls no tool");
+
+		let listed = run(SERVER.to_string(), json!({"command": "greet"})).await;
+		let text = listed.extract_content();
+		assert!(!listed.is_error(), "{text}");
+		for tool in ["greet", "explode"] {
+			assert!(text.contains(&format!("{SERVER}.{tool}")), "{text}");
+		}
+	})
+	.await;
+	crate::session::context::cleanup_session(&session);
 	stop();
 }
 

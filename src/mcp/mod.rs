@@ -560,6 +560,13 @@ pub async fn get_model_functions(config: &crate::config::Config) -> Vec<McpFunct
 		// while it thinks, so its first script does not wait for it.
 		code::check::warm();
 	}
+	if definitions
+		.iter()
+		.any(|function| function.name == code::SEARCH_TOOL_NAME)
+	{
+		// Nor its first search for every tool to be embedded.
+		code::prewarm_search(&scripted);
+	}
 	definitions
 }
 
@@ -858,6 +865,7 @@ async fn route_builtin_tool(
 			let result = match call.tool_name.as_str() {
 				// Runs other tools, so it carries the turn's cancellation into them.
 				code::TOOL_NAME => return Ok(code::execute(call, config, cancellation_token).await),
+				code::SEARCH_TOOL_NAME => return Ok(code::execute_search(call, config).await),
 				"recall" => core::recall::execute_recall(call)
 					.await
 					.map_err(|e| format!("Recall failed: {}", e)),
@@ -963,8 +971,10 @@ async fn execute_tool_without_cancellation(
 			// Dynamic server tools: allow if from a config-defined server or owned by this session.
 			// Project-local tools live under the synthetic "local" server and are workdir-scoped,
 			// so they bypass this check (no session-ownership concept applies). So does the
-			// `code` tool in code mode: code mode attaches it, not the session's servers.
-			let attached_by_code_mode = config.mcp.code_mode && call.tool_name == code::TOOL_NAME;
+			// `code` and `search_tools` tools in code mode: code mode attaches them, not the
+			// session's servers.
+			let attached_by_code_mode =
+				config.mcp.code_mode && [code::TOOL_NAME, code::SEARCH_TOOL_NAME].contains(&call.tool_name.as_str());
 			if !runtime::dynamic::is_dynamic_by_tool(&call.tool_name)
 				&& target_server.name() != core::local_tool::SERVER_NAME
 				&& !attached_by_code_mode

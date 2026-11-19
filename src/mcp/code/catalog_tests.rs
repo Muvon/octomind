@@ -207,3 +207,22 @@ fn declarations_type_every_tool_and_the_input() {
 fn help_without_a_target_is_the_index() {
 	assert_eq!(catalog().help(""), catalog().index());
 }
+
+/// The embedding model finds a tool described in words its text does not
+/// use, which word matching alone cannot.
+#[tokio::test]
+async fn search_finds_a_tool_by_meaning() {
+	let mut catalog = Catalog::default();
+	let object = || json!({"type": "object", "properties": {"path": {"type": "string"}}});
+	catalog.add("files", "delete_path", "Unlink an entry from the disk.", object());
+	catalog.add("files", "read_text", "Return the contents of a document.", object());
+	catalog.add(
+		"tracker",
+		"list_issues",
+		"Show the open tickets of a project.",
+		object(),
+	);
+	let found = catalog.search("remove a file").await.expect("search runs");
+	assert!(found.starts_with("files.delete_path("), "{found}");
+	assert!(catalog.search("  ").await.is_err());
+}

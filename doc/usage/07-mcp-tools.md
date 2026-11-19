@@ -630,19 +630,15 @@ own later view of it is complete. Everything else is the same for a script, incl
 numbered file lines in shell output (`grep -n`, `nl -ba`): a script that prints such lines hands the model ids it can
 edit by.
 
-**Keeping tools as definitions (`direct_tools`).** The `[mcp] direct_tools` list (default `[]`) names external tools that
-stay plain tool definitions. Patterns: `"server:*"`, `"server:tool"`, `"tool"`, `"prefix*"`. `["*"]` keeps every tool a
-definition and removes `code`. A role that does not grant `code` (no `core` server, or `allowed_tools` excludes it)
-gets every tool as a definition. Two tools of one server whose script names collide: the second stays a definition.
-
-The default needs no tuning per model. Scripts pay off when a server has many tools or a task needs many calls. A model
-that prefers to call the file tools one at a time does that with the default too: it calls a listed tool directly and
-receives the tool's description with the first result. Name a server in `direct_tools` when the model should have the
-full schemas of its tools from the first request, at the price of sending them with every request.
+**Turning code mode off (`code_mode`).** `[mcp] code_mode` (default `true`) applies to every session: the main one,
+agents, layers and workflows. On, every external tool is reached through scripts, and `code` is there whenever the
+session has an external tool, whatever the role's servers and `allowed_tools` say; `allowed_tools` still decides which
+external tools the list shows. Two tools of one server whose script names collide: the second is numbered
+(`get_item_2`). Off, every tool is sent to the model as a plain tool definition and there is no `code` tool.
 
 ```toml
 [mcp]
-direct_tools = ["search:*", "fetch_page"]
+code_mode = false
 ```
 
 **Known limits.**

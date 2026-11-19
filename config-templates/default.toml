@@ -390,12 +390,11 @@ allowed_tools = []
 # Global tool restrictions (empty = no restrictions)
 allowed_tools = []
 
-# Tools of external MCP servers (stdio/http) sent to the model as tool
-# definitions. Every other external tool is called from a script through the
-# builtin `code` tool, which lists it by signature only.
-# Patterns: "server:*", "server:tool", "tool", "prefix*". ["*"] sends every
-# tool as a definition and turns the `code` tool off.
-direct_tools = []
+# Code mode: tools of external MCP servers (stdio/http) are not sent to the
+# model as tool definitions; the builtin `code` tool lists them by signature
+# and the model calls them from scripts. Applies to every session.
+# false sends every tool to the model as a tool definition, with no `code` tool.
+code_mode = true
 
 # Per-operation timeout. For tool calls this is an idle deadline: each MCP
 # progress notification resets it. Set a larger explicit value only for a

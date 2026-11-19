@@ -623,6 +623,11 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 			.map(|function| (None, function)),
 	);
 
+	// Code mode is how this session reaches external tools, so `code` comes
+	// with them whatever the role grants.
+	if config.mcp.code_mode && functions.iter().any(|(server, _)| server.is_some()) {
+		functions.insert(0, (None, code::get_code_function()));
+	}
 	// Builtin, dynamic and local tools declare their annotations in code rather
 	// than over the wire; register them the way an external inventory is.
 	for (_, function) in &functions {
@@ -957,9 +962,12 @@ async fn execute_tool_without_cancellation(
 			}
 			// Dynamic server tools: allow if from a config-defined server or owned by this session.
 			// Project-local tools live under the synthetic "local" server and are workdir-scoped,
-			// so they bypass this check (no session-ownership concept applies).
+			// so they bypass this check (no session-ownership concept applies). So does the
+			// `code` tool in code mode: code mode attaches it, not the session's servers.
+			let attached_by_code_mode = config.mcp.code_mode && call.tool_name == code::TOOL_NAME;
 			if !runtime::dynamic::is_dynamic_by_tool(&call.tool_name)
 				&& target_server.name() != core::local_tool::SERVER_NAME
+				&& !attached_by_code_mode
 			{
 				let is_config_server = config.mcp.servers.iter().any(|s| s.name() == target_server.name());
 				if !is_config_server {

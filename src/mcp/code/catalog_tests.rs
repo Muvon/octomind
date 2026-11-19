@@ -43,11 +43,17 @@ fn two_servers_with_one_script_name_stay_distinct() {
 }
 
 #[test]
-fn second_tool_with_the_same_script_name_is_refused() {
+fn second_tool_with_the_same_script_name_is_numbered() {
 	let mut catalog = Catalog::default();
-	assert!(catalog.add("s", "get-item", "", json!({"type": "object"})));
-	assert!(!catalog.add("s", "get.item", "", json!({"type": "object"})));
-	assert_eq!(catalog.servers[0].tools.len(), 1);
+	catalog.add("s", "get-item", "", json!({"type": "object"}));
+	catalog.add("s", "get.item", "", json!({"type": "object"}));
+	catalog.add("s", "get_item", "", json!({"type": "object"}));
+	let idents: Vec<&str> = catalog.servers[0]
+		.tools
+		.iter()
+		.map(|tool| tool.ident.as_str())
+		.collect();
+	assert_eq!(idents, vec!["get_item", "get_item_2", "get_item_3"]);
 }
 
 /// A tool that declares an output schema resolves to that shape: the list

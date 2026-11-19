@@ -227,7 +227,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 32,
 				to: 33,
-				apply: add_v33_direct_tools,
+				apply: add_v33_code_mode,
 			},
 		],
 	)
@@ -419,11 +419,11 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 	Ok(())
 }
 
-/// Add the `mcp.direct_tools` list (empty: external tools go through the `code` tool); an existing value is kept.
-fn add_v33_direct_tools(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+/// Add the `mcp.code_mode` switch (on: external tools go through the `code` tool); an existing value is kept.
+fn add_v33_code_mode(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
 	let template_mcp = required_table(template.as_table(), "mcp", "embedded config")?;
 	let mcp = ensure_table(document.as_table_mut(), template.as_table(), "mcp", "user config")?;
-	merge_missing(mcp, template_mcp, "direct_tools")
+	merge_missing(mcp, template_mcp, "code_mode")
 }
 
 /// Add the required `compression.idle` switch (on); an existing value is kept.

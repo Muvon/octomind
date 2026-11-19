@@ -125,6 +125,7 @@ fn create_test_message(
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 #[test]

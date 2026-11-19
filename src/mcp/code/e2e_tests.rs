@@ -419,6 +419,21 @@ async fn a_failing_tool_call_stops_the_script_and_lists_what_ran() {
 		)
 	);
 	assert_eq!(stub.calls(), vec!["greet", "explode"]);
+	// The result records each call the script made, in call order.
+	let made: Vec<(&str, &str, bool)> = result
+		.script_calls
+		.iter()
+		.map(|made| (made.tool.as_str(), made.output.as_str(), made.error))
+		.collect();
+	assert_eq!(
+		made,
+		vec![("greet", "hello ada", false), ("explode", "stub refused: boom", true)]
+	);
+	assert!(result
+		.script_calls
+		.iter()
+		.all(|made| made.server == SERVER && !made.denied));
+	assert_eq!(result.script_calls[0].arguments, serde_json::json!({"name": "ada"}));
 	stop();
 }
 
@@ -478,6 +493,9 @@ async fn a_guardrail_denial_makes_the_script_call_fail_and_the_tool_does_not_run
 		let text = result.extract_content();
 		assert!(result.is_error(), "{text}");
 		assert!(text.contains("stub greetings forbidden"), "{text}");
+		assert_eq!(result.script_calls.len(), 1);
+		assert!(result.script_calls[0].denied && result.script_calls[0].error);
+		assert!(result.script_calls[0].output.contains("stub greetings forbidden"));
 		assert!(
 			stub.calls().is_empty(),
 			"a denied call must not reach the server: {:?}",

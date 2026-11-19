@@ -204,7 +204,13 @@ pub async fn execute_tools_parallel(
 		}
 		let tree_before = plugin_tree_fingerprint(config);
 		let session_name = chat_session.session.info.name.clone();
-		let blocks = admit_tool_batch(&session_name, config, &current_tool_calls, Some(&mut *chat_session)).await;
+		let blocks = admit_tool_batch(
+			&session_name,
+			config,
+			&current_tool_calls,
+			CallOrigin::Model(Some(&mut *chat_session)),
+		)
+		.await;
 		if *operation_cancelled.borrow() {
 			return Ok((Vec::new(), 0, None));
 		}
@@ -346,8 +352,7 @@ pub(crate) async fn admit_tool_batch(
 	session_id: &str,
 	config: &Config,
 	calls: &[crate::mcp::McpToolCall],
-	// Absent for an in-process subagent, which has no chat session of its own.
-	chat_session: Option<&mut ChatSession>,
+	origin: CallOrigin<'_>,
 ) -> Vec<Option<String>> {
 	let session_id = session_id.to_string();
 	let plugin_judges = crate::plugins::subscribed(&session_id, event::TOOL_BEFORE);
@@ -356,7 +361,7 @@ pub(crate) async fn admit_tool_batch(
 		let preview = crate::session::guardrails::preview_batch(&session_id, config, calls);
 		let hard = preview.blocked;
 		let generated = preview.generated;
-		let plugin_verdict = plugin_tool_verdict(&session_id, config, calls, &hard, &generated, chat_session).await;
+		let plugin_verdict = plugin_tool_verdict(&session_id, config, calls, &hard, &generated, origin).await;
 		let mut admissions = hard
 			.into_iter()
 			.map(|message| crate::session::guardrails::Admission {
@@ -400,6 +405,19 @@ struct PluginToolVerdict {
 	lifts: Vec<(usize, Vec<String>)>,
 }
 
+/// Who made the calls a batch admits.
+pub(crate) enum CallOrigin<'a> {
+	/// The model, in a round that has the chat session or (an in-process
+	/// subagent, a layer) none.
+	Model(Option<&'a mut ChatSession>),
+	/// The script of the `code` call `code_call_id`. Its round holds the chat
+	/// session; `snapshot` is the session as the round found it.
+	Script {
+		code_call_id: &'a str,
+		snapshot: Option<std::sync::Arc<payload::RoundSnapshot>>,
+	},
+}
+
 /// `tool.before`: ask the plugins about a batch the built-in guards have
 /// already looked at. `blocked` holds each call's built-in denial and
 /// `generated` the generated rules that matched it.
@@ -409,8 +427,12 @@ async fn plugin_tool_verdict(
 	calls: &[crate::mcp::McpToolCall],
 	blocked: &[Option<String>],
 	generated: &[Vec<(String, String)>],
-	chat_session: Option<&mut ChatSession>,
+	origin: CallOrigin<'_>,
 ) -> PluginToolVerdict {
+	let script_call_id = match &origin {
+		CallOrigin::Script { code_call_id, .. } => Some(code_call_id.to_string()),
+		CallOrigin::Model(_) => None,
+	};
 	let tool_calls = calls
 		.iter()
 		.enumerate()
@@ -423,27 +445,45 @@ async fn plugin_tool_verdict(
 				.filter(|(id, _)| crate::session::guardrails::plugin_of_rule(session_id, id).is_some())
 				.map(|(id, _)| id.clone())
 				.collect();
-			payload::tool_call(call, capability, blocked[index].clone(), rules)
+			payload::tool_call(call, capability, blocked[index].clone(), rules, script_call_id.clone())
 		})
 		.collect();
 
-	let parts = match chat_session.as_deref() {
-		Some(chat_session) => ContextParts::of(chat_session),
-		None => detached_context_parts(session_id),
-	};
 	let no_messages = Vec::new();
-	let messages = chat_session
-		.as_deref()
-		.map_or(&no_messages, |chat_session| &chat_session.session.messages);
-	let outcome = crate::plugins::tool_before(&parts.context(messages, None), ToolBefore { calls: tool_calls }).await;
+	let outcome = match &origin {
+		CallOrigin::Model(Some(chat_session)) => {
+			let parts = ContextParts::of(chat_session);
+			let context = parts.context(&chat_session.session.messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+		CallOrigin::Script {
+			snapshot: Some(snapshot),
+			..
+		} => {
+			let context = snapshot.parts.context(&snapshot.messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+		_ => {
+			let parts = detached_context_parts(session_id);
+			let context = parts.context(&no_messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+	};
 
-	match chat_session {
-		Some(chat_session) => {
+	match origin {
+		CallOrigin::Model(Some(chat_session)) => {
 			if let Err(error) = crate::plugins::apply::apply(chat_session, outcome.effects).await {
 				crate::log_debug!("Applying the effects of tool.before failed: {:#}", error);
 			}
 		}
-		None => crate::plugins::apply::settle(session_id, None),
+		// The round that holds the chat session applies them when it ends.
+		CallOrigin::Script { snapshot: Some(_), .. } => {
+			crate::plugins::defer_effects(session_id, outcome.effects);
+			crate::plugins::apply::settle(session_id, None);
+		}
+		CallOrigin::Model(None) | CallOrigin::Script { snapshot: None, .. } => {
+			crate::plugins::apply::settle(session_id, None)
+		}
 	}
 
 	let position_of = |call_id: &str| calls.iter().position(|call| call.tool_id == call_id);
@@ -509,15 +549,31 @@ async fn execute_tools_with_context(
 		&session_id_for_guardrails,
 		config,
 		&current_tool_calls,
-		match context {
+		CallOrigin::Model(match context {
 			ToolExecutionContext::MainSession { chat_session, .. } => Some(&mut **chat_session),
 			_ => None,
-		},
+		}),
 	)
 	.await;
 	if operation_cancelled.as_ref().is_some_and(|rx| *rx.borrow()) {
 		return Ok((Vec::new(), 0));
 	}
+	// Plugins judge each call a script makes while this round holds the chat
+	// session, so they are shown the session as the round found it.
+	let round_snapshot = match &*context {
+		ToolExecutionContext::MainSession { chat_session, .. }
+			if crate::plugins::subscribed(&session_id_for_guardrails, event::TOOL_BEFORE)
+				&& current_tool_calls
+					.iter()
+					.any(|call| call.tool_name == crate::mcp::code::TOOL_NAME) =>
+		{
+			Some(std::sync::Arc::new(payload::RoundSnapshot {
+				parts: ContextParts::of(chat_session),
+				messages: chat_session.session.messages.clone(),
+			}))
+		}
+		_ => None,
+	};
 
 	// A write is a barrier on both sides: reads must not observe an unfinished
 	// earlier write, and a later write must not overtake earlier reads. Closing
@@ -567,6 +623,7 @@ async fn execute_tools_with_context(
 		}
 		let layer = !matches!(context, ToolExecutionContext::MainSession { .. });
 		let workdir_override = crate::mcp::workdir::working_directory_override();
+		let snapshot = round_snapshot.clone();
 		let task = tokio::spawn(crate::session::accounting::inherit(async move {
 			let _release = release;
 			for mut predecessor in predecessors {
@@ -585,7 +642,8 @@ async fn execute_tools_with_context(
 				if layer {
 					crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
 				} else {
-					crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
+					let execution = crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task);
+					payload::with_round_snapshot(snapshot, execution).await
 				}
 			});
 			if let Some(workdir) = workdir_override {
@@ -1073,6 +1131,11 @@ async fn plugin_round(
 	} = *round;
 	let session_id = chat_session.session.info.name.clone();
 	let workdir = crate::mcp::get_thread_working_directory();
+	for effects in crate::plugins::take_deferred_effects(&session_id) {
+		if let Err(error) = crate::plugins::apply::apply(chat_session, effects).await {
+			crate::log_debug!("Applying the effects of a script's tool.before failed: {:#}", error);
+		}
+	}
 
 	let outcomes: Vec<ToolOutcome> = calls
 		.iter()
@@ -1098,7 +1161,11 @@ async fn plugin_round(
 		.map(|outcome| outcome.id.clone())
 		.collect();
 
-	for outcome in outcomes.iter().filter(|o| o.mutation && !o.error && !o.denied) {
+	// A script's own calls name the paths it changed; the `code` call names none.
+	let made = outcomes
+		.iter()
+		.flat_map(|outcome| std::iter::once(outcome).chain(&outcome.script_calls));
+	for outcome in made.filter(|o| o.mutation && !o.error && !o.denied) {
 		chat_session.turn_mutated_paths.extend(outcome.paths.iter().cloned());
 	}
 
@@ -1316,6 +1383,7 @@ async fn display_tool_success(
 			execution_context.as_deref(),
 		)
 		.await;
+		crate::session::chat::tool_display::display_script_calls(&res.script_calls);
 	}
 
 	// Output content (info/debug levels only; respect JSONL suppression).

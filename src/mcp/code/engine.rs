@@ -82,6 +82,7 @@ globalThis.help = (target) =>
 	print(typeof target === "string" || target === undefined
 		? __help(target === undefined ? "" : target)
 		: 'help takes a name: help("server") or help("server.tool")');
+globalThis.search_tools = (words) => print(__search(typeof words === "string" ? words : ""));
 globalThis.sleep = (ms) => __sleep(Number(ms) || 0);
 globalThis.setTimeout = (callback, ms, ...args) => {
 	sleep(ms).then(() => callback(...args));
@@ -117,13 +118,13 @@ const __server = (server, tools) =>
 	});
 "#;
 
-pub type CallFuture = Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
+pub type CallFuture = Pin<Box<dyn Future<Output = Result<Value, String>> + Send>>;
 
 /// What a script's tool calls are handed to.
 pub trait Host: Send + Sync + 'static {
-	/// Run one tool. `Ok` is the tool's text output, `Err` the reason it
-	/// failed; the script sees the first as the call's value and the second
-	/// as a thrown error.
+	/// Run one tool. `Ok` is what the call resolves to (the tool's text, or
+	/// its structured result when it declares an output schema), `Err` the
+	/// reason it failed; the script sees the second as a thrown error.
 	fn call(&self, server: &str, tool: &str, arguments: Value) -> CallFuture;
 
 	/// True once the user cancelled the turn.
@@ -183,7 +184,7 @@ async fn call_tool(
 	server: &str,
 	tool: &str,
 	arguments: &str,
-) -> Result<String, String> {
+) -> Result<Value, String> {
 	let arguments: Value =
 		serde_json::from_str(arguments).map_err(|error| format!("arguments are not JSON: {error}"))?;
 	let (server, tool) = catalog
@@ -226,6 +227,12 @@ fn install(ctx: &Ctx<'_>, state: &Arc<State>, catalog: &Arc<Catalog>, host: &Arc
 		Function::new(ctx.clone(), move |target: String| help_catalog.help(&target))?,
 	)?;
 
+	let search_catalog = catalog.clone();
+	globals.set(
+		"__search",
+		Function::new(ctx.clone(), move |words: String| search_catalog.search(&words))?,
+	)?;
+
 	let done_state = state.clone();
 	globals.set(
 		"__done",
@@ -263,7 +270,7 @@ fn install(ctx: &Ctx<'_>, state: &Arc<State>, catalog: &Arc<Catalog>, host: &Arc
 				let host = call_host.clone();
 				async move {
 					let reply = match call_tool(&catalog, host.as_ref(), &server, &tool, &arguments).await {
-						Ok(text) => json!({ "ok": text }),
+						Ok(value) => json!({ "ok": value }),
 						Err(text) => json!({ "err": text }),
 					};
 					state.resume();

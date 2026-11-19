@@ -545,6 +545,7 @@ impl ChatSession {
 		tool_name: &str,
 		_config: &Config,
 		images: Vec<crate::session::image::ImageAttachment>,
+		script_calls: Vec<crate::mcp::ScriptCall>,
 	) -> Result<()> {
 		// Tool result content is persisted as a Message JSON below; no separate log entry.
 		// Create the tool message
@@ -559,6 +560,7 @@ impl ChatSession {
 			tool_call_id: Some(tool_call_id.to_string()),
 			name: Some(tool_name.to_string()),
 			images: (!images.is_empty()).then_some(images),
+			script_calls,
 			..Default::default()
 		};
 

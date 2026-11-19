@@ -1122,6 +1122,7 @@ impl ChatSession {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		};
 
 		self.session.messages.insert(index + 1, compressed_msg);

@@ -214,12 +214,29 @@ impl Host {
 				plan_owner: None,
 				notices,
 				wait: WaitClock::default(),
+				deferred: Vec::new(),
 			},
 		);
 	}
 
 	pub fn end_session(&self, session_id: &str) {
 		self.sessions.lock().remove(session_id);
+	}
+
+	/// Keep `effects` until the round that holds the chat session ends.
+	pub fn defer_effects(&self, session_id: &str, effects: Effects) {
+		if let Some(session) = self.sessions.lock().get_mut(session_id) {
+			session.deferred.push(effects);
+		}
+	}
+
+	/// The effects kept by [`Self::defer_effects`], oldest first.
+	pub fn take_deferred_effects(&self, session_id: &str) -> Vec<Effects> {
+		self.sessions
+			.lock()
+			.get_mut(session_id)
+			.map(|session| std::mem::take(&mut session.deferred))
+			.unwrap_or_default()
 	}
 
 	/// Milliseconds the agent waited for plugins since the last call. Events

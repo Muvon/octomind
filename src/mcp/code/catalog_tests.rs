@@ -50,6 +50,30 @@ fn second_tool_with_the_same_script_name_is_refused() {
 	assert_eq!(catalog.servers[0].tools.len(), 1);
 }
 
+/// A tool that declares an output schema resolves to that shape: the list
+/// shows it, the declarations type the call with it and `help` names it.
+#[test]
+fn a_declared_output_schema_types_the_result() {
+	crate::mcp::tool_shape::register_tool_output_schema(
+		"catalog-test-stats",
+		Some(json!({"type": "object", "properties": {"lines": {"type": "integer"}}, "required": ["lines"]})),
+	);
+	let mut catalog = Catalog::default();
+	catalog.add("s", "catalog-test-stats", "Count lines.", json!({"type": "object"}));
+	catalog.add("s", "catalog-test-text", "", json!({"type": "object"}));
+	assert_eq!(
+		catalog.index(),
+		"s.catalog_test_stats() -> {lines: number} // Count lines.\ns.catalog_test_text()"
+	);
+	let declarations = catalog.declarations(None);
+	assert!(declarations.contains("catalog_test_stats(args?: Record<string, any>): Promise<{lines: number}>;"));
+	assert!(declarations.contains("catalog_test_text(args?: Record<string, any>): Promise<string>;"));
+	assert!(catalog
+		.help("s.catalog_test_stats")
+		.ends_with("Resolves to: {lines: number}"));
+	assert!(!catalog.help("s.catalog_test_text").contains("Resolves to"));
+}
+
 #[test]
 fn index_lists_how_to_call_each_tool_and_what_it_does() {
 	assert_eq!(

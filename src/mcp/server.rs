@@ -91,6 +91,12 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 				&name,
 				crate::mcp::tool_shape::declared_command_params(&parameters),
 			);
+			crate::mcp::tool_shape::register_tool_output_schema(
+				&name,
+				tool.output_schema
+					.as_ref()
+					.map(|schema| serde_json::Value::Object(schema.as_ref().clone())),
+			);
 			Some(McpFunction {
 				name,
 				annotations: tool.annotations.clone(),
@@ -361,6 +367,7 @@ async fn execute_tool_with_cancellation(
 					tool_name: call.tool_name.clone(),
 					tool_id: call.tool_id.clone(),
 					result,
+					script_calls: Vec::new(),
 				}),
 				Err(e) => {
 					crate::log_error!("Error executing tool call '{}': {}", call.tool_name, e);

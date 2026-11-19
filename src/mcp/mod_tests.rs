@@ -103,6 +103,7 @@ fn extract_content_joins_text_blocks_and_skips_null_metadata() {
 	let result = McpToolResult {
 		tool_name: "tool".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	assert_eq!(result.extract_content(), "one\ntwo");
@@ -120,6 +121,7 @@ fn extract_content_replaces_mirrored_image_payloads_in_metadata() {
 	let result = McpToolResult {
 		tool_name: "read_media_file".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	let content = result.extract_content();
@@ -863,6 +865,7 @@ fn extract_content_skips_non_text_blocks() {
 	let result = McpToolResult {
 		tool_name: "tool".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	assert_eq!(result.extract_content(), "only-text");
@@ -1092,6 +1095,7 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 		let result = McpToolResult {
 			tool_name: "screenshot".into(),
 			tool_id: "call-image".into(),
+			script_calls: Vec::new(),
 			result: serde_json::from_value(json!({"content": blocks})).unwrap(),
 		};
 		assert_eq!(result.extract_content(), text.unwrap_or_default());

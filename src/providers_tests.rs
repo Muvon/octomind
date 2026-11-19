@@ -220,6 +220,7 @@ fn msg(role: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 

@@ -59,7 +59,7 @@ fn message_lifecycle_persists_each_role_and_runtime_summary() {
 		.add_system_managed_turn_message("<system-note>event</system-note>")
 		.unwrap();
 	session
-		.add_tool_message("tool result", "call-1", "view", &config, Vec::new())
+		.add_tool_message("tool result", "call-1", "view", &config, Vec::new(), Vec::new())
 		.unwrap();
 	session
 		.add_assistant_message("assistant answer", None, &config, "assistant")
@@ -416,7 +416,7 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 			Vec::new()
 		};
 		session
-			.add_tool_message(text, id, "screenshot", &config, images)
+			.add_tool_message(text, id, "screenshot", &config, images, Vec::new())
 			.unwrap();
 	}
 	session

@@ -139,6 +139,24 @@ fn a_free_form_command_earns_no_write_credit() {
 	assert_eq!(guard.note_round(&[call(false)]), 1);
 }
 
+/// A script that names a tool able to write is marked a mutation whether or not
+/// it wrote, so the same script with the same output counts up like any repeat.
+#[test]
+fn a_script_that_can_write_earns_no_write_credit() {
+	let parameters = json!({"script": "print(await octofs.shell({command: \"sed -n '2343,2400p' a.js\"}))"});
+	let call = RoundCall {
+		tool: crate::mcp::code::TOOL_NAME,
+		parameters: &parameters,
+		result: "the same lines",
+		is_error: false,
+		is_mutation: true,
+		free_form: false,
+	};
+	let mut guard = RepeatGuard::default();
+	let counts: Vec<usize> = (0..4).map(|_| guard.note_round(&[call])).collect();
+	assert_eq!(counts, vec![1, 2, 3, 4]);
+}
+
 #[test]
 fn a_tree_move_restarts_the_count() {
 	let mut guard = RepeatGuard::default();

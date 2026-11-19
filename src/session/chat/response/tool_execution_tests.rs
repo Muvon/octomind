@@ -1167,6 +1167,56 @@ async fn a_lift_of_a_rule_the_plugin_registered_goes_to_the_admission() {
 	assert!(verdict.denials.is_empty());
 }
 
+/// A call a script makes is judged as a call of that script: the plugin is told
+/// whose it is and shown the conversation the round started with, its deny
+/// holds, and its notes wait for the round to end.
+#[tokio::test]
+async fn a_script_call_is_judged_with_the_round_snapshot_and_its_notes_wait() {
+	let stub = StubPlugin::new(&[event::TOOL_BEFORE])
+		.answer(json!({"deny": [{"call_id": "code-1:1", "reason": "not from scripts"}], "note": ["look again"]}));
+	let rig = PluginRig::new("script-call", stub, true).await;
+	let snapshot = std::sync::Arc::new(payload::RoundSnapshot {
+		parts: ContextParts {
+			session_id: rig.id.clone(),
+			parent_session_id: None,
+			role: "assistant".into(),
+			model: None,
+			workdir: rig.dir.path().to_path_buf(),
+			project: "proj".into(),
+			status: None,
+			plan: None,
+			active_skills: Vec::new(),
+		},
+		messages: vec![crate::session::Message {
+			role: "user".into(),
+			content: "fix the build".into(),
+			..Default::default()
+		}],
+	});
+
+	let calls = [plugin_call("greet", "code-1:1", json!({}))];
+	let verdict = plugin_tool_verdict(
+		&rig.id,
+		&rig.config,
+		&calls,
+		&[None],
+		&[Vec::new()],
+		CallOrigin::Script {
+			code_call_id: "code-1",
+			snapshot: Some(snapshot),
+		},
+	)
+	.await;
+
+	assert_eq!(verdict.denials, vec![(0, "not from scripts".to_string())]);
+	let sent = rig.stub.sent(event::TOOL_BEFORE);
+	assert_eq!(sent[0]["calls"][0]["script_call_id"], "code-1");
+	assert!(sent[0].to_string().contains("fix the build"), "{}", sent[0]);
+	let deferred = crate::plugins::take_deferred_effects(&rig.id);
+	assert_eq!(deferred.len(), 1);
+	assert_eq!(deferred[0].notes, vec!["look again".to_string()]);
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn a_replacement_reaches_the_results_with_and_without_the_saved_original() {

@@ -503,7 +503,7 @@ impl McpConfig {
 	/// Check if this config should be skipped during serialization
 	/// This helps avoid writing empty [mcp] sections when only internal servers exist
 	pub fn is_default_for_serialization(&self) -> bool {
-		self.servers.is_empty() && self.allowed_tools.is_empty() && self.direct_tools.is_empty()
+		self.servers.is_empty() && self.allowed_tools.is_empty()
 	}
 
 	/// Get all servers from the registry (for populating role configs)
@@ -525,6 +525,7 @@ impl McpConfig {
 	pub fn with_servers(
 		servers: std::collections::HashMap<String, McpServerConfig>,
 		allowed_tools: Option<Vec<String>>,
+		code_mode: bool,
 	) -> Self {
 		// Convert HashMap to Vec, ensuring names match keys
 		let servers_vec: Vec<McpServerConfig> = servers
@@ -584,7 +585,7 @@ impl McpConfig {
 		Self {
 			servers: servers_vec,
 			allowed_tools: allowed_tools.unwrap_or_default(),
-			direct_tools: Vec::new(),
+			code_mode,
 		}
 	}
 }

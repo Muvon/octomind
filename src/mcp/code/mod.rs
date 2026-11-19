@@ -30,8 +30,9 @@
 //! and plugin checks as a call made directly, and runs through the same
 //! executor.
 //!
-//! Which tools go through scripts is decided by `[mcp] direct_tools`; builtin
-//! tools are always sent to the model as tool definitions.
+//! `[mcp] code_mode` switches it on for every session: each external tool is
+//! then reached through scripts only, and builtin tools stay tool definitions.
+//! Off, every tool is a tool definition and there is no `code` tool.
 
 pub mod catalog;
 pub mod check;
@@ -104,60 +105,32 @@ pub fn get_code_function() -> McpFunction {
 	}
 }
 
-/// Whether `pattern` (from `[mcp] direct_tools`) names this tool:
-/// `server:tool`, `server:*`, `tool` or `prefix*`.
-fn pattern_matches(pattern: &str, server: &str, tool: &str) -> bool {
-	let tool_pattern = match pattern.split_once(':') {
-		Some((named, _)) if named != server => return false,
-		Some((_, tool_pattern)) => tool_pattern,
-		None => pattern,
-	};
-	crate::mcp::is_tool_allowed_by_patterns(tool, &[tool_pattern.to_string()])
-}
-
 /// Split the session's tools into the definitions sent to the model and the
 /// catalog of tools reached through scripts.
 ///
 /// `functions` pairs each tool with the external server it comes from (`None`
 /// for builtin, agent and project-local tools, which always stay definitions).
-/// An external tool goes to the catalog unless `[mcp] direct_tools` names it.
-/// Without the `code` tool in the list (the role does not grant it) nothing
-/// can run a script, so every tool stays a definition.
+/// In code mode every external tool goes to the catalog, and the `code` tool
+/// (present whenever there is one, see `sourced_functions`) lists them.
 pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> (Vec<McpFunction>, Catalog) {
-	// The builtin one: an external server may have a tool of the same name.
-	let scripts_available = functions
-		.iter()
-		.any(|(server, function)| server.is_none() && function.name == TOOL_NAME);
-	if !scripts_available {
+	if !config.mcp.code_mode {
 		let definitions = functions.into_iter().map(|(_, function)| function).collect();
 		return (definitions, Catalog::default());
 	}
 	let mut definitions = Vec::with_capacity(functions.len());
 	let mut catalog = Catalog::default();
 	for (server, function) in functions {
-		let scripted = server.as_deref().filter(|server| {
-			!config
-				.mcp
-				.direct_tools
-				.iter()
-				.any(|pattern| pattern_matches(pattern, server, &function.name))
-		});
-		match scripted {
-			// Two tools of one server can map to the same script name; the
-			// second one stays a definition so it remains callable.
-			Some(server)
-				if catalog.add(
-					server,
-					&function.name,
-					&function.description,
-					function.parameters.clone(),
-				) => {}
-			_ => definitions.push(function),
+		match server {
+			Some(server) => catalog.add(
+				&server,
+				&function.name,
+				&function.description,
+				function.parameters.clone(),
+			),
+			None => definitions.push(function),
 		}
 	}
-	if catalog.is_empty() {
-		definitions.retain(|function| function.name != TOOL_NAME);
-	} else if let Some(code) = definitions.iter_mut().find(|function| function.name == TOOL_NAME) {
+	if let Some(code) = definitions.iter_mut().find(|function| function.name == TOOL_NAME) {
 		// The example names a tool of this session: a made-up name in the
 		// text gets copied into scripts.
 		let server = &catalog.servers[0];

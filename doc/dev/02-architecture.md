@@ -102,8 +102,8 @@ The default config declares four builtin servers:
 forwarded through `mcp::server::execute_tool_call`.
 
 Two inventories exist. `get_available_functions` returns every callable tool and serves routing and display.
-`get_model_functions` returns what the model is sent: builtin tools, `code`, and the external tools named in
-`[mcp] direct_tools`; the other external tools become a catalog of script signatures inside the `code` description
+`get_model_functions` returns what the model is sent. With `[mcp] code_mode` on (the default) that is the builtin tools
+and `code`, which comes with every session that has an external tool; the external tools become a catalog of script signatures inside the `code` description
 (`src/mcp/code/`). A script's tool calls go back through `execute_tool_call`, so guardrails and the `tool.before` check
 apply to each of them.
 

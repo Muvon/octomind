@@ -243,9 +243,9 @@ pub fn js_ident(name: &str) -> String {
 }
 
 impl Catalog {
-	/// Add one tool. Returns false when another tool of the server already
-	/// took the same script name, which leaves the catalog unchanged.
-	pub fn add(&mut self, server: &str, tool: &str, description: &str, schema: Value) -> bool {
+	/// Add one tool. A tool whose script name another tool of the server took
+	/// first is numbered (`get_item_2`), so every tool stays callable.
+	pub fn add(&mut self, server: &str, tool: &str, description: &str, schema: Value) {
 		let position = match self.servers.iter().position(|known| known.name == server) {
 			Some(position) => position,
 			None => {
@@ -264,10 +264,13 @@ impl Catalog {
 				self.servers.len() - 1
 			}
 		};
-		let ident = js_ident(tool);
 		let server = &mut self.servers[position];
-		if server.tool(&ident).is_some() {
-			return false;
+		let base = js_ident(tool);
+		let mut ident = base.clone();
+		let mut number = 1;
+		while server.tool(&ident).is_some() {
+			number += 1;
+			ident = format!("{base}_{number}");
 		}
 		server.tools.push(Tool {
 			name: tool.to_string(),
@@ -276,7 +279,6 @@ impl Catalog {
 			schema,
 			output: crate::mcp::tool_shape::tool_output_schema(tool),
 		});
-		true
 	}
 
 	pub fn is_empty(&self) -> bool {

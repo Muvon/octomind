@@ -14,10 +14,10 @@
 
 use super::*;
 
-fn config(direct_tools: &[&str]) -> Config {
+fn config(code_mode: bool) -> Config {
 	let mut config: Config =
 		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
-	config.mcp.direct_tools = direct_tools.iter().map(|pattern| pattern.to_string()).collect();
+	config.mcp.code_mode = code_mode;
 	config
 }
 
@@ -51,7 +51,7 @@ fn names(functions: &[McpFunction]) -> Vec<&str> {
 
 #[test]
 fn the_shipped_default_sends_every_external_tool_through_scripts() {
-	let (definitions, catalog) = split(&config(&[]), session_tools());
+	let (definitions, catalog) = split(&config(true), session_tools());
 	assert_eq!(names(&definitions), vec!["plan", "code"]);
 	assert_eq!(
 		catalog.index(),
@@ -63,7 +63,7 @@ fn the_shipped_default_sends_every_external_tool_through_scripts() {
 
 #[test]
 fn the_code_tool_lists_what_scripts_can_call() {
-	let (definitions, _) = split(&config(&[]), session_tools());
+	let (definitions, _) = split(&config(true), session_tools());
 	let code = definitions.iter().find(|function| function.name == TOOL_NAME).unwrap();
 	assert!(code.description.starts_with(DESCRIPTION));
 	assert!(code.description.ends_with(
@@ -78,7 +78,7 @@ fn the_code_tool_lists_what_scripts_can_call() {
 /// the `code` tool names the servers and how to find their tools instead.
 #[test]
 fn a_list_too_long_to_send_becomes_the_servers() {
-	let mut config = config(&[]);
+	let mut config = config(true);
 	config.mcp_response_tokens_threshold = 1;
 	let (definitions, catalog) = split(&config, session_tools());
 	let code = definitions.iter().find(|function| function.name == TOOL_NAME).unwrap();
@@ -120,77 +120,56 @@ fn kept_calls_drop_only_unprinted_read_output() {
 }
 
 #[test]
-fn direct_tools_keeps_named_tools_as_definitions() {
-	let (definitions, catalog) = split(&config(&["files:*"]), session_tools());
-	assert_eq!(names(&definitions), vec!["plan", "code", "view", "text_edit"]);
-	assert_eq!(catalog.index(), "search.find({path: string}) // Does find.");
-
-	let (definitions, catalog) = split(&config(&["files:view", "fin*"]), session_tools());
-	assert_eq!(names(&definitions), vec!["plan", "code", "view", "find"]);
-	assert_eq!(catalog.index(), "files.text_edit({path: string}) // Does text_edit.");
-}
-
-#[test]
-fn a_pattern_for_another_server_does_not_match() {
-	assert!(pattern_matches("files:*", "files", "view"));
-	assert!(!pattern_matches("files:*", "search", "view"));
-	assert!(pattern_matches("view", "search", "view"));
-	assert!(!pattern_matches("files:edit", "files", "view"));
-	assert!(pattern_matches("*", "anything", "at_all"));
-}
-
-#[test]
-fn every_tool_direct_turns_the_code_tool_off() {
-	let (definitions, catalog) = split(&config(&["*"]), session_tools());
-	assert_eq!(names(&definitions), vec!["plan", "view", "text_edit", "find"]);
-	assert!(catalog.is_empty());
-}
-
-#[test]
-fn a_session_without_external_tools_has_no_code_tool() {
-	let (definitions, catalog) = split(
-		&config(&[]),
-		vec![(None, function("plan")), (None, get_code_function())],
-	);
-	assert_eq!(names(&definitions), vec!["plan"]);
-	assert!(catalog.is_empty());
-}
-
-#[test]
-fn a_role_without_the_code_tool_keeps_every_tool_as_a_definition() {
+fn code_mode_off_sends_every_tool_as_a_definition() {
 	let tools: Vec<_> = session_tools()
 		.into_iter()
 		.filter(|(_, function)| function.name != TOOL_NAME)
 		.collect();
-	let (definitions, catalog) = split(&config(&[]), tools);
+	let (definitions, catalog) = split(&config(false), tools);
 	assert_eq!(names(&definitions), vec!["plan", "view", "text_edit", "find"]);
 	assert!(catalog.is_empty());
 }
 
+/// An external tool named `code` is a script tool like any other; the
+/// definition sent is the builtin one.
 #[test]
-fn an_external_tool_named_code_does_not_stand_in_for_the_builtin_one() {
+fn an_external_tool_named_code_goes_through_scripts() {
 	let tools = vec![
 		(None, function("plan")),
+		(None, get_code_function()),
 		(Some("other".to_string()), function(TOOL_NAME)),
 		(Some("files".to_string()), function("view")),
 	];
-	let (definitions, catalog) = split(&config(&[]), tools);
-	assert_eq!(names(&definitions), vec!["plan", "code", "view"]);
-	assert!(catalog.is_empty());
+	let (definitions, catalog) = split(&config(true), tools);
+	assert_eq!(names(&definitions), vec!["plan", "code"]);
+	assert!(definitions[1].description.starts_with(DESCRIPTION));
+	assert!(catalog.index().starts_with("other.code({path: string})"));
 }
 
 #[test]
-fn a_tool_whose_script_name_is_taken_stays_a_definition() {
+fn a_tool_whose_script_name_is_taken_gets_a_numbered_one() {
 	let mut tools = session_tools();
 	tools.push((Some("files".to_string()), function("text-edit")));
-	let (definitions, catalog) = split(&config(&[]), tools);
-	assert_eq!(names(&definitions), vec!["plan", "code", "text-edit"]);
-	assert_eq!(catalog.servers[0].tools.len(), 2);
+	let (definitions, catalog) = split(&config(true), tools);
+	assert_eq!(names(&definitions), vec!["plan", "code"]);
+	let files: Vec<(&str, &str)> = catalog.servers[0]
+		.tools
+		.iter()
+		.map(|tool| (tool.name.as_str(), tool.ident.as_str()))
+		.collect();
+	assert_eq!(
+		files,
+		vec![
+			("view", "view"),
+			("text_edit", "text_edit"),
+			("text-edit", "text_edit_2")
+		]
+	);
 }
 
 #[test]
 fn a_rejection_for_an_unknown_tool_lists_the_real_ones() {
-	let (_, catalog) = split(&config(&[]), session_tools());
+	let (_, catalog) = split(&config(true), session_tools());
 	let problems = vec![check::Problem {
 		line: 1,
 		column: 13,
@@ -206,7 +185,7 @@ fn a_rejection_for_an_unknown_tool_lists_the_real_ones() {
 
 #[test]
 fn a_rejection_for_an_unknown_name_lists_the_servers_and_drops_follow_on_problems() {
-	let (_, catalog) = split(&config(&[]), session_tools());
+	let (_, catalog) = split(&config(true), session_tools());
 	let problem = |line, column, message: &str| check::Problem {
 		line,
 		column,
@@ -253,7 +232,7 @@ async fn a_call_outside_a_session_is_refused() {
 		parameters: json!({ "script": "print(1)" }),
 		tool_id: "call-1".to_string(),
 	};
-	let result = execute(&call, &config(&[]), None).await;
+	let result = execute(&call, &config(true), None).await;
 	assert!(result.is_error());
 	assert_eq!(result.extract_content(), "scripts run only inside a session");
 }
@@ -265,7 +244,7 @@ async fn a_call_without_a_script_is_refused() {
 		parameters: json!({ "script": "  " }),
 		tool_id: "call-1".to_string(),
 	};
-	let result = execute(&call, &config(&[]), None).await;
+	let result = execute(&call, &config(true), None).await;
 	assert!(result.is_error());
 	assert_eq!(result.extract_content(), "script: non-empty string required");
 }

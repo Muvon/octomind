@@ -475,6 +475,7 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 	};
 	let every_raw = match call.parameters.get("every") {
 		Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+		None | Some(Value::Null) | Some(Value::String(_)) => None,
 		Some(_) => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
@@ -482,7 +483,6 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 				"'every' must be a string".to_string(),
 			))
 		}
-		None => None,
 	};
 
 	let when_is_idle = when_raw.as_deref().map(str::to_lowercase).as_deref() == Some("idle");

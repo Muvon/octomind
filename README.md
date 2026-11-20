@@ -11,6 +11,7 @@
   [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmuvon%2Foctomind%2Fbadges%2Fcoverage.json&style=flat-square)](https://github.com/muvon/octomind/actions/workflows/ci.yml)
   [![License](https://img.shields.io/badge/license-Apache%202.0-7c3aed?style=flat-square)](LICENSE)
   [![Stars](https://img.shields.io/github/stars/muvon/octomind?style=flat-square&color=7c3aed)](https://github.com/muvon/octomind/stargazers)
+  [![Featured in Awesome AI Agents](https://img.shields.io/badge/Featured_in-Awesome_AI_Agents-2ea44f?style=flat-square)](https://github.com/NipunaRanasinghe/awesome-ai-agents)
 
   [Website](https://octomind.run) · [Docs](https://octomind.run/docs/) · [Tap Registry](https://github.com/muvon/octomind-tap) · [Benchmarks](#benchmarks) · [Issues](https://github.com/muvon/octomind/issues)
 </div>

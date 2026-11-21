@@ -527,7 +527,7 @@ notice, and the rest of the answer still counts.
 
 | Effect | Value | What Octomind does |
 |--------|-------|--------------------|
-| `context` | list of `{name, text, keep}` | Keeps the block by `name`. Its text is added to every model request and never written into the history. A block with the same `name` is replaced in place. No `text` removes the block. A plugin's blocks are joined in the order they were first set, with nothing between them. When the context window is short, the host may leave blocks out; `keep: true` asks to keep that one, and `dropped_context` tells the plugin which blocks were left out. |
+| `context` | list of `{name, text, keep}` | Keeps the block by `name`. Its text rides on the first model request of each turn and on the first request after the block changes, and is never written into the history. Repeating it on every request would end each request in text the next one lacks, so providers that cache by prompt prefix would miss on every call. A block with the same `name` is replaced in place. No `text` removes the block. A plugin's blocks are joined in the order they were first set, with nothing between them. When the context window is short, the host may leave blocks out; `keep: true` asks to keep that one, and `dropped_context` tells the plugin which blocks were left out. |
 | `pin` | list of `{name, text, items}` | Keeps text through every compaction and recites it near the end of the context. `items` are lines the host keeps as separate items when it folds history. An item is a string, or `{text, label, from_request}`: the fold lists it as `label: text` (`constraint: text` without a label), and with `from_request` it names the user's message as the source when that message contains the text. No `text` removes the block. A plugin's pinned blocks are joined in the order they were first set. Pins are stored with the session. |
 | `usage` | list of `{label, calls, input_tokens, output_tokens, reasoning_tokens, cost, wall_ms, blocking}` | Books the spend into the session's cost under the plugin. `label` is shown in `/info`, `cost` is in US dollars, `wall_ms` is milliseconds, `blocking` says the agent waited for the calls. |
 | `report` | `{mechanics, totals}` | Stores the plugin's accounting for the session as data, for the machine-readable cost output. A new report replaces the previous one. `mechanics` maps a name to any JSON; `totals` holds `chat_calls`, `decision_calls`, `wall_blocking_ms`, `wall_background_ms` (leave it out when the plugin cannot tell), `api_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens` and `cost`. |
@@ -649,7 +649,7 @@ such as context blocks, is not stored and must be sent again.
 ## Tutorial: a plugin in five steps
 
 This tutorial builds one Python program, `plugin.py`, and adds one behaviour per step. After step 5 the plugin refuses
-dangerous shell commands, adds an instruction to every model request, shortens long tool results, and sends the agent
+dangerous shell commands, adds an instruction to every turn, shortens long tool results, and sends the agent
 back to work once after a turn that changed files. It uses only the Python standard library. The finished program is
 listed at the end.
 
@@ -816,9 +816,9 @@ If nothing is refused:
   it.
 - Another plugin earlier in the `plugins` list sent a `deny` first. Later plugins are not asked.
 
-### Step 3: add an instruction to every model request
+### Step 3: add an instruction to every turn
 
-You get a text that the model sees with every request of the session and that is never written into the history.
+You get a text that the model sees with the first request of every turn and that is never written into the history.
 
 Add this above `def answer_for`, with the constant at the top of the file:
 

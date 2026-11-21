@@ -29,11 +29,6 @@ Language skills (programming-rust, programming-python, etc.) auto-activate based
 """
 welcome = "🛠️ Developer agent ready. Working in {{CWD}}"
 
-[roles.model]
-temperature = 0.3
-top_p = 0.9
-top_k = 0
-
 [roles.mcp]
 # Inherit all servers from the base config plus any added below
 server_refs = ["core", "runtime", "filesystem", "agent"]

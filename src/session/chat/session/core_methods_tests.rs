@@ -84,7 +84,6 @@ fn test_init_params_builder_wiring() {
 	let params = SessionInitParams::new(&config, "assistant")
 		.with_name("build-test".to_string())
 		.with_model("ollama:fake".to_string())
-		.with_temperature(0.1)
 		.with_max_tokens(2048)
 		.with_max_retries(5)
 		.with_output_mode("plain".to_string())
@@ -781,7 +780,6 @@ async fn resume_preserves_saved_model_and_honors_explicit_overrides() {
 			.find(|role| role.name == "task_refiner")
 			.unwrap();
 		role.config.model.model = role_model;
-		role.config.model.temperature = Some(0.25);
 		config.build_role_map();
 		seed_session_log(
 			"resume-model",
@@ -811,9 +809,6 @@ async fn resume_preserves_saved_model_and_honors_explicit_overrides() {
 				assert_eq!(session.session.info.model, expected_model);
 				assert_eq!(session.role, if explicit_role { "assistant" } else { "task_refiner" });
 				assert_eq!(session.session.info.role, session.role);
-				if !explicit_role {
-					assert_eq!(session.temperature, 0.25);
-				}
 			}
 		}
 	}

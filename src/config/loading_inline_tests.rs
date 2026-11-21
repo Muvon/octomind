@@ -29,27 +29,18 @@ fn get_test_config_with_custom_role() -> String {
 # Test roles for unit testing
 [[roles]]
 name = "developer"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "You are a developer assistant."
 welcome = "Hello! Developer role."
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
 name = "assistant"
-temperature = 0.5
-top_p = 0.9
-top_k = 40
 system = "You are a general assistant."
 welcome = "Hello! Assistant role."
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
 name = "tester"
-temperature = 0.7
-top_p = 0.9
-top_k = 50
 system = "You are a test assistant."
 welcome = "Hello! Test tester role."
 mcp = { server_refs = ["test_server", "clt"], allowed_tools = [] }
@@ -94,8 +85,7 @@ fn test_role_parsing() {
 
 	// Test get_role_config for custom role
 	let (role_config, mcp_config, _, _) = config.get_role_config("tester");
-	// Verify role config structure is valid
-	assert_eq!(role_config.model_override().temperature, Some(0.7));
+	assert_eq!(role_config.system, "You are a test assistant.");
 	assert_eq!(mcp_config.server_refs, vec!["test_server", "clt"]);
 
 	// Test get_merged_config_for_mode for custom role
@@ -223,18 +213,12 @@ fn get_test_config_with_auto_bind() -> String {
 
 [[roles]]
 name = "developer"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "Developer."
 welcome = "Hi."
 mcp = { server_refs = ["explicit"], allowed_tools = ["explicit:*"] }
 
 [[roles]]
 name = "assistant"
-temperature = 0.5
-top_p = 0.9
-top_k = 40
 system = "Assistant."
 welcome = "Hi."
 mcp = { server_refs = [], allowed_tools = [] }
@@ -393,11 +377,8 @@ fn test_max_tokens_inheritance() {
 															   // Test get_effective_max_tokens directly
 	assert_eq!(config.get_effective_max_tokens(), 32768);
 
-	// Verify that RoleConfig no longer has max_tokens field by checking the role config struct
 	let (role_config, _, _, _) = config.get_role_config("tester");
-	// This test verifies the refactoring where max_tokens was moved from RoleConfig to system-wide
-	// We verify role config is valid by checking its temperature field
-	assert_eq!(role_config.model_override().temperature, Some(0.7));
+	assert_eq!(role_config.system, "You are a test assistant.");
 	// Verify developer role exists in config
 	assert!(config.role_map.contains_key("developer"));
 }

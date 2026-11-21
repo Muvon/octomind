@@ -72,7 +72,10 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 33;
+pub const CURRENT_CONFIG_VERSION: u32 = 34;
+
+/// Accepted only for old configs and tap manifests; remove in a later release.
+pub(crate) const DEPRECATED_SAMPLING_KEYS: [&str; 3] = ["temperature", "top_p", "top_k"];
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (

@@ -120,9 +120,6 @@ Common causes are missing required fields, invalid TOML, or out-of-range values.
 
 | Field | Accepted values |
 |---|---|
-| Every resolved model profile's `temperature` | `0.0`–`2.0` |
-| Every resolved model profile's `top_p` | `0.0`–`1.0` |
-| Every resolved model profile's `top_k` | `0`–`1000`; `0` disables it |
 | Every resolved model profile's `name` | A name accepted by the provider factory |
 | `max_session_tokens_threshold` | At most `2000000`; `0` disables the configured limit |
 | MCP server `timeout_seconds` | `1`–`3600` seconds |

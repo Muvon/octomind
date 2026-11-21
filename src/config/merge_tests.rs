@@ -29,36 +29,24 @@ auto_bind = ["binder", "filtered_binder"]
 
 [[roles]]
 name = "binder"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "Binder role."
 welcome = "hi"
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
 name = "filtered_binder"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "Filtered binder role."
 welcome = "hi"
 mcp = { server_refs = ["core"], allowed_tools = ["core:*"] }
 
 [[roles]]
 name = "restricted"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "Restricted role."
 welcome = "hi"
 mcp = { server_refs = ["testsrv"], allowed_tools = ["testsrv:alpha"] }
 
 [[roles]]
 name = "excluded"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "Excluded role."
 welcome = "hi"
 mcp = { server_refs = ["core", "testsrv"], allowed_tools = ["core:*"] }

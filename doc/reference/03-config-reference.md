@@ -178,9 +178,6 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | `name` | string | `"octohub:auto"` | Provider-qualified model identifier |
 | `reasoning_effort` | enum | `"medium"` | `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. `"none"` requests no reasoning and switches thinking off where the provider has a switch (Alibaba, DeepSeek, Z.AI, OpenRouter, OpenAI); the default for `[compression.model]`, whose output is a summary, not a decision |
 | `max_tokens` | u32 | `32768` | Maximum output tokens; `0` uses provider behavior |
-| `temperature` | f32 | `0.3` | Sampling temperature, 0.0-2.0 |
-| `top_p` | f32 | `0.7` | Nucleus sampling, 0.0-1.0 |
-| `top_k` | u32 | `20` | Top-k limit, 0-1000; `0` disables it |
 | `max_retries` | u32 | `1` | Provider retry attempts |
 | `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
@@ -200,9 +197,6 @@ session connection does not consume it. Connection setup has a separate deadline
 name = "octohub:auto"
 reasoning_effort = "medium"
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
@@ -266,9 +260,8 @@ entries declares a model override. `system` and `welcome` are required strings, 
 
 ### `[roles.model]`
 
-Optional partial model profile for the role: `name` (string), `reasoning_effort` (enum), `max_tokens` (u32),
-`temperature`/`top_p` (f32), `top_k`/`max_retries` (u32), and `retry_timeout`/`request_timeout_seconds` (u64). Every
-omitted field inherits its `[model]` value. The example below changes only name and effort.
+Optional partial model profile for the role. Every omitted field inherits its `[model]` value. The example below
+changes only name and effort.
 
 ### `[roles.mcp]`
 
@@ -612,9 +605,6 @@ Model used for compression decisions and summary generation.
 | `name` | string | `"octohub:auto"` | Compression model name |
 | `reasoning_effort` | enum | `"none"` | Thinking effort override; compression produces summaries rather than decisions, so the shipped default disables reasoning where supported |
 | `max_tokens` | u32 | `32000` | Max tokens for decision + summary |
-| `temperature` | f32 | `0.3` | Lower = more consistent decisions |
-| `top_p` | f32 | `1.0` | Nucleus sampling |
-| `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
@@ -631,9 +621,6 @@ threshold = 120000
 name = "octohub:auto"
 reasoning_effort = "none"
 max_tokens = 32000
-temperature = 0.3
-top_p = 1.0
-top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
@@ -647,19 +634,21 @@ These are accepted configuration surfaces, not additional shipped defaults. Runt
 | Path | Type | Omitted behavior | Meaning |
 |---|---|---|---|
 | Root `system` | optional string | Absent | Legacy serialized prompt; session prompts still come from roles. Mentioned only in template comments; place it before any table. |
-| `roles.model` | partial profile or model string | Inherit main profile | All nine `[model]` fields are accepted; the template roles omit it. |
-| `roles.temperature`, `roles.top_p`, `roles.top_k` | optional f32, f32, u32 | Inherit main | Legacy flat sampling input; nested model values win and new serialization uses the nested profile. |
+| `roles.model` | partial profile or model string | Inherit main profile | All `[model]` fields are accepted; the template roles omit it. |
 | `mcp.servers.auto_bind` | optional string array | No automatic binding | Exact-match role/tag activation. |
 | Stdio `mcp.servers.env` | string map | `{}` | Child environment overrides. |
 | Stdio `mcp.servers.cwd` | optional string | Inherit working directory | Child process directory. |
 | `commands.workdir` | string | `"."` | Execution directory relative to session workdir. |
 | Legacy `compression.decision` | partial profile | Used only if `compression.model` is absent | Load normalization maps it to `[compression.model]`; a nested `model` string becomes `name`. |
-| Legacy flat model fields on root/role | Same eight parameter types as `[model]` | Fill nested-profile gaps | `reasoning_effort`, `max_tokens`, `temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, `request_timeout_seconds`. |
+| Legacy flat model fields on root/role | Same parameter types as `[model]` | Fill nested-profile gaps | `reasoning_effort`, `max_tokens`, `max_retries`, `retry_timeout`, `request_timeout_seconds`, `stream_timeout_seconds`, `request_transport`. |
 | `registry.cache_ttl_hours` | u64 | `24` | Manifest refresh interval, described below. |
 
 The root `model` string and historical flat model parameters are migration/normalization inputs, not the version-12
 output format; use `[model]`. The `ProvidersConfig`/`OpenRouterConfig` compatibility types in `src/config/providers.rs`
 are not fields of the loaded `Config`; they do not enable TOML credential storage.
+
+`temperature`, `top_p`, and `top_k` are deprecated since config version 34. They are ignored and reported as
+deprecated when loaded; `octomind config --upgrade` removes them, and they will be removed in a later release.
 
 ## `[registry]`
 

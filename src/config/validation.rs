@@ -173,7 +173,11 @@ impl Config {
 			.iter()
 			.map(|path| IgnoredKeyReport {
 				path: path.clone(),
-				hint: detect_scalar_after_table_hint(path),
+				hint: if is_deprecated_sampling_key(path) {
+					None
+				} else {
+					detect_scalar_after_table_hint(path)
+				},
 			})
 			.collect()
 	}
@@ -188,8 +192,21 @@ pub struct IgnoredKeyReport {
 
 impl IgnoredKeyReport {
 	pub fn format_warning(&self) -> String {
-		format!("warning: unknown configuration key `{}`", self.path)
+		if is_deprecated_sampling_key(&self.path) {
+			format!(
+				"warning: `{}` is deprecated and ignored (sampling parameters are no longer sent); remove it",
+				self.path
+			)
+		} else {
+			format!("warning: unknown configuration key `{}`", self.path)
+		}
 	}
+}
+
+fn is_deprecated_sampling_key(path: &str) -> bool {
+	path.rsplit('.')
+		.next()
+		.is_some_and(|key| super::DEPRECATED_SAMPLING_KEYS.contains(&key))
 }
 
 static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock::new(|| {

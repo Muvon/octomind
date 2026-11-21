@@ -40,16 +40,11 @@ fn sample_role() -> Role {
 		config: RoleConfig {
 			model: crate::config::ModelProfileOverride {
 				model: Some("claude-sonnet-4".to_string()),
-				temperature: Some(0.7),
-				top_p: Some(0.95),
-				top_k: Some(40),
+				max_tokens: Some(4096),
 				..Default::default()
 			},
 			system: "You are a developer.".to_string(),
 			welcome: "Welcome!".to_string(),
-			temperature: None,
-			top_p: None,
-			top_k: None,
 		},
 		mcp: RoleMcpConfig::with_server_refs_and_tools(vec!["core".to_string()], vec!["plan".to_string()]),
 	}
@@ -64,9 +59,7 @@ fn role_serde_json_round_trip() {
 	assert_eq!(deserialized.config.model.model, Some("claude-sonnet-4".to_string()));
 	assert_eq!(deserialized.config.system, "You are a developer.");
 	assert_eq!(deserialized.config.welcome, "Welcome!");
-	assert_eq!(deserialized.config.model.temperature, Some(0.7));
-	assert_eq!(deserialized.config.model.top_p, Some(0.95));
-	assert_eq!(deserialized.config.model.top_k, Some(40));
+	assert_eq!(deserialized.config.model.max_tokens, Some(4096));
 	assert_eq!(deserialized.mcp.server_refs, vec!["core".to_string()]);
 	assert_eq!(deserialized.mcp.allowed_tools, vec!["plan".to_string()]);
 }
@@ -78,7 +71,6 @@ fn role_config_flattens_into_role_json() {
 	assert_eq!(json["name"], "developer");
 	assert_eq!(json["system"], "You are a developer.");
 	assert_eq!(json["welcome"], "Welcome!");
-	let temperature = json["model"]["temperature"].as_f64().expect("temperature not a number");
-	assert!((temperature - 0.7f64).abs() < 1e-6, "temperature {temperature}");
+	assert_eq!(json["model"]["max_tokens"], 4096);
 	assert!(json.get("config").is_none(), "config must be flattened, not nested");
 }

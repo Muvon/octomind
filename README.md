@@ -167,7 +167,7 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | Feature | What you get | Learn more |
 |---|---|---|
 | **Specialists & taps** | Packaged agents with model, prompt, MCP servers, and permissions; installs their tool dependencies on first use | [Tap system](doc/integration/04-tap-system.md) |
-| **Roles** | Per-role model, temperature, system prompt, tools | [Roles](doc/usage/06-roles.md) |
+| **Roles** | Per-role model, system prompt, and tools | [Roles](doc/usage/06-roles.md) |
 | **Workflows** | Multi-step pipelines, each step with its own model and toolset | [Workflows](doc/usage/09-workflows.md) |
 | **MCP client** | stdio and Streamable HTTP servers, with OAuth; enable/disable servers mid-session | [MCP tools](doc/usage/07-mcp-tools.md) |
 | **Agent Skills** | Standard `SKILL.md` skills from `.agents/skills/`, `~/.config/agents/skills/`, and taps; they activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |

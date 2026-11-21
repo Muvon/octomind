@@ -98,7 +98,6 @@ welcome = ""
 
 [roles.model]
 name = "openai:gpt-5.6-luna"
-temperature = 0.3
 
 [roles.mcp]
 server_refs = []

@@ -619,23 +619,15 @@ async fn send_ping(
 
 	// Same model, effort, tools and vision as the real request: any of them
 	// differing changes the cached prefix and the ping would miss.
-	let chat_params = ChatCompletionParams::new(
-		messages,
-		&actual_model,
-		profile.temperature,
-		profile.top_p,
-		profile.top_k,
-		profile.max_tokens,
-		config,
-	)
-	.with_max_retries(0)
-	.with_cancellation_token(cancel_rx)
-	.with_reasoning_effort(profile.reasoning_effort)
-	.with_vision(crate::session::model_utils::provider_supports_vision(
-		provider.as_ref(),
-		&actual_model,
-	))
-	.with_cache_prewarm();
+	let chat_params = ChatCompletionParams::new(messages, &actual_model, profile.max_tokens, config)
+		.with_max_retries(0)
+		.with_cancellation_token(cancel_rx)
+		.with_reasoning_effort(profile.reasoning_effort)
+		.with_vision(crate::session::model_utils::provider_supports_vision(
+			provider.as_ref(),
+			&actual_model,
+		))
+		.with_cache_prewarm();
 
 	let octolib_params = chat_params
 		.to_octolib_params(provider.name())

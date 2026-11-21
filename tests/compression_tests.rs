@@ -50,6 +50,7 @@ mod compression_tests {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}];
 
 		// Add user/assistant pairs
@@ -68,6 +69,7 @@ mod compression_tests {
 				videos: None,
 				thinking: None,
 				id: None,
+				script_calls: Vec::new(),
 			});
 			messages.push(Message {
 				role: "assistant".to_string(),
@@ -83,6 +85,7 @@ mod compression_tests {
 				videos: None,
 				thinking: None,
 				id: None,
+				script_calls: Vec::new(),
 			});
 		}
 
@@ -293,6 +296,7 @@ mod adaptive_compression_tests {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}];
 
 		// Add user/assistant pairs with substantial content to reach token thresholds
@@ -311,6 +315,7 @@ mod adaptive_compression_tests {
 				videos: None,
 				thinking: None,
 				id: None,
+				script_calls: Vec::new(),
 			});
 			messages.push(Message {
 				role: "assistant".to_string(),
@@ -326,6 +331,7 @@ mod adaptive_compression_tests {
 				videos: None,
 				thinking: None,
 				id: None,
+				script_calls: Vec::new(),
 			});
 		}
 
@@ -369,12 +375,9 @@ mod adaptive_compression_tests {
 				api_calls_at_last_compression: 0,
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
-				learning_stats: Default::default(),
-				verification_policy: Default::default(),
-				session_rules: Vec::new(),
-				authorization: Default::default(),
-				evidence: Default::default(),
 				interactive: false,
+				plugin_pins: Vec::new(),
+				plugin_status_fields: Vec::new(),
 			},
 			session_file: None,
 		}

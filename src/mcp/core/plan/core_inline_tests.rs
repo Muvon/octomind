@@ -84,7 +84,7 @@ fn condition_check_only_answers_the_machine_checkable() {
 
 #[test]
 fn sidecar_task_count_is_bounded() {
-	let task = crate::supervisor::plan::PlanTaskDirective {
+	let task = crate::mcp::core::plan::PlanTaskDirective {
 		title: "phase".to_string(),
 		done_when: "outcome exists".to_string(),
 	};

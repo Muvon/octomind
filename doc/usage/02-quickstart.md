@@ -23,7 +23,7 @@ before any config exists, it asks where to get models:
 | Skip for now | Writes the default config unchanged (`octohub:auto`). |
 
 Providers whose key is already in your environment are listed first. After you pick the main model, setup asks whether
-the supervisor and compression should use it too; answer `n` to choose a cheaper model for each. Esc on the first
+compression should use it too; answer `n` to choose a cheaper model for it. Esc on the first
 screen works like Skip.
 
 Startup then resolves the default `assistant:chief` tap agent. Run `octomind configure` to change providers or models
@@ -61,7 +61,7 @@ commands, or delegation; a tap's fetched manifest determines which capabilities 
 | `/status [agents\|monitors\|jobs]` | Show background activity |
 | `/model <provider:model>` | Change the session model |
 | `/image <path>` | Attach an image to the next message |
-| `/done` | Force context compression and start lesson extraction when learning is enabled |
+| `/done` | Force context compression (with the Besydr plugin, also start lesson extraction) |
 | `/clear` | Clear the terminal |
 | `/copy [scope]` | Copy the last response, or `assistant`/`user`/`all` |
 | `/reply [N]` | Quote an earlier reply into the prompt to answer it point by point; `>` at a line start picks single lines |

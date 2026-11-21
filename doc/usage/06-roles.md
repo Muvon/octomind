@@ -59,11 +59,6 @@ Working directory: {{CWD}}
 """
 welcome = "Hello! Working in {{CWD}} (Role: {{ROLE}})"
 
-[roles.model]
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-
 [roles.mcp]
 server_refs = ["core"]
 allowed_tools = ["core:recall"]
@@ -87,15 +82,7 @@ octomind run helper
 | `model` | table | no | Partial model profile; omitted fields inherit from `[model]` |
 | `mcp` | table | no | If present, include both `server_refs` and `allowed_tools`; if absent, both start empty |
 
-`[roles.model]` accepts every field from the main `[model]` table: `name`, `reasoning_effort`, `max_tokens`,
-`temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, and `request_timeout_seconds`.
-
-**Validation ranges (enforced after inheritance).** Values outside these bounds abort loading with an error naming the
-profile:
-
-- `temperature` — `0.0` to `2.0`
-- `top_p` — `0.0` to `1.0`
-- `top_k` — `0` to `1000` (`0` disables it)
+`[roles.model]` accepts every field from the main `[model]` table.
 
 **Model resolution priority.** When more than one source sets a model, the effective model is chosen in this order
 (highest first):
@@ -160,7 +147,7 @@ choosing a filter:
 
 - `"server:*"` — all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent`
   server)
-- `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:text_*` matches `text_editor`)
+- `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:sh*` matches `shell`)
 - `"server:tool_name"` — one specific tool
 - `"tool_name"` (no colon) — backward-compat form: matches that tool name across **all** referenced servers
 - Empty array `[]` — no role-level filter; each registered server's `tools` filter still applies
@@ -232,7 +219,7 @@ octomind run developer:general
 ## Example Roles
 
 Add these entries to `roles.toml`. They assume you have registered a `filesystem` server exposing `view` and
-`text_editor`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
+`text_edit`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
 executable. They demonstrate server grants, not a complete sandbox.
 
 ### Full Developer Access
@@ -247,11 +234,6 @@ Git status: {{GIT_STATUS}}
 """
 welcome = "Developer role ready in {{CWD}}"
 
-[roles.model]
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-
 [roles.mcp]
 server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
 allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
@@ -264,11 +246,6 @@ allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agen
 name = "analyst"
 system = "You analyze code and provide insights. Do not modify files."
 welcome = "Analyst role ready."
-
-[roles.model]
-temperature = 0.2
-top_p = 0.7
-top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -285,13 +262,10 @@ welcome = "Docs role ready."
 
 [roles.model]
 name = "openai:gpt-5.6-luna"
-temperature = 0.4
-top_p = 0.7
-top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:text_editor"]
+allowed_tools = ["filesystem:view", "filesystem:text_edit"]
 ```
 
 

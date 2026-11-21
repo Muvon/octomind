@@ -21,8 +21,7 @@ fn parses_title_and_description_from_header_comments() {
 		           # Title: General Developer\n\
 		           # Description: Elite senior developer.\n\
 		           \n\
-		           [[roles]]\n\
-		           temperature = 0.1\n";
+		           [[roles]]\n";
 	let m = parse_agent_meta(raw, "developer:general").unwrap();
 	assert_eq!(m.title, "General Developer");
 	assert_eq!(m.description, "Elite senior developer.");

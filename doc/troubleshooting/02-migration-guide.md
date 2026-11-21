@@ -1,7 +1,7 @@
 # Migration Guide: Upgrade Octomind and Its Config
 
 Use this guide when upgrading an existing Octomind installation or porting a hand-written config to the current config
-schema, version 12. It covers changes to model and tool configuration, and recovery when an upgrade cannot load.
+schema, version 32. It covers changes to model and tool configuration, and recovery when an upgrade cannot load.
 
 ## Back Up and Upgrade
 
@@ -17,7 +17,7 @@ octomind config --validate
 ```
 
 Choose an unused backup destination if `.before-upgrade` already exists. The registered migration chain upgrades
-older files to schema `12`; a missing version is treated as `0`. It creates a backup before replacing the selected
+older files to schema `32`; a missing version is treated as `0`. It creates a backup before replacing the selected
 file atomically and prints the backup path. It only transforms fields owned by its migration steps: an upgraded
 version stamp does not prove that a historical config has every currently required field.
 
@@ -75,34 +75,28 @@ This complete example keeps an explicit provider/model choice:
 name = "openrouter:anthropic/claude-sonnet-4-6"
 reasoning_effort = "medium"
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
 ```
 
-All model names require `provider:model` format. There are exactly three request purposes:
+All model names require `provider:model` format. Octomind makes requests for two purposes of its own, the main
+conversation and compression; a role can override the main profile:
 
 | Profile | Purpose and inheritance |
 |---|---|
 | `[model]` | Required complete main baseline |
 | `[roles.model]` | Partial override for that role's main requests; omitted fields inherit main |
-| `[supervisor.model]` | Shared supervisor profile, including learning; omitted fields inherit main |
 | `[compression.model]` | Compression decisions and summaries; omitted fields inherit main |
 
 The version `12` migration renames `[compression.decision]` to `[compression.model]` and its `model` key to `name`.
-Separate learning/gate/plan/condense model settings are removed in favor of `[supervisor.model]`.
-The migrated supervisor and compression blocks fill missing parameters from the template; review these explicit
-values if you intended them to track main-profile changes.
+The supervisor's model settings it nested in `[supervisor.model]` went away with the supervisor in version 32;
+see [Version 32 reference](#version-32-supervisor-moved-to-a-plugin). The migrated compression block fills missing
+parameters from the template; review these explicit values if you intended them to track main-profile changes.
 
-To share main settings while overriding just these model names, replace the existing owner blocks with:
+To share main settings while overriding just the compression model name, replace the existing block with:
 
 ```toml
-[supervisor.model]
-name = "octohub:auto"
-
 [compression.model]
 name = "octohub:auto"
 ```
@@ -114,7 +108,7 @@ Tap mappings and workflow step `model` fields remain strings, not profile tables
 "developer:general" = "octohub:auto"
 ```
 
-The shipped main, supervisor, and compression profiles use `octohub:auto`. Migration does not require replacing
+The shipped main and compression profiles use `octohub:auto`. Migration does not require replacing
 an intentional model choice with that default. Authenticate the default with:
 
 ```bash
@@ -160,7 +154,7 @@ allowed_tools = ["core:*", "orchestration:*", "runtime:*", "agent:*"]
 | Named tables such as `[developer]` | Use `[[roles]]` with `name`, `system`, and `welcome` |
 | Role `enabled` | Remove it; defined roles are selectable |
 | Role `enable_layers` or `workflow` | Remove it; use the external workflow CLI for multi-step orchestration |
-| Flat role model/sampling settings | Put overrides in `[roles.model]` |
+| Flat role model settings | Put supported overrides in `[roles.model]` |
 | MCP `enabled` | Select servers with `[roles.mcp].server_refs` and grant tools with `allowed_tools` |
 
 Start the local role above with:
@@ -205,7 +199,7 @@ The current builtin surface is split across four servers:
 | `orchestration` | `tap`, `schedule`, `monitor` |
 | `agent` | Generated `agent_<name>` execution tools |
 
-`plan` is supervisor-internal and is not an MCP tool. `/plan` displays its state.
+There is no `plan` MCP tool. A plugin sets the plan, and `/plan` displays it.
 Add missing server blocks to a hand-written config; these are already in the template:
 
 ```toml
@@ -323,7 +317,7 @@ printf '%s\n' 'Explain this project.' | octomind run --format plain
 |---|---|
 | `/save` | Unsupported; sessions save automatically, including on normal CLI exit |
 | `/skill` | Lists skills; a number selects a page, `*` filters, an exact name toggles activation |
-| `/plan` | Read-only supervisor plan display |
+| `/plan` | Read-only display of the plan a plugin set; no plan without a plugin |
 | `/done` | Forces compression at an explicit task boundary |
 | `/help` | Shows the session command list |
 
@@ -357,7 +351,7 @@ stop it there. Fix the file named in the error, compare required fields with
 octomind config --validate
 ```
 
-A file already stamped `12` is not migrated again. Do not lower its version to repair missing fields; restore the
+A file already stamped `32` is not migrated again. Do not lower its version to repair missing fields; restore the
 missing fields from the template in their proper tables. In particular, put scalar compression keys before nested
 `[compression.attention]` or `[compression.model]` headers.
 
@@ -414,6 +408,7 @@ supported older primary config:
 | `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
 | `27` | Adds the optional advise section |
 | `30` | Renames old lead-agent tags to their `chief` tags in `[taps]` keys and in the root `default` |
+| `32` | Removes `[supervisor]` and `[decision]`, moves `max_identical_rounds` to the root, adds the Besydr plugin entry; see below |
 
 Old lead-agent tags keep working: a saved session, `default`, `/role` or `tap` call that names one (for example
 `developer:cto`, now `developer:chief`, or `assistant:concierge`, the global assistant, now `assistant:chief`) is mapped to
@@ -433,23 +428,35 @@ routing; all five booleans remain required, and unknown decision keys are reject
 Version `4` preserves an existing threshold; otherwise it takes the lowest old pressure-level threshold, or the
 template value when no old threshold exists.
 
-The shipped compression trigger is `120000` tokens. To restore the current compression and optional supervisor
-settings, update these keys in their existing tables; these are fragments, not a complete config:
+The shipped compression trigger is `120000` tokens. To restore the current compression setting, update this key in its
+existing table; this is a fragment, not a complete config:
 
 ```toml
 [compression]
 threshold = 120000
-
-[supervisor.condense]
-adaptive = false
-
-[supervisor.learning.evolution]
-enabled = false
 ```
 
-Supervisor learning records live under `<data-root>/learning/`; external memory MCP tools are not alternate
-supervisor learning stores. See [Learning](../usage/13-learning.md) and [Supervisor](../usage/14-supervisor.md)
-for their operating behavior.
+### Version 32: supervisor moved to a plugin
+
+Before version 32 octomind had a built-in supervisor: the completion check, tool authorization, lessons learned from
+sessions, condensing of long tool output, a plan manager, and generated skills and rules. That code is gone from
+octomind. [Besydr](https://besydr.com/docs), a separate program, does this work as a plugin. The upgrade to version 32
+does the following to `config.toml`:
+
+| Change | Detail |
+|---|---|
+| `[supervisor]`, all `[supervisor.*]` tables and `[decision]` are removed | Octomind no longer reads them. |
+| The removed tables are saved | Unchanged, comments included, to `besydr-carry/supervisor.toml` in the config directory, beside `config.toml`. Besydr reads that file once, on its first run, and takes the settings over into its own config file. The file is written only when the old config had one of the two tables. A message with the path is printed during the upgrade. |
+| `max_identical_rounds` moves to the root | The value of `supervisor.max_identical_rounds` is kept; octomind still stops repeated tool rounds itself. |
+| A `plugins` entry named `besydr` is added | Unless a plugin of that name is already listed. If you had `supervisor.enabled = false`, the entry gets `enabled = false`. |
+
+Besydr installs itself on first use: when the `besydr` program is not found, octomind downloads it from the signed release
+the entry names and never updates it by itself. Lessons octomind learned earlier are imported by Besydr on its first
+run. The `/learning` command comes from the plugin now, and the hidden `octomind distill` command is gone.
+The `octomind evaluate` command is removed. Octomind has no evaluation model of its own; Besydr answers the judgements.
+
+To keep running octomind as a plain agent loop, set `enabled = false` on the `besydr` entry or delete it; see
+[Plugins](../usage/14-supervisor.md) and [Config Reference](../reference/03-config-reference.md#plugins).
 
 ## See also
 

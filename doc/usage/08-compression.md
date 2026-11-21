@@ -53,9 +53,6 @@ threshold = 120000
 name = "openai:gpt-5.6-luna"
 reasoning_effort = "none"
 max_tokens = 32000
-temperature = 0.3
-top_p = 1.0
-top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
@@ -92,9 +89,9 @@ See [Configuration Reference](../reference/03-config-reference.md#compression) f
 
 ## Compression Model
 
-Octomind has exactly three persistent model purposes: main `[model]`, shared `[supervisor.model]`, and
+Octomind has two persistent model purposes: main `[model]` and
 `[compression.model]`. The compression profile performs both the compression decision and summary generation; it is not
-a fourth model purpose. The shipped profile uses `octohub:auto`, and omitted override fields inherit from `[model]`.
+a third model purpose. The shipped profile uses `octohub:auto`, and omitted override fields inherit from `[model]`.
 
 ## Configure Cache Keepalive
 
@@ -376,15 +373,15 @@ list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention
 when the limit is exceeded. Separately, `analysis_findings_max_tokens` (default `6000`) bounds retained findings by
 relevance, recency, and diversity; `0` disables that findings channel.
 
-**Intermediate learning.** When `supervisor.learning.enabled = true`, every successful automatic compaction starts a
-detached lesson-extraction pass from a snapshot taken before the fold, so the turns the fold discards are still learned
-from — including in a one-shot autonomous run, which has a single user message however long it works. This is
+**Intermediate learning.** Octomind tells each plugin before a fold drops messages and after it is applied. With the Besydr
+plugin, every successful automatic compaction can start a lesson-extraction pass from the messages before the fold, so the turns the fold discards are still learned
+from, including in a one-shot autonomous run, which has a single user message however long it works. This is
 asynchronous and never blocks compression. See [Learning](13-learning.md).
 
 ## Source Reference
 
 - [Defaults](../../config-templates/default.toml)
-- [Trigger, background folds, and learning snapshots](../../src/session/chat/conversation_compression/mod.rs)
+- [Trigger and background folds](../../src/session/chat/conversation_compression/mod.rs)
 - [Controller math](../../src/session/chat/conversation_compression/decision.rs)
 - [Archive and context replacement](../../src/session/chat/conversation_compression/apply.rs)
 - [Keepalive policy](../../src/session/cache_keepalive.rs)

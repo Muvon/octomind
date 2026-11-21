@@ -15,7 +15,7 @@
 // User input handling module
 
 use crate::config::Config;
-use crate::mcp::get_available_functions;
+use crate::mcp::get_model_functions;
 use crate::session::estimate_sent_full_context_tokens;
 use crate::session::history::{append_to_session_history_file, load_session_history_from_file};
 use anyhow::Result;
@@ -298,7 +298,7 @@ pub async fn calculate_current_context_tokens(
 	model: &str,
 ) -> u64 {
 	// Get available tools
-	let tools = get_available_functions(config).await;
+	let tools = get_model_functions(config).await;
 
 	// Calculate actual context tokens
 	estimate_sent_full_context_tokens(messages, Some(&tools), model) as u64

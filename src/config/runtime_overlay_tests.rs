@@ -33,15 +33,12 @@ fn extras_unions_across_capabilities() {
 	set_capability_extras("shell", shell_map);
 
 	let mut fs_map = HashMap::new();
-	fs_map.insert(
-		"octofs".to_string(),
-		vec!["text_editor".to_string(), "view".to_string()],
-	);
+	fs_map.insert("octofs".to_string(), vec!["text_edit".to_string(), "view".to_string()]);
 	set_capability_extras("filesystem-write", fs_map);
 
 	let mut got = extras_for_server("octofs");
 	got.sort();
-	let mut expected = vec!["shell".to_string(), "text_editor".to_string(), "view".to_string()];
+	let mut expected = vec!["shell".to_string(), "text_edit".to_string(), "view".to_string()];
 	expected.sort();
 	assert_eq!(got, expected);
 }

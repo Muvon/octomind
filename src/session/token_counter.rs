@@ -86,6 +86,61 @@ pub fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
 	String::new()
 }
 
+/// Marker between the kept start and the kept end of a long text.
+const MIDDLE_OMITTED_MARKER: &str = "\n[… middle omitted for length …]\n";
+
+/// Shorten text to at most `max_tokens` tokens by keeping its start and its end
+/// with a marker between them. A budget too small for both ends and the marker
+/// keeps only the start.
+pub fn truncate_preserving_edges(text: &str, max_tokens: usize) -> String {
+	if max_tokens == 0 || text.is_empty() {
+		return String::new();
+	}
+	if estimate_tokens(text) <= max_tokens {
+		return text.to_string();
+	}
+	let marker_tokens = estimate_tokens(MIDDLE_OMITTED_MARKER);
+	if max_tokens <= marker_tokens + 2 {
+		return truncate_to_tokens(text, max_tokens);
+	}
+	let remaining = max_tokens - marker_tokens;
+	let head_budget = remaining / 2;
+	let mut tail_budget = remaining - head_budget;
+	let head = truncate_to_tokens(text, head_budget);
+	// Tokens do not add up across the joins, so shrink the tail until the whole fits.
+	loop {
+		let tail = suffix_to_tokens(text, tail_budget);
+		let combined = format!("{head}{MIDDLE_OMITTED_MARKER}{tail}");
+		if estimate_tokens(&combined) <= max_tokens || tail_budget == 0 {
+			return combined;
+		}
+		tail_budget -= 1;
+	}
+}
+
+/// The longest end of `text` that fits in `max_tokens` tokens.
+fn suffix_to_tokens(text: &str, max_tokens: usize) -> &str {
+	if max_tokens == 0 {
+		return &text[text.len()..];
+	}
+	if estimate_tokens(text) <= max_tokens {
+		return text;
+	}
+	let mut boundaries: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+	boundaries.push(text.len());
+	let mut low = 0usize;
+	let mut high = boundaries.len() - 1;
+	while low < high {
+		let mid = (low + high) / 2;
+		if estimate_tokens(&text[boundaries[mid]..]) <= max_tokens {
+			high = mid;
+		} else {
+			low = mid + 1;
+		}
+	}
+	&text[boundaries[low]..]
+}
+
 /// Calculate tokens for a single message including ALL fields
 ///
 /// Implements OpenAI's official token counting formula:
@@ -253,7 +308,7 @@ pub async fn calculate_minimum_session_tokens(
 
 	// Get tool definitions tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
-		let tools = crate::mcp::get_available_functions(config).await;
+		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {
 		0
@@ -296,7 +351,7 @@ pub async fn validate_session_token_threshold(
 
 	// Calculate tool tokens
 	let tool_tokens = if !config.mcp.servers.is_empty() {
-		let tools = crate::mcp::get_available_functions(config).await;
+		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {
 		0

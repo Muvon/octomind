@@ -17,7 +17,7 @@
 
 ---
 
-Octomind is an open-source coding agent harness. It gives any LLM the tools to work in a repository — read and edit files, run shells, search code, delegate to sub-agents — through [MCP](https://modelcontextprotocol.io), and runs the result as an interactive CLI, a stdin pipe, a daemon, a WebSocket server, or an ACP agent in your editor. Most agents stop and ask a human before each risky step, which works at a keyboard and blocks everything in CI. Octomind writes that policy down as TOML guardrails and adds a supervising model that plans and checks the work, so the same session can run with nobody watching. On 25 tasks taken from merged pull requests it solved 24; OpenCode solved 19 with the same model at about twice the cost ([benchmarks](#benchmarks)).
+Octomind is an open-source coding agent harness. It gives any LLM the tools to work in a repository — read and edit files, run shells, search code, delegate to sub-agents — through [MCP](https://modelcontextprotocol.io), and runs the result as an interactive CLI, a stdin pipe, a daemon, a WebSocket server, or an ACP agent in your editor. Most agents stop and ask a human before each risky step, which works at a keyboard and blocks everything in CI. Octomind writes that policy down as TOML guardrails, and its optional Besydr plugin plans and checks the work, so the same session can run with nobody watching. On 25 tasks taken from merged pull requests it solved 24; OpenCode solved 19 with the same model at about twice the cost ([benchmarks](#benchmarks)).
 
 ## How It Works
 
@@ -25,15 +25,15 @@ One diagram, the whole turn: what is assembled before the model sees the request
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-  <img src="assets/how-it-works-light.svg" width="100%" alt="Octomind turn flow: request, context assembly (AGENTS.md and skills, lesson recall, supervisor notes, compression), model, tool loop (guards, MCP tools, hooks, condense, detectors), verify gate, validators, response; lessons extracted after /done feed later sessions and, with evolution enabled, skill and guardrail candidates on trial">
+  <img src="assets/how-it-works-light.svg" width="100%" alt="Octomind turn flow: request, context assembly (AGENTS.md and skills, compression), model, tool loop (guards, MCP tools, hooks), validators, response; with the Besydr plugin, lesson recall, completion check and tool output condensing are added">
 </picture>
 
-- **What the model sees** is built once per user message, not per tool round: `AGENTS.md`, the skills whose rules match the prompt (standard `SKILL.md` folders), the tool bundles those skills need (they start their own MCP servers on demand), and the few past lessons that match. [Skills](doc/usage/15-skills.md) · [Learning](doc/usage/13-learning.md)
+- **What the model sees** is built once per user message, not per tool round: `AGENTS.md`, the skills whose rules match the prompt (standard `SKILL.md` folders), and the tool bundles those skills need (they start their own MCP servers on demand). With the Besydr plugin, the few past lessons that match are added too. [Skills](doc/usage/15-skills.md) · [Learning](doc/usage/13-learning.md)
 - **Compression** folds older turns into a summary that cites content-addressed blocks; the raw messages stay in a per-session archive and the `recall` tool brings any block back verbatim as a normal tool result, so history is never rewritten and the prompt cache survives. [Compression](doc/usage/08-compression.md)
-- **Guards, hooks, validators** are deterministic and live in `.agents/guardrails.toml` plus scripts; they run before any model opinion. The optional intent check (`[supervisor.authorizer]`, off by default) adds one supervisor-model look after the guards and blocks a call only when it independently conflicts with what you asked for. [Guardrails](doc/usage/18-guardrails.md)
-- **The supervisor** is a second model (`[supervisor.model]`): it keeps the plan and reminds the model of the goal each turn, cuts oversized tool results down to the lines the task needs (copied, never retyped), and refuses a self-reported "done" until the evidence checks out. The loop check is a fixed heuristic: when the model repeats itself or stalls it gets one nudge, never a takeover. [Supervisor](doc/usage/14-supervisor.md)
-- **The decision model** (`[decision]`) is optional: a classifier that answers typed yes/no questions with a probability instead of prose. When set, the supervisor sends its cheap questions there — which lessons to recall, which skill to activate, which lines to keep, whether a completion claim holds — and keeps chat calls for writing. [Calibrated decisions](doc/use-cases/23-calibrated-checks-with-evaluate.md)
-- **Learning** extracts lessons after `/done` or at exit, in your own words, into files under `learning/<project>/<role>/`; later sessions recall the ones that match. With `[supervisor.learning.evolution]` enabled, recurring lessons become skill and guardrail candidates that run in shadow first, then an A/B trial against a control arm, and go active only when they beat it. [Learning](doc/usage/13-learning.md)
+- **Guards, hooks, validators** are deterministic and live in `.agents/guardrails.toml` plus scripts; they run before any model opinion. [Guardrails](doc/usage/18-guardrails.md)
+- **Repeated tool rounds** end the turn with a notice once `max_identical_rounds` (default 10) identical rounds in a row have run. Octomind does this itself, with or without a plugin.
+- **The Besydr plugin** is a separate program that octomind runs as a plugin: octomind sends it events (session start, each prompt, before and after tool calls, the end of a turn) and applies its answers. It keeps the plan, cuts oversized tool results down to the lines the task needs, refuses a self-reported "done" until the evidence checks out, and learns lessons from sessions. A new config lists it; octomind downloads it on first use. Set `enabled = false` on its entry to run a plain agent loop. [Besydr plugin](doc/usage/14-supervisor.md) · [Besydr docs](https://besydr.com/docs)
+- **Learning** is provided by the Besydr plugin: it extracts lessons in your own words and recalls the ones that match in later sessions. [Learning](doc/usage/13-learning.md)
 
 ## Why Octomind?
 
@@ -43,7 +43,7 @@ Built for the work that keeps going after you leave:
 - **Measured, not claimed.** All four agents ran stock on the same tasks with the same judge. Per-case table, artifacts, and a reproduction guide are in the [benchmarks](#benchmarks).
 - **Ready-made specialists.** `octomind run developer` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). It starts `developer:chief`, the orchestrator of the `developer` domain (a domain is the part of a tag before the `:`; its orchestrator is the agent named `chief`). `octomind run developer:general` starts one exact agent, the generalist that does the work itself. Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving without forgetting the task or your last few messages.
-- **Learns the project as you work.** Corrections and rules you state become lessons, quoted from your own words and scoped to the project and role, and come back in later sessions. Turn on [evolution](doc/usage/13-learning.md) and recurring lessons compile into skill and guardrail candidates, trialled against a control and kept only when they help.
+- **Learns the project as you work.** With the Besydr plugin, corrections and rules you state become lessons, quoted from your own words and scoped to the project and role, and come back in later sessions. [Learning](doc/usage/13-learning.md)
 - **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
 - **One config.** Models, tools, roles, guardrails, budgets: all TOML, no framework code.
 
@@ -88,7 +88,7 @@ octomind
 Before it writes a config, the first interactive run asks where to get models:
 
 - **Octomind hub** (recommended): one browser sign-in, `auto` picks a model for each job, paid with credits you buy.
-- **Your own provider**: OpenRouter, OpenAI, Anthropic, DeepSeek, Ollama, and every other provider octomind supports. Octomind asks for the key with hidden input, saves it to its own `.env` (readable only by you), and lists the provider's models to pick from. One model can serve the main agent, the supervisor, and compression, or you can pick each.
+- **Your own provider**: OpenRouter, OpenAI, Anthropic, DeepSeek, Ollama, and every other provider octomind supports. Octomind asks for the key with hidden input, saves it to its own `.env` (readable only by you), and lists the provider's models to pick from. One model can serve both the main agent and compression, or you can pick each.
 - **Skip**: keep the shipped defaults (`octohub:auto`).
 
 Run `octomind configure` to change this later. Scripts, piped input, and `--format` runs never see the screen; they use the default config.
@@ -167,13 +167,13 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | Feature | What you get | Learn more |
 |---|---|---|
 | **Specialists & taps** | Packaged agents with model, prompt, MCP servers, and permissions; installs their tool dependencies on first use | [Tap system](doc/integration/04-tap-system.md) |
-| **Roles** | Per-role model, temperature, system prompt, tools | [Roles](doc/usage/06-roles.md) |
+| **Roles** | Per-role model, system prompt, and tools | [Roles](doc/usage/06-roles.md) |
 | **Workflows** | Multi-step pipelines, each step with its own model and toolset | [Workflows](doc/usage/09-workflows.md) |
 | **MCP client** | stdio and Streamable HTTP servers, with OAuth; enable/disable servers mid-session | [MCP tools](doc/usage/07-mcp-tools.md) |
 | **Agent Skills** | Standard `SKILL.md` skills from `.agents/skills/`, `~/.config/agents/skills/`, and taps; they activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |
 | **Local project tools** | Executable scripts in `.agents/tools/` auto-register as tools | [Local tools](doc/usage/17-local-tools.md) |
 | **Plugins & `AGENTS.md`** | Agent Plugins (`plugin.json` + skills + `mcp.json`) from taps, `.agents/plugins/`, or `~/.config/agents/plugins/`; project `AGENTS.md` loads at session start | [Configuration](doc/usage/03-configuration.md) |
-| **Supervisor & learning** | A second model plans, checks completion, and condenses tool output; lessons persist as files per project and role | [Supervisor](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
+| **Besydr plugin** | Optional plugin that plans, checks completion, condenses tool output and keeps lessons per project and role; octomind runs it, and `enabled = false` turns it off | [Besydr plugin](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |
 | **Sandbox** | `--sandbox` locks writes to the working directory via Landlock (Linux) or Seatbelt (macOS), inherited by every shell, MCP server, and sub-agent | [Config reference](doc/reference/03-config-reference.md) |
 | **Token efficiency** | Cache-aware cost accounting and adaptive compression | [Token efficiency](doc/usage/16-token-efficiency.md) |
 
@@ -232,18 +232,15 @@ Shell completions: `octomind completion <bash|zsh|fish|elvish|powershell>`.
 
 ### Model access
 
-Run `octomind configure` any time to switch between the hub and your own provider. It changes only the three model names (main, supervisor, compression) and keeps the rest of your config and its comments.
+Run `octomind configure` any time to switch between the hub and your own provider. It changes only the two model names (main, compression) and keeps the rest of your config and its comments.
 
 **Octomind Cloud** — choose the hub in `octomind configure`, or run `octomind login` (device-code sign-in, like `gh auth login`). Either stores a gateway key locally. The default config already uses `octohub:auto`. [Learn more](https://octomind.run/cloud).
 
-**Bring your own key** — choose your provider in `octomind configure`. To set it up by hand instead, set the provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …) and point the model tables at it. The supervisor and compression profiles also default to `octohub:auto`, so update all three:
+**Bring your own key** — choose your provider in `octomind configure`. To set it up by hand instead, set the provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …) and point the model tables at it. The compression profile also defaults to `octohub:auto`, so update both:
 
 ```toml
 [model]
 name = "anthropic:claude-sonnet-5-5"
-
-[supervisor.model]
-name = "anthropic:claude-haiku-5-5"
 
 [compression.model]
 name = "anthropic:claude-haiku-5-5"
@@ -263,7 +260,7 @@ octomind config --validate   # validate config
 Override any value for a single run with `-c`:
 
 ```bash
-octomind run -c supervisor.enabled=false
+octomind run -c max_identical_rounds=0
 ```
 
 Full reference: [Configuration reference](doc/reference/03-config-reference.md) · [Environment variables](doc/reference/04-environment-variables.md).
@@ -277,7 +274,7 @@ Full reference: [Configuration reference](doc/reference/03-config-reference.md) 
 | `/model anthropic:claude-sonnet-5-5` | Switch model mid-session |
 | `/role developer:general` | Switch to a configured role or tap tag |
 | `/new Review auth` | Start a fresh session (title optional) |
-| `/done` | Force context compression and start background learning extraction when enabled |
+| `/done` | Force context compression (with the Besydr plugin, also starts lesson extraction) |
 | `/exit` | Exit the session |
 
 Full list: [Session commands](doc/reference/02-session-commands.md).

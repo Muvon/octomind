@@ -24,7 +24,6 @@ fn new_sets_role_and_plain_mode_with_blank_optionals() {
 	assert!(!args.resume_recent);
 	assert_eq!(args.model, None);
 	assert_eq!(args.max_tokens, None);
-	assert_eq!(args.temperature, None);
 	assert!(!args.role_explicit);
 	assert_eq!(args.max_retries, None);
 	assert!(!args.daemon);
@@ -64,7 +63,6 @@ fn clone_copies_every_field() {
 		resume_recent: true,
 		model: Some("anthropic/claude-3-5-sonnet".to_string()),
 		max_tokens: Some(4096),
-		temperature: Some(0.2),
 		role: "developer".to_string(),
 		role_explicit: true,
 		max_retries: Some(3),
@@ -79,7 +77,6 @@ fn clone_copies_every_field() {
 	assert_eq!(cloned.resume_recent, args.resume_recent);
 	assert_eq!(cloned.model, args.model);
 	assert_eq!(cloned.max_tokens, args.max_tokens);
-	assert_eq!(cloned.temperature, args.temperature);
 	assert_eq!(cloned.role, args.role);
 	assert_eq!(cloned.role_explicit, args.role_explicit);
 	assert_eq!(cloned.max_retries, args.max_retries);

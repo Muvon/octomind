@@ -128,7 +128,7 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 	};
 	match action.as_str() {
 		"list" => handle_list(call).await,
-		"run" => handle_run(call, config).await,
+		"run" => handle_run(call).await,
 		"stop" => handle_stop(call).await,
 		"send" => handle_send(call),
 		"capability" => handle_capability(call, config).await,
@@ -395,7 +395,7 @@ fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
 	))
 }
 
-async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
+async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
 		_ => {
@@ -446,7 +446,7 @@ async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult
 		};
 		(sid, claim.role, None, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
-		let specialist = match super::tap_route::route_task(&prompt, role_param.as_deref(), config).await {
+		let specialist = match super::tap_route::route_task(&prompt, role_param.as_deref()).await {
 			Ok(specialist) => specialist,
 			Err(error) => {
 				return Ok(McpToolResult::error(

@@ -321,7 +321,7 @@ fn score_capability_empty_triggers_returns_zero() {
 }
 
 #[test]
-fn score_capability_takes_mean_of_top_k() {
+fn score_capability_takes_mean_of_highest_scores() {
 	// Trigger vectors aligned with intent at varying degrees so the
 	// computed cosines are 1.0, 0.5, 0.0, 0.0 — top-3 mean is 0.5.
 	let intent = vec![1.0_f32, 0.0];
@@ -1096,44 +1096,38 @@ async fn capability_routing_diversity_fixtures() {
 }
 
 #[test]
-fn apply_capability_answer_confirms_vetoes_promotes_and_rejects_unknown() {
-	use std::collections::BTreeMap;
-	let p = |pairs: &[(&str, f64)]| {
-		pairs
-			.iter()
-			.map(|(k, v)| (k.to_string(), *v))
-			.collect::<BTreeMap<_, _>>()
-	};
+fn apply_capability_answer_confirms_vetoes_and_promotes() {
 	let names = ["a", "b"];
+	let probability = |pairs: &'static [(&str, f64)]| {
+		move |name: &str| {
+			pairs
+				.iter()
+				.find(|(candidate, _)| *candidate == name)
+				.map_or(0.0, |(_, probability)| *probability)
+		}
+	};
 
 	// Cosine winner: kept at the confirm floor, vetoed below it, whatever was chosen.
 	assert_eq!(
-		apply_capability_answer(Some("a"), &names, "b", &p(&[("a", 0.05), ("b", 0.95)])),
-		Ok(Some("a"))
+		apply_capability_answer(Some("a"), &names, "b", probability(&[("a", 0.05), ("b", 0.95)])),
+		Some("a")
 	);
 	assert_eq!(
-		apply_capability_answer(Some("a"), &names, "none", &p(&[("a", 0.04), ("none", 0.96)])),
-		Ok(None)
+		apply_capability_answer(Some("a"), &names, "none", probability(&[("a", 0.04), ("none", 0.96)])),
+		None
 	);
 
 	// No winner: the choice activates at the floor, not below, and `none` is inert.
 	assert_eq!(
-		apply_capability_answer(None, &names, "b", &p(&[("b", 0.6)])),
-		Ok(Some("b"))
-	);
-	assert_eq!(apply_capability_answer(None, &names, "b", &p(&[("b", 0.59)])), Ok(None));
-	assert_eq!(
-		apply_capability_answer(None, &names, "none", &p(&[("none", 1.0)])),
-		Ok(None)
-	);
-
-	// A choice that was never offered is an invalid response either way.
-	assert_eq!(
-		apply_capability_answer(None, &names, "zzz", &p(&[("zzz", 1.0)])),
-		Err("invalid response")
+		apply_capability_answer(None, &names, "b", probability(&[("b", 0.6)])),
+		Some("b")
 	);
 	assert_eq!(
-		apply_capability_answer(Some("a"), &names, "zzz", &p(&[("a", 0.9)])),
-		Err("invalid response")
+		apply_capability_answer(None, &names, "b", probability(&[("b", 0.59)])),
+		None
+	);
+	assert_eq!(
+		apply_capability_answer(None, &names, "none", probability(&[("none", 1.0)])),
+		None
 	);
 }

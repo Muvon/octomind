@@ -19,21 +19,42 @@
 //! atomic replace — live in `octolib::utils`; this module only declares
 //! octomind's version steps and the CLI-facing entry points.
 
+use super::plugins::{DEFAULT_PLUGINS_TOML, DEFAULT_PLUGIN_NAME};
 use anyhow::{Context, Result};
 use octolib::utils::config_file;
 // `toml_edit` comes from octolib's re-export: the migration `apply` signature
 // is a function pointer, so both sides must see the exact same crate.
 use octolib::utils::config_migration::{
-	copy_item, ensure_table, merge_missing, required_table, toml_edit, MigrationPlan, VersionMigration,
+	ensure_table, merge_missing, required_table, toml_edit, Migration, MigrationPlan, VersionMigration,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Schema source of truth: the version stamped here is what every config is
 /// migrated up to.
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
 
-/// Octomind's version chain.
+/// The version whose step removes the built-in supervisor's `[supervisor]` and
+/// `[decision]` tables.
+const SUPERVISOR_REMOVED_IN_VERSION: u32 = 32;
+
+/// Tables that belonged to the built-in supervisor.
+const SUPERVISOR_TABLES: [&str; 2] = ["decision", "supervisor"];
+
+/// Where the upgrade to version 32 saves the supervisor's tables, relative to
+/// the configuration directory. A directory of its own, because octomind
+/// merges every `*.toml` file that sits beside `config.toml`.
+const CARRY_DIR_NAME: &str = "besydr-carry";
+const CARRY_FILE_NAME: &str = "supervisor.toml";
+const CARRY_FILE_HEADER: &str = "# Written by octomind when it upgraded config.toml to version 32.\n\
+# These are the settings of the supervisor that was built into octomind, unchanged.\n\
+# Besydr, the plugin that took over that work, reads this file once, on its first run.\n";
+
+/// One step per version, each run against the current template.
+///
+/// A step that changes nothing once added or tidied keys of `[supervisor]` or
+/// `[decision]`: version 32 removes both tables, so nothing is left to prepare
+/// in them.
 ///
 /// `with_missing_version(0)` because configs written before the version stamp
 /// existed are a real, migratable state rather than a corrupt file.
@@ -51,7 +72,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 1,
 				to: 2,
-				apply: add_delegate_gate,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 2,
@@ -66,7 +87,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 4,
 				to: 5,
-				apply: add_v5_supervisor_fields,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 5,
@@ -76,7 +97,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 6,
 				to: 7,
-				apply: remove_v7_supervisor_judges,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 7,
@@ -86,17 +107,17 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 8,
 				to: 9,
-				apply: add_v9_adaptive_condense,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 9,
 				to: 10,
-				apply: remove_v10_learning_backends,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 10,
 				to: 11,
-				apply: add_v11_learning_evolution,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 11,
@@ -106,9 +127,8 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 12,
 				to: 13,
-				apply: add_v13_authorizer,
+				apply: |_document, _template| Ok(()),
 			},
-			// Legacy evaluate insertion steps are retired; v22 translates surviving values.
 			VersionMigration {
 				from: 13,
 				to: 14,
@@ -132,7 +152,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 17,
 				to: 18,
-				apply: add_v18_evolution_control,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 18,
@@ -147,12 +167,12 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 20,
 				to: 21,
-				apply: add_v21_hindsight,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 21,
 				to: 22,
-				apply: move_v22_decision,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 22,
@@ -162,12 +182,12 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 23,
 				to: 24,
-				apply: add_v24_loop_stop,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 24,
 				to: 25,
-				apply: add_v25_unsettled_advisory,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 25,
@@ -177,7 +197,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 26,
 				to: 27,
-				apply: add_v27_advise,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 27,
@@ -187,7 +207,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 28,
 				to: 29,
-				apply: remove_v29_unsettled_confidence_threshold,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 29,
@@ -197,18 +217,151 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 30,
 				to: 31,
-				apply: add_v31_decision_taps,
+				apply: |_document, _template| Ok(()),
+			},
+			VersionMigration {
+				from: 31,
+				to: 32,
+				apply: replace_v32_supervisor_with_plugin,
+			},
+			VersionMigration {
+				from: 32,
+				to: 33,
+				apply: add_v33_code_mode,
+			},
+			VersionMigration {
+				from: 33,
+				to: 34,
+				apply: remove_v34_sampling,
 			},
 		],
 	)
 	.with_missing_version(0)
 }
 
-/// Add the required `decision.taps` switch (off); an existing value is kept.
-fn add_v31_decision_taps(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_decision = required_table(template.as_table(), "decision", "embedded config")?;
-	let decision = ensure_table(document.as_table_mut(), template.as_table(), "decision", "user config")?;
-	merge_missing(decision, template_decision, "taps")
+/// A whole upgrade: the rewritten configuration, and the supervisor's tables
+/// to save for the plugin when the configuration still had them.
+struct Upgrade {
+	migration: Migration,
+	carried_supervisor_settings: Option<String>,
+}
+
+/// Upgrade `existing` to the current version. `None` when `existing` is
+/// already current.
+fn upgrade(existing: &str) -> Result<Option<Upgrade>> {
+	let Some(migration) = plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE)? else {
+		return Ok(None);
+	};
+	let carried_supervisor_settings = if migration.from_version < SUPERVISOR_REMOVED_IN_VERSION {
+		carried_supervisor_settings(existing)?
+	} else {
+		None
+	};
+	Ok(Some(Upgrade {
+		migration,
+		carried_supervisor_settings,
+	}))
+}
+
+/// The `[decision]` and `[supervisor]` tables of the configuration being
+/// upgraded, as the user has them, as the text of the file the plugin reads,
+/// comments included. `None` when the configuration has neither table.
+fn carried_supervisor_settings(existing: &str) -> Result<Option<String>> {
+	let mut document: toml_edit::DocumentMut = existing.parse().context("Failed to parse the configuration")?;
+	let mut carried = toml_edit::DocumentMut::new();
+	for table in SUPERVISOR_TABLES {
+		if let Some(item) = document.remove(table) {
+			carried.insert(table, item);
+		}
+	}
+	if carried.is_empty() {
+		return Ok(None);
+	}
+	Ok(Some(format!("{CARRY_FILE_HEADER}{carried}")))
+}
+
+/// Version 32: the built-in supervisor is gone, a plugin does its work.
+/// `[supervisor]` and `[decision]` are removed (the upgrade saves them for the
+/// plugin first), `max_identical_rounds` moves to the root, and the default
+/// plugin entry is added unless the user already has a plugin of that name.
+/// A user who had the supervisor switched off gets the entry switched off.
+fn replace_v32_supervisor_with_plugin(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let supervisor = document.remove("supervisor");
+	document.remove("decision");
+	let supervisor = supervisor.as_ref().and_then(toml_edit::Item::as_table_like);
+
+	// The template's key first, for its comment; then the user's value over it.
+	merge_missing(document.as_table_mut(), template.as_table(), "max_identical_rounds")?;
+	if let Some(rounds) = supervisor.and_then(|table| table.get("max_identical_rounds")) {
+		document["max_identical_rounds"] = rounds.clone();
+	}
+
+	let supervisor_was_on = supervisor
+		.and_then(|table| table.get("enabled"))
+		.and_then(toml_edit::Item::as_bool)
+		.unwrap_or(true);
+	add_default_plugin(document, supervisor_was_on)
+}
+
+fn is_default_plugin(entry: &dyn toml_edit::TableLike) -> bool {
+	entry.get("name").and_then(toml_edit::Item::as_str) == Some(DEFAULT_PLUGIN_NAME)
+}
+
+/// The entry of [`DEFAULT_PLUGINS_TOML`] as an inline table.
+fn default_plugin_entry() -> Result<toml_edit::InlineTable> {
+	let defaults: toml_edit::DocumentMut = format!("plugins = {DEFAULT_PLUGINS_TOML}\n")
+		.parse()
+		.context("The default plugin list does not parse")?;
+	let mut entry = defaults
+		.get("plugins")
+		.and_then(toml_edit::Item::as_array)
+		.and_then(|plugins| {
+			plugins
+				.iter()
+				.filter_map(toml_edit::Value::as_inline_table)
+				.find(|entry| is_default_plugin(*entry))
+		})
+		.with_context(|| format!("The default plugin list must have the '{DEFAULT_PLUGIN_NAME}' entry"))?
+		.clone();
+	// Its line breaks belong to the default list's layout, not to the user's.
+	entry.decor_mut().clear();
+	Ok(entry)
+}
+
+/// Add the default plugin entry to the user's `plugins`, which may be absent,
+/// an inline array or `[[plugins]]` tables.
+fn add_default_plugin(document: &mut toml_edit::DocumentMut, enabled: bool) -> Result<()> {
+	let mut entry = default_plugin_entry()?;
+	if !enabled {
+		entry.insert("enabled", false.into());
+	}
+
+	match document.get_mut("plugins") {
+		None => {
+			let mut plugins = toml_edit::Array::new();
+			plugins.push(entry);
+			document["plugins"] = toml_edit::value(plugins);
+		}
+		Some(toml_edit::Item::Value(toml_edit::Value::Array(plugins))) => {
+			let listed = plugins
+				.iter()
+				.filter_map(toml_edit::Value::as_inline_table)
+				.any(|entry| is_default_plugin(entry));
+			if !listed {
+				plugins.push(entry);
+			}
+		}
+		Some(toml_edit::Item::ArrayOfTables(plugins)) => {
+			if !plugins.iter().any(|entry| is_default_plugin(entry)) {
+				plugins.push(entry.into_table());
+			}
+		}
+		Some(_) => anyhow::bail!("plugins: an array is required"),
+	}
+	Ok(())
 }
 
 /// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
@@ -271,19 +424,56 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 	Ok(())
 }
 
-fn remove_v29_unsettled_confidence_threshold(
-	document: &mut toml_edit::DocumentMut,
-	_template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	if let Some(supervisor) = document.get_mut("supervisor") {
-		let supervisor = supervisor.as_table_mut().context("supervisor must be a table")?;
-		if let Some(gate) = supervisor.get_mut("gate") {
-			gate.as_table_mut()
-				.context("supervisor.gate must be a table")?
-				.remove("unsettled_confidence_threshold");
+/// Add the `mcp.code_mode` switch (on: external tools go through the `code` tool); an existing value is kept.
+fn add_v33_code_mode(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	let template_mcp = required_table(template.as_table(), "mcp", "embedded config")?;
+	let mcp = ensure_table(document.as_table_mut(), template.as_table(), "mcp", "user config")?;
+	merge_missing(mcp, template_mcp, "code_mode")
+}
+
+fn remove_v34_sampling(document: &mut toml_edit::DocumentMut, _template: &toml_edit::DocumentMut) -> Result<()> {
+	remove_sampling_from_model_tables(document.as_table_mut());
+	Ok(())
+}
+
+fn remove_sampling_from_model_tables(table: &mut toml_edit::Table) {
+	remove_model_sampling(table);
+
+	if let Some(compression) = table
+		.get_mut("compression")
+		.and_then(toml_edit::Item::as_table_like_mut)
+	{
+		remove_model_sampling(compression);
+	}
+
+	if let Some(roles) = table.get_mut("roles") {
+		if let Some(roles) = roles.as_array_of_tables_mut() {
+			for role in roles.iter_mut() {
+				remove_role_sampling(role);
+			}
+		} else if let Some(roles) = roles.as_array_mut() {
+			for role in roles.iter_mut().filter_map(toml_edit::Value::as_inline_table_mut) {
+				remove_role_sampling(role);
+			}
 		}
 	}
-	Ok(())
+}
+
+fn remove_role_sampling(role: &mut dyn toml_edit::TableLike) {
+	remove_sampling_keys(role);
+	remove_model_sampling(role);
+}
+
+fn remove_model_sampling(owner: &mut dyn toml_edit::TableLike) {
+	if let Some(model) = owner.get_mut("model").and_then(toml_edit::Item::as_table_like_mut) {
+		remove_sampling_keys(model);
+	}
+}
+
+fn remove_sampling_keys(table: &mut dyn toml_edit::TableLike) {
+	for key in super::DEPRECATED_SAMPLING_KEYS {
+		table.remove(key);
+	}
 }
 
 /// Add the required `compression.idle` switch (on); an existing value is kept.
@@ -310,153 +500,9 @@ fn add_v26_model_timeouts_and_transport(
 	Ok(())
 }
 
-/// Add the required unsettled-evidence advisory switch to
-/// `supervisor.gate`; existing values are kept.
-fn add_v25_unsettled_advisory(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let template_gate = required_table(template_supervisor, "gate", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user config",
-	)?;
-	let gate = ensure_table(supervisor, template_supervisor, "gate", "user config")?;
-	merge_missing(gate, template_gate, "unsettled_advisory")
-}
-
-/// Add the required `supervisor.max_identical_rounds` loop hard stop; an existing
-/// value (including `0` = off) is kept.
-fn add_v24_loop_stop(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user config",
-	)?;
-	merge_missing(supervisor, template_supervisor, "max_identical_rounds")
-}
-
 /// Add the required root `commit_attribution` trailer; an existing value is kept.
 fn add_v23_commit_attribution(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
 	merge_missing(document.as_table_mut(), template.as_table(), "commit_attribution")
-}
-
-/// Move calibrated routing without losing legacy switches or accepting conflicts.
-fn move_v22_decision(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let legacy = match document.as_table_mut().get_mut("supervisor") {
-		Some(item) => item
-			.as_table_mut()
-			.context("supervisor: table required")?
-			.remove("evaluate"),
-		None => None,
-	};
-	let had_decision = document.contains_key("decision");
-	if !had_decision {
-		document["decision"] = toml_edit::Item::Table(toml_edit::Table::new());
-	}
-	let decision = document["decision"]
-		.as_table_mut()
-		.context("decision: table required")?;
-	for (key, item) in decision.iter() {
-		match key {
-			"model" if item.as_str().is_some() => {}
-			"recall" | "skills" | "capabilities" | "taps" | "compression" | "supervisor"
-				if item.as_bool().is_some() => {}
-			_ => anyhow::bail!("decision.{key}: unknown key or malformed value"),
-		}
-	}
-	if let Some(legacy) = legacy {
-		let legacy = legacy.as_table().context("supervisor.evaluate: table required")?;
-		if !had_decision {
-			*decision.decor_mut() = legacy.decor().clone();
-		}
-		let mut supervisor = false;
-		let mut has_supervisor_flag = false;
-		let mut supervisor_comments = String::new();
-		for (key, item) in legacy.iter() {
-			match key {
-				"model" | "recall" | "skills" | "capabilities" | "compression" => {
-					let valid = if key == "model" {
-						item.as_str().is_some()
-					} else {
-						item.as_bool().is_some()
-					};
-					anyhow::ensure!(valid, "supervisor.evaluate.{key}: malformed value");
-					if let Some(existing) = decision.get(key) {
-						anyhow::ensure!(
-							existing.as_str() == item.as_str() && existing.as_bool() == item.as_bool(),
-							"decision.{key}: conflicts with supervisor.evaluate.{key}"
-						);
-					} else {
-						copy_item(decision, legacy, key)?;
-					}
-				}
-				"authorizer" | "condense" | "distill" | "plan" | "gate" | "evolution" => {
-					supervisor |= item
-						.as_bool()
-						.with_context(|| format!("supervisor.evaluate.{key}: boolean required"))?;
-					has_supervisor_flag = true;
-					for raw in [
-						legacy.key(key).expect("legacy switch key").leaf_decor().prefix(),
-						item.as_value().expect("legacy boolean switch").decor().suffix(),
-					]
-					.into_iter()
-					.flatten()
-					{
-						if let Some(text) = raw.as_str().filter(|text| !text.trim().is_empty()) {
-							supervisor_comments.push_str(text);
-							if !text.ends_with('\n') {
-								supervisor_comments.push('\n');
-							}
-						}
-					}
-				}
-				_ => anyhow::bail!("supervisor.evaluate.{key}: unknown key"),
-			}
-		}
-		if has_supervisor_flag {
-			if let Some(existing) = decision.get("supervisor") {
-				anyhow::ensure!(
-					existing.as_bool() == Some(supervisor),
-					"decision.supervisor: conflicts with legacy supervisor switches"
-				);
-			} else {
-				decision.insert("supervisor", toml_edit::value(supervisor));
-			}
-			if !supervisor_comments.is_empty() {
-				let mut key = decision.key_mut("supervisor").expect("migrated supervisor switch");
-				let decor = key.leaf_decor_mut();
-				let prefix = decor
-					.prefix()
-					.and_then(|raw| raw.as_str())
-					.map_or(String::new(), str::to_string);
-				decor.set_prefix(format!("{prefix}{supervisor_comments}"));
-			}
-		}
-	}
-	let defaults = required_table(template.as_table(), "decision", "embedded config")?;
-	if !had_decision {
-		merge_missing(decision, defaults, "model")?;
-	}
-	for key in ["recall", "skills", "capabilities", "compression", "supervisor"] {
-		merge_missing(decision, defaults, key)?;
-	}
-	if let Some(item) = decision.get("model") {
-		let model = item.as_str().expect("validated decision.model string");
-		if !model.is_empty() {
-			octolib::evaluation::EvaluationProviderFactory::get_provider_for_model(model)
-				.map_err(|error| anyhow::anyhow!("decision.model: {error}"))?;
-		}
-	}
-	Ok(())
-}
-
-/// Add the shadow-control promotion thresholds to an existing evolution
-/// section; `enabled` and every other key keep their values.
-fn add_v18_evolution_control(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	add_v11_learning_evolution(document, template)
 }
 
 /// Add the required `[timing]` calibration section for `/report`.
@@ -464,54 +510,12 @@ fn add_v20_timing(document: &mut toml_edit::DocumentMut, template: &toml_edit::D
 	merge_missing(document.as_table_mut(), template.as_table(), "timing")
 }
 
-/// Add the required `[supervisor.hindsight]` section (off) without changing
-/// existing supervisor settings.
-fn add_v21_hindsight(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user config",
-	)?;
-	merge_missing(supervisor, template_supervisor, "hindsight")
-}
-
-/// Add the optional `[supervisor.advise]` section (off) without changing
-/// existing supervisor settings.
-fn add_v27_advise(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user config",
-	)?;
-	merge_missing(supervisor, template_supervisor, "advise")
-}
-
-/// Add the required opt-in authorizer without changing existing supervisor settings.
-fn add_v13_authorizer(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user config",
-	)?;
-	merge_missing(supervisor, template_supervisor, "authorizer")
-}
-
 /// v12 nests one validated model profile under each actual model owner. Main is
-/// the baseline; roles inherit it, supervisor (including learning) has one
-/// shared override, and compression remains a separate override.
+/// the baseline; roles inherit it, and compression remains a separate override.
 fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	const PROFILE_FIELDS: [&str; 9] = [
+	const PROFILE_FIELDS: [&str; 6] = [
 		"reasoning_effort",
 		"max_tokens",
-		"temperature",
-		"top_p",
-		"top_k",
 		"max_retries",
 		"retry_timeout",
 		"request_timeout_seconds",
@@ -528,7 +532,7 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 			}
 		}
 	}
-	for key in PROFILE_FIELDS {
+	for key in PROFILE_FIELDS.into_iter().chain(super::DEPRECATED_SAMPLING_KEYS) {
 		if let Some(value) = document.as_table_mut().remove(key) {
 			main.insert(key, value);
 		}
@@ -553,7 +557,7 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 			if let Some(value) = role.remove("model") {
 				profile.insert("name", value);
 			}
-			for key in ["temperature", "top_p", "top_k"] {
+			for key in super::DEPRECATED_SAMPLING_KEYS {
 				if let Some(value) = role.remove(key) {
 					profile.insert(key, value);
 				}
@@ -562,54 +566,6 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 				role.insert("model", toml_edit::Item::Table(profile));
 			}
 		}
-	}
-
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded default configuration")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
-	let mut supervisor_profile = toml_edit::Table::new();
-	if let Some(value) = supervisor.remove("model") {
-		match value.into_table() {
-			Ok(table) => supervisor_profile = table,
-			Err(value) => {
-				supervisor_profile.insert("name", value);
-			}
-		}
-	}
-	let template_supervisor_profile = required_table(
-		template_supervisor,
-		"model",
-		"embedded default supervisor configuration",
-	)?;
-	for key in PROFILE_FIELDS {
-		if let Some(value) = supervisor.remove(key) {
-			supervisor_profile.insert(key, value);
-		}
-		merge_missing(&mut supervisor_profile, template_supervisor_profile, key)?;
-	}
-	merge_missing(&mut supervisor_profile, template_supervisor_profile, "name")?;
-	supervisor.insert("model", toml_edit::Item::Table(supervisor_profile));
-
-	if let Some(learning) = supervisor.get_mut("learning").and_then(|item| item.as_table_mut()) {
-		learning.remove("model");
-		for key in PROFILE_FIELDS {
-			learning.remove(key);
-		}
-	}
-
-	if let Some(gate) = supervisor.get_mut("gate").and_then(|item| item.as_table_mut()) {
-		gate.remove("verifier_model");
-		gate.remove("max_tokens");
-	}
-	if let Some(plan) = supervisor.get_mut("plan").and_then(|item| item.as_table_mut()) {
-		plan.remove("model");
-	}
-	if let Some(condense) = supervisor.get_mut("condense").and_then(|item| item.as_table_mut()) {
-		condense.remove("model");
 	}
 
 	let template_compression = required_table(template.as_table(), "compression", "embedded default configuration")?;
@@ -640,76 +596,6 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 	Ok(())
 }
 
-/// v11 adds the opt-in grounded behavior-evolution stage beneath learning.
-/// The table is required after migration so runtime behavior never depends on
-/// a silent serde fallback; existing users remain disabled until they opt in.
-fn add_v11_learning_evolution(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded default configuration")?;
-	let template_learning = required_table(
-		template_supervisor,
-		"learning",
-		"embedded default supervisor configuration",
-	)?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
-	let learning = ensure_table(
-		supervisor,
-		template_supervisor,
-		"learning",
-		"user supervisor configuration",
-	)?;
-	merge_missing(learning, template_learning, "evolution")
-}
-
-/// v10 makes supervisor learning file-authoritative. The alternate MCP adapter
-/// and its field maps could not preserve the verified memory schema, outcome
-/// feedback, graph identity, or bounded retention lifecycle.
-fn remove_v10_learning_backends(
-	document: &mut toml_edit::DocumentMut,
-	_template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	let Some(learning) = document
-		.as_table_mut()
-		.get_mut("supervisor")
-		.and_then(|item| item.as_table_mut())
-		.and_then(|supervisor| supervisor.get_mut("learning"))
-		.and_then(|item| item.as_table_mut())
-	else {
-		return Ok(());
-	};
-	for key in ["backend", "store", "retrieve"] {
-		learning.remove(key);
-	}
-	Ok(())
-}
-
-/// v9 adds the opt-in runtime-only adaptive condenser trigger. Existing
-/// configurations remain on the exact fixed-threshold behavior.
-fn add_v9_adaptive_condense(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_condense = required_table(
-		required_table(template.as_table(), "supervisor", "embedded default configuration")?,
-		"condense",
-		"embedded default supervisor configuration",
-	)?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
-	let condense = ensure_table(
-		supervisor,
-		required_table(template.as_table(), "supervisor", "embedded default configuration")?,
-		"condense",
-		"user supervisor configuration",
-	)?;
-	merge_missing(condense, template_condense, "adaptive")
-}
-
 /// v8 removes `compression.decision.ignore_cost`. The dollar gate it switched
 /// off is gone: a fold is now amortized over the session's own pace in price
 /// ratios, and the decision call's spend is always tracked.
@@ -729,59 +615,6 @@ fn remove_v8_compression_ignore_cost(
 	Ok(())
 }
 
-/// v7 removes the supervisor's judge mechanics and their knobs: claim_check,
-/// the steer circuit-breaker, the delegate gate, per-knob detectors (now fixed
-/// constants), recitation/orientation switches (now always on with learning),
-/// hardcoded gate/plan budgets, and plan auto-adoption. The mechanics were
-/// deleted from the runtime; this keeps user configs free of dead keys.
-fn remove_v7_supervisor_judges(
-	document: &mut toml_edit::DocumentMut,
-	_template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	let Some(supervisor) = document
-		.as_table_mut()
-		.get_mut("supervisor")
-		.and_then(|item| item.as_table_mut())
-	else {
-		return Ok(());
-	};
-	for key in [
-		"claim_check",
-		"max_consecutive_steers",
-		"orientation",
-		"detectors",
-		"recite",
-		"delegate",
-	] {
-		supervisor.remove(key);
-	}
-	if let Some(gate) = supervisor.get_mut("gate").and_then(|item| item.as_table_mut()) {
-		for key in [
-			"max_iterations",
-			"require_check_after_mutation",
-			"require_plan_complete",
-		] {
-			gate.remove(key);
-		}
-	}
-	if let Some(plan) = supervisor.get_mut("plan").and_then(|item| item.as_table_mut()) {
-		for key in [
-			"max_tokens",
-			"trajectory_max_tokens",
-			"adoption_min_actions",
-			"adoption_min_distinct_actions",
-		] {
-			plan.remove(key);
-		}
-	}
-	if let Some(learning) = supervisor.get_mut("learning").and_then(|item| item.as_table_mut()) {
-		for key in ["min_messages_for_intermediate", "max_inject"] {
-			learning.remove(key);
-		}
-	}
-	Ok(())
-}
-
 /// v6 removes the obsolete terminal `/plan next` hint. Plan state is owned by
 /// the supervisor sidecar, and `/plan` is now a read-only display command.
 fn remove_v6_compression_hints(
@@ -797,37 +630,6 @@ fn remove_v6_compression_hints(
 		compression.remove("hints_pressure_threshold");
 		compression.remove("hints_min_interval");
 	}
-	Ok(())
-}
-
-/// v5 adds the configurable verifier budget, the external plan manager, and
-/// the re-read advisory threshold. Existing supervisor settings and comments
-/// are preserved; only missing keys are copied from the embedded template.
-fn add_v5_supervisor_fields(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded default configuration")?;
-
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
-
-	merge_missing(supervisor, template_supervisor, "gate")?;
-	merge_missing(supervisor, template_supervisor, "plan")
-}
-
-/// v2 (octomind 0.40) originally added the delegate gate; the gate is gone
-/// (v7 removes its keys), so this step now only guarantees a `[supervisor]`
-/// section exists — a config predating it gets the whole section from the
-/// template (octomind requires every field to be present).
-fn add_delegate_gate(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
 	Ok(())
 }
 
@@ -889,8 +691,8 @@ fn collapse_pressure_levels(document: &mut toml_edit::DocumentMut, template: &to
 pub fn check_and_upgrade_config(config_path: &Path) -> Result<bool> {
 	let content = fs::read_to_string(config_path).context("Failed to read config file for version check")?;
 
-	// Cheap pre-check outside the lock; the authoritative one runs under it.
-	if plan().migrate(&content, DEFAULT_CONFIG_TEMPLATE)?.is_none() {
+	// Pre-check outside the lock; the authoritative one runs under it.
+	if upgrade(&content)?.is_none() {
 		return Ok(false);
 	}
 
@@ -914,13 +716,14 @@ pub fn force_upgrade_config(config_path: &Path) -> Result<()> {
 fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	let original = fs::read_to_string(config_path).context("Failed to read config file")?;
 
-	let Some(migration) = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE)? else {
+	let Some(upgrade) = upgrade(&original)? else {
 		if report_up_to_date {
 			let version = plan().version_of(&original)?;
 			eprintln!("✅ Config is already at the latest version ({version})");
 		}
 		return Ok(false);
 	};
+	let migration = upgrade.migration;
 
 	// stderr, never stdout: an outdated config is upgraded during startup, and
 	// ACP/MCP stdio modes carry JSON-RPC on stdout.
@@ -933,6 +736,16 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	toml::from_str::<toml::Value>(&migration.content)
 		.context("Migrated config is not valid TOML - aborting upgrade")?;
 
+	// Before the config is replaced: if the process dies in between, the old
+	// config is still there and the next start writes the same file again.
+	if let Some(settings) = &upgrade.carried_supervisor_settings {
+		let carry_path = save_supervisor_settings(config_path, settings)?;
+		eprintln!(
+			"ℹ️ The built-in supervisor's settings were saved to {} for the Besydr plugin",
+			carry_path.display()
+		);
+	}
+
 	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
 
 	eprintln!(
@@ -941,6 +754,18 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	);
 
 	Ok(true)
+}
+
+/// Write the supervisor's tables where the plugin looks for them on its first run.
+fn save_supervisor_settings(config_path: &Path, settings: &str) -> Result<PathBuf> {
+	let carry_dir = config_path
+		.parent()
+		.context("The config file has no parent directory")?
+		.join(CARRY_DIR_NAME);
+	fs::create_dir_all(&carry_dir).with_context(|| format!("Failed to create {}", carry_dir.display()))?;
+	let carry_path = carry_dir.join(CARRY_FILE_NAME);
+	fs::write(&carry_path, settings).with_context(|| format!("Failed to write {}", carry_path.display()))?;
+	Ok(carry_path)
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@
 
 // Session module for handling interactive coding sessions
 
+pub mod accounting; // Session-owned usage books and the report built from them
 pub mod anchor; // Persistent compaction anchor (iterative summarization)
 pub mod cache;
 pub mod cache_keepalive; // Idle-time prompt cache keepalive pings
@@ -39,8 +40,12 @@ pub mod guardrails; // Project-local deny rules evaluated before each tool call
 pub mod hooks; // Post-result hooks → inbox injection
 pub mod inbox; // Unified message injection queue for all session sources
 pub mod inject_listener; // Unix Domain Socket listener for external message injection
+pub mod notice; // Out-of-band notices shown beside the transcript
 pub mod pipe; // Pre-model pipe execution from guardrails
+pub mod recite; // Goal and plan recitation at the context tail
+pub mod repeat_guard; // Octomind's own count of repeated tool rounds, for the hard stop
 pub mod report; // Session usage reporting
+pub mod self_report; // The status line the agent ends each response with
 pub mod share; // /share: upload session JSONL → octomind.run/r/<id>
 pub mod shell_jobs; // Pending octofs background shell jobs (detached builds/tests)
 pub mod smart_summarizer; // Smart text summarization for context management
@@ -120,6 +125,10 @@ pub struct Message {
 	pub thinking: Option<serde_json::Value>, // For assistant messages: thinking/reasoning content
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub id: Option<String>, // Provider's response ID (for assistant messages)
+	/// For the result of a `code` call: the tool calls its script made, as
+	/// [`crate::mcp::code::kept_calls`] keeps them.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub script_calls: Vec<crate::mcp::ScriptCall>,
 }
 
 fn default_cache_marker() -> bool {
@@ -146,6 +155,7 @@ impl Default for Message {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}
 	}
 }
@@ -175,7 +185,15 @@ pub fn is_system_managed_user_content(content: &str) -> bool {
 		|| trimmed.starts_with("<system-note>")
 		|| trimmed.starts_with("<background_job ")
 		|| crate::mcp::runtime::skill::is_skill_message(content)
-		|| crate::supervisor::gate::is_supervisor_injection(content)
+		|| is_supervisor_injection(content)
+}
+
+/// True when a message is a `<pay-attention>` advisory or a `<recall>` block
+/// injected beside the transcript, not a genuine user turn. Lets the task
+/// search skip octomind's own notes instead of mistaking them for the request.
+fn is_supervisor_injection(content: &str) -> bool {
+	let t = content.trim_start();
+	t.starts_with("<pay-attention>") || t.starts_with("<recall>")
 }
 
 /// Enforce the system-managed contract at the injection seam: content that
@@ -290,36 +308,6 @@ pub fn latest_task_timestamp(messages: &[Message]) -> Option<u64> {
 /// Completed genuine turns whose call counts feed the fold pace estimate.
 pub const TURN_HISTORY: usize = 16;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LearningSessionStats {
-	pub packs: u64,
-	pub items: u64,
-	pub tokens: u64,
-	pub used: u64,
-	pub credit_positive: u64,
-	pub credit_negative: u64,
-	pub used_without_verdict: u64,
-}
-
-impl LearningSessionStats {
-	pub fn record_pack(&mut self, items: u64, tokens: u64) {
-		self.packs += 1;
-		self.items += items;
-		self.tokens += tokens;
-	}
-
-	pub fn record_use(&mut self, delta: f64) {
-		self.used += 1;
-		if delta > 0.0 {
-			self.credit_positive += 1;
-		} else if delta < 0.0 {
-			self.credit_negative += 1;
-		} else {
-			self.used_without_verdict += 1;
-		}
-	}
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TurnTimingStats {
 	pub completed: u64,
@@ -375,7 +363,7 @@ pub struct SessionInfo {
 	#[serde(default)]
 	pub turn_timing: TurnTimingStats,
 	#[serde(default)]
-	pub supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting,
+	pub supervisor_accounting: crate::session::accounting::SupervisorAccounting,
 	// Compression tracking
 	#[serde(default)]
 	pub compression_stats: CompressionStats,
@@ -430,35 +418,17 @@ pub struct SessionInfo {
 	// runway; a genuine user turn resets it so new work gets a short horizon.
 	#[serde(default)]
 	pub consecutive_compressions: u32,
-	/// Persisted learning usage for this named session. Active pack contents and
-	/// pack-local IDs remain runtime-only in `ChatSession`.
-	#[serde(default)]
-	pub learning_stats: LearningSessionStats,
-	/// Standing user policy for assistant-run verification. Updated from genuine
-	/// user turns only; persisted independently of detector streaks and context
-	/// compression.
-	#[serde(default)]
-	pub verification_policy: crate::supervisor::VerificationPolicy,
-	/// Standing rules the user set for the rest of this session, as verbatim
-	/// excerpts. Updated from genuine user turns only; recited every turn and
-	/// pinned through compaction until the user revokes them.
-	#[serde(default)]
-	pub session_rules: Vec<String>,
-	/// User evidence and local authorizer outcomes, preserved across compaction/resume.
-	#[serde(default)]
-	pub authorization: crate::supervisor::authorizer::AuthorizationState,
-	/// Verify-gate evidence ledger snapshot for the still-open turn. Synced on
-	/// every save and restored on resume, so the gate's ground truth survives a
-	/// process restart the same way the task request does — without it, resumed
-	/// turns re-derive evidence conditions from the persisted request but judge
-	/// them against an empty ledger, producing false verification gaps.
-	#[serde(default)]
-	pub evidence: crate::supervisor::gate::EvidenceLedger,
 	/// Set once a human drives this session from the interactive CLI. Only these
 	/// sessions count toward `/report day`: prompts in tap runs, workflow steps,
 	/// one-shot runs and ACP/WebSocket clients often come from another agent.
 	#[serde(default)]
 	pub interactive: bool,
+	/// Context the plugins pinned, kept so a resumed session gets it back.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub plugin_pins: Vec<crate::plugins::PluginBlock>,
+	/// Status-line fields the plugins registered, kept for the same reason.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub plugin_status_fields: Vec<crate::plugins::PluginStatusField>,
 }
 
 impl SessionInfo {
@@ -481,7 +451,7 @@ impl SessionInfo {
 	pub(crate) fn apply_background_usage(
 		&mut self,
 		id: String,
-		usage: &crate::supervisor::accounting::SupervisorAccounting,
+		usage: &crate::session::accounting::SupervisorAccounting,
 	) {
 		if self.supervisor_accounting.background_runs.insert(id) {
 			self.total_cost += usage.totals().cost;
@@ -722,8 +692,8 @@ impl Session {
 		self.info.total_cost += external_spend::take_for(&self.info.name);
 		self.info
 			.supervisor_accounting
-			.add(&crate::supervisor::accounting::take_for(&self.info.name));
-		for (id, usage) in crate::supervisor::accounting::take_completed(&self.info.name) {
+			.add(&crate::session::accounting::take_for(&self.info.name));
+		for (id, usage) in crate::session::accounting::take_completed(&self.info.name) {
 			self.info.apply_background_usage(id, &usage);
 		}
 	}
@@ -733,8 +703,15 @@ impl Session {
 		if let Some(session_file) = &self.session_file {
 			// Append-only design: individual messages are persisted when added.
 			// This just appends an updated SUMMARY snapshot of the current session state.
-			let summary_entry = persistence::summary_log_entry(&self.info);
+			let mut logged_info = self.info.clone();
+			logged_info.capture_agent_runs();
+			// Only what changed since the last snapshot: the loader folds every
+			// snapshot back into the full lists, so repeating them in each SUMMARY
+			// bloats the log.
+			tap_runs::keep_unlogged(&mut logged_info);
+			let summary_entry = persistence::summary_entry_of(&logged_info);
 			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
+			tap_runs::mark_logged(&logged_info);
 			Ok(())
 		} else {
 			Err(anyhow::anyhow!("No session file specified"))
@@ -761,3 +738,7 @@ pub use completion::{
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plugin_state_tests.rs"]
+mod plugin_state_tests;

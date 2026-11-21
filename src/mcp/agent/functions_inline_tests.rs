@@ -227,34 +227,6 @@ async fn dropping_tap_input_owner_cancels_pending_background_work() {
 }
 
 #[tokio::test]
-async fn authorizer_passes_context_without_vetoing_an_unacknowledged_peer() {
-	let sid = "authorizer-acp-parent".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		let (tx, mut notifications) = tokio::sync::mpsc::unbounded_channel();
-		crate::mcp::process::set_notification_sender(Some(sid.clone()), tx);
-		let mut config = crate::session::chat::test_support::fake_provider_config();
-		config.supervisor.enabled = true;
-		config.supervisor.authorizer.enabled = true;
-		let mut session = crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {role:"user".into(),content:"Inspect only; never edit files".into(),id:Some("root-user".into()),..Default::default()}]);
-		session.session.info.name = sid.clone();
-		crate::supervisor::authorizer::capture(&mut session, &config);
-		let params = acp_new_session_params(std::path::Path::new("/tmp"));
-		assert_eq!(params["_meta"][crate::supervisor::authorizer::META_KEY]["users"][0]["text"], "Inspect only; never edit files");
-		let (_tx,rx) = watch::channel(false);
-		let result = run_fake_server(format!("{HANDSHAKE}\necho '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{\"stopReason\":\"end_turn\"}}}}'\n{WAIT_STDIN_EOF}"), rx).await.unwrap();
-		assert!(result.contains("hello"));
-		let acknowledged = HANDSHAKE.replace("\"sessionId\":\"s\"", "\"sessionId\":\"s\",\"_meta\":{\"octomind.authorization\":true}");
-		let (_tx,rx) = watch::channel(false);
-		let result = run_fake_server(format!("{acknowledged}\necho '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{\"stopReason\":\"end_turn\"}}}}'\n{WAIT_STDIN_EOF}"), rx).await.unwrap();
-		assert!(result.contains("hello"));
-		assert!(matches!(notifications.try_recv(), Ok(crate::websocket::ServerMessage::Assistant(_))));
-		assert!(matches!(notifications.try_recv(), Ok(crate::websocket::ServerMessage::Assistant(_))));
-		crate::mcp::process::clear_notification_sender(Some(sid.clone()));
-		crate::session::context::cleanup_session(&sid);
-	}).await;
-}
-
-#[tokio::test]
 async fn streams_live_updates_into_tap_registry() {
 	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
 	use std::sync::{Arc, RwLock};
@@ -568,7 +540,7 @@ async fn handback_banks_the_childs_verified_verdict() {
 		)
 		.await
 		.expect("verified run succeeds");
-		assert_eq!(crate::supervisor::delegate::take_handback(), (1, 1));
+		assert_eq!(crate::mcp::agent::handback::take_handback(), (1, 1));
 
 		let script = format!(
 			"{HANDSHAKE}echo '{}'\ncat >/dev/null",
@@ -585,10 +557,10 @@ async fn handback_banks_the_childs_verified_verdict() {
 		)
 		.await
 		.expect("unverified run succeeds");
-		assert_eq!(crate::supervisor::delegate::take_handback(), (1, 0));
+		assert_eq!(crate::mcp::agent::handback::take_handback(), (1, 0));
 		drop(cancel_tx);
 
-		crate::supervisor::delegate::clear_handback_for_session(&sid);
+		crate::mcp::agent::handback::clear_handback_for_session(&sid);
 	})
 	.await;
 }

@@ -21,13 +21,12 @@ mod copy;
 pub use copy::CopyScope;
 mod display;
 mod done;
-pub use done::{handle_done, DoneOutcome, LessonHandoff};
+pub use done::{handle_done, DoneOutcome};
 mod analyze;
 mod effort;
 mod help;
 mod image;
 mod info;
-mod learning;
 mod list;
 mod login;
 mod loglevel;
@@ -79,6 +78,13 @@ pub struct InfoTiming {
 	pub last_turn_time_ms: u64,
 }
 
+/// The `/info` rows of one plugin.
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginRows {
+	pub plugin: String,
+	pub rows: Vec<crate::plugins::protocol::Row>,
+}
+
 // Strongly-typed command outputs
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
@@ -119,7 +125,11 @@ pub enum CommandOutput {
 		/// Cache keepalive pings, their cost and the last ping budget; `None`
 		/// until a wait was measured.
 		keepalive: Option<crate::session::cache_keepalive::KeepaliveReport>,
-		supervisor_accounting: crate::supervisor::report::SupervisorReport,
+		supervisor_accounting: crate::session::accounting::report::SupervisorReport,
+		/// One block per plugin that answered the status request. Left out of
+		/// the JSON when none did, so sessions without plugins serialise as before.
+		#[serde(skip_serializing_if = "Vec::is_empty")]
+		plugins: Vec<PluginRows>,
 	},
 	Model {
 		old_model: Option<String>,
@@ -246,7 +256,12 @@ pub enum CommandOutput {
 	Status {
 		data: serde_json::Value,
 	},
-	Learning {
+	/// Answer of a command a plugin provides. `data` is what the plugin sent
+	/// for structured clients, or `{"text": ..}` when it sent only text.
+	Plugin {
+		plugin: String,
+		command: String,
+		text: String,
 		data: serde_json::Value,
 	},
 	Share {
@@ -304,7 +319,7 @@ impl CommandOutput {
 	/// Display output in CLI mode
 	pub async fn display_cli(&mut self, session: &mut ChatSession, config: &Config) {
 		match self {
-			Self::Help { .. } => display::display_help(self, config),
+			Self::Help { .. } => display::display_help(self, config, &session.session.info.name),
 			Self::Info { .. } => display::display_info(self),
 			Self::Model { .. } => display::display_model(self),
 			Self::Effort { .. } => display::display_effort(self),
@@ -363,7 +378,7 @@ impl CommandOutput {
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Workflow { .. } => display::display_workflow(self),
 			Self::Status { .. } => display::display_status(self),
-			Self::Learning { .. } => display::display_learning(self),
+			Self::Plugin { .. } => display::display_plugin(self),
 			Self::Share { .. } => display::display_share(self),
 			Self::Usage { .. } => display::display_usage(self),
 			Self::Login { .. } => display::display_login(self),
@@ -402,6 +417,46 @@ pub enum CommandResult {
 	TreatAsUserInput, // This input should be treated as user input, not a command
 }
 
+/// Send `command` to the plugin that provides it. `None` when no plugin that
+/// is on for the session provides it.
+async fn run_plugin_command(session: &mut ChatSession, command: &str, input: &str) -> Option<CommandOutput> {
+	let name = command.strip_prefix('/')?;
+	let session_id = session.session.info.name.clone();
+	let provider = crate::plugins::commands(&session_id)
+		.into_iter()
+		.find(|candidate| candidate.spec.name == name)?;
+	// `command` is the first word of `input`, so what follows it is the argument text.
+	let arguments = input.trim_start()[command.len()..].trim_start().to_string();
+
+	let parts = crate::plugins::payload::ContextParts::of(session);
+	let answer = {
+		let ctx = parts.context(&session.session.messages, None);
+		let payload = crate::plugins::protocol::Command {
+			name: name.to_string(),
+			arguments,
+		};
+		crate::plugins::command(&ctx, &provider.plugin, payload).await
+	};
+	crate::plugins::apply::settle(&session_id, Some(&mut session.session));
+
+	Some(match answer {
+		Some(answer) => {
+			let text = answer.text.unwrap_or_default();
+			let data = answer.data.unwrap_or_else(|| serde_json::json!({ "text": text }));
+			CommandOutput::Plugin {
+				plugin: provider.plugin,
+				command: command.to_string(),
+				text,
+				data,
+			}
+		}
+		None => CommandOutput::Error {
+			error: format!("Plugin {} did not answer {}", provider.plugin, command),
+			context: None,
+		},
+	})
+}
+
 // Process user commands
 pub async fn process_command(
 	session: &mut ChatSession,
@@ -422,13 +477,18 @@ pub async fn process_command(
 	// Use current session role instead of original startup role
 	let current_role = session.role.clone();
 
+	// A plugin command wins over a built-in of the same name.
+	if let Some(output) = run_plugin_command(session, command, input).await {
+		return Ok(CommandResult::HandledWithOutput(Box::new(output)));
+	}
+
 	let result = match command {
 		EXIT_COMMAND | QUIT_COMMAND => Ok(CommandResult::Exit),
 		HELP_COMMAND | HELP_COMMAND_ALT => help::handle_help(config, &current_role).await,
 		COPY_COMMAND => copy::handle_copy(session, params),
 		REPLY_COMMAND => reply::handle_reply(session, params),
 		CLEAR_COMMAND => clear::handle_clear(),
-		INFO_COMMAND => info::handle_info(session, config),
+		INFO_COMMAND => info::handle_info(session, config).await,
 		REPORT_COMMAND => report::handle_report(session, config, params),
 
 		CONTEXT_COMMAND => context::handle_context(session, params),
@@ -439,7 +499,7 @@ pub async fn process_command(
 			// command messages route it straight here — so handle it for real
 			// instead of panicking the connection task. handle_done is
 			// transport-agnostic; the CLI still uses its own lifecycle path.
-			match done::handle_done(session, config, operation_cancelled, done::LessonHandoff::Task).await? {
+			match done::handle_done(session, config, operation_cancelled).await? {
 				done::DoneOutcome::Compressed => Ok(CommandResult::Handled),
 				done::DoneOutcome::NothingToCompress => Ok(CommandResult::Handled),
 				done::DoneOutcome::Failed(e) => Err(anyhow::anyhow!("/done failed: {}", e)),
@@ -466,7 +526,6 @@ pub async fn process_command(
 			}
 			status::handle_status(params, &session.session.info.agent_runs).await
 		}
-		LEARNING_COMMAND => learning::handle_learning(session, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
 		USAGE_COMMAND => usage::handle_usage().await,
@@ -491,3 +550,7 @@ pub async fn process_command(
 #[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod dispatch_tests;
+
+#[cfg(test)]
+#[path = "plugin_commands_tests.rs"]
+mod plugin_commands_tests;

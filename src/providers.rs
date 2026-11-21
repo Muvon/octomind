@@ -86,12 +86,6 @@ pub struct ChatCompletionParams<'a> {
 	pub messages: &'a [Message],
 	/// Model identifier (e.g., "claude-3-5-sonnet", "gpt-4")
 	pub model: &'a str,
-	/// Sampling temperature (0.0 to 2.0)
-	pub temperature: f64,
-	/// Top-p nucleus sampling (0.0 to 1.0)
-	pub top_p: f64,
-	/// Top-k sampling (1 to infinity)
-	pub top_k: u32,
 	/// Maximum tokens to generate (0 = no limit)
 	pub max_tokens: u32,
 	/// Maximum retry attempts on failure
@@ -131,21 +125,10 @@ pub struct ChatCompletionParams<'a> {
 
 impl<'a> ChatCompletionParams<'a> {
 	/// Create new chat completion parameters
-	pub fn new(
-		messages: &'a [Message],
-		model: &'a str,
-		temperature: f64,
-		top_p: f64,
-		top_k: u32,
-		max_tokens: u32,
-		config: &'a Config,
-	) -> Self {
+	pub fn new(messages: &'a [Message], model: &'a str, max_tokens: u32, config: &'a Config) -> Self {
 		Self {
 			messages,
 			model,
-			temperature,
-			top_p,
-			top_k,
 			max_tokens,
 			max_retries: config.max_retries,
 			retry_timeout: std::time::Duration::from_secs(config.retry_timeout),
@@ -282,31 +265,24 @@ impl<'a> ChatCompletionParams<'a> {
 			octolib_messages.push(synthetic);
 		}
 
-		let mut params = octolib::llm::ChatCompletionParams::new(
-			&octolib_messages,
-			self.model,
-			self.temperature,
-			self.top_p,
-			self.top_k,
-			self.max_tokens,
-		)
-		.with_max_retries(self.max_retries)
-		.with_retry_timeout(self.retry_timeout)
-		.with_request_timeout(self.request_timeout)
-		.with_stream_timeout(self.stream_timeout)
-		.with_long_cache(true)
-		.with_cache_prewarm(self.cache_prewarm)
-		.with_reasoning_effort(
-			self.reasoning_effort
-				.unwrap_or(self.config.reasoning_effort)
-				.to_octolib(),
-		)
-		// Sent on every request: only the octohub proxy interprets it (for the
-		// virtual `auto` model); other providers ignore an unknown X- header.
-		.with_extra_headers(std::collections::HashMap::from([(
-			MODEL_PURPOSE_HEADER.to_string(),
-			self.purpose.as_str().to_string(),
-		)]));
+		let mut params = octolib::llm::ChatCompletionParams::new(&octolib_messages, self.model, self.max_tokens)
+			.with_max_retries(self.max_retries)
+			.with_retry_timeout(self.retry_timeout)
+			.with_request_timeout(self.request_timeout)
+			.with_stream_timeout(self.stream_timeout)
+			.with_long_cache(true)
+			.with_cache_prewarm(self.cache_prewarm)
+			.with_reasoning_effort(
+				self.reasoning_effort
+					.unwrap_or(self.config.reasoning_effort)
+					.to_octolib(),
+			)
+			// Sent on every request: only the octohub proxy interprets it (for the
+			// virtual `auto` model); other providers ignore an unknown X- header.
+			.with_extra_headers(std::collections::HashMap::from([(
+				MODEL_PURPOSE_HEADER.to_string(),
+				self.purpose.as_str().to_string(),
+			)]));
 
 		if provider_name == "chatgpt" {
 			params = params.with_chatgpt_transport(self.request_transport.to_chatgpt());
@@ -362,7 +338,7 @@ impl<'a> ChatCompletionParams<'a> {
 
 		// Fetch and add MCP tools if MCP is configured
 		if self.tools && !self.config.mcp.servers.is_empty() {
-			let mcp_functions = crate::mcp::get_available_functions(self.config).await;
+			let mcp_functions = crate::mcp::get_model_functions(self.config).await;
 			if !mcp_functions.is_empty() {
 				// Convert MCP functions to octolib FunctionDefinitions
 				let mut octolib_tools: Vec<octolib::llm::FunctionDefinition> = mcp_functions

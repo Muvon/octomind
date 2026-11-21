@@ -15,15 +15,12 @@
 use super::*;
 
 #[test]
-fn configure_changes_only_three_names_and_preserves_comments() {
+fn configure_changes_only_two_names_and_preserves_comments() {
 	let source = "# keep the header\n\
 		telemetry = false # keep root settings\n\n\
 		[model] # main profile\n\
 		# keep the main comment\n\
 		name   =   \"old:main\" # main inline\n\
-		temperature = 0.7\n\n\
-		[supervisor.model]\n\
-		name = 'old:supervisor' # supervisor inline\n\
 		max_tokens = 1234\n\n\
 		[compression.model]\n\
 		name = \"old:compression\" # compression inline\n\
@@ -34,36 +31,21 @@ fn configure_changes_only_three_names_and_preserves_comments() {
 		name = \"leave:this-model\"\n";
 	for source in [source.to_string(), source.replace('\n', "\r\n")] {
 		let document = Document::parse(source.clone()).expect("parse config");
-		let after = set_model_names(
-			&document,
-			&[
-				"openai:main".into(),
-				"openai:supervisor".into(),
-				"openai:compression".into(),
-			],
-		)
-		.expect("edit names");
+		let after =
+			set_model_names(&document, &["openai:main".into(), "openai:compression".into()]).expect("edit names");
 		let expected = source
 			.replace("\"old:main\"", "\"openai:main\"")
-			.replace("'old:supervisor'", "\"openai:supervisor\"")
 			.replace("\"old:compression\"", "\"openai:compression\"");
 		assert_eq!(after, expected);
 	}
 }
 
 #[test]
-fn configure_template_changes_only_the_three_model_names() {
+fn configure_template_changes_only_the_two_model_names() {
 	let source = include_str!("../../config-templates/default.toml");
 	let document = Document::parse(source.to_string()).expect("parse embedded template");
-	let after = set_model_names(
-		&document,
-		&[
-			"openai:main".into(),
-			"openai:supervisor".into(),
-			"openai:compression".into(),
-		],
-	)
-	.expect("edit template");
+	let after =
+		set_model_names(&document, &["openai:main".into(), "openai:compression".into()]).expect("edit template");
 	let differences: Vec<_> = source
 		.lines()
 		.zip(after.lines())
@@ -74,7 +56,7 @@ fn configure_template_changes_only_the_three_model_names() {
 	assert!(differences
 		.iter()
 		.all(|(before, _)| *before == "name = \"octohub:auto\""));
-	for model in ["openai:main", "openai:supervisor", "openai:compression"] {
+	for model in ["openai:main", "openai:compression"] {
 		assert!(after.contains(&format!("name = \"{model}\"")));
 	}
 }
@@ -83,7 +65,7 @@ fn configure_template_changes_only_the_three_model_names() {
 fn configure_rejects_missing_or_malformed_model_names() {
 	for source in ["[model]\n", "[model]\nname = 42\n"] {
 		let document = Document::parse(source.to_string()).expect("parse config");
-		let err = set_model_names(&document, &["openai:a".into(), "openai:b".into(), "openai:c".into()])
+		let err = set_model_names(&document, &["openai:a".into(), "openai:b".into()])
 			.expect_err("required name must not be created or coerced");
 		assert!(err.to_string().contains("model.name"), "{err}");
 	}

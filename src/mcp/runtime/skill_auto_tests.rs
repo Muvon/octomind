@@ -496,12 +496,174 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 }
 
 // ---------------------------------------------------------------------------
+// Judgement by a plugin when the rules abstain
+// ---------------------------------------------------------------------------
+
+fn skill_choice(choice: &str, probability: f64) -> serde_json::Value {
+	serde_json::json!({"judgements": {"skill": {
+		"type": "choice",
+		"choice": choice,
+		"probabilities": {choice: probability},
+	}}})
+}
+
+/// A pool entry with no rules: only a judgement can activate it.
+fn rule_less_entry(name: &str) -> PoolEntry {
+	PoolEntry {
+		name: name.to_string(),
+		description: format!("Test skill {name}"),
+		rules: Vec::new(),
+		evolution: None,
+	}
+}
+
+/// Run an activation for `content` in session `sid` with a plugin that answers
+/// every `judge` event with `answer`.
+async fn activate_with_judging_plugin(
+	sid: &str,
+	answer: serde_json::Value,
+	entries: Vec<PoolEntry>,
+	content: &str,
+) -> crate::plugins::test_support::StubPlugin {
+	let stub = crate::plugins::test_support::StubPlugin::new(&["judge"]).answer(answer);
+	crate::plugins::test_support::connect_stub(sid, "developer", Path::new("/tmp"), &stub).await;
+	set_pool(entries);
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.to_string(), async {
+		run_activation(content, Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+	stub
+}
+
+fn finish_judging_test(sid: &str) {
+	crate::plugins::end_session(sid);
+	cleanup_session(&sid.to_string());
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn a_skill_the_plugin_picks_with_enough_confidence_is_activated() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+	install_tap_skill("other", "developer", &[]);
+
+	let sid = "__skillauto_judge_pick".to_string();
+	let entries = vec![rule_less_entry("fits"), rule_less_entry("other")];
+	let stub = activate_with_judging_plugin(
+		&sid,
+		skill_choice("fits", 0.9),
+		entries,
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(has_active_skill(&sid, "fits"));
+	assert!(!has_active_skill(&sid, "other"));
+	let asked = stub.sent("judge");
+	assert_eq!(asked.len(), 1);
+	assert_eq!(asked[0]["purpose"], "skills");
+	assert_eq!(asked[0]["subject"], "please write the release notes");
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_skill_the_plugin_picks_below_the_floor_is_not_activated() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_low".to_string();
+	let answer = skill_choice("fits", crate::plugins::judgement::SKILL_ACTIVATE_AT - 0.01);
+	activate_with_judging_plugin(
+		&sid,
+		answer,
+		vec![rule_less_entry("fits")],
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_plugin_that_picks_none_activates_no_skill() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_none".to_string();
+	let answer = skill_choice(crate::plugins::judgement::NONE, 0.99);
+	activate_with_judging_plugin(
+		&sid,
+		answer,
+		vec![rule_less_entry("fits")],
+		"please write the release notes",
+	)
+	.await;
+
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_rule_that_decided_keeps_the_plugin_from_being_asked() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("rust-helper", "developer", &["content(rust)"]);
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_rules".to_string();
+	let mut ruled = rule_less_entry("rust-helper");
+	ruled.rules = content_rule("rust");
+	let entries = vec![ruled, rule_less_entry("fits")];
+	let stub = activate_with_judging_plugin(
+		&sid,
+		skill_choice("fits", 0.9),
+		entries,
+		"please help with rust development",
+	)
+	.await;
+
+	assert!(has_active_skill(&sid, "rust-helper"));
+	assert!(!has_active_skill(&sid, "fits"));
+	assert!(stub.sent("judge").is_empty());
+	finish_judging_test(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn without_a_plugin_that_judges_the_rules_abstaining_activates_nothing() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("fits", "developer", &[]);
+
+	let sid = "__skillauto_judge_absent".to_string();
+	set_pool(vec![rule_less_entry("fits")]);
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation("please write the release notes", Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+
+	assert!(session.session.messages.is_empty());
+	assert!(!has_active_skill(&sid, "fits"));
+	finish_judging_test(&sid);
+}
+
+// ---------------------------------------------------------------------------
 // Pool init + config override
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn init_pool_collects_domain_matching_skills_with_descriptions() {
+fn init_pool_collects_domain_matching_skills() {
 	let _guard = DataDirGuard::new();
 	install_tap_skill("in-domain", "developer", &["content(rust)"]);
 	// No rules → still in the pool, reachable only by the evaluation choice.
@@ -522,7 +684,6 @@ fn init_pool_collects_domain_matching_skills_with_descriptions() {
 			.find(|e| e.name == "no-rules")
 			.expect("rule-less skills join the pool");
 		assert!(no_rules.rules.is_empty());
-		assert_eq!(no_rules.description, "Test skill no-rules");
 		assert!(!names.contains(&"other-domain"), "domain filter applies");
 	}
 	clear_pool();
@@ -544,61 +705,10 @@ async fn skills_config_reads_session_override() {
 
 	cleanup_session(&sid);
 }
-#[tokio::test]
-#[serial]
-async fn run_activation_skips_shadow_bound_skills() {
-	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let _guard = DataDirGuard::new();
-	install_tap_skill("shadowed", "developer", &["content(rust)"]);
-	install_tap_skill("failclosed", "developer", &["content(rust)"]);
-
-	let sid = "__skillauto_shadow".to_string();
-
-	// A shadow-flagged binding and a non-shadow binding whose id has no
-	// registry record: both classify as shadow (fail-closed) and must be
-	// skipped despite a deterministic rule match.
-	set_pool(vec![
-		PoolEntry {
-			name: "shadowed".to_string(),
-			description: String::new(),
-			rules: content_rule("rust"),
-			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
-				id: "__skillauto_shadow_binding".to_string(),
-				shadow: true,
-				path: PathBuf::new(),
-			}),
-		},
-		PoolEntry {
-			name: "failclosed".to_string(),
-			description: String::new(),
-			rules: content_rule("rust"),
-			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
-				id: "__skillauto_unknown_binding".to_string(),
-				shadow: false,
-				path: PathBuf::new(),
-			}),
-		},
-	]);
-
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-
-	assert!(
-		session.session.messages.is_empty(),
-		"shadow-bound skills must not inject content"
-	);
-	assert!(!has_active_skill(&sid, "shadowed"));
-	assert!(!has_active_skill(&sid, "failclosed"));
-	cleanup_session(&sid);
-	clear_pool();
-}
 
 // ---------------------------------------------------------------------------
 // Wave-1 coverage additions: pool initialization edge cases (malformed tap
-// entries, universal dirs, evolution-generated skills), env-skill injection
+// entries, universal dirs), env-skill injection
 // failure, and end-to-end validator scheduling.
 // ---------------------------------------------------------------------------
 
@@ -704,83 +814,6 @@ fn init_pool_reads_universal_skill_dirs() {
 		Some(v) => std::env::set_var("HOME", v),
 		None => std::env::remove_var("HOME"),
 	}
-}
-
-#[tokio::test]
-#[serial]
-async fn init_pool_includes_evolution_generated_skills() {
-	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let _guard = DataDirGuard::new();
-	default_tap_dir(); // empty tap set
-
-	// A trial-state skill record in the evolution registry, with its
-	// generated artifact on disk.
-	let evo_dir = crate::directories::get_learning_evolution_dir().expect("evolution dir");
-	let artifact = evo_dir.join("evo1").join("artifact");
-	write_file(
-		&artifact.join("SKILL.md"),
-		&skill_md("evo-skill", "developer", &["content(rust)"]),
-	);
-	let registry = serde_json::json!({
-		"schema_version": 1,
-		"records": [{
-			"schema_version": 1,
-			"id": "evo1",
-			"name": "evo-skill",
-			"description": "generated skill",
-			"kind": "skill",
-			"scope": { "project": null, "domain": null },
-			"state": "trial",
-			"effect": "advisory",
-			"explicit_authorization": true,
-			"source_memory_ids": [],
-			"evidence": [],
-			"artifact_version": 1,
-			"parent_version": null,
-			"superseded_ids": [],
-			"generator_model": "m",
-			"verifier_model": "v",
-			"artifact_path": "SKILL.md",
-			"script_path": null,
-			"shadow_matches": 0,
-			"trial_uses": 0,
-			"successes": 0,
-			"failures": 0,
-			"false_triggers": 0,
-			"created": "2026-01-01T00:00:00Z",
-			"updated": "2026-01-01T00:00:00Z",
-			"promoted": null,
-			"last_used": null,
-			"retired": null,
-			"history": []
-		}]
-	});
-	write_file(
-		&evo_dir.join("registry.json"),
-		&serde_json::to_string(&registry).expect("registry json"),
-	);
-
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
-	config.supervisor.learning.evolution.enabled = true;
-
-	let sid = "__skillauto_evo".to_string();
-	set_session_config(&sid, &config);
-	clear_pool();
-	with_session_id(sid.clone(), async {
-		crate::supervisor::learning::evolution::init_for_session("developer");
-		init_pool("developer");
-	})
-	.await;
-
-	let names = pool_names(&sid);
-	assert!(
-		names.contains(&"evo-skill".to_string()),
-		"generated skill must enter the pool: {names:?}"
-	);
-
-	cleanup_session(&sid);
-	clear_pool();
 }
 
 #[tokio::test]
@@ -992,287 +1025,133 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation gate (decision.skills): one Choice over the inactive
-// pool plus `none`, only when every rule abstained. The fake guard holds
-// ENV_LOCK itself, so these tests do not lock it again.
+// Skill directories registered by plugins
 // ---------------------------------------------------------------------------
 
-use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
-use crate::supervisor::evaluate::{Seam, SKILL_QUESTION_ID};
+use crate::plugins::protocol::event as plugin_event;
+use crate::plugins::test_support::StubPlugin;
+use crate::session::guardrails::plugin_tests::{stub_answering, PluginSession};
 
-fn evaluate_config() -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
-	config.supervisor.enabled = true;
-	config.decision.skills = true;
-	config
+fn skill_dirs_answer(dirs: &[(&str, &PathBuf, &str)]) -> serde_json::Value {
+	let dirs: Vec<_> = dirs
+		.iter()
+		.map(|(id, path, mode)| serde_json::json!({"id": id, "path": path.to_str().unwrap(), "mode": mode}))
+		.collect();
+	serde_json::json!({"register": {"skill_dirs": dirs}})
 }
 
-fn rule_less(name: &str, description: &str) -> PoolEntry {
-	PoolEntry {
-		name: name.to_string(),
-		description: description.to_string(),
-		rules: Vec::new(),
-		evolution: None,
-	}
+fn write_plugin_skill(root: &Path, name: &str) -> PathBuf {
+	let dir = root.join(name);
+	write_file(&dir.join("SKILL.md"), &skill_md(name, "developer", &["content(rust)"]));
+	dir
+}
+
+/// Binding of the pool entry named `name` in the session's pool.
+fn pool_binding(sid: &str, name: &str) -> SkillBinding {
+	get_pool()
+		.read()
+		.unwrap()
+		.get(sid)
+		.and_then(|pool| pool.entries.iter().find(|entry| entry.name == name))
+		.and_then(|entry| entry.evolution.clone())
+		.unwrap_or_else(|| panic!("no plugin skill '{name}' in the pool"))
 }
 
 #[tokio::test]
 #[serial]
-async fn run_activation_evaluate_chooses_a_skill_when_rules_abstain() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
-		SKILL_QUESTION_ID,
-		"content-translate",
-		1.0,
-	))])
-	.await;
-	let _data = DataDirGuard::new();
-	install_tap_skill("content-translate", "developer", &[]);
+async fn plugin_skill_dirs_join_the_pool_and_the_active_list_by_mode() {
+	let root = tempfile::tempdir().unwrap();
+	let live = write_plugin_skill(root.path(), "plugin-live");
+	let watched = write_plugin_skill(root.path(), "plugin-watched");
+	let answer = skill_dirs_answer(&[("live", &live, "apply"), ("watched", &watched, "observe")]);
+	let session = PluginSession::start("skills-pool", stub_answering(answer)).await;
+	get_pool()
+		.write()
+		.unwrap()
+		.insert(session.sid.clone(), SkillPool { entries: Vec::new() });
 
-	let sid = "__skillauto_evaluate_choice".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![
-		PoolEntry {
-			name: "git-workflow".to_string(),
-			description: "Git branching and commits".to_string(),
-			rules: content_rule("git"),
-			evolution: None,
-		},
-		rule_less("content-translate", "Translate documents between languages"),
-		rule_less("code-review", "Review a diff"),
-		rule_less("programming-rust", "Rust guidance"),
+	session.send_event().await;
+
+	assert_eq!(pool_names(&session.sid), vec!["plugin-live", "plugin-watched"]);
+	assert!(!pool_binding(&session.sid, "plugin-live").shadow);
+	assert!(pool_binding(&session.sid, "plugin-watched").shadow);
+	let active = with_session_id(session.sid.clone(), async { plugin_skill_dirs() }).await;
+	assert_eq!(active, vec![live]);
+}
+
+#[tokio::test]
+#[serial]
+async fn a_second_registration_of_skill_dirs_replaces_the_first() {
+	let root = tempfile::tempdir().unwrap();
+	let one = write_plugin_skill(root.path(), "plugin-one");
+	let two = write_plugin_skill(root.path(), "plugin-two");
+	let stub = StubPlugin::new(&[plugin_event::REQUEST_BEFORE]).queue([
+		skill_dirs_answer(&[("one", &one, "apply")]),
+		skill_dirs_answer(&[("two", &two, "observe")]),
 	]);
-	let applied = evaluate_counter(Seam::Skills, "applied");
-	let message = "translate README.md into Spanish, keep the code blocks untouched";
+	let session = PluginSession::start("skills-replace", stub).await;
+	get_pool()
+		.write()
+		.unwrap()
+		.insert(session.sid.clone(), SkillPool { entries: Vec::new() });
 
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation(message, Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-
-	assert_eq!(session.session.messages.len(), 1);
-	assert!(session.session.messages[0]
-		.content
-		.contains("<skill name=\"content-translate\""));
-	assert!(has_active_skill(&sid, "content-translate"));
-	assert!(!has_active_skill(&sid, "git-workflow"));
-	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied + 1);
-
-	let request = &fake.requests()[0];
-	assert_eq!(request.state, serde_json::Value::String(message.to_string()));
-	match &request.questions[SKILL_QUESTION_ID] {
-		octolib::evaluation::Question::Choice { criteria, .. } => {
-			assert_eq!(
-				criteria.keys().cloned().collect::<Vec<_>>(),
-				[
-					"code-review",
-					"content-translate",
-					"git-workflow",
-					"none",
-					"programming-rust"
-				]
-			);
-			assert_eq!(
-				criteria["content-translate"],
-				Some(serde_json::Value::String(
-					"Translate documents between languages".into()
-				))
-			);
-		}
-		other => panic!("expected a choice, got {other:?}"),
-	}
-	cleanup_session(&sid);
-	clear_pool();
+	session.send_event().await;
+	assert_eq!(pool_names(&session.sid), vec!["plugin-one"]);
+	session.send_event().await;
+	assert_eq!(pool_names(&session.sid), vec!["plugin-two"]);
+	// An event that registers nothing changes nothing.
+	session.send_event().await;
+	assert_eq!(pool_names(&session.sid), vec!["plugin-two"]);
+	let active = with_session_id(session.sid.clone(), async { plugin_skill_dirs() }).await;
+	assert!(active.is_empty());
 }
 
 #[tokio::test]
 #[serial]
-async fn run_activation_evaluate_activation_floor_is_inclusive_and_none_is_inert() {
-	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.59)),
-		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "none", 1.0)),
-		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.60)),
-	])
-	.await;
-	let _data = DataDirGuard::new();
-	install_tap_skill("markup-landing-page", "developer", &[]);
+async fn a_pool_built_after_the_registration_includes_the_skill_dirs() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	default_tap_dir();
+	let root = tempfile::tempdir().unwrap();
+	let live = write_plugin_skill(root.path(), "plugin-late");
+	let answer = skill_dirs_answer(&[("late", &live, "apply")]);
+	let session = PluginSession::start("skills-late", stub_answering(answer)).await;
 
-	let sid = "__skillauto_evaluate_floor".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![rule_less("markup-landing-page", "Landing page markup")]);
-	let calls = evaluate_counter(Seam::Skills, "calls");
-	let applied = evaluate_counter(Seam::Skills, "applied");
+	session.send_event().await;
+	assert!(pool_names(&session.sid).is_empty());
+	with_session_id(session.sid.clone(), async { init_pool("developer") }).await;
 
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		for _ in 0..2 {
-			run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
-			assert!(session.session.messages.is_empty());
-			assert!(!has_active_skill(&sid, "markup-landing-page"));
-		}
-		run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-
-	assert!(has_active_skill(&sid, "markup-landing-page"));
-	assert_eq!(session.session.messages.len(), 1);
-	assert_eq!(fake.requests().len(), 3);
-	assert_eq!(evaluate_counter(Seam::Skills, "calls"), calls + 3);
-	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied + 1);
-	cleanup_session(&sid);
-	clear_pool();
+	assert_eq!(pool_names(&session.sid), vec!["plugin-late"]);
 }
 
 #[tokio::test]
 #[serial]
-async fn run_activation_evaluate_refusal_activates_nothing() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
-		crate::session::chat::test_support::refusals(&[SKILL_QUESTION_ID]),
-	)])
-	.await;
-	let _data = DataDirGuard::new();
-	install_tap_skill("markup-landing-page", "developer", &[]);
+async fn a_plugin_skill_match_is_reported_by_mode_and_observed_ones_stay_out() {
+	let root = tempfile::tempdir().unwrap();
+	let live = write_plugin_skill(root.path(), "plugin-live");
+	let watched = write_plugin_skill(root.path(), "plugin-watched");
+	let answer = skill_dirs_answer(&[("live", &live, "apply"), ("watched", &watched, "observe")]);
+	let session = PluginSession::start("skills-match", stub_answering(answer)).await;
+	get_pool()
+		.write()
+		.unwrap()
+		.insert(session.sid.clone(), SkillPool { entries: Vec::new() });
+	session.send_event().await;
 
-	let sid = "__skillauto_evaluate_refused".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![rule_less("markup-landing-page", "Landing page markup")]);
-	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
-	let applied = evaluate_counter(Seam::Skills, "applied");
-
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
+	let live_binding = pool_binding(&session.sid, "plugin-live");
+	let watched_binding = pool_binding(&session.sid, "plugin-watched");
+	let (live_observed, watched_observed) = with_session_id(session.sid.clone(), async {
+		(observed_only(&live_binding), observed_only(&watched_binding))
 	})
 	.await;
 
-	assert!(session.session.messages.is_empty());
-	assert!(!has_active_skill(&sid, "markup-landing-page"));
-	assert_eq!(fake.requests().len(), 1);
-	assert_eq!(evaluate_counter(Seam::Skills, "unavailable"), unavailable + 1);
-	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied);
-	cleanup_session(&sid);
-	clear_pool();
-}
-
-#[tokio::test]
-#[serial]
-async fn run_activation_deterministic_match_makes_no_evaluation_call() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
-		SKILL_QUESTION_ID,
-		"other",
-		1.0,
-	))])
-	.await;
-	let _data = DataDirGuard::new();
-	install_tap_skill("rust-helper", "developer", &["content(rust)"]);
-	install_tap_skill("other", "developer", &[]);
-
-	let sid = "__skillauto_evaluate_det".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![
-		PoolEntry {
-			name: "rust-helper".to_string(),
-			description: "Rust".to_string(),
-			rules: content_rule("rust"),
-			evolution: None,
-		},
-		rule_less("other", "Other"),
-	]);
-
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-
-	assert!(has_active_skill(&sid, "rust-helper"));
-	assert!(!has_active_skill(&sid, "other"));
-	assert!(fake.requests().is_empty(), "rules decided; no evaluation call");
-	cleanup_session(&sid);
-	clear_pool();
-}
-
-#[tokio::test]
-#[serial]
-async fn run_activation_evaluate_choice_respects_shadow_bindings() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
-		SKILL_QUESTION_ID,
-		"shadowed",
-		1.0,
-	))])
-	.await;
-	let _data = DataDirGuard::new();
-	install_tap_skill("shadowed", "developer", &[]);
-
-	let sid = "__skillauto_evaluate_shadow".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![PoolEntry {
-		name: "shadowed".to_string(),
-		description: "Generated".to_string(),
-		rules: Vec::new(),
-		evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
-			id: "__skillauto_evaluate_shadow_binding".to_string(),
-			shadow: true,
-			path: PathBuf::new(),
-		}),
-	}]);
-	let applied = evaluate_counter(Seam::Skills, "applied");
-
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-
-	assert!(session.session.messages.is_empty());
-	assert!(!has_active_skill(&sid, "shadowed"));
-	assert_eq!(fake.requests().len(), 1);
-	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied);
-	cleanup_session(&sid);
-	clear_pool();
-}
-
-#[tokio::test]
-#[serial]
-async fn run_activation_evaluate_roster_cap_and_seam_switch() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
-		SKILL_QUESTION_ID,
-		"skill-0",
-		1.0,
-	))])
-	.await;
-	let _data = DataDirGuard::new();
-
-	// 255 inactive entries: above the 254 cap, no call, one unavailable.
-	let sid = "__skillauto_evaluate_roster".to_string();
-	set_session_config(&sid, &evaluate_config());
-	set_pool((0..255).map(|i| rule_less(&format!("skill-{i}"), "x")).collect());
-	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-	assert!(fake.requests().is_empty());
-	assert_eq!(evaluate_counter(Seam::Skills, "unavailable"), unavailable + 1);
-	assert!(session.session.messages.is_empty());
-	cleanup_session(&sid);
-
-	// Seam off: a rule-less pool entry is unreachable and no call is made.
-	let sid = "__skillauto_evaluate_off".to_string();
-	let mut config = evaluate_config();
-	config.decision.skills = false;
-	set_session_config(&sid, &config);
-	set_pool(vec![rule_less("skill-0", "x")]);
-	let mut session = ChatSession::for_tests(Vec::new());
-	with_session_id(sid.clone(), async {
-		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
-	})
-	.await;
-	assert!(fake.requests().is_empty());
-	assert!(session.session.messages.is_empty());
-	assert!(!has_active_skill(&sid, "skill-0"));
-	cleanup_session(&sid);
-	clear_pool();
+	assert!(!live_observed);
+	assert!(watched_observed);
+	assert_eq!(
+		session.reported_matches().await,
+		serde_json::json!([
+			{"id": "live", "outcome": "applied"},
+			{"id": "watched", "outcome": "observed"}
+		])
+	);
 }

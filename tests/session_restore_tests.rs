@@ -63,6 +63,7 @@ mod session_restore_tests {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		}
 	}
 
@@ -114,12 +115,9 @@ mod session_restore_tests {
 			api_calls_at_last_compression: 0,
 			output_tokens_at_last_compression: 0,
 			consecutive_compressions: 0,
-			learning_stats: Default::default(),
-			verification_policy: Default::default(),
-			session_rules: Vec::new(),
-			authorization: Default::default(),
-			evidence: Default::default(),
 			interactive: false,
+			plugin_pins: Vec::new(),
+			plugin_status_fields: Vec::new(),
 		};
 
 		let summary = serde_json::json!({

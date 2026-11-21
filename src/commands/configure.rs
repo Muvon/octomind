@@ -32,8 +32,8 @@ use toml_edit::{Document, Item, Value};
 
 use super::login::{self, LoginArgs, LoginTarget};
 
-const MODEL_SLOTS: [&[&str]; 3] = [&["model"], &["supervisor", "model"], &["compression", "model"]];
-const SLOT_NAMES: [&str; 3] = ["main", "supervisor", "compression"];
+const MODEL_SLOTS: [&[&str]; 2] = [&["model"], &["compression", "model"]];
+const SLOT_NAMES: [&str; 2] = ["main", "compression"];
 const HUB_MODEL: &str = "octohub:auto";
 const MODELS_URL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const OTHER_MODEL_LABEL: &str = "other — type a model id that is not in this list";
@@ -71,9 +71,7 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	}
 	let source = match std::fs::read_to_string(config_path) {
 		Ok(source) => source,
-		Err(e) if e.kind() == io::ErrorKind::NotFound => {
-			include_str!("../../config-templates/default.toml").to_string()
-		}
+		Err(e) if e.kind() == io::ErrorKind::NotFound => octomind::config::plugins::new_config_text(),
 		Err(e) => return Err(e).with_context(|| format!("could not read {}", config_path.display())),
 	};
 	let mut document = Document::parse(source).context("could not parse config.toml")?;
@@ -101,7 +99,7 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 					no_browser: false,
 				})
 				.await?;
-				break Some([HUB_MODEL.to_string(), HUB_MODEL.to_string(), HUB_MODEL.to_string()]);
+				break Some([HUB_MODEL.to_string(), HUB_MODEL.to_string()]);
 			}
 			SetupChoice::Provider(i) => {
 				if let Some(models) = configure_provider(&providers[i].0).await? {
@@ -128,7 +126,7 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	}
 
 	block_open("configure", None);
-	let kw = key_width(["main", "supervisor", "compression", "provider", "key", "signed in"]);
+	let kw = key_width(["main", "compression", "provider", "key", "signed in"]);
 	for (path, slot) in MODEL_SLOTS.iter().zip(SLOT_NAMES) {
 		let mut item = document.as_item();
 		for key in *path {
@@ -170,7 +168,7 @@ pub async fn execute(config_path: &Path, first_run: bool) -> Result<()> {
 	Ok(())
 }
 
-fn set_model_names(document: &Document<String>, models: &[String; 3]) -> Result<String> {
+fn set_model_names(document: &Document<String>, models: &[String; 2]) -> Result<String> {
 	let mut replacements = Vec::new();
 	for (path, model) in MODEL_SLOTS.iter().zip(models) {
 		let mut item = document.as_item();
@@ -378,8 +376,8 @@ async fn public_models(url: &str) -> Result<Vec<String>> {
 		.collect())
 }
 
-/// Collect any missing keys, then the three models. `None` means the user went back to the provider list.
-async fn configure_provider(provider: &ProviderSetupInfo) -> Result<Option<[String; 3]>> {
+/// Collect any missing keys, then the two models. `None` means the user went back to the provider list.
+async fn configure_provider(provider: &ProviderSetupInfo) -> Result<Option<[String; 2]>> {
 	if provider.name == "chatgpt" {
 		login::execute(&LoginArgs {
 			target: LoginTarget::Chatgpt,
@@ -407,25 +405,19 @@ async fn configure_provider(provider: &ProviderSetupInfo) -> Result<Option<[Stri
 	Ok(models.map(|models| models.map(|model| format!("{}:{model}", provider.name))))
 }
 
-/// Main, supervisor and compression models; Esc on each list steps back to the previous one.
-fn choose_models(provider: &str, catalog: &[String]) -> Result<Option<[String; 3]>> {
-	'main: loop {
+/// Main and compression models; Esc on the compression list steps back to the main one.
+fn choose_models(provider: &str, catalog: &[String]) -> Result<Option<[String; 2]>> {
+	loop {
 		let Some(main) = choose_model(provider, "main", catalog, None)? else {
 			return Ok(None);
 		};
 		if confirm(&format!(
-			"Use {main} for the supervisor and compression too? They check work and shorten long \
-			 conversations; a cheaper model often fits. [Y/n] "
+			"Use {main} for compression too? It shortens long conversations; a cheaper model often fits. [Y/n] "
 		))? {
-			return Ok(Some([main.clone(), main.clone(), main]));
+			return Ok(Some([main.clone(), main]));
 		}
-		loop {
-			let Some(supervisor) = choose_model(provider, "supervisor", catalog, Some(&main))? else {
-				continue 'main;
-			};
-			if let Some(compression) = choose_model(provider, "compression", catalog, Some(&main))? {
-				return Ok(Some([main, supervisor, compression]));
-			}
+		if let Some(compression) = choose_model(provider, "compression", catalog, Some(&main))? {
+			return Ok(Some([main, compression]));
 		}
 	}
 }

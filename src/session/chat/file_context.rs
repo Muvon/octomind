@@ -52,58 +52,61 @@ pub fn generate_file_context_content(file_contexts: &[(String, usize, usize)]) -
 	render_files_as_xml(&file_contents)
 }
 
+/// octofs tools whose arguments name the files and lines a call read or changed.
+const FILE_TOOLS: [&str; 4] = ["view", "symbol", "text_edit", "batch_edit"];
+/// Arguments that split one call into parts, each with its own file or lines:
+/// `view` spans, `batch_edit` operations, `text_edit` replacements.
+const PART_KEYS: [&str; 3] = ["ranges", "operations", "edits"];
+
 /// Extract file references from tool call arguments
 /// Returns raw refs (path or path:start:end) that need merging
 pub fn extract_file_refs_from_args(tool_name: &str, args: &serde_json::Value, refs: &mut Vec<String>) {
-	let file_read_tools = ["view", "text_editor", "batch_edit", "extract_lines"];
-
-	if !file_read_tools.contains(&tool_name) {
+	if !FILE_TOOLS.contains(&tool_name) {
 		return;
 	}
 
-	let args_obj = match args.as_object() {
-		Some(obj) => obj,
-		None => return,
+	// `view` names several files in one call as `a.rs|b.rs`.
+	let call_paths: Vec<&str> = args
+		.get("path")
+		.and_then(|p| p.as_str())
+		.map(|p| p.split('|').map(str::trim).collect())
+		.unwrap_or_default();
+	let parts = PART_KEYS
+		.iter()
+		.find_map(|key| args.get(*key).and_then(|v| v.as_array()))
+		.filter(|parts| !parts.is_empty());
+
+	let Some(parts) = parts else {
+		refs.extend(call_paths.iter().map(|path| file_ref(path, args)));
+		return;
 	};
 
-	if let Some(path) = args_obj.get("path").and_then(|p| p.as_str()) {
-		let lines = args_obj.get("lines");
-		if let Some(lines) = lines {
-			if let Some(arr) = lines.as_array() {
-				if arr.len() >= 2 {
-					if let (Some(start), Some(end)) = (arr[0].as_u64(), arr[1].as_u64()) {
-						refs.push(format!("{}:{}:{}", path, start, end));
-						return;
-					}
-				}
-			}
-		}
-		refs.push(path.to_string());
-	}
-
-	if tool_name == "view" {
-		if let Some(paths) = args_obj.get("paths").and_then(|p| p.as_array()) {
-			for p in paths {
-				if let Some(path) = p.as_str() {
-					refs.push(path.to_string());
-				}
-			}
+	for part in parts {
+		match part.get("path").and_then(|p| p.as_str()) {
+			Some(path) => refs.push(file_ref(path, part)),
+			None => refs.extend(call_paths.iter().map(|path| file_ref(path, part))),
 		}
 	}
+}
 
-	if tool_name == "extract_lines" {
-		if let Some(from_path) = args_obj.get("from_path").and_then(|p| p.as_str()) {
-			let from_range = args_obj.get("from_range");
-			if let Some(arr) = from_range.and_then(|r| r.as_array()) {
-				if arr.len() >= 2 {
-					if let (Some(start), Some(end)) = (arr[0].as_u64(), arr[1].as_u64()) {
-						refs.push(format!("{}:{}:{}", from_path, start, end));
-						return;
-					}
-				}
-			}
-			refs.push(from_path.to_string());
-		}
+/// `path:start:end` when the arguments carry both line ends, else the whole file.
+fn file_ref(path: &str, args: &serde_json::Value) -> String {
+	match (
+		args.get("start").and_then(line_number),
+		args.get("end").and_then(line_number),
+	) {
+		(Some(start), Some(end)) => format!("{}:{}:{}", path, start, end),
+		_ => path.to_string(),
+	}
+}
+
+/// Line number of a `start`/`end` value: an integer or a line id (`12:a3`).
+/// A negative integer counts from the file end, so it names no fixed line.
+fn line_number(value: &serde_json::Value) -> Option<u64> {
+	match value {
+		serde_json::Value::Number(number) => number.as_u64(),
+		serde_json::Value::String(id) => id.split(':').next()?.parse().ok(),
+		_ => None,
 	}
 }
 

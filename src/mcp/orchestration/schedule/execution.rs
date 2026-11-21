@@ -101,7 +101,7 @@ pub(crate) fn dispatch(entry: ScheduleEntry, config: &Config) {
 	let (cancel, rx) = watch::channel(false);
 	let task_id = id.clone();
 	let task_session = session_id.clone();
-	let task = tokio::spawn(crate::supervisor::accounting::inherit(async move {
+	let task = tokio::spawn(async move {
 		crate::session::context::with_session_id(task_session.clone(), async move {
 			crate::mcp::workdir::with_working_directory(workdir, async move {
 				let (result, tap_run) = execute(&call, &config, rx).await;
@@ -131,7 +131,7 @@ pub(crate) fn dispatch(entry: ScheduleEntry, config: &Config) {
 			.await;
 		})
 		.await;
-	}));
+	});
 	jobs.insert(
 		id,
 		Execution {

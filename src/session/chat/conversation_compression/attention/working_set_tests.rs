@@ -51,6 +51,70 @@ fn selected(messages: &[Message], budget: usize) -> (Vec<EvidencePacket>, String
 	(packets, content)
 }
 
+fn script_call(tool: &str, arguments: Value, output: &str) -> crate::mcp::ScriptCall {
+	crate::mcp::ScriptCall {
+		id: format!("script:{tool}"),
+		server: "octofs".into(),
+		tool: tool.into(),
+		arguments,
+		output: output.into(),
+		error: false,
+		denied: false,
+	}
+}
+
+/// A file a script read and printed is a region of its `code` result, and the
+/// rest of what the script printed stays; a read it did not print is none.
+#[test]
+fn a_file_a_script_printed_is_a_region_of_its_result() {
+	let shown = "1:ab|fn a() {}\n2:ab|fn b() {}";
+	let mut messages = interaction(
+		"code",
+		serde_json::json!({"script": "print('checked'); return await octofs.view({path: 'src/a.rs'})"}),
+		&format!("checked\n{shown}"),
+		"script",
+	);
+	messages[1].script_calls = vec![
+		script_call("view", serde_json::json!({"path": "src/a.rs"}), shown),
+		script_call("view", serde_json::json!({"path": "src/b.rs"}), "1:ab|fn hidden() {}"),
+	];
+	let canonical = canonical_result(&messages[1], &messages);
+	assert!(canonical.starts_with("checked\n"), "{canonical}");
+	assert!(canonical.contains(&render_region(
+		"src/a.rs",
+		1,
+		&["fn a() {}".to_string(), "fn b() {}".to_string()]
+	)));
+	assert!(!canonical.contains("src/b.rs"), "{canonical}");
+	assert!(describe(&messages).contains("src/a.rs"));
+}
+
+/// An edit a script made invalidates the lines it changed, like an edit the
+/// model made directly; the `code` call itself does not wipe every region.
+#[test]
+fn an_edit_inside_a_script_invalidates_only_its_file() {
+	let mut messages = read("src/a.rs", 1, &["one", "two"], "read-a");
+	messages.extend(read("src/b.rs", 1, &["keep"], "read-b"));
+	let mut edit = interaction(
+		"code",
+		serde_json::json!({"script": "await octofs.text_edit({})"}),
+		"done",
+		"script",
+	);
+	edit[1].script_calls = vec![script_call(
+		"text_edit",
+		serde_json::json!({"path": "src/a.rs", "new_text": "changed"}),
+		"-1:ab..2:ab (2 lines)\n+1:cd|changed",
+	)];
+	messages.extend(edit);
+	let packets = build_packets("working-set-test", &messages, "test");
+	let artifacts = current_lines(&packets, &messages);
+	assert!(artifacts.get("src/b.rs").is_some_and(|lines| lines.contains_key(&1)));
+	assert!(artifacts
+		.get("src/a.rs")
+		.is_none_or(|lines| lines.values().all(|line| line.text != "one" && line.text != "two")));
+}
+
 #[test]
 fn non_region_closure_keeps_shell_evidence_and_checkpoint() {
 	let failure = "thread panicked at src/deploy.rs:42";
@@ -77,7 +141,7 @@ fn non_region_closure_keeps_shell_evidence_and_checkpoint() {
 fn keeps_current_regions_and_post_edit_text_with_shifted_coordinates() {
 	let mut messages = read("artifact", 1, &["first", "old", "tail"], "read");
 	messages.extend(interaction(
-		"text_editor",
+		"text_edit",
 		serde_json::json!({"path":"artifact","old_text":"old","new_text":"new\nadded"}),
 		"-2:ab (1 line)\n+2:ab|new\n+3:ab|added\nshift: lines after 2:ab +1",
 		"edit",
@@ -297,6 +361,19 @@ fn single_file_search_hits_keep_their_own_line_numbers() {
 		unretained_ranges(&packets, "./src/a.rs", 10, 41),
 		vec![(10, 11), (13, 39), (41, 41)]
 	);
+}
+
+#[test]
+fn several_file_view_keeps_each_section_under_its_own_file() {
+	let messages = interaction(
+		"view",
+		serde_json::json!({"path":"src/a.rs|src/b.rs"}),
+		"src/a.rs:\n1:ab|alpha\n\nsrc/b.rs:\n1:cd|beta",
+		"pair",
+	);
+	let (packets, _) = selected(&messages, 2000);
+	assert!(unretained_ranges(&packets, "src/a.rs", 1, 1).is_empty());
+	assert!(unretained_ranges(&packets, "src/b.rs", 1, 1).is_empty());
 }
 
 #[test]

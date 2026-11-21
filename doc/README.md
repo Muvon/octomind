@@ -82,8 +82,8 @@ runs.
 | [Commands & Agents](usage/10-commands-and-layers.md) | Custom commands, agents, and prompts |
 | [Structured Output](usage/11-structured-output.md) | JSON Schema output for automation |
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, and JetBrains setup |
-| [Learning](usage/13-learning.md) | Cross-session adaptive learning |
-| [Supervisor](usage/14-supervisor.md) | Completion checks, planning, condensation, and learning control |
+| [Learning](usage/13-learning.md) | Lessons from past sessions, provided by the Besydr plugin |
+| [Besydr plugin](usage/14-supervisor.md) | Completion checks, planning, and condensation, provided by the Besydr plugin |
 | [Skills](usage/15-skills.md) | Auto-activating skills and validators |
 | [Token Efficiency](usage/16-token-efficiency.md) | Context and capability efficiency |
 | [Local Tools](usage/17-local-tools.md) | Project-local scripts exposed as MCP tools |
@@ -97,6 +97,7 @@ runs.
 | [ACP Protocol](integration/02-acp-protocol.md) | Agent Client Protocol integration |
 | [Daemon & Hooks](integration/03-daemon-and-hooks.md) | Long-running sessions and webhook listeners |
 | [Tap System](integration/04-tap-system.md) | Agent, skill, capability, and workflow registries |
+| [Plugins](integration/05-plugins.md) | Reference for writing a plugin: events, effects, and configuration |
 
 ## Use Cases
 
@@ -113,7 +114,7 @@ runs.
 | [Custom Hooks](use-cases/09-custom-hooks.md) | Script-backed webhook integration |
 | [Safe Agent: Sandbox & Guardrails](use-cases/10-safe-agent-sandbox-and-guardrails.md) | Block destructive commands and verify the agent’s work |
 | [Predictable AI Spend](use-cases/11-keep-ai-spend-predictable.md) | Spending checkpoints, per-role models, and usage reports |
-| [Make “Done” Mean Done](use-cases/12-make-done-mean-done.md) | Supervisor gate, plan checks, and a test validator |
+| [Make “Done” Mean Done](use-cases/12-make-done-mean-done.md) | Completion check, plan checks, and a test validator |
 | [Project Conventions via Skills](use-cases/13-teach-project-conventions-with-skills.md) | Auto-activating skills and convention validators |
 | [Learn from Past Sessions](use-cases/14-learn-from-past-sessions.md) | Carry corrections into the next session |
 | [Project Scripts as Tools](use-cases/15-expose-project-scripts-as-tools.md) | Let the agent run your checks through local tools |
@@ -124,7 +125,6 @@ runs.
 | [Research with Dynamic Fan-out](use-cases/20-research-a-topic-with-dynamic-fanout.md) | Planner-driven parallel investigations |
 | [Implement–Review–Fix Loop](use-cases/21-implement-review-fix-loop.md) | Bounded graph workflow until review passes |
 | [Release Notes from Git History](use-cases/22-release-notes-from-git-history.md) | Plain drafts and schema-validated release data |
-| [Calibrated Checks](use-cases/23-calibrated-checks-with-evaluate.md) | Probability-scored done, scope, and vagueness checks in scripts, validators, and pipes |
 
 ## Development Guide
 

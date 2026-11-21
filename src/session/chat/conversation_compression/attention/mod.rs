@@ -22,6 +22,8 @@ pub(super) mod live;
 pub(super) mod working_set;
 
 use super::schema::{CompressionSummary, FoldedUnit};
+use crate::plugins::judgement;
+use crate::plugins::protocol::{JudgeItem, PinItem};
 use crate::session::chat::session::ChatSession;
 use crate::session::Message;
 use anyhow::{anyhow, Context, Result};
@@ -106,14 +108,18 @@ pub(crate) struct EvidencePacket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PinnedItem {
 	pub text: String,
+	/// The word printed before the text, in place of `constraint`.
+	pub label: Option<String>,
 	pub source: Option<String>,
 }
+
+/// The word printed before a pinned line that carries no label of its own.
+const CONSTRAINT_LABEL: &str = "constraint";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PinnedState {
 	pub task: PinnedItem,
 	pub constraints: Vec<PinnedItem>,
-	pub verification_policy: crate::supervisor::VerificationPolicy,
 	pub governance_hash: String,
 }
 
@@ -188,19 +194,14 @@ pub(crate) async fn build(
 		.map(|packet| packet.id.clone());
 
 	let constraints = collect_constraints(session, task_source.as_deref());
-	let verification_policy = session
-		.session
-		.info
-		.verification_policy
-		.effective(session.gate_task.as_ref().is_some_and(|task| task.forbids_verification));
-	let governance_hash = governance_hash(&session.session.messages, &task_text, &constraints, verification_policy);
+	let governance_hash = governance_hash(&session.session.messages, &task_text, &constraints);
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: task_text,
+			label: None,
 			source: task_source,
 		},
 		constraints,
-		verification_policy,
 		governance_hash,
 	};
 
@@ -383,7 +384,7 @@ fn classify_packet(messages: &[Message]) -> (PacketKind, Provenance) {
 			return (PacketKind::TaskContinuation, Provenance::ValidatedSummary);
 		}
 		if crate::session::is_real_user_task_message(first) {
-			let has_constraint = !crate::supervisor::recite::extract_constraints(&first.content).is_empty();
+			let has_constraint = !crate::session::recite::extract_constraints(&first.content).is_empty();
 			return (
 				if has_constraint {
 					PacketKind::UserConstraintOrCorrection
@@ -524,50 +525,52 @@ fn link_dependencies(packets: &mut [EvidencePacket]) {
 	}
 }
 
+/// Items of the plugins' pinned blocks, in the order the plugins pinned them.
+fn plugin_pinned_items(session: &ChatSession) -> Vec<PinItem> {
+	crate::plugins::pinned_blocks(&session.session.info.name)
+		.into_iter()
+		.flat_map(|block| block.items)
+		.collect()
+}
+
+/// What the fold must keep: the plugins' pinned items, or when they pinned
+/// none, the request lines the tail recitation carries.
 fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<PinnedItem> {
 	let literal_task = crate::session::latest_real_user_task_content(&session.session.messages).unwrap_or_default();
-	// Standing session rules pin first. The turn that set one may already be
-	// folded away, so they cite no packet rather than a false source.
-	let mut items: Vec<PinnedItem> = session
-		.session
-		.info
-		.session_rules
-		.iter()
-		.map(|rule| PinnedItem {
-			text: rule.clone(),
-			source: None,
-		})
-		.collect();
-	// The same request lines the tail recitation carries (see
-	// [`crate::supervisor::recite::recite_note`]): the turn's resolved checklist
-	// whole, else its verbatim directives — never a keyword subset of a checklisted
-	// request, which would steer the folded session toward the lines it kept.
-	let request_lines = match session.gate_task.as_ref().map(|task| &task.evidence_conditions) {
-		Some(conditions) if !conditions.is_empty() => conditions.clone(),
-		_ => crate::supervisor::recite::active_constraints(&session.session.messages, session.gate_task.as_ref()),
-	};
+	// Cite the current real-user packet only when it contains the exact
+	// constraint. A contextual resolver may legitimately carry a constraint
+	// from its bounded evidence, but attributing that text to the literal
+	// "continue" packet would be false provenance.
+	let source_of = |text: &str| task_source.filter(|_| literal_task.contains(text)).map(str::to_string);
+	let plugin_items = plugin_pinned_items(session);
+	if !plugin_items.is_empty() {
+		return plugin_items
+			.into_iter()
+			.map(|item| PinnedItem {
+				source: source_of(&item.text).filter(|_| item.from_request),
+				label: item.label,
+				text: item.text,
+			})
+			.collect();
+	}
+	// The verbatim directives of the request, never a keyword subset of it,
+	// which would steer the folded session toward the lines it kept.
+	let mut items: Vec<PinnedItem> = Vec::new();
+	let request_lines = crate::session::recite::active_constraints(&session.session.messages);
 	for text in request_lines {
 		if items.iter().any(|item| item.text == text) {
 			continue;
 		}
 		items.push(PinnedItem {
-			// Cite the current real-user packet only when it contains the exact
-			// constraint. A contextual resolver may legitimately carry a constraint
-			// from its bounded evidence, but attributing that text to the literal
-			// "continue" packet would be false provenance.
-			source: task_source.filter(|_| literal_task.contains(&text)).map(str::to_string),
+			source: source_of(&text),
+			label: None,
 			text,
 		});
 	}
 	items
 }
 
-fn governance_hash(
-	messages: &[Message],
-	task: &str,
-	constraints: &[PinnedItem],
-	verification_policy: crate::supervisor::VerificationPolicy,
-) -> String {
+fn governance_hash(messages: &[Message], task: &str, constraints: &[PinnedItem]) -> String {
 	let mut hasher = Sha256::new();
 	hasher.update(b"octomind-pact-governance-v1\0");
 	for message in messages.iter().filter(|message| message.role == "system") {
@@ -577,10 +580,10 @@ fn governance_hash(
 	hasher.update(task.as_bytes());
 	for constraint in constraints {
 		hasher.update([0]);
+		hasher.update(constraint.label.as_deref().unwrap_or_default().as_bytes());
+		hasher.update([0]);
 		hasher.update(constraint.text.as_bytes());
 	}
-	hasher.update([0]);
-	hasher.update(verification_policy.as_str().as_bytes());
 	short_hex(&hasher.finalize())
 }
 
@@ -592,7 +595,7 @@ fn ground_self_report(session: &ChatSession, messages: &[Message], packets: &[Ev
 }
 
 fn ground_handoff(
-	handoff: &crate::supervisor::detect::SelfReportHandoff,
+	handoff: &crate::session::self_report::SelfReportHandoff,
 	messages: &[Message],
 	packets: &[EvidencePacket],
 ) -> Vec<GroundedHint> {
@@ -1268,18 +1271,13 @@ impl PactContext {
 		self.metrics = metrics;
 	}
 
-	/// Ask the evaluation model, per summarize-lane tool packet, whether the
-	/// work after the fold still needs its content, and demote the dead ones
-	/// to `archive_reference` before the fold model reads the evidence set. A
+	/// Ask the plugins, per summarize-lane tool packet, whether the work after
+	/// the fold still needs its content, and demote the dead ones to
+	/// `archive_reference` before the fold model reads the evidence set. A
 	/// demoted packet has exactly the shape of one the allocator never
 	/// admitted, so rendering, citation rules, archive, and telemetry need no
-	/// special case. All or nothing: one unavailable window leaves every lane
-	/// as allocated.
-	pub(crate) async fn prune_dead_tool_packets(&mut self, config: &crate::config::Config) {
-		use crate::supervisor::evaluate::{self, Seam};
-		if !evaluate::enabled(config, Seam::Compression) {
-			return;
-		}
+	/// special case. With no answer every lane stays as allocated.
+	pub(crate) async fn prune_dead_tool_packets(&mut self, session_id: &str) {
 		let units: Vec<usize> = self
 			.packets
 			.iter()
@@ -1294,7 +1292,7 @@ impl PactContext {
 		if units.is_empty() {
 			return;
 		}
-		let mut header = serde_json::json!({
+		let mut kept = serde_json::json!({
 			"task": self.pinned.task.text,
 			"constraints": self
 				.pinned
@@ -1302,56 +1300,40 @@ impl PactContext {
 				.iter()
 				.map(|item| item.text.as_str())
 				.collect::<Vec<_>>(),
-			"units": [],
 		});
 		if !self.plan_focus.trim().is_empty() {
-			header["plan"] = serde_json::Value::String(self.plan_focus.trim().to_string());
+			kept["plan"] = serde_json::Value::String(self.plan_focus.trim().to_string());
 		}
-		let header_tokens = crate::session::estimate_tokens(&header.to_string());
-		let samples: Vec<(usize, serde_json::Value)> = units
+		let items: Vec<JudgeItem> = units
 			.iter()
 			.map(|index| {
 				let packet = &self.packets[*index];
-				(
-					*index,
-					serde_json::json!({
+				JudgeItem {
+					id: packet.id.clone(),
+					data: serde_json::json!({
 						"id": packet.id,
 						"tokens": packet.tokens,
-						"sample": crate::supervisor::condense::truncate_preserving_edges(
+						"sample": crate::session::token_counter::truncate_preserving_edges(
 							packet.prompt_content.trim(),
-							evaluate::COMPRESSION_SAMPLE_TOKENS,
+							judgement::COMPRESSION_SAMPLE_TOKENS,
 						),
 					}),
-				)
+				}
 			})
 			.collect();
-		let windows = evaluate::windows(samples, header_tokens, 1, |(_, unit)| {
-			crate::session::estimate_tokens(&unit.to_string())
-		});
-		let requests = windows
-			.iter()
-			.map(|window| {
-				let mut state = header.clone();
-				state["units"] = window.iter().map(|(_, unit)| unit.clone()).collect();
-				(
-					state,
-					evaluate::compression_questions(window.iter().map(|(index, _)| self.packets[*index].id.as_str())),
-				)
-			})
-			.collect();
-		let Some(answers) = evaluate::run_windows(config, Seam::Compression, requests).await else {
+		let Some(needed) = judgement::still_needed(session_id, kept, items).await else {
 			return;
 		};
-		let mut dead: Vec<usize> = Vec::new();
-		for (window, answers) in windows.iter().zip(answers) {
-			for (slot, (index, _)) in window.iter().enumerate() {
-				if evaluate::probability(&answers, &evaluate::compression_question_id(slot))
-					.is_some_and(|probability| probability < evaluate::COMPRESSION_KEEP_AT)
-				{
-					dead.push(*index);
-				}
-			}
-		}
+		// A unit the plugin left out stays as allocated.
+		let dead: Vec<usize> = units
+			.iter()
+			.copied()
+			.filter(|index| {
+				needed
+					.probability(&self.packets[*index].id)
+					.is_some_and(|probability| probability < judgement::COMPRESSION_KEEP_AT)
+			})
+			.collect();
 		// Dependencies point backwards, so deciding from the last unit to the
 		// first sees every dependent's final lane. A unit a selected packet
 		// still depends on stays: the validator rejects a live packet whose
@@ -1375,9 +1357,9 @@ impl PactContext {
 			demoted += 1;
 		}
 		if demoted > 0 {
-			crate::supervisor::stats::evaluate_applied(Seam::Compression, demoted);
+			needed.applied(session_id, demoted);
 			crate::log_debug!(
-				"evaluate compression: demoted {} of {} summarize packets ({} tokens) to archive_reference",
+				"compression judgement: demoted {} of {} summarize packets ({} tokens) to archive_reference",
 				demoted,
 				units.len(),
 				removed_tokens
@@ -1567,24 +1549,16 @@ impl PactContext {
 		let newer_turn = messages[fold_point..]
 			.iter()
 			.any(crate::session::is_real_user_task_message);
-		let (scope, constraints, verification_policy) = if newer_turn {
-			(prefix, self.pinned.constraints.clone(), self.pinned.verification_policy)
+		let (scope, constraints) = if newer_turn {
+			(prefix, self.pinned.constraints.clone())
 		} else {
-			(
-				messages.as_slice(),
-				collect_constraints(session, None),
-				session
-					.session
-					.info
-					.verification_policy
-					.effective(session.gate_task.as_ref().is_some_and(|task| task.forbids_verification)),
-			)
+			(messages.as_slice(), collect_constraints(session, None))
 		};
 		let task = crate::session::latest_real_user_task_content(scope)
 			.unwrap_or_default()
 			.trim()
 			.to_string();
-		let actual = governance_hash(scope, &task, &constraints, verification_policy);
+		let actual = governance_hash(scope, &task, &constraints);
 		if actual != self.pinned.governance_hash {
 			return Err(anyhow!(
 				"PACT governance changed before commit (expected {}, got {})",
@@ -2173,21 +2147,13 @@ fn render_pinned_lines(pinned: &PinnedState, task_carried: bool) -> String {
 	};
 	out.push_str(&format!("task{source}: {task}\n"));
 	for constraint in &pinned.constraints {
+		let label = constraint.label.as_deref().unwrap_or(CONSTRAINT_LABEL);
 		let source = constraint
 			.source
 			.as_deref()
 			.map(|id| format!(" (source: {id})"))
 			.unwrap_or_default();
-		out.push_str(&format!("constraint{source}: {}\n", constraint.text));
-	}
-	match pinned.verification_policy {
-		crate::supervisor::VerificationPolicy::Forbidden => out.push_str(
-			"verification_policy: forbidden for this turn; do not execute verification\n",
-		),
-		crate::supervisor::VerificationPolicy::Allowed => out.push_str(
-			"verification_policy: allowed; any prior no-verification rule is revoked; verification is permitted, not required\n",
-		),
-		crate::supervisor::VerificationPolicy::Unspecified => {}
+		out.push_str(&format!("{label}{source}: {}\n", constraint.text));
 	}
 	out.push_str(&format!("governance_hash: {}\n", pinned.governance_hash));
 	out

@@ -62,28 +62,56 @@ fn test_extract_file_refs_from_args() {
 	extract_file_refs_from_args("shell", &json!({"path": "a.rs"}), &mut out);
 	assert!(out.is_empty());
 
-	// path + lines → ranged ref
-	extract_file_refs_from_args("view", &json!({"path": "a.rs", "lines": [10, 20]}), &mut out);
+	// view with both line ends → ranged ref; a line id counts by its number
+	extract_file_refs_from_args("view", &json!({"path": "a.rs", "start": 10, "end": "20:a3"}), &mut out);
 	assert_eq!(out, vec!["a.rs:10:20"]);
 
-	// path without lines → whole file
+	// view without both ends, or with an end counted from the file end → whole file
 	out.clear();
-	extract_file_refs_from_args("text_editor", &json!({"path": "t.rs"}), &mut out);
-	assert_eq!(out, vec!["t.rs"]);
+	extract_file_refs_from_args("view", &json!({"path": "t.rs"}), &mut out);
+	extract_file_refs_from_args("view", &json!({"path": "u.rs", "start": 5, "end": -1}), &mut out);
+	assert_eq!(out, vec!["t.rs", "u.rs"]);
 
-	// view with a paths array
-	out.clear();
-	extract_file_refs_from_args("view", &json!({"paths": ["x.rs", "y.rs"]}), &mut out);
-	assert_eq!(out, vec!["x.rs", "y.rs"]);
-
-	// extract_lines with from_path + from_range
+	// view with several spans of one file
 	out.clear();
 	extract_file_refs_from_args(
-		"extract_lines",
-		&json!({"from_path": "s.rs", "from_range": [1, 4]}),
+		"view",
+		&json!({"path": "x.rs", "ranges": [{"start": 1, "end": 4}, {"start": "80:3f", "end": 95}]}),
 		&mut out,
 	);
-	assert_eq!(out, vec!["s.rs:1:4"]);
+	assert_eq!(out, vec!["x.rs:1:4", "x.rs:80:95"]);
+
+	// view of several files in one call
+	out.clear();
+	extract_file_refs_from_args("view", &json!({"path": "p.rs | q.rs"}), &mut out);
+	assert_eq!(out, vec!["p.rs", "q.rs"]);
+
+	// batch_edit: an operation names its own file or works on the call's
+	out.clear();
+	extract_file_refs_from_args(
+		"batch_edit",
+		&json!({"path": "e.rs", "operations": [
+			{"operation": "view", "path": "s.rs", "start": 1, "end": 4},
+			{"operation": "insert", "start": "7:0c", "content": "x"}
+		]}),
+		&mut out,
+	);
+	assert_eq!(out, vec!["s.rs:1:4", "e.rs"]);
+
+	// text_edit: the call's file, or one file per replacement
+	out.clear();
+	extract_file_refs_from_args("text_edit", &json!({"path": "c.rs", "command": "create"}), &mut out);
+	extract_file_refs_from_args(
+		"text_edit",
+		&json!({"edits": [{"path": "m.rs", "old_text": "a", "new_text": "b"}]}),
+		&mut out,
+	);
+	assert_eq!(out, vec!["c.rs", "m.rs"]);
+
+	// symbol: the file it read definitions from
+	out.clear();
+	extract_file_refs_from_args("symbol", &json!({"name": "load", "path": "src/config.rs"}), &mut out);
+	assert_eq!(out, vec!["src/config.rs"]);
 }
 
 #[test]

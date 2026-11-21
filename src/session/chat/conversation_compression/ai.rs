@@ -104,6 +104,7 @@ pub(super) async fn run_decision_call(
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 		crate::session::Message {
 			role: "user".to_string(),
@@ -119,16 +120,16 @@ pub(super) async fn run_decision_call(
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 	];
 
 	let mode_label = if schema.is_some() { "json" } else { "xml" };
 	log_debug!(
-		"Using compression decision model '{}' mode={} (max_tokens={}, temp={})",
+		"Using compression decision model '{}' mode={} (max_tokens={})",
 		decision_config.model,
 		mode_label,
-		decision_config.max_tokens,
-		decision_config.temperature
+		decision_config.max_tokens
 	);
 
 	let response = crate::session::chat_completion_with_validation(decision_params(

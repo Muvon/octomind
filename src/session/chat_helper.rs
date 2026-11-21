@@ -55,6 +55,19 @@ impl MediaKind {
 	}
 }
 
+/// Names, with the leading slash, of the commands plugins provide for the
+/// session in scope. Empty outside a session scope; the terminal reads its line
+/// on a blocking thread, which has a scope only when the caller sets one.
+pub(crate) fn plugin_command_names() -> Vec<String> {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return Vec::new();
+	};
+	crate::plugins::commands(&session_id)
+		.into_iter()
+		.map(|command| format!("/{}", command.spec.name))
+		.collect()
+}
+
 pub(crate) struct CommandCompleter<'a> {
 	commands: Vec<String>,
 	config: &'a crate::config::Config,
@@ -63,7 +76,8 @@ pub(crate) struct CommandCompleter<'a> {
 
 impl<'a> CommandCompleter<'a> {
 	pub(crate) fn new(config: &'a crate::config::Config, role: &'a str) -> Self {
-		let commands = crate::session::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
+		let mut commands: Vec<String> = crate::session::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
+		commands.extend(plugin_command_names());
 		Self { commands, config, role }
 	}
 
@@ -105,26 +119,12 @@ impl<'a> CommandCompleter<'a> {
 		vec!["list", "remove", "add", "edit", "help"]
 	}
 
-	/// Get available /learning subcommands — the primary names the command documents
-	fn get_learning_subcommands() -> Vec<&'static str> {
-		vec!["list", "show", "delete", "clear", "evolution"]
-	}
-
 	/// Everything /schedule accepts, aliases included: highlighting must not mark
 	/// a valid alias red. Kept in sync with `schedule::handle_schedule`.
 	fn accepted_schedule_subcommands() -> Vec<&'static str> {
 		Self::get_schedule_subcommands()
 			.into_iter()
 			.chain(["rm", "del", "delete", "?"])
-			.collect()
-	}
-
-	/// Everything /learning accepts, aliases included. Kept in sync with
-	/// `learning::handle_learning`.
-	fn accepted_learning_subcommands() -> Vec<&'static str> {
-		Self::get_learning_subcommands()
-			.into_iter()
-			.chain(["rm", "remove", "get"])
 			.collect()
 	}
 
@@ -138,7 +138,6 @@ impl<'a> CommandCompleter<'a> {
 			"/loglevel" => Self::get_log_levels(),
 			"/status" => Self::get_status_filters(),
 			"/schedule" => Self::accepted_schedule_subcommands(),
-			"/learning" => Self::accepted_learning_subcommands(),
 			"/copy" => CopyScope::ALL.iter().map(|scope| scope.name()).collect(),
 			// `ReasoningEffortConfig::parse` also accepts these spellings.
 			"/effort" => ReasoningEffortConfig::ALL
@@ -561,22 +560,6 @@ impl<'a> CommandCompleter<'a> {
 				.collect();
 
 			(prefix_len, candidates)
-		} else if line.starts_with("/learning ") {
-			// Handle /learning command with subcommand completion
-			let prefix_len = "/learning ".len();
-
-			let subcommand_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
-
-			let candidates: Vec<Pair> = Self::get_learning_subcommands()
-				.iter()
-				.filter(|subcommand| subcommand.starts_with(subcommand_part))
-				.map(|subcommand| Pair {
-					display: subcommand.to_string(),
-					replacement: subcommand.to_string(),
-				})
-				.collect();
-
-			(prefix_len, candidates)
 		} else if line.starts_with("/workflow ") {
 			// Handle /workflow command with tap-workflow name completion
 			let prefix_len = "/workflow ".len();
@@ -843,11 +826,6 @@ impl<'a> CommandCompleter<'a> {
 			return Some(format!(" [{}]", Self::get_schedule_subcommands().join("|")));
 		}
 
-		// Special hint for /learning command
-		if line == "/learning" {
-			return Some(format!(" [{}]", Self::get_learning_subcommands().join("|")));
-		}
-
 		// Special hint for /workflow command
 		if line == "/workflow" {
 			return Some(" <name> [input...]".to_string());
@@ -965,13 +943,6 @@ impl<'a> CommandCompleter<'a> {
 		if let Some(rest) = line.strip_prefix("/schedule ") {
 			if rest.is_empty() {
 				return Some(Self::get_schedule_subcommands().join("|"));
-			}
-			return None; // Let the completer handle this
-		}
-
-		if let Some(rest) = line.strip_prefix("/learning ") {
-			if rest.is_empty() {
-				return Some(Self::get_learning_subcommands().join("|"));
 			}
 			return None; // Let the completer handle this
 		}

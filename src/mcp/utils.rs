@@ -22,8 +22,7 @@ use super::McpToolResult;
 pub fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"core" => "system",
-		"text_editor" | "batch_edit" | "extract_lines" => "filesystem",
-		"shell" | "ast_grep" | "workdir" | "view" | "list_files" => "filesystem",
+		"view" | "symbol" | "text_edit" | "batch_edit" | "shell" => "filesystem",
 		"plan" => "core",
 		name if name.contains("file") || name.contains("editor") => "core",
 		name if name.contains("search") || name.contains("find") => "search",

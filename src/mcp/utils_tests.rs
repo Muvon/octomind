@@ -19,7 +19,7 @@ fn test_guess_tool_category() {
 	// Exact names
 	assert_eq!(guess_tool_category("core"), "system");
 	assert_eq!(guess_tool_category("shell"), "filesystem");
-	assert_eq!(guess_tool_category("text_editor"), "filesystem");
+	assert_eq!(guess_tool_category("text_edit"), "filesystem");
 	assert_eq!(guess_tool_category("plan"), "core");
 	// Contains-based rules
 	assert_eq!(guess_tool_category("web_fetch"), "web");
@@ -78,6 +78,7 @@ fn tool_response_images_survive_text_truncation() {
 	let result = McpToolResult {
 		tool_name: "screenshot".into(),
 		tool_id: "call-image".into(),
+		script_calls: Vec::new(),
 		result: serde_json::from_value(serde_json::json!({"content": [
 			{"type": "text", "text": "long output\n".repeat(500)},
 			{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}

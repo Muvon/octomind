@@ -621,7 +621,7 @@ async fn info_throughput_counts_reasoning_tokens() {
 	session.session.info.turn_timing.completed = 2;
 	session.session.info.turn_timing.total_time_ms = 90_000;
 	session.session.info.turn_timing.last_time_ms = 40_000;
-	session.session.info.supervisor_accounting.turn_time = crate::supervisor::accounting::TurnTime {
+	session.session.info.supervisor_accounting.turn_time = crate::session::accounting::TurnTime {
 		completed: 2,
 		total_time_ms: 90_000,
 		main_api_time_ms: 63_400,
@@ -667,12 +667,9 @@ async fn info_throughput_counts_reasoning_tokens() {
 
 #[tokio::test]
 async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
-	crate::supervisor::accounting::isolated(async {
+	crate::session::accounting::isolated(async {
+		use crate::session::accounting::{self, record_call, CallKind};
 		use crate::session::context::{cleanup_session, current_session_id, init_session_services, with_session_id};
-		use crate::supervisor::{
-			accounting,
-			stats::{record_call, CallKind},
-		};
 		let dir = tempfile::tempdir().unwrap();
 		let mut old = ChatSession::for_tests(Vec::new());
 		let old_id = uuid::Uuid::new_v4().to_string();

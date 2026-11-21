@@ -33,6 +33,7 @@ fn msg(role: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -51,6 +52,7 @@ fn assistant_with_tool_calls(content: &str, tool_calls: serde_json::Value) -> Me
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -69,6 +71,7 @@ fn tool_response(call_id: &str, name: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -150,70 +153,6 @@ fn write_session(lines: &[&str]) -> NamedTempFile {
 }
 
 // ---- tests ----
-
-#[test]
-fn authorizer_user_evidence_and_parent_boundary_survive_actual_session_load() {
-	let mut info = SessionInfo {
-		name: "authorizer-resume".into(),
-		..Default::default()
-	};
-	info.authorization.initialized = true;
-	info.authorization
-		.users
-		.push(crate::supervisor::authorizer::UserInstruction {
-			id: "u1".into(),
-			text: "Inspect only; do not modify files".into(),
-			..Default::default()
-		});
-	info.authorization.parent = Some(Box::new(crate::supervisor::authorizer::AuthorizationContext {
-		users: info.authorization.users.clone(),
-		..Default::default()
-	}));
-	info.authorization.blocked = 3;
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
-	let user = serde_json::to_string(&Message {
-		role: "user".into(),
-		content: "continue".into(),
-		..Default::default()
-	})
-	.unwrap();
-	let file = write_session(&[&summary, &user]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert_eq!(restored.info.authorization.blocked, 3);
-	assert_eq!(
-		restored.info.authorization.users[0].text,
-		"Inspect only; do not modify files"
-	);
-	assert!(restored.info.authorization.parent.is_some());
-}
-
-#[test]
-fn standing_session_rules_survive_session_load() {
-	let info = SessionInfo {
-		name: "session-rules-resume".into(),
-		session_rules: vec!["never push to main".into()],
-		..Default::default()
-	};
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
-	let file = write_session(&[&summary]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert_eq!(restored.info.session_rules, vec!["never push to main"]);
-
-	// A session saved before the field existed loads with no rules.
-	let mut legacy_info = serde_json::to_value(SessionInfo {
-		name: "session-rules-legacy".into(),
-		..Default::default()
-	})
-	.unwrap();
-	legacy_info
-		.as_object_mut()
-		.expect("session info is an object")
-		.remove("session_rules");
-	let legacy = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":legacy_info}).to_string();
-	let file = write_session(&[&legacy]);
-	let restored = load_session(&file.path().to_path_buf()).unwrap();
-	assert!(restored.info.session_rules.is_empty());
-}
 
 #[test]
 fn round_trip_without_compression_preserves_messages() {
@@ -495,30 +434,33 @@ fn legacy_summary_without_evidence_field_loads() {
 
 	assert_eq!(session.info.name, "legacy-no-evidence");
 	assert_eq!(session.info.input_tokens, 5);
-	assert!(session.info.evidence.render().is_empty());
 }
 
 #[test]
-fn summary_with_evidence_restores_ledger_on_load() {
-	// The still-open turn's recorded actions must survive a restart: a
-	// SUMMARY carrying ledger state restores it instead of default().
-	let mut info = SessionInfo {
-		name: "evidence-restore".to_string(),
-		created_at: 1_700_000_000,
-		model: "test/model".to_string(),
-		..Default::default()
-	};
-	info.evidence.record(
-		"knowledge",
-		&json!({"source":"https://docs.x.ai/developers/pricing"}),
-		false,
-		false,
-		1024,
-	);
+fn summary_with_fields_of_the_removed_supervisor_state_still_loads() {
+	// Session files written before the supervisor was removed carry its state
+	// in `session_info`; the loader must skip it and keep the rest.
 	let s = serde_json::to_string(&json!({
 		"type": "SUMMARY",
 		"timestamp": 1_700_000_000u64,
-		"session_info": info,
+		"session_info": {
+			"name": "old-supervisor-state",
+			"created_at": 1_700_000_000u64,
+			"model": "test/model",
+			"role": "",
+			"input_tokens": 5u64,
+			"output_tokens": 7u64,
+			"cache_read_tokens": 0u64,
+			"cache_write_tokens": 0u64,
+			"total_cost": 0.0,
+			"duration_seconds": 0u64,
+			"layer_stats": [],
+			"learning_stats": {"packs": 1},
+			"verification_policy": "forbidden",
+			"session_rules": ["never push to main"],
+			"authorization": {"blocked": 3},
+			"evidence": {"entries": []},
+		},
 	}))
 	.unwrap();
 	let m = serde_json::to_string(&msg("user", "hi")).unwrap();
@@ -526,8 +468,8 @@ fn summary_with_evidence_restores_ledger_on_load() {
 	let file = write_session(&[&s, &m]);
 	let session = load_session(&file.path().to_path_buf()).expect("load");
 
-	assert_eq!(session.info.evidence.render(), info.evidence.render());
-	assert!(session.info.evidence.render().contains("docs.x.ai"));
+	assert_eq!(session.info.name, "old-supervisor-state");
+	assert_eq!(session.info.input_tokens, 5);
 }
 
 #[test]
@@ -632,32 +574,6 @@ fn stats_checkpoint_restores_all_token_categories_after_summary() {
 }
 
 #[test]
-fn historical_evidence_restores_through_session_load() {
-	use crate::supervisor::resolve::ResolutionScope::FollowUp;
-	let mut info = SessionInfo::default();
-	let seq = info
-		.evidence
-		.record("view", &json!({"path":"providers"}), false, false, 32);
-	info.evidence.record_ground(seq, "anthropic.rs\nopenai.rs");
-	info.evidence.begin_turn("audit every provider");
-	let summary = serde_json::to_string(&json!({
-		"type": "SUMMARY",
-		"timestamp": 1_700_000_000u64,
-		"session_info": info,
-	}))
-	.unwrap();
-	let user = serde_json::to_string(&msg("user", "so we are good?")).unwrap();
-	let file = write_session(&[&summary, &user]);
-	let restored = load_session(&file.path().to_path_buf()).expect("load");
-	assert!(restored.info.evidence.render().is_empty());
-	assert!(restored.info.evidence.grounds().is_empty());
-	assert_eq!(
-		restored.info.evidence.verification_evidence(FollowUp),
-		info.evidence.verification_evidence(FollowUp)
-	);
-}
-
-#[test]
 fn same_timestamp_checkpoints_restore_main_cost_without_double_counting() {
 	let file = NamedTempFile::new().unwrap();
 	let path = file.path().to_path_buf();
@@ -754,4 +670,281 @@ fn unknown_main_cost_checkpoint_cannot_be_replaced_with_a_partial_known_cost() {
 	)
 	.unwrap();
 	assert!(load_session(&path).unwrap().info.main_cost.is_none());
+}
+
+#[test]
+fn entry_kind_reads_the_type_without_regard_to_key_order_or_other_fields() {
+	assert_eq!(entry_kind(r#"{"type":"STATS","total_cost":1.5}"#), Some("STATS"));
+	assert_eq!(
+		entry_kind(r#"{"timestamp":5,"session_info":{"type":"nested"},"type":"SUMMARY"}"#),
+		Some("SUMMARY")
+	);
+	let message = serde_json::to_string(&msg("user", "hi")).unwrap();
+	assert_eq!(entry_kind(&message), None, "a message line has no type");
+	assert_eq!(entry_kind("SUMMARY: {\"name\":\"legacy\"}"), None);
+	assert_eq!(entry_kind("[1,2]"), None);
+}
+
+#[test]
+fn snapshot_entry_with_type_not_first_still_loads() {
+	let info = SessionInfo {
+		name: "type-last".into(),
+		total_cost: 2.0,
+		..Default::default()
+	};
+	let summary = json!({"timestamp": 100, "session_info": info, "type": "SUMMARY"}).to_string();
+	let stats = json!({"total_cost": 3.0, "timestamp": 101, "type": "STATS"}).to_string();
+	let file = write_session(&[&summary, &stats]);
+	let loaded = load_session(&file.path().to_path_buf()).expect("load");
+	assert_eq!(loaded.info.name, "type-last");
+	assert_eq!(loaded.info.total_cost, 3.0);
+}
+
+#[test]
+fn one_load_yields_the_runtime_state_the_log_replay_computes() {
+	let info = SessionInfo {
+		name: "one-pass".into(),
+		model: "ollama:saved".into(),
+		role: "developer:general".into(),
+		..Default::default()
+	};
+	let lines = [
+		json!({"type": "SUMMARY", "timestamp": 100, "session_info": info}).to_string(),
+		json!({"type": "COMMAND", "command": "/model ollama:latest"}).to_string(),
+		json!({"type": "COMMAND", "command": "/role tester:general"}).to_string(),
+		json!({"type": "RESTORATION_POINT", "timestamp": 101}).to_string(),
+		json!({"type": "KNOWLEDGE_ENTRY", "content": "kept"}).to_string(),
+		json!({"type": "COMMAND", "command": "/model ollama:after"}).to_string(),
+		json!({"type": "COMMAND", "command": "/effort high"}).to_string(),
+	];
+	let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+	let path = file.path().to_path_buf();
+
+	let loaded = load_session_with_runtime_state(&path).expect("load");
+	let replayed = extract_runtime_state_from_log(&path).expect("replay");
+
+	assert_eq!(loaded.runtime_state.model, replayed.model);
+	assert_eq!(loaded.runtime_state.role, replayed.role);
+	assert_eq!(loaded.runtime_state.reasoning_effort, replayed.reasoning_effort);
+	assert_eq!(loaded.runtime_state.critical_knowledge, replayed.critical_knowledge);
+	assert_eq!(replayed.model.as_deref(), Some("ollama:after"));
+	assert_eq!(replayed.role, None, "role predates the restoration point");
+	assert_eq!(replayed.critical_knowledge, vec!["kept".to_string()]);
+	assert_eq!(loaded.session.info.model, "ollama:after");
+}
+
+#[test]
+fn snapshot_without_main_cost_leaves_a_known_main_cost_while_null_clears_it() {
+	let mut info = serde_json::to_value(SessionInfo {
+		name: "main-cost-presence".into(),
+		main_cost: Some(0.5),
+		..Default::default()
+	})
+	.unwrap();
+	let known = json!({"type": "SUMMARY", "timestamp": 100, "session_info": info.clone()}).to_string();
+	info.as_object_mut().unwrap().remove("main_cost");
+	let absent = json!({"type": "SUMMARY", "timestamp": 101, "session_info": info}).to_string();
+	let absent_stats = json!({"type": "STATS", "timestamp": 102, "total_cost": 0.1}).to_string();
+	let file = write_session(&[&known, &absent, &absent_stats]);
+	assert_eq!(
+		load_session(&file.path().to_path_buf()).unwrap().info.main_cost,
+		Some(0.5)
+	);
+
+	let null_stats = json!({"type": "STATS", "timestamp": 102, "main_cost": null}).to_string();
+	let file = write_session(&[&known, &null_stats]);
+	assert!(load_session(&file.path().to_path_buf())
+		.unwrap()
+		.info
+		.main_cost
+		.is_none());
+}
+
+fn snapshot_run(id: &str, status: crate::session::tap_runs::TapJobStatus) -> crate::session::tap_runs::TapJobInfo {
+	crate::session::tap_runs::TapJobInfo {
+		id: id.to_string(),
+		role: "developer:general".to_string(),
+		workdir: "/tmp".to_string(),
+		started_at: std::time::UNIX_EPOCH,
+		status,
+		error: None,
+		live: crate::session::tap_runs::TapLiveState {
+			last_action: None,
+			usage: None,
+		},
+	}
+}
+
+#[test]
+fn full_and_changed_only_snapshots_fold_into_the_whole_run_history() {
+	use crate::session::tap_runs::TapJobStatus::{Done, Running};
+	// Binaries up to 0.72 wrote every run into every snapshot; later ones write only
+	// the runs that changed. One log holds both, and a restoration point between
+	// them must not drop the runs that only earlier snapshots name.
+	let info = |runs| SessionInfo {
+		name: "mixed-snapshots".into(),
+		agent_runs: runs,
+		..Default::default()
+	};
+	let lines = [
+		json!({"type": "SUMMARY", "timestamp": 100, "session_info": info(vec![snapshot_run("a", Done), snapshot_run("b", Running)])})
+			.to_string(),
+		json!({"type": "STATS", "timestamp": 101, "agent_runs": [snapshot_run("a", Done), snapshot_run("b", Running), snapshot_run("c", Running)]})
+			.to_string(),
+		json!({"type": "RESTORATION_POINT", "timestamp": 102}).to_string(),
+		json!({"type": "STATS", "timestamp": 103, "agent_runs": [snapshot_run("b", Done)]}).to_string(),
+		json!({"type": "SUMMARY", "timestamp": 104, "session_info": info(vec![snapshot_run("d", Running)])}).to_string(),
+		json!({"type": "SUMMARY", "timestamp": 105, "session_info": info(Vec::new())}).to_string(),
+	];
+	let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+
+	let runs = load_session(&file.path().to_path_buf()).unwrap().info.agent_runs;
+
+	let seen: Vec<(&str, crate::session::tap_runs::TapJobStatus)> =
+		runs.iter().map(|run| (run.id.as_str(), run.status)).collect();
+	assert_eq!(seen, vec![("a", Done), ("b", Done), ("c", Running), ("d", Running)]);
+}
+
+#[test]
+fn stats_with_a_total_cost_that_is_not_a_number_fails_the_load() {
+	let info = SessionInfo {
+		name: "bad-total-cost".into(),
+		..Default::default()
+	};
+	let summary = json!({"type": "SUMMARY", "timestamp": 100, "session_info": info}).to_string();
+	let stats = json!({"type": "STATS", "timestamp": 101, "total_cost": "lots"}).to_string();
+	let file = write_session(&[&summary, &stats]);
+
+	assert!(load_session(&file.path().to_path_buf()).is_err());
+}
+
+// ---- plan and schedule snapshots read by the load ----
+
+fn plan_snapshot_line(title: &str) -> String {
+	let plan = crate::mcp::core::plan::storage::ExecutionPlan {
+		title: title.to_string(),
+		tasks: Vec::new(),
+		current_task_index: 0,
+		created_at: chrono::Utc::now(),
+		status: crate::mcp::core::plan::storage::PlanStatus::Active,
+	};
+	json!({"type": "PLAN_SNAPSHOT", "plan": plan}).to_string()
+}
+
+fn schedule_snapshot_line(descriptions: &[&str]) -> String {
+	use crate::mcp::orchestration::schedule::storage::{ScheduleAction, ScheduleEntry};
+	let entries: Vec<ScheduleEntry> = descriptions
+		.iter()
+		.map(|description| {
+			ScheduleEntry::new(
+				description.to_string(),
+				ScheduleAction::Message {
+					message: "ping".to_string(),
+				},
+				chrono::Local::now() + chrono::Duration::seconds(60),
+				None,
+			)
+		})
+		.collect();
+	json!({"type": "SCHEDULE_SNAPSHOT", "entries": entries}).to_string()
+}
+
+/// Load a log made of a SUMMARY followed by `lines`.
+fn load_with_lines(lines: &[String]) -> LoadedSession {
+	let mut all = vec![summary_line("snapshot-session", 100)];
+	all.extend_from_slice(lines);
+	let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+	let file = write_session(&refs);
+	load_session_with_runtime_state(&file.path().to_path_buf()).expect("load")
+}
+
+fn schedule_descriptions(loaded: &LoadedSession) -> Vec<String> {
+	loaded
+		.schedule
+		.as_ref()
+		.expect("schedule restored")
+		.iter()
+		.map(|entry| entry.description.clone())
+		.collect()
+}
+
+#[test]
+fn the_load_returns_the_latest_plan_and_skips_a_malformed_snapshot() {
+	let loaded = load_with_lines(&[
+		plan_snapshot_line("older"),
+		r#"{"type":"PLAN_SNAPSHOT","plan":{"title":123}}"#.to_string(),
+		plan_snapshot_line("newest"),
+	]);
+
+	assert_eq!(loaded.plan.expect("plan restored").title, "newest");
+}
+
+#[test]
+fn a_plan_cleared_marker_leaves_the_load_without_a_plan_until_the_next_snapshot() {
+	let cleared = load_with_lines(&[plan_snapshot_line("gone"), r#"{"type":"PLAN_CLEARED"}"#.to_string()]);
+	assert!(cleared.plan.is_none());
+
+	let replanned = load_with_lines(&[
+		plan_snapshot_line("gone"),
+		r#"{"type":"PLAN_CLEARED"}"#.to_string(),
+		plan_snapshot_line("again"),
+	]);
+	assert_eq!(replanned.plan.expect("plan restored").title, "again");
+}
+
+#[test]
+fn a_null_or_absent_plan_changes_nothing() {
+	let loaded = load_with_lines(&[
+		plan_snapshot_line("kept"),
+		r#"{"type":"PLAN_SNAPSHOT","plan":null}"#.to_string(),
+		r#"{"type":"PLAN_SNAPSHOT"}"#.to_string(),
+		r#"{"type":"OTHER","plan":null}"#.to_string(),
+		"{not json".to_string(),
+	]);
+	assert_eq!(loaded.plan.expect("plan restored").title, "kept");
+
+	let only_null = load_with_lines(&[r#"{"type":"PLAN_SNAPSHOT","plan":null}"#.to_string()]);
+	assert!(only_null.plan.is_none());
+}
+
+#[test]
+fn the_load_returns_the_latest_schedule_and_skips_malformed_snapshots() {
+	let loaded = load_with_lines(&[
+		schedule_snapshot_line(&["older", "also older"]),
+		"this line is not json at all".to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT"}"#.to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT","entries":null}"#.to_string(),
+		r#"{"type":"SCHEDULE_SNAPSHOT","entries":"not-an-array"}"#.to_string(),
+		schedule_snapshot_line(&["latest"]),
+	]);
+
+	assert_eq!(schedule_descriptions(&loaded), vec!["latest".to_string()]);
+}
+
+#[test]
+fn an_empty_schedule_snapshot_is_the_latest_state() {
+	let loaded = load_with_lines(&[schedule_snapshot_line(&["removed later"]), schedule_snapshot_line(&[])]);
+
+	assert_eq!(schedule_descriptions(&loaded), Vec::<String>::new());
+}
+
+#[test]
+fn a_log_without_snapshots_loads_without_a_plan_or_schedule() {
+	let loaded = load_with_lines(&[]);
+
+	assert!(loaded.plan.is_none());
+	assert!(loaded.schedule.is_none());
+}
+
+#[test]
+fn a_log_that_is_not_zstd_fails_the_load() {
+	let file = tempfile::Builder::new()
+		.suffix(".jsonl.zst")
+		.tempfile()
+		.expect("tempfile");
+	std::fs::write(file.path(), b"definitely not zstd").expect("write garbage");
+
+	assert!(load_session_with_runtime_state(&file.path().to_path_buf()).is_err());
 }

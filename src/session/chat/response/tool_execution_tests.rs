@@ -145,107 +145,6 @@ async fn test_rich_results_bypass_truncation() {
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default config template")
 }
-
-#[tokio::test]
-async fn authorizer_uncertainty_allows_inline_capability_calls() {
-	let mut config = template_config();
-	config.supervisor.authorizer.enabled = true;
-	let mut session = ChatSession::for_tests(Vec::new());
-	session.session.info.name = "authorizer-inline-test".into();
-	let mut processor = ToolProcessor::new();
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let mut call = tap_call("capability");
-	call.parameters["prompt"] = serde_json::json!("activate shell");
-	let (results, _) = execute_tools_parallel(
-		vec![call],
-		"",
-		&mut session,
-		&config,
-		&mut processor,
-		rx,
-		OutputMode::Jsonl,
-	)
-	.await
-	.unwrap();
-	assert!(!results[0].is_error());
-	assert_eq!(
-		crate::session::guardrails::get_call_log(&session.session.info.name).len(),
-		1
-	);
-	assert_eq!(session.session.info.authorization.completed_actions.len(), 1);
-	crate::session::context::cleanup_session(&session.session.info.name);
-}
-
-#[tokio::test]
-#[serial_test::serial]
-#[cfg(unix)]
-async fn authorizer_mixed_batch_executes_only_allowed_tool_and_skips_denied_hook() {
-	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
-	let _guard = ENV_LOCK.lock().await;
-	let tmp = tempfile::tempdir().unwrap();
-	write_local_tool(
-		tmp.path(),
-		"allowed",
-		"#!/bin/sh\n# @description Read requested data.\necho permitted\n",
-	);
-	write_local_tool(
-		tmp.path(),
-		"denied",
-		"#!/bin/sh\n# @description Unrequested file write.\ntouch forbidden-marker\n",
-	);
-	write_local_tool(
-		tmp.path(),
-		"blocked-hook",
-		"#!/bin/sh\n# @description Test hook.\ntouch hook-marker\n",
-	);
-	std::fs::write(
-		tmp.path().join(".agents/guardrails.toml"),
-		"[[hook]]\nresult = 'authorizer'\nscript = '.agents/tools/blocked-hook'\n",
-	)
-	.unwrap();
-	let id = "authorizer-execution".to_string();
-	crate::session::context::with_session_id(id.clone(), async {
-		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-		crate::session::context::set_session_workdir(&id, tmp.path().to_path_buf());
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![final_response(r#"{"decisions":[{"id":"0","decision":"allow","reason":"Read requested data"},{"id":"1","decision":"block","reason":"Unrequested write","conflict":"prohibition","source_id":"user:0","argument_path":"@tool","overridden_guards":[]}]}"#), final_response(r#"{"decisions":[{"id":"1","confirmed":true}]}"#)]).await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-		let mut config = fake_provider_config();
-		config.supervisor.enabled = true;
-		config.supervisor.authorizer.enabled = true;
-		config.supervisor.condense.enabled = false;
-		config.supervisor.model.model = Some("ollama:fake-model".into());
-		let mut session = ChatSession::for_tests(vec![crate::session::Message {role:"user".into(),content:"Read data. Do not modify files".into(),id:Some("u1".into()),..Default::default()}]);
-		session.session.info.name = id.clone();
-		let mut processor = ToolProcessor::new();
-		let mut context = main_session_context(&mut session, &mut processor);
-		let calls = ["allowed", "denied"].iter().map(|name| crate::mcp::McpToolCall {tool_name:name.to_string(),tool_id:name.to_string(),parameters:serde_json::json!({})}).collect();
-		let (_tx,rx) = tokio::sync::watch::channel(false);
-		let (results, _) = execute_tools_in_context(calls, &mut context, &config, Some(rx), OutputMode::Jsonl).await.unwrap();
-		assert!(!results[0].is_error(), "{}",results[0].extract_content());
-		assert!(results[0].extract_content().contains("permitted"));
-		assert!(results[1].is_error());
-		assert_eq!(results[1].tool_id,"denied");
-		assert!(results[1].extract_content().contains("[authorizer]"));
-		assert!(!tmp.path().join("forbidden-marker").exists());
-		assert!(!tmp.path().join("hook-marker").exists());
-		assert_eq!(crate::session::guardrails::get_call_log(&id).len(),1);
-		assert_eq!(session.session.info.authorization.completed_actions.len(),1);
-		assert_eq!(session.session.info.authorization.completed_actions[0].tool,"allowed");
-		assert!(session.session.info.authorization.completed_actions[0].succeeded);
-		crate::session::context::cleanup_session(&id);
-		std::env::remove_var("OLLAMA_API_URL");
-	}).await;
-}
-
-fn message(role: &str, content: &str) -> crate::session::Message {
-	crate::session::Message {
-		role: role.to_string(),
-		content: content.to_string(),
-		..Default::default()
-	}
-}
-
 #[test]
 fn test_context_accessors_main_session_and_layer() {
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -254,6 +153,7 @@ fn test_context_accessors_main_session_and_layer() {
 		chat_session: &mut session,
 		tool_processor: &mut processor,
 		tool_round_intent: "",
+		round_stop: None,
 	};
 
 	assert_eq!(context.session_name(), "test");
@@ -280,6 +180,7 @@ fn test_increment_tool_calls_counts_main_session_only() {
 		chat_session: &mut session,
 		tool_processor: &mut processor,
 		tool_round_intent: "",
+		round_stop: None,
 	};
 
 	context.increment_tool_calls("view");
@@ -359,6 +260,7 @@ async fn test_execute_tools_in_context_error_tracker_attempts_and_loop() {
 		chat_session: &mut session,
 		tool_processor: &mut processor,
 		tool_round_intent: "",
+		round_stop: None,
 	};
 
 	for attempt in 1..=3 {
@@ -379,60 +281,6 @@ async fn test_execute_tools_in_context_error_tracker_attempts_and_loop() {
 			assert!(content.contains("LOOP DETECTED"), "{content}");
 		}
 	}
-}
-
-#[test]
-fn test_parent_task_context_goal_and_request() {
-	let mut session = ChatSession::for_tests(vec![message("user", "fix the login bug")]);
-	session.session.info.anchor.intent = "Ship the refactor".to_string();
-
-	let task = parent_task_context(&session);
-	assert!(task.contains("Goal: Ship the refactor"), "{task}");
-	assert!(task.contains("Current request: fix the login bug"), "{task}");
-
-	// No anchor and no real user turn: neither segment appears
-	let bare = ChatSession::for_tests(Vec::new());
-	let empty = parent_task_context(&bare);
-	assert!(!empty.contains("Goal:"), "{empty}");
-	assert!(!empty.contains("Current request:"), "{empty}");
-}
-
-#[test]
-fn test_parent_task_context_uses_the_live_turn_resolution() {
-	let mut session = ChatSession::for_tests(vec![message("user", "do it")]);
-	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained("do it");
-	resolved.resolved_request = "polish the readme".to_string();
-	resolved.whole_targets = vec!["readme".to_string()];
-	session.gate_task = Some(resolved);
-	session.specialist_brief = Some(crate::supervisor::condense::SpecialistBrief {
-		source: 0,
-		text: "README architect; README.md is the working material.".to_string(),
-	});
-
-	let task = parent_task_context(&session);
-	assert!(
-		task.starts_with("Specialist brief:\nREADME architect; README.md is the working material.\n"),
-		"the brief leads the task block: {task}"
-	);
-	assert!(task.contains("Current request: polish the readme"), "{task}");
-	assert!(task.contains("Works on as a whole: readme"), "{task}");
-
-	// A resolution left over from an earlier turn never frames this one
-	session.session.messages.push(message("user", "fix the login bug"));
-	let task = parent_task_context(&session);
-	assert!(task.contains("Current request: fix the login bug"), "{task}");
-	assert!(!task.contains("Works on as a whole"), "{task}");
-	assert!(
-		task.starts_with("Specialist brief:"),
-		"the session brief outlives the turn: {task}"
-	);
-
-	// A failed compaction leaves an empty brief, which is never rendered
-	session.specialist_brief = Some(crate::supervisor::condense::SpecialistBrief {
-		source: 0,
-		text: String::new(),
-	});
-	assert!(!parent_task_context(&session).contains("Specialist brief"));
 }
 
 #[tokio::test]
@@ -492,6 +340,7 @@ fn main_session_context<'a>(
 		chat_session: session,
 		tool_processor: processor,
 		tool_round_intent: "",
+		round_stop: None,
 	}
 }
 
@@ -530,7 +379,7 @@ async fn test_execute_tools_parallel_routes_single_tap_capability_inline() {
 	let mut processor = ToolProcessor::new();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let (results, _elapsed_ms) = execute_tools_parallel(
+	let (results, _elapsed_ms, _) = execute_tools_parallel(
 		vec![crate::mcp::McpToolCall {
 			tool_name: "tap".to_string(),
 			parameters: serde_json::json!({"action": "capability", "prompt": "x"}),
@@ -681,8 +530,8 @@ async fn slow_then_fast_order(prefix: &str, read_only: [Option<bool>; 2]) -> Str
 			log.display()
 		),
 	);
-	crate::supervisor::detect::register_tool_read_only_hint(&slow, read_only[0]);
-	crate::supervisor::detect::register_tool_read_only_hint(&fast, read_only[1]);
+	crate::mcp::tool_shape::register_tool_read_only_hint(&slow, read_only[0]);
+	crate::mcp::tool_shape::register_tool_read_only_hint(&fast, read_only[1]);
 
 	let config = template_config();
 	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
@@ -763,7 +612,7 @@ async fn test_write_waits_for_an_earlier_read() {
 #[cfg(unix)]
 async fn test_removing_read_only_metadata_restores_ordering() {
 	for name in ["orderremovedslow", "orderremovedfast"] {
-		crate::supervisor::detect::register_tool_read_only_hint(name, Some(true));
+		crate::mcp::tool_shape::register_tool_read_only_hint(name, Some(true));
 	}
 	assert_eq!(slow_then_fast_order("orderremoved", [None; 2]).await, "slow\nfast\n");
 }
@@ -791,7 +640,7 @@ async fn test_execute_tools_in_context_runs_reads_in_parallel() {
 		"#!/bin/sh\n# @description Release the other read.\nprintf 'fast\\n' >> order.log\nprintf 'release\\n' > release\n",
 	);
 	for name in ["orderreadslow", "orderreadfast"] {
-		crate::supervisor::detect::register_tool_read_only_hint(name, Some(true));
+		crate::mcp::tool_shape::register_tool_read_only_hint(name, Some(true));
 	}
 
 	let sid = "tool-exec-parallel-reads".to_string();
@@ -863,7 +712,7 @@ async fn test_read_groups_overlap_on_each_side_of_a_write() {
 				&name,
 				&format!("#!/bin/sh\n# @description Test read group.\n{command}\n"),
 			);
-			crate::supervisor::detect::register_tool_read_only_hint(&name, Some(true));
+			crate::mcp::tool_shape::register_tool_read_only_hint(&name, Some(true));
 		}
 	}
 	write_local_tool(
@@ -871,7 +720,7 @@ async fn test_read_groups_overlap_on_each_side_of_a_write() {
 		"groupwrite",
 		"#!/bin/sh\n# @description Test state barrier.\necho write >> order.log\n",
 	);
-	crate::supervisor::detect::register_tool_read_only_hint("groupwrite", Some(false));
+	crate::mcp::tool_shape::register_tool_read_only_hint("groupwrite", Some(false));
 	let names = [
 		"groupbeforeslow",
 		"groupbeforefast",
@@ -943,7 +792,7 @@ async fn test_cancellation_does_not_start_later_calls() {
 			name,
 			&format!("#!/bin/sh\n# @description Must remain queued.\ntouch {name}\n"),
 		);
-		crate::supervisor::detect::register_tool_read_only_hint(name, Some(read_only));
+		crate::mcp::tool_shape::register_tool_read_only_hint(name, Some(read_only));
 	}
 	let sid = "tool-exec-cancel-sequence".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
@@ -1015,37 +864,6 @@ async fn test_execute_layer_tool_calls_parallel_unknown_tool_error_result() {
 }
 
 #[tokio::test]
-async fn test_parent_task_context_includes_active_plan_checklist() {
-	use crate::mcp::core::plan::storage::PlanStorage;
-
-	let session_id = "tool-exec-plan-ctx-test".to_string();
-	crate::session::context::with_session_id(session_id.clone(), async {
-		let storage = crate::session::context::get_plan_storage(&session_id);
-		storage
-			.lock()
-			.expect("plan storage lock")
-			.create_plan(
-				"Ship the feature".to_string(),
-				vec![crate::mcp::core::plan::storage::TaskData::new(
-					"Write tests".to_string(),
-					"Cover the loop detector".to_string(),
-					None,
-					None,
-				)],
-			)
-			.expect("create plan");
-
-		let session = ChatSession::for_tests(Vec::new());
-		let task = parent_task_context(&session);
-		assert!(task.contains("Live plan"), "{task}");
-		assert!(task.contains("Write tests"), "{task}");
-
-		crate::session::context::cleanup_session(&session_id);
-	})
-	.await;
-}
-
-#[tokio::test]
 async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
 	let mut config = template_config();
 	config.mcp_response_tokens_threshold = 32;
@@ -1055,6 +873,7 @@ async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
 		.map(|(index, data)| crate::mcp::McpToolResult {
 			tool_name: "screenshot".into(),
 			tool_id: format!("call-{index}"),
+			script_calls: Vec::new(),
 			result: serde_json::from_value(serde_json::json!({"content": [
 				{"type": "text", "text": "identical caption\n".repeat(500)},
 				{"type": "image", "data": data, "mimeType": "image/png"}
@@ -1064,7 +883,7 @@ async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
 		.collect();
 	for result in &results {
 		// The dedup and condenser rails both require a plain-text result.
-		assert!(!crate::supervisor::condense::is_plain_text_result(result));
+		assert!(!crate::mcp::tool_shape::is_plain_text_result(result));
 	}
 	let original = serde_json::to_value(&results).unwrap();
 	let processed = handle_large_tool_results(results, &config, OutputMode::NonInteractive)
@@ -1106,9 +925,7 @@ async fn background_job_results_get_the_tool_result_hard_cap() {
 			content: big.clone(),
 		},
 	];
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-
-	shape_background_deliveries(&mut batch, &session, &config, rx)
+	shape_background_deliveries(&mut batch, &session, &config)
 		.await
 		.expect("shaping never fails");
 
@@ -1118,4 +935,706 @@ async fn background_job_results_get_the_tool_result_hard_cap() {
 	assert!(output.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
 	assert_eq!(batch[1].content, delivery, "a status snapshot is not the job's result");
 	assert_eq!(batch[2].content, big, "only background job results are shaped");
+}
+
+// The plugin path of the tool round ----------------------------------------
+
+use crate::plugins::test_support::{connect_stub, stub_config, StubPlugin};
+use serde_json::json;
+
+const ROUND_INTENT: &str = "check the greeting";
+
+fn plugin_call(tool: &str, id: &str, parameters: serde_json::Value) -> crate::mcp::McpToolCall {
+	crate::mcp::McpToolCall {
+		tool_name: tool.to_string(),
+		parameters,
+		tool_id: id.to_string(),
+	}
+}
+
+fn greeting(id: &str) -> (crate::mcp::McpToolCall, crate::mcp::McpToolResult) {
+	(
+		plugin_call("greet", id, json!({})),
+		crate::mcp::McpToolResult::success("greet".into(), id.into(), "hello".into()),
+	)
+}
+
+/// A session wired to a stub plugin, with a work directory of its own.
+struct PluginRig {
+	id: String,
+	dir: tempfile::TempDir,
+	config: Config,
+	stub: StubPlugin,
+	_data: crate::session::chat::test_support::DataDirGuard,
+}
+
+impl PluginRig {
+	/// The stub is configured and, when `connected`, switched on for the session.
+	async fn new(label: &str, stub: StubPlugin, connected: bool) -> Self {
+		let data = crate::session::chat::test_support::DataDirGuard::new();
+		let id = format!("tool-round-{label}");
+		let dir = tempfile::tempdir().expect("tempdir");
+		let mut config = template_config();
+		config.plugins.push(stub_config(&stub));
+		crate::session::context::set_session_workdir(&id, dir.path().to_path_buf());
+		if connected {
+			connect_stub(&id, "assistant", dir.path(), &stub).await;
+		}
+		Self {
+			id,
+			dir,
+			config,
+			stub,
+			_data: data,
+		}
+	}
+
+	fn session(&self) -> ChatSession {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = self.id.clone();
+		session
+	}
+
+	/// What the main session does with the results of a round, from the hard
+	/// cap on: the plugin path.
+	async fn finish_round(
+		&self,
+		session: &mut ChatSession,
+		config: &Config,
+		calls: &[crate::mcp::McpToolCall],
+		results: Vec<crate::mcp::McpToolResult>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let denied = vec![false; calls.len()];
+		self.finish_round_with(session, config, calls, &denied, results, None)
+			.await
+	}
+
+	/// `finish_round` for calls that may be denied and a tree fingerprint taken before the round.
+	async fn finish_round_with(
+		&self,
+		session: &mut ChatSession,
+		config: &Config,
+		calls: &[crate::mcp::McpToolCall],
+		denied: &[bool],
+		results: Vec<crate::mcp::McpToolResult>,
+		tree_before: Option<u64>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let round = RoundCalls {
+			calls,
+			denied,
+			own_answers: &HashMap::new(),
+		};
+		self.finish(session, config, &round, results, tree_before).await
+	}
+
+	/// `finish_round` for tools whose own answers differ from the results shown.
+	async fn finish_round_own(
+		&self,
+		session: &mut ChatSession,
+		calls: &[crate::mcp::McpToolCall],
+		results: Vec<crate::mcp::McpToolResult>,
+		own_answers: &HashMap<String, OwnAnswer>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let denied = vec![false; calls.len()];
+		let round = RoundCalls {
+			calls,
+			denied: &denied,
+			own_answers,
+		};
+		self.finish(session, &self.config, &round, results, None).await
+	}
+
+	async fn finish(
+		&self,
+		session: &mut ChatSession,
+		config: &Config,
+		round: &RoundCalls<'_>,
+		mut results: Vec<crate::mcp::McpToolResult>,
+		tree_before: Option<u64>,
+	) -> (Vec<crate::mcp::McpToolResult>, Option<RoundStop>) {
+		let dir = self.dir.path().to_path_buf();
+		crate::session::context::with_session_id(self.id.clone(), async {
+			crate::mcp::workdir::set_session_working_directory(dir);
+			let stop = plugin_round(session, config, round, &mut results, ROUND_INTENT, tree_before).await;
+			(results, stop)
+		})
+		.await
+	}
+}
+
+impl Drop for PluginRig {
+	fn drop(&mut self) {
+		crate::plugins::end_session(&self.id);
+		crate::session::context::cleanup_session(&self.id);
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn a_plugin_denial_is_the_call_result_and_the_tool_does_not_run() {
+	let stub = StubPlugin::new(&[event::TOOL_BEFORE])
+		.answer(json!({"deny": [{"call_id": "w1", "reason": "[plugin] not now"}]}));
+	let rig = PluginRig::new("deny", stub, true).await;
+	let marker = rig.dir.path().join("marker");
+	write_local_tool(
+		rig.dir.path(),
+		"touch_file",
+		&format!(
+			"#!/bin/sh\n# @description Create a marker.\ntouch '{}'\n",
+			marker.display()
+		),
+	);
+	let mut session = rig.session();
+	let mut processor = ToolProcessor::new();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let dir = rig.dir.path().to_path_buf();
+
+	let (results, _, stop) = crate::session::context::with_session_id(rig.id.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(dir);
+		crate::session::context::init_session_services("assistant");
+		execute_tools_parallel(
+			vec![plugin_call("touch_file", "w1", json!({}))],
+			ROUND_INTENT,
+			&mut session,
+			&rig.config,
+			&mut processor,
+			rx,
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("the round runs")
+	})
+	.await;
+
+	assert!(stop.is_none());
+	assert!(results[0].is_error());
+	// Used as the plugin wrote it: no `[guardrail]` prefix of octomind's.
+	assert_eq!(results[0].extract_content(), "[plugin] not now");
+	assert!(!marker.exists(), "a denied tool must not run");
+	let sent = &rig.stub.sent(event::TOOL_BEFORE)[0];
+	assert_eq!(sent["calls"][0]["id"], "w1");
+	assert_eq!(sent["calls"][0]["tool"], "touch_file");
+}
+
+#[tokio::test]
+async fn a_lift_of_a_rule_the_plugin_registered_goes_to_the_admission() {
+	let rules = "[[guard]]\nid = \"no-write\"\nmode = \"apply\"\nmatch = \"write\"\nmessage = \"no\"\n";
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE, event::TOOL_BEFORE]).respond(move |method, _| {
+		Ok(if method == event::REQUEST_BEFORE {
+			json!({"register": {"rules": rules}})
+		} else {
+			// One rule is the plugin's own, the other is not.
+			json!({"lift": [{"call_id": "c1", "rules": ["no-write", "foreign"]}]})
+		})
+	});
+	let rig = PluginRig::new("lift", stub, true).await;
+	let dir = rig.dir.path().to_path_buf();
+	let ctx = crate::plugins::EventContext {
+		session_id: &rig.id,
+		parent_session_id: None,
+		role: "assistant",
+		model: None,
+		workdir: &dir,
+		project: "proj",
+		messages: &[],
+		detached: false,
+		status: None,
+		plan: None,
+		tools: None,
+		active_skills: Vec::new(),
+	};
+	let request = crate::plugins::protocol::RequestBefore {
+		phase: crate::plugins::protocol::RequestPhase::TurnStart,
+		turn: crate::plugins::protocol::TurnKind::User,
+		free_context_tokens: None,
+		pending_async: false,
+	};
+	crate::plugins::request_before(&ctx, request).await;
+
+	let calls = [plugin_call("guarded", "c1", json!({}))];
+	let verdict = plugin_tool_verdict(
+		&rig.id,
+		&rig.config,
+		&calls,
+		&[None],
+		&[Vec::new()],
+		CallOrigin::Model(None),
+	)
+	.await;
+
+	assert_eq!(verdict.lifts, vec![(0, vec!["no-write".to_string()])]);
+	assert!(verdict.denials.is_empty());
+}
+
+/// A call a script makes is judged as a call of that script: the plugin is told
+/// whose it is and shown the conversation the round started with, its deny
+/// holds, and its notes wait for the round to end.
+#[tokio::test]
+async fn a_script_call_is_judged_with_the_round_snapshot_and_its_notes_wait() {
+	let stub = StubPlugin::new(&[event::TOOL_BEFORE])
+		.answer(json!({"deny": [{"call_id": "code-1:1", "reason": "not from scripts"}], "note": ["look again"]}));
+	let rig = PluginRig::new("script-call", stub, true).await;
+	let snapshot = std::sync::Arc::new(payload::RoundSnapshot {
+		parts: ContextParts {
+			session_id: rig.id.clone(),
+			parent_session_id: None,
+			role: "assistant".into(),
+			model: None,
+			workdir: rig.dir.path().to_path_buf(),
+			project: "proj".into(),
+			status: None,
+			plan: None,
+			active_skills: Vec::new(),
+		},
+		messages: vec![crate::session::Message {
+			role: "user".into(),
+			content: "fix the build".into(),
+			..Default::default()
+		}],
+	});
+
+	let calls = [plugin_call("greet", "code-1:1", json!({}))];
+	let verdict = plugin_tool_verdict(
+		&rig.id,
+		&rig.config,
+		&calls,
+		&[None],
+		&[Vec::new()],
+		CallOrigin::Script {
+			code_call_id: "code-1",
+			snapshot: Some(snapshot),
+		},
+	)
+	.await;
+
+	assert_eq!(verdict.denials, vec![(0, "not from scripts".to_string())]);
+	let sent = rig.stub.sent(event::TOOL_BEFORE);
+	assert_eq!(sent[0]["calls"][0]["script_call_id"], "code-1");
+	assert!(sent[0].to_string().contains("fix the build"), "{}", sent[0]);
+	let deferred = crate::plugins::take_deferred_effects(&rig.id);
+	assert_eq!(deferred.len(), 1);
+	assert_eq!(deferred[0].notes, vec!["look again".to_string()]);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_replacement_reaches_the_results_with_and_without_the_saved_original() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]).queue([
+		json!({"replace": [{"call_id": "g1", "text": "short"}]}),
+		json!({"replace": [{"call_id": "g2", "text": "was {original_path}", "keep_original": true}]}),
+	]);
+	let rig = PluginRig::new("replace", stub, true).await;
+	let mut session = rig.session();
+
+	let (call, result) = greeting("g1");
+	let (results, stop) = rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+	assert!(stop.is_none());
+	assert_eq!(results[0].extract_content(), "short");
+	assert!(!results[0].is_error());
+
+	let (call, result) = greeting("g2");
+	let (results, _) = rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+	let text = results[0].extract_content();
+	let path = text.strip_prefix("was ").expect("the path is substituted");
+	assert_eq!(std::fs::read_to_string(path).expect("the original was saved"), "hello");
+
+	let sent = rig.stub.sent(event::TOOL_AFTER);
+	assert_eq!(sent[0]["intent"], ROUND_INTENT);
+	assert_eq!(sent[0]["calls"][0]["id"], "g1");
+	assert_eq!(sent[0]["calls"][0]["result"], "hello");
+	assert_eq!(sent[0]["calls"][0]["replaceable"], true);
+	assert!(sent[0]["tree"].is_object());
+}
+
+#[test]
+fn a_replacement_keeps_the_error_flag_and_leaves_rich_results_alone() {
+	let replace = |text: &str| crate::plugins::protocol::Replace {
+		call_id: "c1".into(),
+		text: text.into(),
+		keep_original: false,
+	};
+	let mut failed = crate::mcp::McpToolResult::error("shell".into(), "c1".into(), "long failure".into());
+	apply_replace(&mut failed, replace("summary"));
+	assert!(failed.is_error());
+	assert_eq!(failed.extract_content(), "summary");
+
+	let mut rich =
+		crate::mcp::McpToolResult::success_with_metadata("tool".into(), "c1".into(), "body".into(), json!({"k": "v"}));
+	apply_replace(&mut rich, replace("summary"));
+	// The text form of a rich result carries its metadata; it must stay as it was.
+	assert!(rich.extract_content().starts_with("body"));
+	assert!(!rich.extract_content().contains("summary"));
+	assert!(rich.result.structured_content.is_some());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ten_identical_rounds_end_the_turn_and_the_tenth_event_says_so() {
+	let rig = PluginRig::new("loop", StubPlugin::new(&[event::TOOL_AFTER]), true).await;
+	let mut session = rig.session();
+
+	for round in 1..=10 {
+		let (call, result) = greeting(&format!("r{round}"));
+		let (results, stop) = rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+		assert_eq!(results[0].extract_content(), "hello");
+		if round < 10 {
+			assert!(stop.is_none(), "round {round}");
+		} else {
+			assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+		}
+	}
+
+	let sent = rig.stub.sent(event::TOOL_AFTER);
+	assert_eq!(sent.len(), 10);
+	assert!(sent[8].get("stopping").is_none());
+	assert_eq!(sent[9]["stopping"], "loop");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn the_hard_stop_counts_even_when_the_plugin_never_started() {
+	let rig = PluginRig::new("unstarted", StubPlugin::new(&[event::TOOL_AFTER]), false).await;
+	let mut session = rig.session();
+
+	let mut last = None;
+	for round in 1..=10 {
+		let (call, result) = greeting(&format!("u{round}"));
+		last = rig
+			.finish_round(&mut session, &rig.config, &[call], vec![result])
+			.await
+			.1;
+	}
+
+	assert!(matches!(last, Some(RoundStop::RepeatedRounds(10))));
+	assert!(rig.stub.received().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_plugin_stop_ends_the_turn_with_its_notice() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]).answer(json!({"stop": "enough for today"}));
+	let rig = PluginRig::new("stop", stub, true).await;
+	let mut session = rig.session();
+
+	let (call, result) = greeting("s1");
+	let (_, stop) = rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+
+	assert!(matches!(stop, Some(RoundStop::Plugin(notice)) if notice == "enough for today"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn successful_mutations_are_recorded_as_absolute_paths() {
+	crate::mcp::tool_shape::register_tool_read_only_hint("edit_note", Some(false));
+	let rig = PluginRig::new("mutated", StubPlugin::new(&[]), true).await;
+	let mut session = rig.session();
+	let edit = |id: &str, path: &str| {
+		(
+			plugin_call("edit_note", id, json!({"path": path})),
+			crate::mcp::McpToolResult::success("edit_note".into(), id.into(), "ok".into()),
+		)
+	};
+	let (kept, kept_result) = edit("e1", "notes.md");
+	let (failed, _) = edit("e2", "broken.md");
+	let failed_result = crate::mcp::McpToolResult::error("edit_note".into(), "e2".into(), "no such file".into());
+
+	rig.finish_round(
+		&mut session,
+		&rig.config,
+		&[kept, failed],
+		vec![kept_result, failed_result],
+	)
+	.await;
+
+	let paths: Vec<_> = session.turn_mutated_paths.iter().collect();
+	assert_eq!(paths.len(), 1, "{paths:?}");
+	assert!(std::path::Path::new(paths[0]).is_absolute());
+	assert!(paths[0].ends_with("notes.md"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn without_a_plugin_nothing_is_sent_and_repeated_rounds_still_end_the_turn() {
+	let rig = PluginRig::new("none", StubPlugin::new(&[event::TOOL_AFTER]), false).await;
+	let mut session = rig.session();
+	let without_plugins = template_config();
+	assert!(!without_plugins.has_plugins());
+
+	for round in 1..=10 {
+		let (call, result) = greeting(&format!("n{round}"));
+		let (results, stop) = rig
+			.finish_round(&mut session, &without_plugins, &[call], vec![result])
+			.await;
+		assert_eq!(results[0].extract_content(), "hello");
+		if round < 10 {
+			assert!(stop.is_none(), "round {round}");
+		} else {
+			assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+		}
+	}
+	assert!(rig.stub.sent(event::TOOL_AFTER).is_empty());
+	assert!(session.turn_mutated_paths.is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn background_output_is_replaced_by_a_plugin() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+	use crate::session::shell_jobs::{delivery_message, split_delivery};
+
+	let stub = StubPlugin::new(&[event::TOOL_AFTER])
+		.answer(json!({"replace": [{"call_id": "octofs://jobs/1", "text": "cleaned"}]}));
+	let rig = PluginRig::new("background", stub, true).await;
+	let session = rig.session();
+	let open_tag = "<background_job resource=\"octofs://jobs/1\">";
+	let mut batch = vec![InboxMessage {
+		source: InboxSource::BackgroundJob {
+			id: "octofs://jobs/1".to_string(),
+		},
+		content: delivery_message(open_tag, "a long build log"),
+	}];
+	shape_background_deliveries(&mut batch, &session, &rig.config)
+		.await
+		.expect("shaping never fails");
+
+	let (tag, output) = split_delivery(&batch[0].content).expect("the delivery keeps its tags");
+	assert_eq!(tag, open_tag);
+	assert_eq!(output, "cleaned");
+	let sent = &rig.stub.sent(event::TOOL_AFTER)[0];
+	assert_eq!(sent["calls"], json!([]));
+	// No launching call is known, so the delivery is named by the job's own id.
+	assert_eq!(sent["background"][0]["call_id"], "octofs://jobs/1");
+	assert_eq!(sent["background"][0]["output"], "a long build log");
+	// No launching call is known, so the delivery is named by the job's own id.
+	assert_eq!(sent["background"][0]["call_id"], "octofs://jobs/1");
+}
+
+/// A fingerprint no real tree has, so the round looks as if it changed the tree.
+const OTHER_TREE: Option<u64> = Some(0);
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_changed_tree_restarts_the_repeat_count_only_for_a_round_that_could_write() {
+	crate::mcp::tool_shape::register_tool_read_only_hint("edit_note", Some(false));
+	let rig = PluginRig::new("tree-moved", StubPlugin::new(&[]), true).await;
+	let edit = |id: &str| {
+		(
+			plugin_call("edit_note", id, json!({"path": "notes.md"})),
+			crate::mcp::McpToolResult::success("edit_note".into(), id.into(), "ok".into()),
+		)
+	};
+
+	// A round that only reads: the tree moved under it for another reason.
+	let mut session = rig.session();
+	for _ in 0..2 {
+		let (call, result) = greeting("read");
+		rig.finish_round_with(&mut session, &rig.config, &[call], &[false], vec![result], OTHER_TREE)
+			.await;
+	}
+	assert_eq!(session.repeat_guard.identical_rounds(), 2);
+
+	// A round that could write and found the tree changed starts the count again.
+	let mut session = rig.session();
+	for _ in 0..2 {
+		let (call, result) = edit("write");
+		rig.finish_round_with(&mut session, &rig.config, &[call], &[false], vec![result], OTHER_TREE)
+			.await;
+	}
+	assert_eq!(session.repeat_guard.identical_rounds(), 1);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_replacement_for_a_call_the_plugin_was_not_allowed_to_replace_is_ignored() {
+	let stub =
+		StubPlugin::new(&[event::TOOL_AFTER]).answer(json!({"replace": [{"call_id": "d1", "text": "overwritten"}]}));
+	let rig = PluginRig::new("replace-denied", stub, true).await;
+	let mut session = rig.session();
+
+	let call = plugin_call("greet", "d1", json!({}));
+	let denial = crate::mcp::McpToolResult::error("greet".into(), "d1".into(), "[plugin] not now".into());
+	let (results, _) = rig
+		.finish_round_with(&mut session, &rig.config, &[call], &[true], vec![denial], None)
+		.await;
+
+	assert_eq!(results[0].extract_content(), "[plugin] not now");
+	assert_eq!(rig.stub.sent(event::TOOL_AFTER)[0]["calls"][0]["replaceable"], false);
+}
+
+/// What a tool returned, as `plugin_round` is told of it.
+fn own_answer(error: bool, text: &str) -> OwnAnswer {
+	OwnAnswer {
+		error,
+		digest: payload::result_hash(text),
+		returned: None,
+	}
+}
+
+/// Ten rounds of one `greet` call. Round `n` shows the agent `shown(n)` and
+/// the tool returned `returned(n)`. The last round's stop.
+async fn last_stop_of_ten_rounds(
+	label: &str,
+	shown: impl Fn(usize) -> (String, bool),
+	returned: impl Fn(usize) -> (String, bool),
+) -> Option<RoundStop> {
+	let rig = PluginRig::new(label, StubPlugin::new(&[]), false).await;
+	let mut session = rig.session();
+	let mut last = None;
+	for round in 1..=10 {
+		let id = format!("{label}{round}");
+		let call = plugin_call("greet", &id, json!({}));
+		let (text, error) = shown(round);
+		let result = if error {
+			crate::mcp::McpToolResult::error("greet".into(), id.clone(), text)
+		} else {
+			crate::mcp::McpToolResult::success("greet".into(), id.clone(), text)
+		};
+		let (text, error) = returned(round);
+		let own_answers = HashMap::from([(id, own_answer(error, &text))]);
+		last = rig
+			.finish_round_own(&mut session, &[call], vec![result], &own_answers)
+			.await
+			.1;
+	}
+	last
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn rounds_that_became_repeat_notes_still_end_the_turn_as_repeats_of_what_the_tool_returned() {
+	let stop = last_stop_of_ten_rounds(
+		"notes",
+		|round| {
+			if round == 1 {
+				("hello".to_string(), false)
+			} else {
+				("duplicate tool call".to_string(), true)
+			}
+		},
+		|_| ("hello".to_string(), false),
+	)
+	.await;
+
+	assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn the_same_output_shown_differently_each_round_still_ends_the_turn() {
+	let stop = last_stop_of_ten_rounds(
+		"reshown",
+		|round| (format!("summary {round}"), false),
+		|_| ("the full output".to_string(), false),
+	)
+	.await;
+
+	assert!(matches!(stop, Some(RoundStop::RepeatedRounds(10))));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn different_output_each_round_never_ends_the_turn() {
+	let stop = last_stop_of_ten_rounds(
+		"different",
+		|round| (format!("shown {round}"), false),
+		|round| (format!("returned {round}"), false),
+	)
+	.await;
+
+	assert!(stop.is_none());
+}
+
+/// Run two identical calls of the local tool `tool` through the main session's
+/// execution with `stub` as its plugin; the second is shown as a repeat note.
+/// The `tool.after` event the plugin got.
+#[cfg(unix)]
+async fn tool_after_of_a_repeated_call(tool: &str, stub: &StubPlugin) -> serde_json::Value {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		tool,
+		&format!(
+			"#!/bin/sh\n# @description Dump a fixed payload.\nprintf '%s' '{}'\n",
+			"B".repeat(600)
+		),
+	);
+	let config = template_config();
+	// A session id of its own: other tests run rounds under "test" at the same
+	// time, and a stub connected there would be sent their `tool.after` events.
+	let sid = format!("tool-round-own-{tool}");
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		connect_stub(&sid, "assistant", tmp.path(), stub).await;
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = sid.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let call = |id: &str| crate::mcp::McpToolCall {
+			tool_name: tool.to_string(),
+			parameters: json!({}),
+			tool_id: id.to_string(),
+		};
+		let (results, _) = execute_tools_in_context(
+			vec![call("r1"), call("r2")],
+			&mut context,
+			&config,
+			Some(rx),
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("local tool execution");
+		assert!(results[1].is_error(), "the second call is shown as a repeat note");
+
+		crate::plugins::end_session(&sid);
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+	stub.sent(event::TOOL_AFTER).remove(0)
+}
+
+const RETURNED_CHARS: usize = 40;
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn a_repeat_note_reaches_a_plugin_that_asked_with_what_the_tool_returned() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]).init_field("options", json!({"returned_chars": RETURNED_CHARS}));
+
+	let sent = tool_after_of_a_repeated_call("returned_dump", &stub).await;
+
+	// The first call was shown as the tool returned it.
+	assert!(sent["calls"][0].get("returned").is_none());
+	let second = &sent["calls"][1];
+	assert_eq!(second["error"], true);
+	assert_eq!(second["returned"]["error"], false);
+	assert_eq!(second["returned"]["text"], "B".repeat(RETURNED_CHARS));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn a_plugin_that_did_not_ask_is_sent_no_returned_text() {
+	let stub = StubPlugin::new(&[event::TOOL_AFTER]);
+
+	let sent = tool_after_of_a_repeated_call("unasked_dump", &stub).await;
+
+	assert_eq!(sent["calls"][1]["error"], true);
+	assert!(sent["calls"][1].get("returned").is_none());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn an_event_of_a_chat_session_tells_the_plugin_its_model() {
+	let rig = PluginRig::new("model", StubPlugin::new(&[event::TOOL_AFTER]), true).await;
+	let mut session = rig.session();
+	session.model = "openrouter:test-model".to_string();
+
+	let (call, result) = greeting("m1");
+	rig.finish_round(&mut session, &rig.config, &[call], vec![result]).await;
+
+	assert_eq!(rig.stub.sent(event::TOOL_AFTER)[0]["model"], "openrouter:test-model");
 }

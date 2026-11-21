@@ -37,6 +37,8 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 		}
 	}
 
+	commands.extend(crate::session::chat_helper::plugin_command_names());
+
 	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Help {
 		commands,
 	})))

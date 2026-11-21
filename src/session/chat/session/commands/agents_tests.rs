@@ -396,7 +396,7 @@ async fn saved_agent_history_and_main_cost_survive_a_fresh_runtime() {
 		let mut config: crate::config::Config =
 			toml::from_str(include_str!("../../../../../config-templates/default.toml")).unwrap();
 		config.build_role_map();
-		let result = super::super::info::handle_info(&mut session, &config).unwrap();
+		let result = super::super::info::handle_info(&mut session, &config).await.unwrap();
 		let super::super::CommandResult::HandledWithOutput(output) = result else {
 			panic!("expected info");
 		};

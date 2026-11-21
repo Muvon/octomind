@@ -284,3 +284,32 @@ async fn test_validator_silent_on_success_exit_and_missing_script() {
 	.await;
 	crate::session::context::cleanup_session(&sid);
 }
+
+#[tokio::test]
+async fn test_generated_validator_without_match_runs_even_when_observe_only() {
+	let sid = "__hooks_validator_generated_no_match".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		write_script(tmp.path(), &format!("validators/check.{SCRIPT_EXT}"), "RUN cargo test");
+		crate::session::context::set_session_workdir(&sid, tmp.path().to_path_buf());
+		crate::session::guardrails::init_for_session();
+		crate::session::inbox::init_inbox_for_session();
+
+		let parsed = crate::config::guardrails::Guardrails::parse(&format!(
+			"[[validator]]\nname = \"generated\"\nscript = \"validators/check.{SCRIPT_EXT}\"\n"
+		))
+		.expect("parse generated validator");
+		let mut generated = crate::config::guardrails::Guardrails::default();
+		generated.append_generated(parsed, "gen-validator", true);
+		crate::session::guardrails::merge_generated_for_session(&sid, generated);
+
+		crate::session::hooks::run_turn_validators(&sid, "developer", "shipped").await;
+
+		let msg = crate::session::inbox::try_pop_inbox_message()
+			.expect("a generated validator without `match` is not gated by observe-only");
+		assert!(msg.content.contains("RUN cargo test"));
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

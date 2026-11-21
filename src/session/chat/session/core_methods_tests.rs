@@ -84,7 +84,6 @@ fn test_init_params_builder_wiring() {
 	let params = SessionInitParams::new(&config, "assistant")
 		.with_name("build-test".to_string())
 		.with_model("ollama:fake".to_string())
-		.with_temperature(0.1)
 		.with_max_tokens(2048)
 		.with_max_retries(5)
 		.with_output_mode("plain".to_string())
@@ -222,6 +221,57 @@ async fn initialize_named_existing_session_resumes_transcript() {
 		session.last_response, "first answer",
 		"resume must seed last_response from the final assistant message"
 	);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn initialize_resume_puts_the_logged_plan_and_schedule_into_the_session_stores() {
+	use crate::mcp::core::plan::storage::{ExecutionPlan, PlanStatus, PlanStorage};
+	use crate::mcp::orchestration::schedule::storage::{ScheduleAction, ScheduleEntry};
+
+	let _data = DataDirGuard::new();
+	let first = initialized_named_session("core-init-plan-schedule").await;
+	let name = first.session.info.name.clone();
+	let plan = ExecutionPlan {
+		title: "logged plan".to_string(),
+		tasks: Vec::new(),
+		current_task_index: 0,
+		created_at: chrono::Utc::now(),
+		status: PlanStatus::Active,
+	};
+	let entry = ScheduleEntry::new(
+		"logged entry".to_string(),
+		ScheduleAction::Message {
+			message: "ping".to_string(),
+		},
+		chrono::Local::now() + chrono::Duration::seconds(60),
+		None,
+	);
+	crate::session::logger::log_plan_snapshot(&name, &plan).unwrap();
+	crate::session::logger::log_schedule_snapshot(&name, &[entry]).unwrap();
+
+	let config = test_config();
+	let params = SessionInitParams::new(&config, "assistant").with_name(name.clone());
+	let resumed = ChatSession::initialize(params).await.expect("resume session");
+	assert!(resumed.was_resumed);
+
+	{
+		let plan_store = crate::session::context::get_plan_storage(&name);
+		let plan_store = plan_store.lock().unwrap();
+		assert_eq!(plan_store.get_plan().expect("plan restored").title, "logged plan");
+	}
+	let schedule_store = crate::session::context::get_schedule_storage(&name);
+	let descriptions: Vec<String> = schedule_store
+		.lock()
+		.unwrap()
+		.entries()
+		.iter()
+		.map(|entry| entry.description.clone())
+		.collect();
+	assert_eq!(descriptions, vec!["logged entry".to_string()]);
+
+	crate::session::context::clear_plan_storage(&name);
+	crate::session::context::clear_schedule_storage(&name);
 }
 
 #[serial_test::serial]
@@ -553,35 +603,6 @@ async fn test_attach_video_from_file_and_url() {
 }
 
 // ---------------------------------------------------------------------------
-// get_full_context_tokens: active memory pack accounting
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_get_full_context_tokens_counts_active_memory_pack_once() {
-	let config = test_config();
-	let mut session = ChatSession::for_tests(vec![message("system", "anchor"), message("user", "hello")]);
-	let without_pack = session.get_full_context_tokens(&config).await;
-
-	// A pack that is NOT materialized in messages adds its bounded cost
-	session.active_memory_pack = Some("remember: build on the box".to_string());
-	let with_pack = session.get_full_context_tokens(&config).await;
-	assert!(
-		with_pack > without_pack,
-		"pack must add tokens: {with_pack} vs {without_pack}"
-	);
-
-	// Once materialized as a named message it must not be double-counted
-	let mut pack_msg = message("user", "remember: build on the box");
-	pack_msg.name = Some("__active_memory_pack".to_string());
-	session.session.messages.push(pack_msg);
-	let materialized = session.get_full_context_tokens(&config).await;
-	assert!(
-		materialized < with_pack,
-		"materialized pack must not be counted twice: {materialized} vs {with_pack}"
-	);
-}
-
-// ---------------------------------------------------------------------------
 // reinitialize_for_role
 // ---------------------------------------------------------------------------
 
@@ -730,7 +751,6 @@ async fn resume_preserves_saved_model_and_honors_explicit_overrides() {
 			.find(|role| role.name == "task_refiner")
 			.unwrap();
 		role.config.model.model = role_model;
-		role.config.model.temperature = Some(0.25);
 		config.build_role_map();
 		seed_session_log(
 			"resume-model",
@@ -760,9 +780,6 @@ async fn resume_preserves_saved_model_and_honors_explicit_overrides() {
 				assert_eq!(session.session.info.model, expected_model);
 				assert_eq!(session.role, if explicit_role { "assistant" } else { "task_refiner" });
 				assert_eq!(session.session.info.role, session.role);
-				if !explicit_role {
-					assert_eq!(session.temperature, 0.25);
-				}
 			}
 		}
 	}
@@ -907,8 +924,8 @@ fn raw_context_estimate_needs_cached_tools() {
 #[tokio::test]
 #[serial_test::serial]
 async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
+	use crate::session::accounting;
 	use crate::session::context::with_session_id;
-	use crate::supervisor::accounting;
 	accounting::take();
 	with_session_id("turn-split-accounting".into(), async {
 		let mut session = ChatSession::for_tests(Vec::new());

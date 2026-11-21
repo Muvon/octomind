@@ -132,6 +132,7 @@ fn handle_final_response(
 		videos: None,
 		thinking: None,
 		id: response_id, // CRITICAL: Set the response_id for conversation continuity
+		script_calls: Vec::new(),
 	};
 
 	chat_session.session.messages.push(assistant_message.clone());
@@ -347,6 +348,7 @@ fn add_assistant_message_with_tool_calls(
 		videos: None,
 		thinking: thinking_value,
 		id: response_id.clone(),
+		script_calls: Vec::new(),
 	};
 
 	// ATOMIC ADD: persist BEFORE pushing to in-memory Vec.
@@ -379,8 +381,10 @@ fn add_assistant_message_with_tool_calls(
 /// Each call overwrites `last_self_report`, so across a multi-round turn it
 /// converges on the final message's state (None when no token was emitted).
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
-	if config.supervisor.enabled {
-		let parsed = crate::supervisor::detect::parse_self_report_handoff(content);
+	// The status line is octomind's own: plugins read it too, even when the
+	// built-in supervisor is off.
+	if config.has_plugins() {
+		let parsed = crate::session::self_report::parse_self_report_handoff(content);
 		if let Some(report) = parsed.as_ref() {
 			for id in &report.used_memories {
 				if chat_session.recalled_refs.iter().any(|(known, _, _, _)| known == id) {
@@ -388,7 +392,6 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 				}
 			}
 		}
-		chat_session.pending_plan_signal = parsed.as_ref().and_then(|report| report.plan);
 		chat_session.last_self_report = parsed.as_ref().map(|report| report.state);
 		chat_session.last_self_report_reason = parsed
 			.as_ref()
@@ -398,7 +401,7 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		// Surface the agent's own "what I'm doing" on the spinner instead of
 		// the generic "Working …" — free feedback already paid for by the
 		// self-report token. Sticky until the next report or turn boundary.
-		use crate::supervisor::detect::SelfReport;
+		use crate::session::self_report::SelfReport;
 		let label = match (chat_session.last_self_report, &chat_session.last_self_report_reason) {
 			(Some(SelfReport::Blocked), Some(r)) => Some(format!("blocked · {} …", r)),
 			(Some(_), Some(r)) => Some(format!("{} …", r)),
@@ -411,9 +414,14 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		chat_session.last_self_report = None;
 		chat_session.last_self_report_reason = None;
 		chat_session.last_self_report_handoff = None;
-		chat_session.pending_plan_signal = None;
 	}
 	visible_assistant_content(content)
+}
+
+/// The tree moved across a round that could write. Fingerprint drift across a
+/// round of pure reads is external (a dev server, a build), not the agent's.
+fn round_moved_tree(write_capable: bool, before: Option<u64>, after: Option<u64>) -> bool {
+	write_capable && matches!((before, after), (Some(a), Some(b)) if a != b)
 }
 
 // Function to process response, handling tool calls recursively
@@ -466,6 +474,9 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 		if !params.config.mcp.servers.is_empty() {
 			// Resolve current tool calls for this iteration
 			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
+			// A listed external tool called as a tool of its own becomes its `code`
+			// script here, before it is shown, announced or run.
+			let current_tool_calls = crate::mcp::code::script_direct_calls(params.config, current_tool_calls).await;
 
 			if !current_tool_calls.is_empty() {
 				let session_id = params.chat_session.session.info.name.clone();
@@ -519,19 +530,6 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 					return Ok(());
 				}
 
-				// Observational verification signal: fingerprint the working
-				// tree BEFORE this round's tools run. Measuring after execution (the
-				// old site, inside the bookkeeping loop) made fp_before == fp_after
-				// unconditionally, so "tree_unchanged" was trivially true and a round
-				// that both edited and looked verifier-shaped marked its own mutation
-				// as verified — losing the distinction between changes and checks.
-				let track_verification = params.config.supervisor.enabled && params.config.supervisor.gate.enabled;
-				let fp_before = if track_verification {
-					crate::supervisor::workdir::fingerprint()
-				} else {
-					None
-				};
-
 				// Execute all tool calls in parallel using the new module
 
 				// Emit ToolUse notifications before execution so ACP/WebSocket clients
@@ -572,7 +570,7 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 					let answered = !*operation_cancelled_clone.borrow();
 					handle.finish(params.chat_session, answered).await;
 				}
-				let (tool_results, total_tool_time_ms) = match tool_run {
+				let (tool_results, total_tool_time_ms, round_stop) = match tool_run {
 					Ok(results) => results,
 					Err(e) => {
 						// Check if this was a cancellation
@@ -610,418 +608,24 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 				// Set when this round reaches `supervisor.max_identical_rounds`: the turn
 				// ends on this notice after the results are recorded.
 				let mut loop_stop: Option<String> = None;
-
-				// Supervisor detectors (deterministic, free): record each tool action
-				// to maintain loop / no-progress state. Consumers — verify-gate (P2)
-				// and steer (P3) — are not wired yet; for now this keeps detector state
-				// live and emits a debug trace, fused with the agent's self-report.
-				if params.config.supervisor.enabled {
-					let loop_threshold = crate::supervisor::detect::LOOP_THRESHOLD;
-					let no_progress_window = crate::supervisor::detect::NO_PROGRESS_WINDOW;
-
-					// Track whether this round emitted a steer.
-					let mut round_steered = false;
-					// Accumulate the highest-priority signal across the parallel batch;
-					// parallel calls share one AI feedback turn so only one steer fires.
-					let mut round_signal = crate::supervisor::detect::DetectorSignal::None;
-					// Per-ROUND detector inputs: a parallel batch is ONE model decision, so the
-					// whole round is observed as one unit. Per-call state is folded via note_call;
-					// the round verdict comes from record_round_signals after the loop.
-					let mut call_hashes: Vec<u64> = Vec::with_capacity(current_tool_calls.len());
-					let mut round_novel = false;
-					// (fp_before / track_verification are captured above, BEFORE
-					// execute_tools_parallel — see the pre-execution comment.)
-					let mut round_verifier = false;
-					// Command identities and error receipts for advisory recovery hints;
-					// these do not establish whether a behavioral check ran or failed.
-					let mut round_command_outcomes: Vec<(u64, bool)> = Vec::new();
-					let mut round_readback = false;
-					let mut round_mutation = false;
-					let mut round_write_capable = false;
-
-					for call in &current_tool_calls {
-						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
-						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
-						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
-						let is_mutation =
-							crate::supervisor::detect::is_mutation_call(&call.tool_name, &call.parameters);
-						// Verify-gate evidence ledger: record what actually executed —
-						// completion claims are checked against this, not the narrative.
-						let sequence = params.chat_session.evidence.record(
-							&call.tool_name,
-							&call.parameters,
-							is_mutation,
-							is_error,
-							result_content.len(),
-						);
-						if let Some(tr) = tr {
-							// A linked resource is detached work whose real output arrives
-							// later; this key returns it to the call that launched it.
-							for (uri, _) in crate::session::shell_jobs::resource_links_in(&tr.result) {
-								crate::session::shell_jobs::attach_sequence(&uri, sequence);
-							}
-							// So is an MCP task the call became; a no-op for any other call.
-							crate::session::shell_jobs::attach_sequence(
-								&crate::session::shell_jobs::task_key(&call.tool_id),
-								sequence,
+				if let Some(stop) = round_stop {
+					loop_stop = Some(match stop {
+						tool_execution::RoundStop::RepeatedRounds(identical) => {
+							// The turn ends here, so a queued note would only land on the next one.
+							params.chat_session.drop_plugin_notes();
+							crate::session::notice::supervisor_notice(&format!(
+								"stopped — {} identical tool rounds in a row",
+								identical
+							));
+							log_info!(
+								"Loop stop: {} identical tool rounds (limit {})",
+								identical,
+								params.config.max_identical_rounds
 							);
+							crate::session::repeat_guard::loop_stop_note(identical, &current_tool_calls, &tool_results)
 						}
-						// Retained under the sequence the rendered ledger shows, so the
-						// verify-gate can ask for this exact call's output instead of
-						// ruling on a line that names the call but not what it returned.
-						params.chat_session.evidence.record_ground(sequence, &result_content);
-						// Retain command evidence independently of verification credit:
-						// a smoke test can mutate state and still demonstrate behavior.
-						let executed_command =
-							crate::supervisor::detect::executed_command(&call.tool_name, &call.parameters);
-						let command_execution = executed_command.is_some();
-						let verifier_shaped =
-							crate::supervisor::detect::is_verifier_shaped(&call.tool_name, &call.parameters);
-						if let Some(key) = crate::supervisor::detect::command_key(&call.tool_name, &call.parameters) {
-							round_command_outcomes.push((key, !is_error));
-						}
-						if let Some(cmd) = executed_command.filter(|_| !is_error) {
-							params.chat_session.evidence.record_command_output(cmd, &result_content);
-						}
-						// Fold this call's per-result state in; aggregate the rest for the round.
-						let (rhash, novel) = params.chat_session.detectors.note_call(
-							&call.tool_name,
-							&call.parameters,
-							&result_content,
-							is_error,
-							is_mutation,
-						);
-						call_hashes.push(rhash);
-						round_novel |= novel;
-						// Read-back verification: a successful non-mutation call that
-						// re-reads an artifact the agent itself mutated — the correct
-						// verification for work with no command to run (docs, config,
-						// prose). Checked BEFORE this call's own mutation is recorded so
-						// a call never reads back its own write.
-						round_readback |=
-							params
-								.chat_session
-								.detectors
-								.is_readback_call(&call.parameters, is_mutation, is_error);
-						// Write-capability for the verification fold: a mutation-shaped
-						// call or a command execution could have moved the tree — errored
-						// ones included, a command may write before failing. A round of
-						// pure reads cannot, so fingerprint drift across it is external.
-						round_write_capable |= is_mutation || command_execution;
-						if !is_error {
-							round_mutation |= is_mutation;
-							if is_mutation {
-								params.chat_session.detectors.note_mutated_paths(&call.parameters);
-							}
-							round_verifier |= verifier_shaped;
-						}
-					}
-
-					// Set when this write-capable round moved the working tree.
-					let mut tree_moved = false;
-					// Fold the round into the observational verification state: a round
-					// verifies only when a verifier-shaped call succeeded on a tree the
-					// round itself did not change.
-					if track_verification {
-						let fp_after = crate::supervisor::workdir::fingerprint();
-						// Subagent runs that finished in this window report their own
-						// end-of-turn verdict — the only vantage point from which a
-						// delegated change and the check that followed it are separable
-						// (see supervisor::delegate handback). ALL of them must have
-						// verified: one unverified specialist in a multi-agent round is
-						// an unchecked change, and the round is not clean because a
-						// sibling happened to check its own work.
-						let (delegated_runs, delegated_verified) = crate::supervisor::delegate::take_handback();
-						let delegated_ok = delegated_runs > 0 && delegated_verified == delegated_runs;
-						crate::log_debug!(
-							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={} write_capable={} delegated={}/{}",
-							fp_before,
-							fp_after,
-							round_verifier,
-							round_readback,
-							round_mutation,
-							round_write_capable,
-							delegated_verified,
-							delegated_runs
-						);
-						params.chat_session.detectors.note_round_verification(
-							fp_before,
-							fp_after,
-							round_verifier,
-							round_readback,
-							round_mutation,
-							delegated_ok,
-							// A delegated child can write through any tool of its own, so
-							// its round is write-capable regardless of the parent's calls.
-							round_write_capable || delegated_runs > 0,
-						);
-						tree_moved = (round_write_capable || delegated_runs > 0)
-							&& matches!((fp_before, fp_after), (Some(a), Some(b)) if a != b);
-					}
-
-					// One verdict per ROUND: the whole parallel batch is a single model decision,
-					// so identical / truncated / deduped / off-task calls in one shot count once,
-					// not once per call.
-					let batch_signal = params.chat_session.detectors.record_round_signals(
-						&call_hashes,
-						round_novel,
-						loop_threshold,
-						no_progress_window,
-					);
-					round_signal = round_signal.merge(batch_signal);
-					// Close the outcome window of earlier advice before this round can open a new one.
-					crate::supervisor::advise::note_round(
-						&mut params.chat_session.advise_open,
-						crate::supervisor::detect::call_set_hash(&current_tool_calls),
-					);
-					if tree_moved {
-						params.chat_session.detectors.note_tree_moved();
-					}
-
-					// Command errors are observed facts, not proof of failed verification.
-					// Keep an advisory signal even while other calls add information.
-					let recovery_signal = params
-						.chat_session
-						.detectors
-						.record_round_command_outcomes(&round_command_outcomes, no_progress_window);
-					round_signal = round_signal.merge(recovery_signal);
-
-					// At most one advisory per round. A recurring signal never proves
-					// non-compliance or justifies stronger instructions.
-					if crate::supervisor::detect::should_steer(round_signal, params.chat_session.last_self_report) {
-						// Count recurrence only to throttle hints. A different signal
-						// starts a fresh advisory sequence.
-						if round_signal == params.chat_session.steer_last_signal {
-							params.chat_session.steer_attempt = params.chat_session.steer_attempt.saturating_add(1);
-						} else {
-							params.chat_session.steer_attempt = 0;
-							params.chat_session.steer_last_signal = round_signal;
-							params.chat_session.last_steered_calls = None;
-						}
-						let attempt = params.chat_session.steer_attempt;
-						let calls_hash = crate::supervisor::detect::call_set_hash(&current_tool_calls);
-						// Repeated polling is legitimate; back off duplicate hints without
-						// treating their recurrence as evidence that the agent ignored us.
-						let repeated = Some(calls_hash) == params.chat_session.last_steered_calls;
-						let emit = !repeated || attempt.saturating_add(1).is_power_of_two();
-
-						if emit {
-							// Evidence-driven trigger: advice is written only on a loop or recovery alarm that
-							// already passed backoff, never periodically. One alarm in `CONTROL_EVERY` gets the
-							// fixed note as a control arm, and the note is a plain steer message (one exposure).
-							let fixed_note = crate::supervisor::detect::steer_note(round_signal).to_string();
-							let mut advice_label: Option<&'static str> = None;
-							let actions_since_gate = params.chat_session.evidence.actions_since_gate();
-							// A round that reaches the hard stop ends the turn before any note lands,
-							// so writing advice for it would be a wasted call logged as given.
-							let max_identical = params.config.supervisor.max_identical_rounds;
-							let will_stop =
-								max_identical > 0 && params.chat_session.detectors.identical_rounds() >= max_identical;
-							let note = if params.config.supervisor.advise.enabled
-								&& !will_stop && crate::supervisor::advise::eligible(
-								round_signal,
-								actions_since_gate,
-							) {
-								use crate::supervisor::advise;
-								let session_name = params.chat_session.session.info.name.clone();
-								// The control arm is drawn per eligible alarm, not per ledger position:
-								// alarms recur at the same position across turns, which would pin a
-								// session to one arm.
-								params.chat_session.advise_alarms += 1;
-								let alarm = params.chat_session.advise_alarms;
-								let signature =
-									advise::stuck_signature(round_signal, &current_tool_calls, &tool_results);
-								match advise::arm(&session_name, alarm) {
-									advise::Arm::Control => {
-										crate::supervisor::stats::advise_control();
-										advise::record_emitted(&advise::EmitRecord {
-											session: &session_name,
-											sequence: alarm,
-											signal: round_signal,
-											signature: &signature,
-											arm: advise::Arm::Control,
-											result: "control",
-											class: None,
-											evidence: None,
-											lessons: &[],
-											p_useful: None,
-											ms: 0,
-										});
-										params.chat_session.advise_open.push(advise::open(
-											alarm,
-											signature,
-											advise::Arm::Control,
-											false,
-											calls_hash,
-										));
-										fixed_note
-									}
-									advise::Arm::Treated => {
-										let evidence = &params.chat_session.evidence;
-										let lessons = advise::stuck_lessons(
-											params.role,
-											&crate::supervisor::learning::evolution::project_name(None),
-											&signature,
-										)
-										.await;
-										let lesson_ids: Vec<String> =
-											lessons.iter().map(|lesson| lesson.file_id()).collect();
-										let state = advise::AdviseState {
-											signal: round_signal,
-											signature: signature.clone(),
-											request: crate::session::latest_real_user_task_content(
-												&params.chat_session.session.messages,
-											)
-											.unwrap_or_default()
-											.to_string(),
-											role: crate::supervisor::role_context(
-												&params.chat_session.session.messages,
-											),
-											plan: crate::mcp::core::plan::render_plan_details(),
-											actions: evidence.render(),
-											grounds: evidence.grounds().to_vec(),
-											recent_commands: evidence
-												.recent_commands()
-												.into_iter()
-												.map(|(command, output)| (command.to_string(), output.to_string()))
-												.collect(),
-											mutated_paths: evidence.mutated_paths().to_vec(),
-											prior_notes: params.chat_session.advise_notes.clone(),
-											lessons,
-										};
-										let advised =
-											advise::advise(params.config, &state, operation_cancelled_clone.clone())
-												.await;
-										match advised.result {
-											advise::AdviceResult::Advice(advice) => {
-												crate::supervisor::stats::advised();
-												advise::record_emitted(&advise::EmitRecord {
-													session: &session_name,
-													sequence: alarm,
-													signal: round_signal,
-													signature: &signature,
-													arm: advise::Arm::Treated,
-													result: "advised",
-													class: Some(advice.class),
-													evidence: Some(&advice.evidence),
-													lessons: &lesson_ids,
-													p_useful: advised.p_useful,
-													ms: advised.ms,
-												});
-												params.chat_session.advise_notes.push(advice.note.clone());
-												params.chat_session.advise_open.push(advise::open(
-													alarm,
-													signature.clone(),
-													advise::Arm::Treated,
-													true,
-													calls_hash,
-												));
-												advice_label = Some(advice.class.label());
-												advise::render_note(&advice, &signature)
-											}
-											advise::AdviceResult::Skipped(reason) => {
-												crate::supervisor::stats::advise_skipped();
-												advise::record_emitted(&advise::EmitRecord {
-													session: &session_name,
-													sequence: alarm,
-													signal: round_signal,
-													signature: &signature,
-													arm: advise::Arm::Treated,
-													result: reason,
-													class: None,
-													evidence: None,
-													lessons: &lesson_ids,
-													p_useful: advised.p_useful,
-													ms: advised.ms,
-												});
-												params.chat_session.advise_open.push(advise::open(
-													alarm,
-													signature,
-													advise::Arm::Treated,
-													false,
-													calls_hash,
-												));
-												fixed_note
-											}
-										}
-									}
-								}
-							} else {
-								fixed_note
-							};
-							params.chat_session.steer_pending = Some(note);
-							params.chat_session.last_steered_calls = Some(calls_hash);
-							crate::supervisor::stats::steer(round_signal);
-							crate::supervisor::notify(&match advice_label {
-								Some(label) => format!(
-									"advisory — {} · advice: {}",
-									crate::supervisor::detect::signal_description(round_signal),
-									label
-								),
-								None => format!(
-									"advisory — {}",
-									crate::supervisor::detect::signal_description(round_signal)
-								),
-							});
-							crate::log_debug!(
-								"Supervisor steer queued: {:?} attempt={} (self_report={:?})",
-								round_signal,
-								attempt,
-								params.chat_session.last_self_report
-							);
-						} else {
-							crate::log_debug!(
-								"Supervisor steer suppressed (backoff — de-spam): {:?} attempt={}",
-								round_signal,
-								attempt
-							);
-						}
-
-						// A signal dominates the round whether or not we emitted (a
-						// backoff-silent round is de-spam, not a breakout).
-						round_steered = true;
-					}
-					// A genuine breakout (no signal fired) resets all steer state.
-					if !round_steered && round_signal == crate::supervisor::detect::DetectorSignal::None {
-						params.chat_session.steer_attempt = 0;
-						params.chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
-						params.chat_session.last_steered_calls = None;
-					}
-
-					// The one hard limit: `max_identical_rounds` rounds in a row that repeat
-					// one already made since the last new result end the turn. Every hint
-					// below it stays advisory.
-					let max_identical = params.config.supervisor.max_identical_rounds;
-					let identical = params.chat_session.detectors.identical_rounds();
-					if max_identical > 0 && identical >= max_identical {
-						crate::supervisor::advise::record_outcome(
-							&mut params.chat_session.advise_open,
-							&params.chat_session.session.info.name,
-							"loop_stop",
-						);
-						// The turn ends here, so a queued hint would only land on the next one.
-						params.chat_session.steer_pending = None;
-						// The stop is final for this turn: spend the verify-gate's and the
-						// unfinished-hand-back nudge's re-entry budgets so neither re-runs the
-						// turn straight back into the loop, and label the trajectory failed as
-						// an exhausted gate does. A genuine user turn resets both budgets.
-						params.chat_session.gate_iterations = crate::supervisor::gate::MAX_GATE_ITERATIONS;
-						params.chat_session.nudge_iterations = crate::supervisor::gate::MAX_ITERATIONS;
-						params.chat_session.gate_failed = true;
-						params.chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
-						crate::supervisor::stats::loop_stop();
-						crate::supervisor::notify(&format!("stopped — {} identical tool rounds in a row", identical));
-						log_info!(
-							"Supervisor loop stop: {} identical tool rounds (limit {})",
-							identical,
-							max_identical
-						);
-						loop_stop = Some(crate::supervisor::detect::loop_stop_note(
-							identical,
-							&current_tool_calls,
-							&tool_results,
-						));
-					}
+						tool_execution::RoundStop::Plugin(notice) => notice,
+					});
 				}
 
 				// Check for cancellation BEFORE adding assistant message
@@ -1185,13 +789,6 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 
 	params.emit(cost_msg);
 
-	// Supervisor telemetry beside the cost snapshot: the run-exit dump can be
-	// reaped with the process by harnesses that close on the final stream
-	// event, so emit the cumulative counters at every turn boundary too.
-	if let Some(stats) = crate::supervisor::stats::snapshot() {
-		crate::log_debug!("supervisor session stats: {}", stats);
-	}
-
 	Ok(())
 }
 
@@ -1203,11 +800,10 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 /// (the crashed turns of a long run were recorded as zero before).
 pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) -> CostPayload {
 	chat_session.session.fold_external_spend();
-	crate::supervisor::authorizer::sync(chat_session);
 	let info = &chat_session.session.info;
 	let total_tokens = info.total_tokens();
 	let compression = &info.compression_stats;
-	let supervisor = crate::supervisor::report::SupervisorReport::for_session(info);
+	let supervisor = crate::session::accounting::report::SupervisorReport::for_session(info);
 	CostPayload {
 		session_tokens: total_tokens,
 		session_cost: info.total_cost,

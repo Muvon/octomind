@@ -17,7 +17,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use agent_client_protocol::v1::schema::{ExtRequest, ExtResponse};
+use agent_client_protocol::v1::schema::{
+	AvailableCommand, AvailableCommandInput, ExtRequest, ExtResponse, UnstructuredCommandInput,
+};
 use agent_client_protocol::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -54,6 +56,26 @@ pub struct CommandResponse {
 	/// Error message if success is false
 	pub error: Option<String>,
 }
+
+/// The commands plugins provide for the session, in the form the ACP command
+/// menu lists them: no leading slash, the hint as the input hint.
+pub fn plugin_available_commands(session_id: &str) -> Vec<AvailableCommand> {
+	crate::plugins::commands(session_id)
+		.into_iter()
+		.map(|command| {
+			let spec = command.spec;
+			let entry = AvailableCommand::new(spec.name, spec.description);
+			if spec.hint.is_empty() {
+				entry
+			} else {
+				entry.input(AvailableCommandInput::Unstructured(UnstructuredCommandInput::new(
+					spec.hint,
+				)))
+			}
+		})
+		.collect()
+}
+
 /// Execute an ACP extension command
 pub async fn execute_command(
 	request: &CommandRequest,

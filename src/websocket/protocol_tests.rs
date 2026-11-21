@@ -749,7 +749,8 @@ fn command_status_carries_data_so_clients_finalize_the_turn() {
 #[tokio::test]
 #[serial_test::serial]
 async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
-	crate::supervisor::accounting::isolated(async {
+	crate::session::accounting::isolated(async {
+		use crate::session::accounting::{self, record_call, CallKind};
 		use crate::session::{
 			chat::{
 				response::session_cost_payload,
@@ -759,10 +760,6 @@ async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
 				},
 			},
 			context::with_session_id,
-		};
-		use crate::supervisor::{
-			accounting,
-			stats::{record_call, CallKind},
 		};
 		accounting::take();
 		let mut config: crate::config::Config =

@@ -45,10 +45,12 @@ octomind
 ```
 
 Running `octomind` without a subcommand starts the same interactive session as `octomind run`. The default configuration
-uses `octohub:auto` for its main, supervisor, and compression model purposes.
+uses `octohub:auto` for its main and compression model purposes.
 When no config exists and stdin and stdout are terminals, startup opens model setup before creating it. Choose the hub,
 use your own provider, or skip to keep the defaults. Run `octomind configure` to repeat setup later; see the
 [CLI reference](../reference/01-cli-reference.md#octomind-configure). Non-interactive runs create defaults without prompts.
+A new config also lists the Besydr plugin, which octomind downloads on first use and never updates by itself; see
+[Besydr plugin](14-supervisor.md).
 
 ## Installer Requirements and Targets
 
@@ -76,7 +78,7 @@ curl -fsSL https://octomind.run/install.sh | bash
 ## Bring Your Own API Key
 
 Signing in is optional. See [AI Providers](04-providers.md#bring-your-own-keys) to configure direct-provider credentials
-and the main, supervisor, and compression models.
+and the main and compression models.
 
 ## Other Installation Methods
 

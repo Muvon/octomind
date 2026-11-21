@@ -61,6 +61,7 @@ fn test_summarize_simple_conversation() {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 		Message {
 			role: "assistant".to_string(),
@@ -76,6 +77,7 @@ fn test_summarize_simple_conversation() {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 	];
 

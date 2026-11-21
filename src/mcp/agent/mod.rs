@@ -15,6 +15,7 @@
 // Agent MCP provider - routes tasks to configured layers
 
 pub mod functions;
+pub mod handback;
 
 // Re-export main functionality
 pub use functions::{execute_agent_command, get_all_functions};

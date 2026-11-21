@@ -17,11 +17,59 @@
 
 use crate::config::Config;
 use crate::log_info;
+use crate::mcp::{McpToolCall, McpToolResult};
+use crate::plugins::payload::{self, ContextParts};
+use crate::plugins::protocol::{
+	event, BackgroundOutput, Returned, SubagentRuns, ToolAfter, ToolBefore, ToolOutcome, TreeChange,
+};
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::ToolProcessor;
 use crate::session::output::OutputMode;
 use anyhow::Result;
 use colored::Colorize;
+use std::collections::HashMap;
+
+/// The `stopping` value of a `tool.after` event whose round reaches the hard stop.
+const STOPPING_LOOP: &str = "loop";
+
+/// What a plugin writes where the path of the saved original belongs.
+const ORIGINAL_PATH_PLACEHOLDER: &str = "{original_path}";
+
+/// What a tool itself returned for a call, kept until the round's results are
+/// finished: the repeat check and the size cap change what the agent is shown.
+struct OwnAnswer {
+	error: bool,
+	/// Fingerprint of the whole text, for the repeat stop.
+	digest: String,
+	/// Its error flag and first characters, kept only when a plugin asked.
+	returned: Option<Returned>,
+}
+
+impl OwnAnswer {
+	fn of(result: &McpToolResult, returned_chars: Option<usize>) -> Self {
+		Self {
+			error: result.is_error(),
+			digest: payload::result_hash(&result.extract_content()),
+			returned: returned_chars.map(|limit| payload::returned_by_tool(result, limit)),
+		}
+	}
+}
+
+/// The calls of a finished round with what is known about each besides its result.
+struct RoundCalls<'a> {
+	calls: &'a [McpToolCall],
+	/// Per call: a rule denied it, so its result is the reason.
+	denied: &'a [bool],
+	own_answers: &'a HashMap<String, OwnAnswer>,
+}
+
+/// Why a tool round ends the turn instead of asking the model again.
+pub enum RoundStop {
+	/// The hard stop: this many tool rounds in a row repeated an earlier one.
+	RepeatedRounds(usize),
+	/// A plugin ended the turn with this notice.
+	Plugin(String),
+}
 
 /// Context for tool execution - can be either main session or layer context
 pub enum ToolExecutionContext<'a> {
@@ -33,6 +81,8 @@ pub enum ToolExecutionContext<'a> {
 		/// none: the nearest available explanation of why these calls were
 		/// issued now.
 		tool_round_intent: &'a str,
+		/// Set by the round when the plugin path ends the turn after it.
+		round_stop: Option<RoundStop>,
 	},
 	/// Layer/agent context — tool access controlled by the ACP session's role config
 	Layer { session_name: String, layer_name: String },
@@ -147,22 +197,22 @@ pub async fn execute_tools_parallel(
 	tool_processor: &mut ToolProcessor,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	mode: OutputMode,
-) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
+) -> Result<(Vec<crate::mcp::McpToolResult>, u64, Option<RoundStop>)> {
 	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
 		if *operation_cancelled.borrow() {
-			return Ok((Vec::new(), 0));
+			return Ok((Vec::new(), 0, None));
 		}
-		crate::supervisor::authorizer::capture(chat_session, config);
+		let tree_before = plugin_tree_fingerprint(config);
+		let session_name = chat_session.session.info.name.clone();
 		let blocks = admit_tool_batch(
-			&chat_session.session.info.name,
+			&session_name,
 			config,
 			&current_tool_calls,
-			Some(operation_cancelled.clone()),
+			CallOrigin::Model(Some(&mut *chat_session)),
 		)
 		.await;
-		crate::supervisor::authorizer::sync(chat_session);
 		if *operation_cancelled.borrow() {
-			return Ok((Vec::new(), 0));
+			return Ok((Vec::new(), 0, None));
 		}
 		chat_session.session.info.tool_calls += 1;
 		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
@@ -175,34 +225,34 @@ pub async fn execute_tools_parallel(
 					message,
 				)],
 				0,
+				None,
 			));
 		}
 		let (result, elapsed_ms) = execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
-		crate::supervisor::authorizer::record_completed(
-			&chat_session.session.info.name,
-			&current_tool_calls[0],
-			&result,
-		);
-		crate::supervisor::authorizer::sync(chat_session);
-		// Hard cap first: the condenser must only ever see (and select over) what
-		// the agent would actually receive.
+		// Hard cap first: plugins see (and may replace) what the agent would
+		// actually receive.
 		let mut results = handle_large_tool_results(vec![result], config, mode).await?;
-		condense_main_results(
-			&mut results,
-			&current_tool_calls,
+		let round_stop = plugin_round(
 			chat_session,
 			config,
+			&RoundCalls {
+				calls: &current_tool_calls,
+				denied: &[false],
+				own_answers: &HashMap::new(),
+			},
+			&mut results,
 			tool_round_intent,
-			operation_cancelled,
+			tree_before,
 		)
 		.await;
-		return Ok((results, elapsed_ms));
+		return Ok((results, elapsed_ms, round_stop));
 	}
 
 	let mut context = ToolExecutionContext::MainSession {
 		chat_session,
 		tool_processor,
 		tool_round_intent,
+		round_stop: None,
 	};
 
 	let result = execute_tools_in_context(
@@ -214,7 +264,10 @@ pub async fn execute_tools_parallel(
 	)
 	.await;
 
-	result
+	let ToolExecutionContext::MainSession { round_stop, .. } = context else {
+		unreachable!("the context was built as a main session above");
+	};
+	result.map(|(results, elapsed_ms)| (results, elapsed_ms, round_stop))
 }
 
 fn is_tap_capability_call(call: &crate::mcp::McpToolCall) -> bool {
@@ -295,44 +348,35 @@ async fn execute_tap_capability_inline(
 // Implementation that works with execution context
 /// Shared admission, including inline capability calls. Native prechecks are
 /// previewed before the model, then committed against the final allowed batch.
-async fn admit_tool_batch(
+pub(crate) async fn admit_tool_batch(
 	session_id: &str,
 	config: &Config,
 	calls: &[crate::mcp::McpToolCall],
-	cancellation: Option<tokio::sync::watch::Receiver<bool>>,
+	origin: CallOrigin<'_>,
 ) -> Vec<Option<String>> {
 	let session_id = session_id.to_string();
-	let enabled = (config.supervisor.enabled && config.supervisor.authorizer.enabled)
-		|| crate::supervisor::authorizer::context_for_session(&session_id).is_some();
-	let messages = if enabled {
+	let plugin_judges = crate::plugins::subscribed(&session_id, event::TOOL_BEFORE);
+	let mut plugin_denials = HashMap::new();
+	let messages = if plugin_judges {
 		let preview = crate::session::guardrails::preview_batch(&session_id, config, calls);
 		let hard = preview.blocked;
 		let generated = preview.generated;
-		let indices = hard
-			.iter()
-			.enumerate()
-			.filter_map(|(i, m)| m.is_none().then_some(i))
-			.collect::<Vec<_>>();
-		let candidates = indices.iter().map(|i| calls[*i].clone()).collect::<Vec<_>>();
-		let guards = indices.iter().map(|i| generated[*i].clone()).collect::<Vec<_>>();
-		let (_tx, default_rx) = tokio::sync::watch::channel(false);
-		let decisions = crate::supervisor::authorizer::check_batch(
-			&session_id,
-			config,
-			&candidates,
-			&guards,
-			cancellation.unwrap_or(default_rx),
-		)
-		.await;
+		let plugin_verdict = plugin_tool_verdict(&session_id, config, calls, &hard, &generated, origin).await;
 		let mut admissions = hard
 			.into_iter()
-			.map(|message| crate::supervisor::authorizer::Admission {
+			.map(|message| crate::session::guardrails::Admission {
 				message,
 				..Default::default()
 			})
 			.collect::<Vec<_>>();
-		for (index, decision) in indices.into_iter().zip(decisions) {
-			admissions[index] = decision;
+		for (index, reason) in plugin_verdict.denials {
+			if admissions[index].message.is_none() {
+				admissions[index].message = Some(reason.clone());
+				plugin_denials.insert(index, reason);
+			}
+		}
+		for (index, rules) in plugin_verdict.lifts {
+			admissions[index].overridden_guards.extend(rules);
 		}
 		crate::session::guardrails::check_batch_admitted(&session_id, config, calls, &admissions)
 	} else {
@@ -340,9 +384,11 @@ async fn admit_tool_batch(
 	};
 	messages
 		.into_iter()
-		.map(|message| {
+		.enumerate()
+		.map(|(index, message)| {
 			message.map(|message| {
-				if message.starts_with("[authorizer]") || message.starts_with("[guardrail]") {
+				// A plugin's text is used as it is: the plugin owns its prefix.
+				if message.starts_with("[guardrail]") || plugin_denials.get(&index) == Some(&message) {
 					message
 				} else {
 					format!("[guardrail] {message}")
@@ -350,6 +396,127 @@ async fn admit_tool_batch(
 			})
 		})
 		.collect()
+}
+
+/// What plugins decided about the calls of one batch, by index into the batch.
+#[derive(Default)]
+struct PluginToolVerdict {
+	denials: Vec<(usize, String)>,
+	lifts: Vec<(usize, Vec<String>)>,
+}
+
+/// Who made the calls a batch admits.
+pub(crate) enum CallOrigin<'a> {
+	/// The model, in a round that has the chat session or (an in-process
+	/// subagent, a layer) none.
+	Model(Option<&'a mut ChatSession>),
+	/// The script of the `code` call `code_call_id`. Its round holds the chat
+	/// session; `snapshot` is the session as the round found it.
+	Script {
+		code_call_id: &'a str,
+		snapshot: Option<std::sync::Arc<payload::RoundSnapshot>>,
+	},
+}
+
+/// `tool.before`: ask the plugins about a batch the built-in guards have
+/// already looked at. `blocked` holds each call's built-in denial and
+/// `generated` the generated rules that matched it.
+async fn plugin_tool_verdict(
+	session_id: &String,
+	config: &Config,
+	calls: &[crate::mcp::McpToolCall],
+	blocked: &[Option<String>],
+	generated: &[Vec<(String, String)>],
+	origin: CallOrigin<'_>,
+) -> PluginToolVerdict {
+	let script_call_id = match &origin {
+		CallOrigin::Script { code_call_id, .. } => Some(code_call_id.to_string()),
+		CallOrigin::Model(_) => None,
+	};
+	let tool_calls = calls
+		.iter()
+		.enumerate()
+		.map(|(index, call)| {
+			let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name).map(|s| s.name().to_string());
+			let capability =
+				crate::session::guardrails::resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
+			let rules = generated[index]
+				.iter()
+				.filter(|(id, _)| crate::session::guardrails::plugin_of_rule(session_id, id).is_some())
+				.map(|(id, _)| id.clone())
+				.collect();
+			payload::tool_call(call, capability, blocked[index].clone(), rules, script_call_id.clone())
+		})
+		.collect();
+
+	let no_messages = Vec::new();
+	let outcome = match &origin {
+		CallOrigin::Model(Some(chat_session)) => {
+			let parts = ContextParts::of(chat_session);
+			let context = parts.context(&chat_session.session.messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+		CallOrigin::Script {
+			snapshot: Some(snapshot),
+			..
+		} => {
+			let context = snapshot.parts.context(&snapshot.messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+		_ => {
+			let parts = detached_context_parts(session_id);
+			let context = parts.context(&no_messages, None);
+			crate::plugins::tool_before(&context, ToolBefore { calls: tool_calls }).await
+		}
+	};
+
+	match origin {
+		CallOrigin::Model(Some(chat_session)) => {
+			if let Err(error) = crate::plugins::apply::apply(chat_session, outcome.effects).await {
+				crate::log_debug!("Applying the effects of tool.before failed: {:#}", error);
+			}
+		}
+		// The round that holds the chat session applies them when it ends.
+		CallOrigin::Script { snapshot: Some(_), .. } => {
+			crate::plugins::defer_effects(session_id, outcome.effects);
+			crate::plugins::apply::settle(session_id, None);
+		}
+		CallOrigin::Model(None) | CallOrigin::Script { snapshot: None, .. } => {
+			crate::plugins::apply::settle(session_id, None)
+		}
+	}
+
+	let position_of = |call_id: &str| calls.iter().position(|call| call.tool_id == call_id);
+	PluginToolVerdict {
+		denials: outcome
+			.denies
+			.into_iter()
+			.filter_map(|deny| Some((position_of(&deny.call_id)?, deny.reason)))
+			.collect(),
+		lifts: outcome
+			.lifts
+			.into_iter()
+			.filter_map(|lift| Some((position_of(&lift.call_id)?, lift.rules)))
+			.collect(),
+	}
+}
+
+/// The common fields of an event for a session that has no chat session at
+/// hand: an in-process subagent, known only by its synthetic id.
+fn detached_context_parts(session_id: &String) -> ContextParts {
+	let workdir = crate::mcp::get_thread_working_directory();
+	ContextParts {
+		session_id: session_id.clone(),
+		parent_session_id: None,
+		role: crate::session::context::get_session_role(session_id).unwrap_or_default(),
+		// The model of a session without a chat session is not readable here.
+		model: None,
+		project: crate::plugins::project::project_name(&workdir),
+		workdir,
+		status: None,
+		plan: None,
+		active_skills: crate::session::context::get_active_skills(session_id),
+	}
 }
 
 async fn execute_tools_with_context(
@@ -360,6 +527,10 @@ async fn execute_tools_with_context(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
+	// A tool the `code` tool lists may be called as a tool of its own; such a
+	// call becomes the `code` script it means before anything else looks at it.
+	// Layers and scheduled runs reach this without the main loop's rewrite.
+	let current_tool_calls = crate::mcp::code::script_direct_calls(config, current_tool_calls).await;
 
 	// Guardrails run sequentially over the ordered batch before any tool is
 	// spawned. Tools arrive in the order the model emitted them, so `+/-`
@@ -370,22 +541,39 @@ async fn execute_tools_with_context(
 	let session_id_for_guardrails = context.session_name().to_string();
 	// Messages are stored already prefixed with their source, so the spawn loop
 	// below emits them verbatim.
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		crate::supervisor::authorizer::capture(chat_session, config);
-	}
+	let tree_before = match context {
+		ToolExecutionContext::MainSession { .. } => plugin_tree_fingerprint(config),
+		_ => None,
+	};
 	let block_messages = admit_tool_batch(
 		&session_id_for_guardrails,
 		config,
 		&current_tool_calls,
-		operation_cancelled.clone(),
+		CallOrigin::Model(match context {
+			ToolExecutionContext::MainSession { chat_session, .. } => Some(&mut **chat_session),
+			_ => None,
+		}),
 	)
 	.await;
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		crate::supervisor::authorizer::sync(chat_session);
-	}
 	if operation_cancelled.as_ref().is_some_and(|rx| *rx.borrow()) {
 		return Ok((Vec::new(), 0));
 	}
+	// Plugins judge each call a script makes while this round holds the chat
+	// session, so they are shown the session as the round found it.
+	let round_snapshot = match &*context {
+		ToolExecutionContext::MainSession { chat_session, .. }
+			if crate::plugins::subscribed(&session_id_for_guardrails, event::TOOL_BEFORE)
+				&& current_tool_calls
+					.iter()
+					.any(|call| call.tool_name == crate::mcp::code::TOOL_NAME) =>
+		{
+			Some(std::sync::Arc::new(payload::RoundSnapshot {
+				parts: ContextParts::of(chat_session),
+				messages: chat_session.session.messages.clone(),
+			}))
+		}
+		_ => None,
+	};
 
 	// A write is a barrier on both sides: reads must not observe an unfinished
 	// earlier write, and a later write must not overtake earlier reads. Closing
@@ -418,7 +606,7 @@ async fn execute_tools_with_context(
 		// Guardrail decided this tool is denied — return the error result
 		// directly without spawning the underlying executor.
 		let block_msg = block_messages.get(index).cloned().unwrap_or(None);
-		let read_only = crate::supervisor::detect::tool_read_only_hint(&tool_name) == Some(true);
+		let read_only = crate::mcp::tool_shape::tool_read_only_hint(&tool_name) == Some(true);
 		let mut predecessors = if read_only {
 			Vec::new()
 		} else {
@@ -435,7 +623,8 @@ async fn execute_tools_with_context(
 		}
 		let layer = !matches!(context, ToolExecutionContext::MainSession { .. });
 		let workdir_override = crate::mcp::workdir::working_directory_override();
-		let task = tokio::spawn(crate::supervisor::accounting::inherit(async move {
+		let snapshot = round_snapshot.clone();
+		let task = tokio::spawn(crate::session::accounting::inherit(async move {
 			let _release = release;
 			for mut predecessor in predecessors {
 				let _ = predecessor.changed().await;
@@ -453,7 +642,8 @@ async fn execute_tools_with_context(
 				if layer {
 					crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
 				} else {
-					crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
+					let execution = crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task);
+					payload::with_round_snapshot(snapshot, execution).await
 				}
 			});
 			if let Some(workdir) = workdir_override {
@@ -468,6 +658,12 @@ async fn execute_tools_with_context(
 
 	// FIXED: Proper parallel awaiting with immediate cancellation support
 	let mut tool_results = Vec::new();
+	// The longest start of a tool's own text any plugin asked to see.
+	let returned_chars = crate::plugins::options(&session_id_for_guardrails)
+		.into_iter()
+		.filter_map(|(_, options)| options.returned_chars)
+		.max();
+	let mut own_answers: HashMap<String, OwnAnswer> = HashMap::new();
 	let mut _has_error = false;
 	let mut total_tool_time_ms = 0; // Track cumulative tool execution time
 
@@ -554,10 +750,8 @@ async fn execute_tools_with_context(
 						if let Some(call) = stored_tool_call.as_ref() {
 							context.capture_tap_run(call, &res);
 						}
-						if block_messages.get(tool_index - 1).is_some_and(Option::is_none) {
-							if let Some(call) = stored_tool_call.as_ref() {
-								crate::supervisor::authorizer::record_completed(&session_id_for_guardrails, call, &res);
-							}
+						if matches!(context, ToolExecutionContext::MainSession { .. }) {
+							own_answers.insert(tool_id.clone(), OwnAnswer::of(&res, returned_chars));
 						}
 						// Deduplication runs HERE, before display — so the terminal block,
 						// the sink emission (response.rs), and the AI's session message all
@@ -569,35 +763,35 @@ async fn execute_tools_with_context(
 						// tool ran fine — it's a repeat), so error_tracker is left untouched.
 						// Text-only keys cannot distinguish changed image payloads or preserve
 						// their association with each new tool call; rich results are not elided.
-						let dedup_placeholder =
-							if res.is_error() || !crate::supervisor::condense::is_plain_text_result(&res) {
-								None
+						let dedup_placeholder = if res.is_error() || !crate::mcp::tool_shape::is_plain_text_result(&res)
+						{
+							None
+						} else {
+							let content = res.extract_content();
+							// Key dedup on (tool_name, args, content): identical args with
+							// CHANGED output (re-reading a file after editing it) must reach
+							// the model, and different args that return the same bytes (a
+							// `view` that ignores its range) must not collide.
+							let args = stored_tool_call
+								.as_ref()
+								.map(|tc| tc.parameters.to_string())
+								.unwrap_or_default();
+							if crate::session::dedup::is_duplicate(&tool_name, &args, &content) {
+								// `was_truncated` selects the stronger stop+narrow message.
+								// Truncation runs later (handle_large_tool_results), so detect
+								// it directly here on the full content.
+								let was_truncated = crate::utils::truncation::truncate_mcp_response_global(
+									&content,
+									config.mcp_response_tokens_threshold,
+									&tool_name,
+								)
+								.1;
+								Some(crate::session::dedup::placeholder(&tool_name, &content, was_truncated))
 							} else {
-								let content = res.extract_content();
-								// Key dedup on (tool_name, args, content): identical args with
-								// CHANGED output (re-reading a file after editing it) must reach
-								// the model, and different args that return the same bytes (a
-								// `view` that ignores its range) must not collide.
-								let args = stored_tool_call
-									.as_ref()
-									.map(|tc| tc.parameters.to_string())
-									.unwrap_or_default();
-								if crate::session::dedup::is_duplicate(&tool_name, &args, &content) {
-									// `was_truncated` selects the stronger stop+narrow message.
-									// Truncation runs later (handle_large_tool_results), so detect
-									// it directly here on the full content.
-									let was_truncated = crate::utils::truncation::truncate_mcp_response_global(
-										&content,
-										config.mcp_response_tokens_threshold,
-										&tool_name,
-									)
-									.1;
-									Some(crate::session::dedup::placeholder(&tool_name, &content, was_truncated))
-								} else {
-									crate::session::dedup::record(&tool_name, &args, &content);
-									None
-								}
-							};
+								crate::session::dedup::record(&tool_name, &args, &content);
+								None
+							}
+						};
 
 						// CRITICAL MCP PROTOCOL FIX: Check if result is actually an error
 						if let Some(placeholder) = dedup_placeholder {
@@ -791,9 +985,6 @@ async fn execute_tools_with_context(
 	// truncation, so hook scripts see full untruncated output. Hooks for
 	// guardrail-blocked tools are skipped (synthetic results aren't real).
 	let blocked_flags: Vec<bool> = block_messages.iter().map(|m| m.is_some()).collect();
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		crate::supervisor::authorizer::sync(chat_session);
-	}
 	crate::session::hooks::run_hooks(
 		&session_id_for_guardrails,
 		config,
@@ -808,26 +999,26 @@ async fn execute_tools_with_context(
 	// body would let it keep lines the truncated result never contains.
 	let mut tool_results = handle_large_tool_results(tool_results, config, mode).await?;
 
-	// Supervisor condense: task-aware narrowing of results that individually
-	// exceed condense.tokens_threshold — runs AFTER hooks (they must see full
-	// output) and after the hard cap above.
-	// Main-session only: layers have no anchor/user-request to condition on.
+	// Plugins see the capped text and may replace it; this must come before
+	// anything emits or stores the results.
 	if let ToolExecutionContext::MainSession {
 		chat_session,
 		tool_round_intent,
+		round_stop,
 		..
 	} = context
 	{
-		let cancel_rx = operation_cancelled
-			.clone()
-			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
-		condense_main_results(
-			&mut tool_results,
-			&current_tool_calls,
+		*round_stop = plugin_round(
 			chat_session,
 			config,
+			&RoundCalls {
+				calls: &current_tool_calls,
+				denied: &blocked_flags,
+				own_answers: &own_answers,
+			},
+			&mut tool_results,
 			tool_round_intent,
-			cancel_rx,
+			tree_before,
 		)
 		.await;
 	}
@@ -835,90 +1026,9 @@ async fn execute_tools_with_context(
 	Ok((tool_results, total_tool_time_ms))
 }
 
-/// The parent session's live task framing — the session's specialist brief,
-/// durable goal, current user request and open plan items. Used by supervisor
-/// mechanics that must judge something against "what are we actually doing
-/// right now" (condense).
-fn parent_task_context(chat_session: &ChatSession) -> String {
-	let mut task = String::new();
-	if let Some(brief) = specialist_brief(chat_session) {
-		task.push_str(&format!("Specialist brief:\n{brief}\n"));
-	}
-	let resolved = turn_resolution(chat_session);
-	let intent = chat_session.session.info.anchor.intent.trim();
-	if !intent.is_empty() {
-		task.push_str(&format!("Goal: {intent}\n"));
-	}
-	if let Some(resolved) = resolved {
-		// The resolved request spells out an elliptical follow-up ("do it");
-		// for a self-contained turn it is the request itself.
-		task.push_str(&format!("Current request: {}\n", resolved.resolved_request));
-		if !resolved.whole_targets.is_empty() {
-			task.push_str(&format!("Works on as a whole: {}\n", resolved.whole_targets.join(", ")));
-		}
-	} else if let Some(req) = crate::session::latest_real_user_task_content(&chat_session.session.messages) {
-		task.push_str(&format!("Current request: {req}\n"));
-	}
-	if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
-		task.push_str(&plan);
-	}
-	task
-}
-
-/// The turn-admission resolution, only while it belongs to the live request:
-/// a stale one from an earlier turn would frame this turn's results wrongly.
-fn turn_resolution(chat_session: &ChatSession) -> Option<&crate::supervisor::resolve::ResolvedTask> {
-	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)?;
-	chat_session
-		.gate_task
-		.as_ref()
-		.filter(|resolved| resolved.original_request == request)
-}
-
-/// The compacted standing specialist context, when compaction produced one.
-fn specialist_brief(chat_session: &ChatSession) -> Option<&str> {
-	chat_session
-		.specialist_brief
-		.as_ref()
-		.map(|brief| brief.text.as_str())
-		.filter(|text| !text.is_empty())
-}
-
-async fn condense_main_results(
-	results: &mut [crate::mcp::McpToolResult],
-	calls: &[crate::mcp::McpToolCall],
-	chat_session: &ChatSession,
-	config: &Config,
-	tool_round_intent: &str,
-	operation_cancelled: tokio::sync::watch::Receiver<bool>,
-) {
-	let task = parent_task_context(chat_session);
-	let whole_targets = turn_resolution(chat_session)
-		.map(|resolved| resolved.whole_targets.as_slice())
-		.unwrap_or_default();
-	// The brief, already in `task`, is the compacted standing context; the raw
-	// standing messages are sent only when no brief exists.
-	let agent_context = if specialist_brief(chat_session).is_some() {
-		String::new()
-	} else {
-		crate::supervisor::specialist_context(&chat_session.session.messages)
-	};
-	crate::supervisor::condense::condense_round(
-		results,
-		calls,
-		config,
-		&task,
-		whole_targets,
-		&agent_context,
-		tool_round_intent,
-		operation_cancelled,
-	)
-	.await;
-}
-
 /// A background job's result, delivered when its MCP notification arrives, is
 /// the deferred output of the tool call that launched it, so it gets what an
-/// on-time result gets: the hard per-tool cap, then the supervisor condense.
+/// on-time result gets: the hard per-tool cap, then the plugin round.
 /// Only the MCP output inside the delivery is shaped; status snapshots and
 /// every other inbox message pass through untouched. Every inbox drain runs
 /// this before its messages reach the transcript.
@@ -926,7 +1036,6 @@ pub(crate) async fn shape_background_deliveries(
 	batch: &mut [crate::session::inbox::InboxMessage],
 	chat_session: &ChatSession,
 	config: &Config,
-	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
 	use crate::session::shell_jobs::{delivery_message, split_delivery, DELIVERY_ERROR_ATTR};
 
@@ -952,13 +1061,243 @@ pub(crate) async fn shape_background_deliveries(
 	}
 
 	let mut results = handle_large_tool_results(results, config, config.output_mode()).await?;
-	// No launching call or round intent travels with a delivery: the output is
-	// judged against the live task alone.
-	condense_main_results(&mut results, &[], chat_session, config, "", operation_cancelled).await;
+	plugin_background_round(chat_session, &mut results).await;
 	for ((index, open_tag), result) in framings.into_iter().zip(results) {
 		batch[index].content = delivery_message(&open_tag, &result.extract_content());
 	}
 	Ok(())
+}
+
+/// The fingerprint a round's `tool.after` compares against, taken before the
+/// round runs. Only measured when plugins are configured.
+fn plugin_tree_fingerprint(config: &Config) -> Option<u64> {
+	config
+		.has_plugins()
+		.then(crate::plugins::workdir::fingerprint)
+		.flatten()
+}
+
+/// Whether a plugin may replace this result and keep the original readable:
+/// plain text, a place to save it, and not itself the read of a saved original.
+fn is_replaceable(call: &crate::mcp::McpToolCall, result: &crate::mcp::McpToolResult) -> bool {
+	crate::mcp::tool_shape::is_plain_text_result(result)
+		&& crate::session::context::current_session_id().is_some()
+		&& !crate::utils::spill::references_spill(&call.parameters)
+		&& !crate::utils::spill::spill_exists(&result.tool_name, &result.extract_content())
+}
+
+/// Put `replace.text` in the result, keeping its error flag. With
+/// `keep_original` the full text is saved first and its path goes where the
+/// plugin wrote `{original_path}`; when it cannot be saved the result stays.
+fn apply_replace(result: &mut crate::mcp::McpToolResult, replace: crate::plugins::protocol::Replace) {
+	if !crate::mcp::tool_shape::is_plain_text_result(result) {
+		return;
+	}
+	let text = if replace.keep_original {
+		let Some(path) = crate::utils::spill::write_spill(&result.tool_name, &result.extract_content()) else {
+			return;
+		};
+		replace
+			.text
+			.replace(ORIGINAL_PATH_PLACEHOLDER, &path.display().to_string())
+	} else {
+		replace.text
+	};
+	let content = vec![rmcp::model::ContentBlock::text(text)];
+	result.result = if result.is_error() {
+		rmcp::model::CallToolResult::error(content)
+	} else {
+		rmcp::model::CallToolResult::success(content)
+	};
+}
+
+/// The end of a finished tool round: runs after the hard size cap and before
+/// the results are condensed, emitted or stored. Feeds octomind's own repeat
+/// counter, which works with no plugin configured; with plugins it also
+/// records what the round changed, sends `tool.after` and applies the
+/// replacements. Returns why the turn ends after this round.
+async fn plugin_round(
+	chat_session: &mut ChatSession,
+	config: &Config,
+	round: &RoundCalls<'_>,
+	results: &mut [McpToolResult],
+	intent: &str,
+	tree_before: Option<u64>,
+) -> Option<RoundStop> {
+	let RoundCalls {
+		calls,
+		denied,
+		own_answers,
+	} = *round;
+	let session_id = chat_session.session.info.name.clone();
+	let workdir = crate::mcp::get_thread_working_directory();
+	for effects in crate::plugins::take_deferred_effects(&session_id) {
+		if let Err(error) = crate::plugins::apply::apply(chat_session, effects).await {
+			crate::log_debug!("Applying the effects of a script's tool.before failed: {:#}", error);
+		}
+	}
+
+	let outcomes: Vec<ToolOutcome> = calls
+		.iter()
+		.enumerate()
+		.filter_map(|(index, call)| {
+			let result = results.iter().find(|result| result.tool_id == call.tool_id)?;
+			let was_denied = denied.get(index).copied().unwrap_or(false);
+			let replaceable = !was_denied && is_replaceable(call, result);
+			let returned = own_answers.get(&call.tool_id).and_then(|own| own.returned.as_ref());
+			Some(payload::tool_outcome(
+				call,
+				result,
+				&workdir,
+				was_denied,
+				replaceable,
+				returned,
+			))
+		})
+		.collect();
+	let replaceable_ids: std::collections::HashSet<String> = outcomes
+		.iter()
+		.filter(|outcome| outcome.replaceable)
+		.map(|outcome| outcome.id.clone())
+		.collect();
+
+	// A script's own calls name the paths it changed; the `code` call names none.
+	let made = outcomes
+		.iter()
+		.flat_map(|outcome| std::iter::once(outcome).chain(&outcome.script_calls));
+	for outcome in made.filter(|o| o.mutation && !o.error && !o.denied) {
+		chat_session.turn_mutated_paths.extend(outcome.paths.iter().cloned());
+	}
+
+	// Counted on the text as the cap left it, before any replacement, and on
+	// what the tools themselves returned.
+	let (shown_round, returned_round): (Vec<_>, Vec<_>) = calls
+		.iter()
+		.filter_map(|call| {
+			let outcome = outcomes.iter().find(|outcome| outcome.id == call.tool_id)?;
+			let shown = crate::session::repeat_guard::RoundCall {
+				tool: &call.tool_name,
+				parameters: &call.parameters,
+				result: outcome.result.as_deref().unwrap_or_default(),
+				is_error: outcome.error,
+				is_mutation: outcome.mutation,
+				free_form: outcome.free_form,
+			};
+			let returned = match own_answers.get(&call.tool_id) {
+				Some(own) => crate::session::repeat_guard::RoundCall {
+					result: &own.digest,
+					is_error: own.error,
+					..shown
+				},
+				None => shown,
+			};
+			Some((shown, returned))
+		})
+		.unzip();
+	chat_session
+		.repeat_guard
+		.note_round_returned(&shown_round, &returned_round);
+	let tree_after = plugin_tree_fingerprint(config);
+	// A call that ran and could have moved the tree: a mutation, or a command,
+	// which may write before it fails. A script could when one of its calls could.
+	let write_capable = outcomes
+		.iter()
+		.flat_map(|outcome| std::iter::once(outcome).chain(&outcome.script_calls))
+		.any(|outcome| !outcome.denied && (outcome.mutation || outcome.command.is_some()));
+	if super::round_moved_tree(write_capable, tree_before, tree_after) {
+		chat_session.repeat_guard.note_tree_moved();
+	}
+	let identical = chat_session.repeat_guard.identical_rounds();
+	let max_identical = config.max_identical_rounds;
+	let looping = max_identical > 0 && identical >= max_identical;
+
+	let mut plugin_stop = None;
+	if crate::plugins::subscribed(&session_id, event::TOOL_AFTER) {
+		let (finished, verified) = crate::mcp::agent::handback::take_handback();
+		let fingerprint_text =
+			|fingerprint: Option<u64>| fingerprint.map(|value| value.to_string()).unwrap_or_default();
+		let payload = ToolAfter {
+			intent: (!intent.trim().is_empty()).then(|| intent.to_string()),
+			calls: outcomes,
+			tree: Some(TreeChange {
+				before: fingerprint_text(tree_before),
+				after: fingerprint_text(tree_after),
+			}),
+			subagents: (finished > 0).then_some(SubagentRuns {
+				finished: finished as u32,
+				verified: verified as u32,
+			}),
+			background: Vec::new(),
+			stopping: looping.then(|| STOPPING_LOOP.to_string()),
+			context_files: Vec::new(),
+		};
+		let parts = ContextParts::of(chat_session);
+		let outcome = crate::plugins::tool_after(&parts.context(&chat_session.session.messages, None), payload).await;
+		for replace in outcome.replaces {
+			// Only a call the plugin was told it may replace: a denial reason or the
+			// read of a saved original must stay as it is.
+			if !replaceable_ids.contains(&replace.call_id) {
+				crate::log_debug!(
+					"Ignored the replacement for call '{}': it was not replaceable",
+					replace.call_id
+				);
+				continue;
+			}
+			if let Some(result) = results.iter_mut().find(|result| result.tool_id == replace.call_id) {
+				apply_replace(result, replace);
+			}
+		}
+		plugin_stop = outcome.stop;
+		if let Err(error) = crate::plugins::apply::apply(chat_session, outcome.effects).await {
+			crate::log_debug!("Applying the effects of tool.after failed: {:#}", error);
+		}
+	}
+
+	if looping {
+		Some(RoundStop::RepeatedRounds(identical))
+	} else {
+		plugin_stop.map(RoundStop::Plugin)
+	}
+}
+
+/// `tool.after` for background job output that arrived between rounds: no
+/// calls, one output per delivery. Replacements go into the delivery text.
+/// Only the part of the effects that needs no `&mut` session can be applied
+/// here: the callers of this function hold a shared session.
+async fn plugin_background_round(chat_session: &ChatSession, results: &mut [McpToolResult]) {
+	let session_id = &chat_session.session.info.name;
+	if !crate::plugins::subscribed(session_id, event::TOOL_AFTER) {
+		return;
+	}
+	// No launching call is linked to a job yet, so each delivery goes under its own id.
+	let background: Vec<BackgroundOutput> = results
+		.iter()
+		.map(|result| BackgroundOutput {
+			call_id: result.tool_id.clone(),
+			label: result.tool_name.clone(),
+			output: result.extract_content(),
+		})
+		.collect();
+	let payload = ToolAfter {
+		intent: None,
+		calls: Vec::new(),
+		tree: None,
+		subagents: None,
+		background: background.clone(),
+		stopping: None,
+		context_files: Vec::new(),
+	};
+	let parts = ContextParts::of(chat_session);
+	let outcome = crate::plugins::tool_after(&parts.context(&chat_session.session.messages, None), payload).await;
+	for replace in outcome.replaces {
+		if let Some(index) = background.iter().position(|output| output.call_id == replace.call_id) {
+			apply_replace(&mut results[index], replace);
+		}
+	}
+	if !outcome.effects.notes.is_empty() || outcome.effects.plan.is_some() {
+		crate::log_debug!("tool.after for background output answered with notes or a plan change; not applied");
+	}
+	crate::plugins::apply::settle(session_id, None);
 }
 
 /// Error body for a tool that hit the consecutive-failure threshold. The
@@ -987,7 +1326,7 @@ async fn handle_large_tool_results(
 			// image, audio, or structured-content semantics. Until the hard cap
 			// has a protocol-aware representation, correctness wins: leave these
 			// payloads intact rather than silently converting them to plain text.
-			if !crate::supervisor::condense::is_plain_text_result(&result) {
+			if !crate::mcp::tool_shape::is_plain_text_result(&result) {
 				return result;
 			}
 			let content_str = result.extract_content();
@@ -1047,6 +1386,7 @@ async fn display_tool_success(
 			execution_context.as_deref(),
 		)
 		.await;
+		crate::session::chat::tool_display::display_script_calls(&res.script_calls);
 	}
 
 	// Output content (info/debug levels only; respect JSONL suppression).

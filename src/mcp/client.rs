@@ -437,6 +437,10 @@ fn build_client_info(protocol_version: ProtocolVersion, shell: bool) -> ClientCo
 	// would pin the value it had at connect time.
 	if protocol_version >= ProtocolVersion::V_2026_07_28 {
 		session["context_epoch"] = crate::session::context::context_epoch().into();
+		// True for one call only, so it too needs per-request capabilities.
+		if super::code::is_script_call() {
+			session["script"] = true.into();
+		}
 	}
 
 	let mut capabilities = ClientCapabilities::default();
@@ -610,7 +614,7 @@ pub(crate) fn missing_env_keys(server: &McpServerConfig) -> Vec<String> {
 /// Resolve `{{ENV:KEY}}` placeholders in a string from the parent environment.
 /// Unresolved placeholders are left as-is — callers should guard with
 /// `missing_env_keys` before relying on the result.
-fn resolve_env_placeholders(s: &str) -> String {
+pub(crate) fn resolve_env_placeholders(s: &str) -> String {
 	let mut result = s.to_string();
 	for key in crate::agent::inputs::extract_env_keys(s) {
 		if let Ok(val) = std::env::var(&key) {

@@ -220,6 +220,7 @@ fn msg(role: &str, content: &str) -> Message {
 		videos: None,
 		thinking: None,
 		id: None,
+		script_calls: Vec::new(),
 	}
 }
 
@@ -474,16 +475,13 @@ fn test_config() -> Config {
 async fn test_octolib_params_defaults_and_passthrough() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params = ChatCompletionParams::new(&messages, "test-model", 0.5, 0.9, 7, 1234, &config);
+	let params = ChatCompletionParams::new(&messages, "test-model", 1234, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
 		.expect("conversion succeeds");
 
 	assert_eq!(octo.model, "test-model");
-	assert_eq!(octo.temperature, 0.5);
-	assert_eq!(octo.top_p, 0.9);
-	assert_eq!(octo.top_k, 7);
 	assert_eq!(octo.max_tokens, 1234);
 	// Defaults come from the config template: max_retries=1, retry_timeout=30s.
 	assert_eq!(octo.max_retries, 1);
@@ -506,7 +504,7 @@ async fn test_octolib_params_carry_provider_items() {
 	assistant.provider_items = Some(items.clone());
 	let messages = vec![msg("user", "go"), assistant, msg("user", "again")];
 
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -519,7 +517,7 @@ async fn test_octolib_params_carry_provider_items() {
 async fn test_octolib_params_builder_overrides() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_max_retries(7);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config).with_max_retries(7);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -531,7 +529,7 @@ async fn test_octolib_params_builder_overrides() {
 async fn test_octolib_params_key_prompt_cache_by_session() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let outside = params
 		.to_octolib_params("test-provider")
 		.await
@@ -557,7 +555,7 @@ async fn test_octolib_params_cached_system_message_gets_one_hour_ttl() {
 		},
 		msg("user", "hi"),
 	];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -571,7 +569,7 @@ async fn test_octolib_params_cached_system_message_gets_one_hour_ttl() {
 async fn test_octolib_params_appends_synthetic_user_after_assistant() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi"), msg("assistant", "hello")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -592,7 +590,7 @@ async fn test_octolib_params_no_synthetic_user_after_user_message() {
 		},
 		msg("user", "hi"),
 	];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -605,7 +603,7 @@ async fn test_octolib_params_no_synthetic_user_after_user_message() {
 async fn test_octolib_params_system_only_messages_get_no_synthetic_user() {
 	let config = test_config();
 	let messages = vec![msg("system", "sysprompt")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -618,7 +616,7 @@ async fn test_octolib_params_purpose_header_sent_on_every_request() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -629,8 +627,7 @@ async fn test_octolib_params_purpose_header_sent_on_every_request() {
 		"untagged calls are MAIN traffic"
 	);
 
-	let params =
-		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_purpose(ModelPurpose::Compression);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config).with_purpose(ModelPurpose::Compression);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -646,7 +643,7 @@ async fn test_octolib_params_reasoning_effort_override_beats_config() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -654,7 +651,7 @@ async fn test_octolib_params_reasoning_effort_override_beats_config() {
 	// Config template default is "medium".
 	assert_eq!(octo.reasoning_effort, Some(octolib::llm::ReasoningEffort::Medium));
 
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config)
 		.with_reasoning_effort(crate::config::ReasoningEffortConfig::High);
 	let octo = params
 		.to_octolib_params("test-provider")
@@ -672,7 +669,7 @@ async fn test_octolib_params_schema_becomes_strict_structured_output() {
 		"properties": {"answer": {"type": "string"}},
 		"required": ["answer"]
 	});
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_schema(schema.clone());
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config).with_schema(schema.clone());
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -688,7 +685,7 @@ async fn test_octolib_params_zero_request_timeout_disables_deadline() {
 	let mut config = test_config();
 	config.request_timeout_seconds = 0;
 	let messages = vec![msg("user", "hi")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -701,7 +698,7 @@ async fn test_octolib_params_cancellation_token_attached() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let (_tx, rx) = watch::channel(false);
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_cancellation_token(rx);
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config).with_cancellation_token(rx);
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -723,7 +720,7 @@ async fn test_octolib_params_retry_observer_reaches_the_session_that_built_the_c
 		(ModelPurpose::Compression, "octohub", "auto"),
 	] {
 		let octo = crate::session::context::with_session_id(sid.clone(), async {
-			ChatCompletionParams::new(&messages, model, 0.1, 1.0, 0, 10, &config)
+			ChatCompletionParams::new(&messages, model, 10, &config)
 				.with_purpose(purpose)
 				.to_octolib_params(provider)
 				.await
@@ -759,7 +756,7 @@ async fn test_octolib_params_retry_observer_reaches_the_session_that_built_the_c
 async fn test_octolib_params_without_tools_keeps_tools_empty() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).without_tools();
+	let params = ChatCompletionParams::new(&messages, "m", 10, &config).without_tools();
 	let octo = params
 		.to_octolib_params("test-provider")
 		.await
@@ -790,7 +787,7 @@ async fn test_octolib_params_without_vision_strips_prompt_and_tool_images() {
 		},
 	];
 	for vision in [true, false] {
-		let octo = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
+		let octo = ChatCompletionParams::new(&messages, "m", 10, &config)
 			.with_vision(vision)
 			.to_octolib_params("test-provider")
 			.await
@@ -845,7 +842,7 @@ async fn chatgpt_uses_websockets_and_other_providers_keep_http() {
 		("openai", octolib::ChatGptTransport::Http),
 		("anthropic", octolib::ChatGptTransport::Http),
 	] {
-		let params = ChatCompletionParams::new(&messages, "model", 0.1, 1.0, 0, 10, &config)
+		let params = ChatCompletionParams::new(&messages, "model", 10, &config)
 			.to_octolib_params(provider)
 			.await
 			.expect("conversion succeeds");
@@ -862,7 +859,7 @@ async fn request_transport_applies_to_octohub_and_chatgpt_only() {
 	for configured in [RequestTransportConfig::WebSocket, RequestTransportConfig::Http] {
 		config.request_transport = configured;
 		for provider in ["octohub", "chatgpt", "openai", "anthropic"] {
-			let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config)
+			let params = ChatCompletionParams::new(&messages, "auto", 10, &config)
 				.to_octolib_params(provider)
 				.await
 				.expect("conversion succeeds");
@@ -894,7 +891,7 @@ fn request_transport_builder_overrides_the_config_default() {
 
 	let config = test_config();
 	let messages = vec![msg("user", "hello")];
-	let params = ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config);
+	let params = ChatCompletionParams::new(&messages, "auto", 10, &config);
 	assert_eq!(params.request_transport, RequestTransportConfig::WebSocket);
 	assert_eq!(
 		params
@@ -915,7 +912,7 @@ async fn request_transport_preserves_session_purpose_cancellation_and_retry_meta
 		for purpose in [ModelPurpose::Main, ModelPurpose::Supervisor, ModelPurpose::Compression] {
 			let (cancel, token) = watch::channel(false);
 			let mut params = crate::session::context::with_session_id("octohub-session".to_string(), async {
-				ChatCompletionParams::new(&messages, "auto", 0.1, 1.0, 0, 10, &config)
+				ChatCompletionParams::new(&messages, "auto", 10, &config)
 					.with_purpose(purpose)
 					.with_cancellation_token(token)
 					.to_octolib_params("octohub")
@@ -956,7 +953,7 @@ async fn stream_timeout_defaults_disabled_and_is_independent_of_request_deadline
 		config.request_timeout_seconds = total;
 		config.stream_timeout_seconds = idle;
 		for provider in ["chatgpt", "alibaba"] {
-			let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+			let params = ChatCompletionParams::new(&messages, "m", 10, &config);
 			let octo = params.to_octolib_params(provider).await.unwrap();
 			assert_eq!(
 				octo.request_timeout,

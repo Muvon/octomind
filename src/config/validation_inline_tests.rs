@@ -18,16 +18,7 @@ fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }
 
-#[test]
-fn enabled_supervisor_requires_a_model() {
-	let mut config = template_config();
-	config.supervisor.model.model = Some(String::new());
-	assert!(config.validate_model_profiles().is_err());
-
-	config.supervisor.enabled = false;
-	assert!(config.validate_model_profiles().is_ok());
-}
-use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
+use crate::config::{HookConfig, McpServerConfig};
 
 fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
 	HookConfig {
@@ -35,26 +26,6 @@ fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
 		bind: bind.to_string(),
 		script: script.to_string(),
 		timeout,
-	}
-}
-
-fn role_with(name: &str, temperature: f64, top_p: f64, top_k: u32) -> Role {
-	Role {
-		name: name.to_string(),
-		config: RoleConfig {
-			model: crate::config::ModelProfileOverride {
-				temperature: Some(temperature),
-				top_p: Some(top_p),
-				top_k: Some(top_k),
-				..Default::default()
-			},
-			system: "system prompt".to_string(),
-			welcome: "welcome".to_string(),
-			temperature: None,
-			top_p: None,
-			top_k: None,
-		},
-		mcp: Default::default(),
 	}
 }
 
@@ -82,30 +53,6 @@ fn session_token_threshold_caps_at_two_million() {
 
 	config.max_session_tokens_threshold = 2_000_000;
 	config.validate_thresholds().expect("the boundary itself must pass");
-}
-
-#[test]
-fn role_sampling_bounds_are_enforced_with_inclusive_boundaries() {
-	let mut config = template_config();
-	config.roles = vec![
-		role_with("lower-edge", 0.0, 0.0, 1),
-		role_with("upper-edge", 2.0, 1.0, 1000),
-	];
-	config.validate_model_profiles().expect("both edges are legal values");
-
-	let cases = [
-		("too-hot", 2.1, 1.0, 1000, "temperature"),
-		("too-cold", -0.1, 1.0, 1000, "temperature"),
-		("too-wide", 1.0, 1.1, 1000, "top_p"),
-		("too-narrow", 1.0, -0.1, 1000, "top_p"),
-		("too-many", 1.0, 1.0, 1001, "top_k"),
-	];
-	for (name, temperature, top_p, top_k, knob) in cases {
-		config.roles = vec![role_with(name, temperature, top_p, top_k)];
-		let error = config.validate_model_profiles().unwrap_err().to_string();
-		assert!(error.contains(name), "must name the role, got: {error}");
-		assert!(error.contains(knob), "must name {knob}, got: {error}");
-	}
 }
 
 #[test]
@@ -250,14 +197,4 @@ fn compression_model_check_requires_a_resolvable_model() {
 	config
 		.validate_model_profiles()
 		.expect("the shipped decision model must resolve");
-}
-
-#[test]
-fn supervisor_model_is_not_required_when_the_supervisor_is_off() {
-	let mut config = template_config();
-	config.supervisor.model.model = Some(String::new());
-	config.supervisor.enabled = false;
-	config
-		.validate_model_profiles()
-		.expect("a disabled supervisor never runs the planner");
 }

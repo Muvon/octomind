@@ -41,7 +41,6 @@ pub const SKILL_COMMAND: &str = "/skill";
 pub const EFFORT_COMMAND: &str = "/effort";
 pub const SCHEDULE_COMMAND: &str = "/schedule";
 pub const STATUS_COMMAND: &str = "/status";
-pub const LEARNING_COMMAND: &str = "/learning";
 pub const SHARE_COMMAND: &str = "/share";
 pub const ANALYZE_COMMAND: &str = "/analyze";
 pub const USAGE_COMMAND: &str = "/usage";
@@ -62,7 +61,7 @@ pub enum Reach {
 /// The hint is empty only when the command takes no argument. `/help`, the
 /// completer and the WebSocket bind ack all list from here (the ACP menu in
 /// `acp/agent.rs` keeps its own list).
-pub const BUILTIN_COMMANDS: [(&str, &str, &str, Reach); 31] = [
+pub const BUILTIN_COMMANDS: [(&str, &str, &str, Reach); 30] = [
 	(HELP_COMMAND, "", "Show this help message", Reach::Anywhere),
 	(
 		COPY_COMMAND,
@@ -155,12 +154,6 @@ pub const BUILTIN_COMMANDS: [(&str, &str, &str, Reach); 31] = [
 		STATUS_COMMAND,
 		"[agents|monitors|jobs]",
 		"Show active agents, MCP jobs, and command monitors",
-		Reach::Anywhere,
-	),
-	(
-		LEARNING_COMMAND,
-		"[list|show|delete|clear|evolution]",
-		"Manage role/project lessons",
 		Reach::Anywhere,
 	),
 	(

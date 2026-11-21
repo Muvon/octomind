@@ -53,9 +53,27 @@ fn help_builtin_rows() -> Vec<(&'static str, String)> {
 		.collect()
 }
 
-pub fn display_help(output: &CommandOutput, config: &Config) {
+/// (command, description) rows of the commands plugins provide for the session,
+/// laid out like the built-in rows.
+fn help_plugin_rows(session_id: &str) -> Vec<(String, String)> {
+	crate::plugins::commands(session_id)
+		.into_iter()
+		.map(|command| {
+			let spec = command.spec;
+			let text = if spec.hint.is_empty() {
+				spec.description
+			} else {
+				format!("{} {}", spec.description, spec.hint)
+			};
+			(format!("/{}", spec.name), text)
+		})
+		.collect()
+}
+
+pub fn display_help(output: &CommandOutput, config: &Config, session_id: &str) {
 	if let CommandOutput::Help { .. } = output {
 		let builtins = help_builtin_rows();
+		let plugin_cmds = help_plugin_rows(session_id);
 
 		let custom_cmds: Vec<(String, &str)> = config
 			.commands
@@ -70,7 +88,8 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		// Column width: pad command names so descriptions align.
 		let builtins_width = builtins.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
 		let custom_width = custom_cmds.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
-		let pad = builtins_width.max(custom_width).min(24);
+		let plugin_width = plugin_cmds.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
+		let pad = builtins_width.max(custom_width).max(plugin_width).min(24);
 
 		block_open("/help", None);
 		block_section("commands");
@@ -83,7 +102,13 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 				block_row(cmd, &desc.dimmed().to_string(), pad);
 			}
 		}
-		let total = builtins.len() + custom_cmds.len();
+		if !plugin_cmds.is_empty() {
+			block_section("plugin");
+			for (cmd, desc) in &plugin_cmds {
+				block_row(cmd, &desc.dimmed().to_string(), pad);
+			}
+		}
+		let total = builtins.len() + custom_cmds.len() + plugin_cmds.len();
 		block_close_ok("/help", Some(&format!("{} commands", total)));
 		println!();
 	}
@@ -368,6 +393,7 @@ pub fn display_info(output: &CommandOutput) {
 		agents_stats,
 		keepalive,
 		supervisor_accounting,
+		plugins,
 		..
 	} = output
 	{
@@ -674,6 +700,14 @@ pub fn display_info(output: &CommandOutput) {
 			}
 		}
 
+		for block in plugins {
+			block_section(&block.plugin);
+			let kw = key_width(block.rows.iter().map(|row| row.label.as_str()));
+			for row in &block.rows {
+				block_row(&row.label, &row.value, kw);
+			}
+		}
+
 		block_close_ok("/info", Some(session_name));
 		println!();
 	}
@@ -737,102 +771,142 @@ fn info_timing_rows(timing: &super::InfoTiming) -> Vec<(&'static str, String)> {
 	rows
 }
 
+/// `mechanic` is `None` for a row octomind does not know, such as a plugin's own.
 fn supervisor_outcome(
-	mechanic: crate::supervisor::report::Mechanic,
-	usage: &crate::supervisor::report::MechanicUsage,
+	mechanic: Option<crate::session::accounting::report::Mechanic>,
+	usage: &crate::session::accounting::report::MechanicUsage,
 ) -> String {
-	use crate::session::chat::session::utils::format_number;
-	use crate::supervisor::report::{Mechanic, Outcome};
-	let mut parts = Vec::new();
-	for (&outcome, &count) in &usage.outcome {
+	use crate::session::accounting::report::Outcome;
+	let mut known = Vec::new();
+	let mut other = Vec::new();
+	for (name, &count) in &usage.outcome {
 		if count == 0 {
 			continue;
 		}
-		let counted = |label: &str| format!("{count} {label}");
-		let plural = |singular: &str, plural: &str| counted(if count == 1 { singular } else { plural });
-		let text = match outcome {
-			Outcome::Runs => plural("run", "runs"),
-			Outcome::Pass => plural("pass", "passes"),
-			Outcome::Fail => plural("fail", "fails"),
-			Outcome::Stall => counted("stalled"),
-			Outcome::RefutedGaps => plural("gap refuted", "gaps refuted"),
-			Outcome::Reported => plural("finding reported", "findings reported"),
-			Outcome::Checked => counted("checked"),
-			Outcome::Blocked => counted("blocked"),
-			Outcome::Cached => counted("cached"),
-			Outcome::Unavailable => counted("unavailable"),
-			Outcome::SkippedJudge => counted("skipped judge"),
-			Outcome::Condensed => counted("condensed"),
-			Outcome::SavedTokens => format!("saved {} tok", format_number(count)),
-			Outcome::Items => plural("item", "items"),
-			Outcome::Used => counted("used"),
-			Outcome::Lessons => plural("lesson", "lessons"),
-			Outcome::Experiences => plural("experience", "experiences"),
-			Outcome::Orientation => counted("orientation"),
-			Outcome::PlanCalls => plural("planner call", "planner calls"),
-			Outcome::Skips => plural("skip", "skips"),
-			Outcome::Applied => counted(match mechanic {
-				Mechanic::Skills | Mechanic::Capabilities => "activated",
-				Mechanic::Recall => "filtered",
-				Mechanic::Compression => "demoted",
-				Mechanic::Taps => "routed",
-				_ => continue,
-			}),
-			Outcome::DecisionUnavailable => counted("decision unavailable"),
-			Outcome::Replaced => continue,
-			Outcome::Consolidated => counted("consolidated"),
-			Outcome::Archived => counted("archived"),
-			Outcome::Advised => counted("advised"),
-			Outcome::AdviceSkipped => counted("advice skipped"),
-			Outcome::AdviceControl => counted("advice control"),
-			Outcome::Readback => counted("readback"),
-			Outcome::FormatRepair => counted("format repair"),
-		};
-		parts.push(text);
+		match Outcome::from_name(name) {
+			Some(outcome) => known.push((outcome, count)),
+			// A plugin's own outcome is shown as it named it.
+			None => other.push(format!("{count} {}", name.replace('_', " "))),
+		}
 	}
+	known.sort_by_key(|(outcome, _)| *outcome);
+	let mut parts: Vec<String> = known
+		.into_iter()
+		.filter_map(|(outcome, count)| known_outcome_text(mechanic, outcome, count))
+		.collect();
+	parts.extend(other);
 	parts.join(" · ")
 }
 
-fn supervisor_table(report: &crate::supervisor::report::SupervisorReport, terminal_width: usize) -> String {
+fn known_outcome_text(
+	mechanic: Option<crate::session::accounting::report::Mechanic>,
+	outcome: crate::session::accounting::report::Outcome,
+	count: u64,
+) -> Option<String> {
+	use crate::session::accounting::report::{Mechanic, Outcome};
 	use crate::session::chat::session::utils::format_number;
-	use crate::supervisor::report::Mechanic;
+	let counted = |label: &str| format!("{count} {label}");
+	let plural = |singular: &str, plural: &str| counted(if count == 1 { singular } else { plural });
+	Some(match outcome {
+		Outcome::Runs => plural("run", "runs"),
+		Outcome::Pass => plural("pass", "passes"),
+		Outcome::Fail => plural("fail", "fails"),
+		Outcome::Stall => counted("stalled"),
+		Outcome::RefutedGaps => plural("gap refuted", "gaps refuted"),
+		Outcome::Reported => plural("finding reported", "findings reported"),
+		Outcome::Checked => counted("checked"),
+		Outcome::Blocked => counted("blocked"),
+		Outcome::Cached => counted("cached"),
+		Outcome::Unavailable => counted("unavailable"),
+		Outcome::SkippedJudge => counted("skipped judge"),
+		Outcome::Condensed => counted("condensed"),
+		Outcome::SavedTokens => format!("saved {} tok", format_number(count)),
+		Outcome::Items => plural("item", "items"),
+		Outcome::Used => counted("used"),
+		Outcome::Lessons => plural("lesson", "lessons"),
+		Outcome::Experiences => plural("experience", "experiences"),
+		Outcome::Orientation => counted("orientation"),
+		Outcome::PlanCalls => plural("planner call", "planner calls"),
+		Outcome::Skips => plural("skip", "skips"),
+		Outcome::Applied => counted(match mechanic {
+			Some(Mechanic::Skills | Mechanic::Capabilities) => "activated",
+			Some(Mechanic::Recall) => "filtered",
+			Some(Mechanic::Compression) => "demoted",
+			Some(Mechanic::Taps) => "routed",
+			_ => return None,
+		}),
+		Outcome::DecisionUnavailable => counted("decision unavailable"),
+		Outcome::Replaced => return None,
+		Outcome::Consolidated => counted("consolidated"),
+		Outcome::Archived => counted("archived"),
+		Outcome::Advised => counted("advised"),
+		Outcome::AdviceSkipped => counted("advice skipped"),
+		Outcome::AdviceControl => counted("advice control"),
+		Outcome::Readback => counted("readback"),
+		Outcome::FormatRepair => counted("format repair"),
+	})
+}
+
+fn supervisor_table(report: &crate::session::accounting::report::SupervisorReport, terminal_width: usize) -> String {
+	use crate::session::accounting::report::{Mechanic, MechanicUsage};
+	use crate::session::chat::session::utils::format_number;
 	const W_RAIL: usize = 4;
 	const W_GAP: usize = 2;
 	const W_OUTCOME_INDENT: usize = 2;
 	if report.mechanics.is_empty() {
 		return String::new();
 	}
-	let background = report.mechanics.values().any(|usage| usage.wall_background_ms > 0);
+	// A row that is not in the shape of `MechanicUsage` shows its name and nothing else.
+	let mut entries: Vec<(&str, Option<Mechanic>, Option<MechanicUsage>)> = report
+		.mechanics
+		.iter()
+		.map(|(name, row)| {
+			(
+				name.as_str(),
+				Mechanic::from_name(name),
+				serde_json::from_value::<MechanicUsage>(row.clone()).ok(),
+			)
+		})
+		.collect();
+	// Octomind's own rows first in their usual order, then the others by name (the sort is stable).
+	entries.sort_by_key(|(_, mechanic, _)| (mechanic.is_none(), *mechanic));
+	let background = entries
+		.iter()
+		.any(|(_, _, usage)| usage.as_ref().is_some_and(|usage| usage.wall_background_ms > 0));
 	let mut headers = vec!["".to_owned(), "chat".into(), "decision".into(), "wall".into()];
 	if background {
 		headers.push("background".into());
 	}
 	headers.extend(["API".into(), "tokens in/out".into(), "cost".into(), "outcome".into()]);
 	let mut rows = vec![headers];
-	for (&mechanic, usage) in &report.mechanics {
+	for (name, mechanic, usage) in entries {
+		let Some(usage) = usage else {
+			let mut row = vec![name.to_owned()];
+			row.resize(rows[0].len(), String::new());
+			rows.push(row);
+			continue;
+		};
 		let chat = if matches!(
 			mechanic,
-			Mechanic::Skills | Mechanic::Capabilities | Mechanic::Compression | Mechanic::Taps
+			Some(Mechanic::Skills | Mechanic::Capabilities | Mechanic::Compression | Mechanic::Taps)
 		) {
 			"–".into()
 		} else {
 			usage.chat_calls.to_string()
 		};
-		let decision = if matches!(mechanic, Mechanic::Resolve | Mechanic::Hindsight | Mechanic::Retention) {
+		let decision = if matches!(
+			mechanic,
+			Some(Mechanic::Resolve | Mechanic::Hindsight | Mechanic::Retention)
+		) {
 			"–".into()
 		} else {
 			usage.decision_calls.to_string()
 		};
-		let mut row = vec![
-			mechanic.name().into(),
-			chat,
-			decision,
-			format_duration(usage.wall_blocking_ms),
-		];
+		let mut row = vec![name.into(), chat, decision, format_duration(usage.wall_blocking_ms)];
 		if background {
 			row.push(format_duration(usage.wall_background_ms));
 		}
-		if mechanic == Mechanic::Hindsight {
+		if mechanic == Some(Mechanic::Hindsight) {
 			row.extend(["–".into(), "local".into(), "–".into()]);
 		} else {
 			row.extend([
@@ -845,7 +919,7 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport, termin
 				format!("${:.5}", usage.cost),
 			]);
 		}
-		row.push(supervisor_outcome(mechanic, usage));
+		row.push(supervisor_outcome(mechanic, &usage));
 		rows.push(row);
 	}
 	let totals = &report.totals;
@@ -917,7 +991,7 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport, termin
 				} else {
 					format!("{text:>width$}", width = widths[column])
 				};
-				if row_index == 0 || column == 0 || text == "–" || text == "local" {
+				if row_index == 0 || column == 0 || text.is_empty() || text == "–" || text == "local" {
 					padded.bright_black().to_string()
 				} else if column == outcome_column {
 					padded.dimmed().to_string()
@@ -2815,326 +2889,19 @@ fn display_skill_list(data: &serde_json::Value) {
 	println!();
 }
 
-pub fn display_learning(output: &CommandOutput) {
-	let data = match output {
-		CommandOutput::Learning { data } => data,
-		_ => return,
+pub fn display_plugin(output: &CommandOutput) {
+	let CommandOutput::Plugin {
+		plugin, command, text, ..
+	} = output
+	else {
+		return;
 	};
-
-	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
-
-	match subcommand {
-		"list" => {
-			let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("?");
-			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
-			let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-			let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
-			let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(0);
-			let pattern = data.get("pattern").and_then(|v| v.as_str());
-
-			let subtitle = if let Some(pat) = pattern {
-				format!("{}/{} · filter '{}'", role, project, pat)
-			} else {
-				format!("{}/{}", role, project)
-			};
-			block_open("/learning", Some(&subtitle));
-			if let Some(storage) = data.get("storage") {
-				let number = |key| storage.get(key).and_then(|value| value.as_u64()).unwrap_or(0);
-				block_row_text(
-					&format!(
-						"hot: {} item(s) / {} tok · cold: {} item(s) / {} tok · scope: {} local + {} global",
-						number("hot_items"),
-						number("hot_tokens"),
-						number("cold_items"),
-						number("cold_tokens"),
-						number("scoped_hot") + number("scoped_cold"),
-						number("global_hot") + number("global_cold")
-					)
-					.dimmed()
-					.to_string(),
-				);
-				if let Some(types) = storage.get("by_type").and_then(|value| value.as_object()) {
-					let summary = types
-						.iter()
-						.map(|(name, counts)| {
-							format!(
-								"{} {}/{}",
-								name,
-								counts.get("hot").and_then(|value| value.as_u64()).unwrap_or(0),
-								counts.get("cold").and_then(|value| value.as_u64()).unwrap_or(0)
-							)
-						})
-						.collect::<Vec<_>>()
-						.join(" · ");
-					if !summary.is_empty() {
-						block_row_text(&format!("types hot/cold: {summary}").dimmed().to_string());
-					}
-				}
-			}
-
-			let lessons = match data.get("lessons").and_then(|v| v.as_array()) {
-				Some(l) if !l.is_empty() => l,
-				_ => {
-					block_line(&"No lessons found.".yellow().to_string());
-					block_close_ok("/learning", Some("empty"));
-					println!();
-					return;
-				}
-			};
-
-			for lesson in lessons {
-				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
-				let title = lesson.get("title").and_then(|v| v.as_str()).unwrap_or("");
-				let memory_type = lesson.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
-				let importance = lesson.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
-				let confidence = lesson.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
-				let scope = lesson.get("scope").and_then(|v| v.as_str()).unwrap_or("scoped");
-				let tags = lesson
-					.get("tags")
-					.and_then(|v| v.as_array())
-					.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
-					.unwrap_or_default();
-				let created = lesson.get("created").and_then(|v| v.as_str()).unwrap_or("");
-				let outcome = lesson.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
-				let related = lesson.get("related").and_then(|v| v.as_array()).map_or(0, Vec::len);
-				let evidence = lesson.get("evidence").and_then(|v| v.as_array()).map_or(0, Vec::len);
-
-				let imp_indicator = if importance >= 0.7 {
-					"[high]".bright_yellow().to_string()
-				} else if importance >= 0.4 {
-					"[med] ".dimmed().to_string()
-				} else {
-					"[low] ".dimmed().to_string()
-				};
-
-				let display_source = if memory_type == "experience" && !title.is_empty() {
-					title
-				} else {
-					content
-				};
-				let content_display = if display_source.chars().count() > 80 {
-					format!("{}…", display_source.chars().take(79).collect::<String>())
-				} else {
-					display_source.to_string()
-				};
-
-				let scope_tag = if scope == "global" {
-					" (global)".bright_cyan().to_string()
-				} else {
-					String::new()
-				};
-				block_section(&format!("#{} {}{} ({})", index, imp_indicator, scope_tag, memory_type));
-				block_row_text(&content_display.bright_white().to_string());
-
-				let mut meta = Vec::new();
-				if !confidence.is_empty() {
-					meta.push(format!("confidence: {}", confidence));
-				}
-				if !tags.is_empty() {
-					meta.push(format!("tags: {}", tags));
-				}
-				if !created.is_empty() {
-					let date: String = created.chars().take(10).collect();
-					meta.push(format!("created: {}", date));
-				}
-				if !outcome.is_empty() && outcome != "unknown" {
-					meta.push(format!("outcome: {}", outcome));
-				}
-				if related > 0 {
-					meta.push(format!("links: {}", related));
-				}
-				if evidence > 0 {
-					meta.push(format!("evidence: {}", evidence));
-				}
-				if !meta.is_empty() {
-					block_row_text(&meta.join(" | ").dimmed().to_string());
-				}
-			}
-
-			if total_pages > 1 {
-				let mut nav = Vec::new();
-				if page > 1 {
-					nav.push(format!("/learning list {}", page - 1));
-				}
-				if page < total_pages {
-					nav.push(format!("/learning list {}", page + 1));
-				}
-				block_line(
-					&format!("Page {}/{}  {}", page, total_pages, nav.join("  "))
-						.dimmed()
-						.to_string(),
-				);
-			}
-			block_line(
-				&"/learning show <n> · /learning delete <n> · /learning clear"
-					.dimmed()
-					.to_string(),
-			);
-			block_close_ok("/learning", Some(&format!("{} lesson(s)", total)));
-			println!();
-		}
-		"show" => {
-			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-			let memory_type = data.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
-			let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
-			let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
-			block_open("/learning", Some(&format!("#{} · {} · {}", index, memory_type, title)));
-			for line in content.lines() {
-				block_row_text(line);
-			}
-			let mut meta = Vec::new();
-			for (key, label) in [
-				("outcome", "outcome"),
-				("confidence", "confidence"),
-				("scope", "scope"),
-				("path", "file"),
-			] {
-				if let Some(value) = data.get(key).and_then(|v| v.as_str()) {
-					if !value.is_empty() {
-						meta.push(format!("{label}: {value}"));
-					}
-				}
-			}
-			let related = data
-				.get("related")
-				.and_then(|v| v.as_array())
-				.map(|items| {
-					items
-						.iter()
-						.filter_map(|item| item.as_str())
-						.collect::<Vec<_>>()
-						.join(", ")
-				})
-				.unwrap_or_default();
-			if !related.is_empty() {
-				meta.push(format!("related: {related}"));
-			}
-			let evidence = data
-				.get("evidence")
-				.and_then(|v| v.as_array())
-				.map(|items| {
-					items
-						.iter()
-						.filter_map(|item| item.as_str())
-						.collect::<Vec<_>>()
-						.join(", ")
-				})
-				.unwrap_or_default();
-			if !evidence.is_empty() {
-				meta.push(format!("evidence: {evidence}"));
-			}
-			if !meta.is_empty() {
-				block_section("provenance");
-				for line in meta {
-					block_row_text(&line.dimmed().to_string());
-				}
-			}
-			block_close_ok("/learning", Some("memory inspected"));
-			println!();
-		}
-		"delete" => {
-			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-			let preview = data.get("content_preview").and_then(|v| v.as_str()).unwrap_or("");
-			block_open("/learning", None);
-			let kw = key_width(["deleted"]);
-			block_row(
-				"deleted",
-				&format!("#{}: {}…", index, preview).bright_green().to_string(),
-				kw,
-			);
-			block_close_ok("/learning", Some(&format!("deleted #{}", index)));
-			println!();
-		}
-		"clear" => {
-			let deleted = data.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
-			let errors = data
-				.get("errors")
-				.and_then(|v| v.as_array())
-				.map(|a| a.len())
-				.unwrap_or(0);
-			block_open("/learning", None);
-			if deleted == 0 {
-				block_line(&"No lessons to clear.".yellow().to_string());
-				block_close_ok("/learning", Some("empty"));
-			} else {
-				let kw = key_width(["cleared", "warnings"]);
-				block_row(
-					"cleared",
-					&format!("{} lesson(s)", deleted).bright_green().to_string(),
-					kw,
-				);
-				if errors > 0 {
-					block_row(
-						"warnings",
-						&format!("{} file(s) could not be removed", errors).yellow().to_string(),
-						kw,
-					);
-				}
-				block_close_ok("/learning", Some(&format!("cleared {}", deleted)));
-			}
-			println!();
-		}
-		"evolution_list" => {
-			let records = data
-				.get("records")
-				.and_then(|value| value.as_array())
-				.cloned()
-				.unwrap_or_default();
-			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
-			let domain = data.get("domain").and_then(|v| v.as_str()).unwrap_or("?");
-			block_open("/learning evolution", Some(&format!("{project}/{domain}")));
-			if records.is_empty() {
-				block_line(&"No matching evolved behavior.".yellow().to_string());
-			} else {
-				for record in &records {
-					let id = record.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-					let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-					let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
-					let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
-					block_section(&format!("{name} · {kind} · {state}"));
-					block_row_text(&id.dimmed().to_string());
-				}
-			}
-			block_line(
-				&"/learning evolution show <id> · approve · reject · rollback"
-					.dimmed()
-					.to_string(),
-			);
-			block_close_ok("/learning evolution", Some(&format!("{} artifact(s)", records.len())));
-			println!();
-		}
-		"evolution_show" => {
-			let record = data.get("record").cloned().unwrap_or_default();
-			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
-			block_open("/learning evolution", Some(&format!("{name} · {state}")));
-			if let Some(native) = data.get("native_artifact").and_then(|v| v.as_str()) {
-				for line in native.lines() {
-					block_row_text(line);
-				}
-			}
-			block_close_ok("/learning evolution", Some("artifact inspected"));
-			println!();
-		}
-		"evolution_action" => {
-			let action = data.get("action").and_then(|v| v.as_str()).unwrap_or("updated");
-			let record = data.get("record").cloned().unwrap_or_default();
-			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
-			block_open("/learning evolution", None);
-			block_row_text(&format!("{action}: {name} -> {state}").bright_green().to_string());
-			block_close_ok("/learning evolution", Some(action));
-			println!();
-		}
-		"error" => {
-			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
-			block_open("/learning", None);
-			block_close_err("/learning", msg);
-			println!();
-		}
-		_ => {}
+	block_open(command, Some(plugin));
+	for line in text.lines() {
+		block_line(line);
 	}
+	block_close_ok(command, None);
+	println!();
 }
 
 /// Width of the usage bars. Short enough to sit inside a narrow terminal.

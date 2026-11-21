@@ -27,7 +27,6 @@ pub fn get_env_tracker() -> &'static Mutex<env_source::EnvTracker> {
 }
 // Re-export all modules
 pub mod agents;
-pub mod decision;
 pub mod env_source;
 
 pub mod guardrails;
@@ -41,6 +40,8 @@ pub mod mcp;
 pub mod model;
 
 pub mod migrations;
+
+pub mod plugins;
 
 pub mod providers;
 
@@ -60,10 +61,10 @@ mod merge;
 // Tests should be rewritten to use complete config structures
 
 // Re-export commonly used types
-pub use decision::*;
 pub use hooks::*;
 pub use mcp::*;
 pub use model::*;
+pub use plugins::*;
 pub use providers::*;
 pub use registry::*;
 pub use roles::*;
@@ -71,7 +72,10 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 31;
+pub const CURRENT_CONFIG_VERSION: u32 = 34;
+
+/// Accepted only for old configs and tap manifests; remove in a later release.
+pub(crate) const DEPRECATED_SAMPLING_KEYS: [&str; 3] = ["temperature", "top_p", "top_k"];
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -377,6 +381,11 @@ pub struct Config {
 	// Request spending threshold in USD - if > 0, stop execution when exceeded during single request
 	pub max_request_spending_threshold: f64,
 
+	/// Tool rounds in a row that repeat calls and results already seen since the last new result
+	/// (the previous round, or a cycle through a few) before the turn is hard-stopped. `0` = off;
+	/// detector hints stay advisory either way.
+	pub max_identical_rounds: usize,
+
 	// Agent configurations - simplified ACP-based definitions
 	#[serde(default)]
 	pub agents: Vec<crate::config::agents::AgentConfig>,
@@ -402,12 +411,6 @@ pub struct Config {
 
 	// Plan-driven compression configuration
 	pub compression: CompressionConfig,
-
-	pub decision: DecisionConfig,
-
-	// Supervisor: out-of-band control plane (learning, detectors, gate, plan, condense).
-	// Strict: required field — a missing [supervisor] section is a hard parse error.
-	pub supervisor: crate::supervisor::SupervisorConfig,
 
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,
@@ -462,6 +465,11 @@ pub struct Config {
 	#[serde(default)]
 	pub hooks: Vec<HookConfig>,
 
+	// Plugins: separate programs that take part in the agent loop. A new
+	// configuration file lists the default one (`plugins::new_config_text`).
+	#[serde(default)]
+	pub plugins: Vec<PluginConfig>,
+
 	// Agent registry configuration
 	#[serde(default)]
 	pub registry: crate::config::registry::RegistryConfig,
@@ -471,6 +479,13 @@ pub struct Config {
 
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
+}
+
+impl Config {
+	/// The config has an enabled `[[plugins]]` entry.
+	pub fn has_plugins(&self) -> bool {
+		self.plugins.iter().any(|plugin| plugin.enabled)
+	}
 }
 
 impl std::ops::Deref for Config {
@@ -513,6 +528,7 @@ impl McpConfig {
 	pub fn with_servers(
 		servers: std::collections::HashMap<String, McpServerConfig>,
 		allowed_tools: Option<Vec<String>>,
+		code_mode: bool,
 	) -> Self {
 		// Convert HashMap to Vec, ensuring names match keys
 		let servers_vec: Vec<McpServerConfig> = servers
@@ -572,6 +588,7 @@ impl McpConfig {
 		Self {
 			servers: servers_vec,
 			allowed_tools: allowed_tools.unwrap_or_default(),
+			code_mode,
 		}
 	}
 }
@@ -592,10 +609,6 @@ impl Config {
 	pub fn get_model_profile_for_role(&self, role: &str) -> ModelProfile {
 		let (role_config, _, _, _) = self.get_role_config(role);
 		role_config.model_override().resolve(&self.model_profile)
-	}
-
-	pub fn get_supervisor_model_profile(&self) -> ModelProfile {
-		self.supervisor.model.resolve(&self.model_profile)
 	}
 
 	pub fn get_compression_model_profile(&self) -> ModelProfile {

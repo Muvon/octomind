@@ -177,6 +177,7 @@ fn mcp_config_deserializes_servers_and_allowed_tools() {
 	let config: McpConfig = toml::from_str(
 		r#"
 allowed_tools = ["core:*"]
+code_mode = false
 
 [[servers]]
 type = "builtin"
@@ -187,6 +188,7 @@ tools = ["plan"]
 	)
 	.expect("McpConfig must deserialize");
 	assert_eq!(config.allowed_tools, ["core:*"]);
+	assert!(!config.code_mode);
 	assert_eq!(config.servers.len(), 1);
 	assert_eq!(config.servers[0].name(), "core");
 }
@@ -269,18 +271,12 @@ model = "openai:agent-model"
 
 [[roles]]
 name = "agent-role"
-temperature = 0.2
-top_p = 0.9
-top_k = 10
 system = "Agent."
 welcome = "Hi."
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
 name = "assistant"
-temperature = 0.1
-top_p = 0.5
-top_k = 5
 system = "OVERRIDE"
 welcome = "No."
 mcp = { server_refs = [], allowed_tools = [] }

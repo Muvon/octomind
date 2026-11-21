@@ -38,7 +38,6 @@ fn configure_first_run_excludes_noninteractive_modes_and_other_commands() {
 		vec!["octomind", "acp"],
 		vec!["octomind", "server"],
 		vec!["octomind", "workflow"],
-		vec!["octomind", "evaluate"],
 		vec!["octomind", "send", "--name", "session", "hello"],
 		vec!["octomind", "config"],
 		vec!["octomind", "configure"],
@@ -50,21 +49,12 @@ fn configure_first_run_excludes_noninteractive_modes_and_other_commands() {
 		vec!["octomind", "complete", "run"],
 		vec![
 			"octomind",
-			"distill",
-			"--messages",
-			"messages.json",
-			"--role",
-			"assistant",
-		],
-		vec![
-			"octomind",
 			"compact",
 			"--fold",
 			"fold.json",
 			"--session-file",
 			"session.json",
 		],
-		vec!["octomind", "hindsight-worker", "--model", "local:test"],
 	] {
 		let parsed = CliArgs::try_parse_from(&argv).expect("valid command");
 		assert!(

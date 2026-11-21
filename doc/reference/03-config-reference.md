@@ -1,7 +1,7 @@
 # Configuration Reference: Octomind TOML Config Fields and Defaults
 
 Use this reference when editing Octomind’s TOML configuration or diagnosing a load error, with every field and its
-default. It covers the complete shipped template, optional parsed fields, and model, role, tool, and supervisor
+default. It covers the complete shipped template, optional parsed fields, and model, role, tool, and plugin
 settings.
 
 ## Get started
@@ -67,7 +67,7 @@ octomind config --validate
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `version` | u32 | `22` | Config version. Do not modify. Used for automatic upgrades. |
+| `version` | u32 | `32` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant:chief"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
@@ -77,7 +77,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:chief"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. It is the global assistant; if you search this file for a role of that name you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]` first; if no local role has that name and a tap domain does, it starts that domain's orchestrator, the agent named `chief` (`developer:chief`). A `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 26
+version = 32
 log_level = "info"
 default = "assistant:chief"
 sandbox = false
@@ -107,12 +107,14 @@ cache_keepalive_enabled = false
 | `markdown_theme` | string | `"default"` | Theme: `"default"`, `"dark"`, `"light"`, `"ocean"`, `"solarized"`, `"monokai"` |
 | `max_session_spending_threshold` | f64 | `0.0` | USD spent since last accepted checkpoint; interactive CLI asks to continue, piped/ACP/WebSocket declines. `0.0` = no limit. |
 | `max_request_spending_threshold` | f64 | `0.0` | Request spending limit. Stops execution when exceeded. `0.0` = no limit. |
+| `max_identical_rounds` | usize | `10` | Hard stop for runaway tool loops: when this many tool rounds in a row repeat calls and results already seen since the last new result (the previous round again, or a cycle through a few), the turn ends with a notice instead of another model request. `0` = off. Required in the file; the version 32 upgrade adds it, taking the value of the former `supervisor.max_identical_rounds`. |
 
 ```toml
 enable_markdown_rendering = true
 markdown_theme = "default"
 max_session_spending_threshold = 0.0
 max_request_spending_threshold = 0.0
+max_identical_rounds = 10
 ```
 
 ## Capability auto-activation
@@ -126,9 +128,49 @@ max_request_spending_threshold = 0.0
 auto_capabilities = true
 ```
 
+## `plugins`
+
+A plugin is a separate program that takes part in the agent loop. Octomind sends it an event at fixed points (session
+start, each prompt, before and after tool calls, the end of a turn, and so on) and applies the effects it answers
+with. The list is optional; an absent or empty list means a plain agent loop. See [Plugins](../usage/14-supervisor.md)
+for how octomind starts and supervises them.
+
+The shipped `config-templates/default.toml` has `plugins = []`. A **new** configuration, created on first run or by
+`octomind config`, lists one entry, Besydr (an inline array, because root keys must precede the first table header):
+
+```toml
+plugins = [
+	{ name = "besydr", type = "stdio", command = "besydr", args = ["connect"], install_manifest = "https://cdn.besydr.com/latest.json", install_key = "uU5IoojVdfJZj5/fU4JQE8CXnmYXNBGo5nyLgWcNNrw=" },
+]
+```
+
+If `besydr` is not installed, octomind downloads it on first use from the signed release the entry names and never
+updates it by itself. To run without it, set `enabled = false` on the entry or remove the entry. Entries may also be
+written as `[[plugins]]` tables, for example in a split-config file.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Unique name, used in notices and logs. A duplicate name is a validation error. |
+| `type` | enum | required | `"stdio"` (octomind starts the program and talks over its standard input and output), `"socket"` (a local unix socket; not supported on Windows), or `"http"` (octomind posts each message to a URL). |
+| `command` | string | absent | Program to start. Required for `stdio`; for `socket` it is started only when nothing answers on `path`. |
+| `args` | string array | `[]` | Arguments for `command`. |
+| `path` | string | absent | Socket path. Required for `socket`. |
+| `url` | string | absent | Endpoint, starting with `http://` or `https://`. Required for `http`. |
+| `headers` | string map | `{}` | Extra request headers for `http`. Values support `{{ENV:KEY}}`. |
+| `enabled` | bool | `true` | Set `false` to keep the entry but not start the plugin. |
+| `roles` | string array | `[]` | Roles the plugin applies to; empty means all roles. An entry matches an exact role tag or a domain prefix (`developer` matches `developer:general`). |
+| `timeout_seconds` | u64 | absent | Upper limit in seconds for how long octomind waits for one event's answer without hearing from the plugin, `1` to `3600`. A plugin declares that time per event (30 seconds for an event it declares none, and for the handshake); with this set, the smaller value applies. |
+| `install_manifest` | string | absent | `https://` URL of a signed release manifest. When `command` is not installed, octomind downloads the program for this machine from it. Only for `stdio` and `socket`; needs `command` and `install_key`. |
+| `install_key` | string | absent | Ed25519 public key (base64 of 32 bytes) the manifest must be signed with. Needs `install_manifest`; each is invalid without the other. |
+
+Unknown keys in an entry are rejected. When a plugin cannot be started or does not answer, octomind goes on without it
+and shows a notice; after 3 unanswered events in a row the plugin is paused for 30 seconds and then tried again (see
+[Failures](../integration/05-plugins.md#failures)). Besydr's own settings live in Besydr's config file, not here: see
+[Besydr's configuration](https://besydr.com/docs/configuration).
+
 ## `[model]`
 
-The complete main model profile and inheritance baseline. Persistent role, supervisor, and compression profiles use the
+The complete main model profile and inheritance baseline. Persistent role and compression profiles use the
 same fields; name-only tap/workflow overrides retain the inherited parameters.
 
 | Field | Type | Default | Description |
@@ -136,16 +178,13 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | `name` | string | `"octohub:auto"` | Provider-qualified model identifier |
 | `reasoning_effort` | enum | `"medium"` | `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. `"none"` requests no reasoning and switches thinking off where the provider has a switch (Alibaba, DeepSeek, Z.AI, OpenRouter, OpenAI); the default for `[compression.model]`, whose output is a summary, not a decision |
 | `max_tokens` | u32 | `32768` | Maximum output tokens; `0` uses provider behavior |
-| `temperature` | f32 | `0.3` | Sampling temperature, 0.0-2.0 |
-| `top_p` | f32 | `0.7` | Nucleus sampling, 0.0-1.0 |
-| `top_k` | u32 | `20` | Top-k limit, 0-1000; `0` disables it |
 | `max_retries` | u32 | `1` | Provider retry attempts |
 | `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
 | `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
 | `request_transport` | enum | `"websocket"` | `"websocket"` or `"http"`. Applies to `octohub:` and `chatgpt:` models only; other providers ignore it. Required in the file; the v26 migration adds it as `"websocket"` |
 
-`request_transport` applies to every `octohub:` and `chatgpt:` model call, including supervisor and compression
+`request_transport` applies to every `octohub:` and `chatgpt:` model call, including compression
 calls that inherit it. Set `request_transport = "http"` to opt out. WebSocket errors do not silently fall back to
 HTTP or replay a request. The library derives the Octohub WebSocket URL from the existing Octohub HTTP(S) base URL,
 preserving private hosts and ports; no separate endpoint setting is required.
@@ -158,9 +197,6 @@ session connection does not consume it. Connection setup has a separate deadline
 name = "octohub:auto"
 reasoning_effort = "medium"
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
@@ -224,9 +260,8 @@ entries declares a model override. `system` and `welcome` are required strings, 
 
 ### `[roles.model]`
 
-Optional partial model profile for the role: `name` (string), `reasoning_effort` (enum), `max_tokens` (u32),
-`temperature`/`top_p` (f32), `top_k`/`max_retries` (u32), and `retry_timeout`/`request_timeout_seconds` (u64). Every
-omitted field inherits its `[model]` value. The example below changes only name and effort.
+Optional partial model profile for the role. Every omitted field inherits its `[model]` value. The example below
+changes only name and effort.
 
 ### `[roles.mcp]`
 
@@ -263,6 +298,7 @@ Global MCP (Model Context Protocol) configuration.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `allowed_tools` | string[] | `[]` | Global tool filter; role merging replaces it with that role’s `allowed_tools`, including an empty list. |
+| `code_mode` | bool | `true` | On: external MCP tools (stdio/http) are not sent to the model as tool definitions; the builtin `code` tool lists them by signature and the model calls them from scripts, in every session whatever the role grants. Off: every tool is sent as a tool definition and there is no `code` tool. |
 
 ### `[[mcp.servers]]`
 
@@ -273,7 +309,7 @@ process):
 
 | Server | Tools | Description |
 |--------|-------|-------------|
-| `core` | `recall` (when attention or governance is enabled) | Session-memory retrieval; governance defaults on and planning is supervisor-internal |
+| `core` | `recall` (when attention or governance is enabled) | Session-memory retrieval; governance defaults on |
 | `orchestration` | `tap`, `schedule`, `monitor` | Delegation, scheduled messages, and event-stream monitoring |
 | `runtime` | `mcp`, `agent`, `skill`, `capability` | Harness and tool-surface reconfiguration |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
@@ -317,6 +353,7 @@ entry.
 ```toml
 [mcp]
 allowed_tools = []
+code_mode = true
 
 [[mcp.servers]]
 name = "search"
@@ -568,9 +605,6 @@ Model used for compression decisions and summary generation.
 | `name` | string | `"octohub:auto"` | Compression model name |
 | `reasoning_effort` | enum | `"none"` | Thinking effort override; compression produces summaries rather than decisions, so the shipped default disables reasoning where supported |
 | `max_tokens` | u32 | `32000` | Max tokens for decision + summary |
-| `temperature` | f32 | `0.3` | Lower = more consistent decisions |
-| `top_p` | f32 | `1.0` | Nucleus sampling |
-| `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
 | `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
@@ -587,259 +621,9 @@ threshold = 120000
 name = "octohub:auto"
 reasoning_effort = "none"
 max_tokens = 32000
-temperature = 0.3
-top_p = 1.0
-top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
-```
-
-## `[decision]`
-
-Calibrated decisions use a provider-qualified model for selected routing and evaluation seams. The model gets one
-attempt with a five-second timeout and no retries. An absent or empty model disables this routing. If a decision answer
-is unavailable, supervisor decisions fail closed; writing still uses the shared `[supervisor.model]` profile. Configure
-the credential required by the selected provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`, `TYPESAFE_API_KEY`,
-or `OCTOHUB_API_KEY` (and optionally `OCTOHUB_API_URL`).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `model` | optional string | `"cloudflare:typesafe/jev"` | Provider-qualified decision model; absent or empty disables routing. |
-| `recall` | bool | `false` | Filter recalled scoped lessons for relevance. If unavailable, keep the candidates. |
-| `skills` | bool | `false` | Choose an inactive skill when rules abstain. If unavailable, activate none. |
-| `capabilities` | bool | `false` | Confirm or promote capability selection. If unavailable, keep the cosine result. |
-| `taps` | bool | `false` | Pick the specialist for `tap(action="run")` among the 16 candidates closest to the task by cosine match, or none. If unavailable, keep the cosine result. |
-| `compression` | bool | `false` | Demote unneeded summarize packets before a fold. If unavailable, keep the lanes. |
-| `supervisor` | bool | `false` | Route supervisor decisions and evolution grading through this model. |
-
-```toml
-[decision]
-model = "cloudflare:typesafe/jev"
-recall = false
-skills = false
-capabilities = false
-taps = false
-compression = false
-supervisor = false
-```
-
-## `[supervisor]`
-
-The out-of-band control plane around the agent loop. It hosts learning (distill + recall + orientation memory),
-deterministic detectors, the verify-gate, the external plan manager, and condense. See the [Supervisor
-guide](../usage/14-supervisor.md) for how the mechanics fit together. **Strict:** the `[supervisor]` section and its
-required keys must be present — a missing section or key is a hard parse error, not a silent default.
-
-When the supervisor is active, deterministic detectors, goal recitation, and check-after-mutation pre-gates use fixed
-internal thresholds. The `enabled` switches below control their respective model-driven mechanics. Detector hints are
-advisory; `max_identical_rounds` is the one hard stop.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Master switch for the whole control plane |
-| `max_identical_rounds` | usize | `10` | End the turn when this many tool rounds in a row repeat calls and results already seen since the last new result (the previous round again, or a cycle through a few). The turn's final answer becomes a notice naming the repeated call and its result, with no further model request and no verify-gate re-run. `0` = off. Needs `enabled` |
-
-### `[supervisor.model]`
-
-Optional partial profile shared by every supervisor mechanic: authorizer, gate, resolve, plan, condense, extraction, recall,
-retention, verification, and evolution. It accepts every field from `[model]`; omitted fields inherit main. Omitting the
-entire block uses `[model]` unchanged.
-
-| Field | Type | Template default | Meaning |
-|---|---|---|---|
-| `name` | string | `"octohub:auto"` | Shared supervisor model. |
-| `reasoning_effort` | enum | `"medium"` | Reasoning effort hint. |
-| `max_tokens` | u32 | `8192` | Output token ceiling. |
-| `temperature` | f32 | `0.0` | Sampling temperature. |
-| `top_p` | f32 | `1.0` | Nucleus sampling. |
-| `top_k` | u32 | `0` | Top-k sampling; disabled at zero. |
-| `max_retries` | u32 | `1` | Retry attempts. |
-| `retry_timeout` | u64 | `30` | Backoff base in seconds. |
-| `request_timeout_seconds` | u64 | `300` | Total deadline per HTTP/WebSocket request attempt; `0` disables it |
-| `stream_timeout_seconds` | u64 | `0` | SSE/WebSocket response inactivity limit; `0` disables it; never extends the total deadline |
-| `request_transport` | enum | `"websocket"` | `"websocket"` or `"http"` (octohub and chatgpt only) |
-
-### `[supervisor.hindsight]`
-
-An optional, local verifier scores the session event trace when the agent hands a turn back. It estimates whether the
-user's next turn will be a correction and, if so, its class. This is observe-only: scores are logged, shown in a
-supervisor notice, tallied in `/info`, and appended to `hindsight.jsonl` beside the verify-gate verdict.
-Hindsight inference is shared across Octomind processes using the same runtime directory.
-An automatically started worker owns the model; client processes keep no Hindsight weights.
-The worker exits after 15 minutes without clients. The hidden `hindsight-worker` command is
-internal and should not be launched manually. On macOS, Octolib reuses CoreML compiled-model
-cache entries; Linux and Windows retain their existing execution-provider selection.
-
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable observe-only hindsight scoring. |
-| `model` | string | `"muvon/hindsight"` | Hugging Face repository containing files under `onnx/`, or a local export directory. Set `HF_TOKEN` for a private Hugging Face repository. |
-
-```toml
-[supervisor.hindsight]
-enabled = false
-model = "muvon/hindsight"
-```
-
-### `[supervisor.advise]`
-
-An optional, model-written steer note. On a loop or recovery alarm, one shared supervisor-model call reads the request,
-the last tool receipts, and any stuck-keyed experience records, and answers with a short observation that cites a
-receipt (`#N`). It never gives a command or code, and it may skip, in which case the plain note goes out. One in four
-eligible alarms is a control that gets the plain note. Every alarm is appended to `advise.jsonl` in the data directory
-with the gate verdict that followed. With `[decision] supervisor = true`, an observe-only usefulness score is logged
-beside it. See the [Supervisor guide](../usage/14-supervisor.md#steer-and-advise).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable model-written advice on loop and recovery alarms. |
-
-```toml
-[supervisor.advise]
-enabled = false
-```
-
-### `[supervisor.learning]`
-
-Cross-session adaptive learning. Extracts lessons and orientation memory (durable subject understanding, recalled as
-working assumptions to verify) from sessions and injects them into future sessions. See [Learning
-Guide](../usage/13-learning.md) for full details.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable the learning system (lessons + orientation) |
-
-### `[supervisor.learning.evolution]`
-
-Optional grounded behavior evolution. When enabled, newly stored quote-backed rules and verified experiences may produce
-scoped native skill or guardrail candidates. Synthesis and admission both use the single `[supervisor.model]` profile,
-which must support structured output. A trial randomizes each session into a control arm (trigger observed, behavior
-not applied) or a treatment arm, so both arms run concurrently; it is promoted only when the treatment beats that
-control by more than the noise margin and by more than 2.5 posterior standard deviations, at an acceptable API-call
-cost; see [Learning](../usage/13-learning.md).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable detached candidate synthesis and lifecycle-managed trials |
-| `min_samples` | integer | `10` | Verify-gate verdicts in the shadow screen, then in each concurrent arm, before comparison |
-| `noise_margin` | float | `0.15` | Smallest pass-rate gain worth promoting; also the non-inferiority bound for a cheaper behavior |
-| `cost_allowance` | float | `0.10` | Relative API-call increase tolerated at negligible gain; also the saving that promotes at an unchanged pass rate |
-| `cost_per_gain` | float | `2.0` | Extra relative API-call increase allowed per unit of pass-rate gain |
-| `max_trial_uses` | integer | `40` | Live uses after which an undecided trial retires as inconclusive |
-
-### `[supervisor.gate]`
-
-Verify-gate on every turn stop: a `done` claim, or a `blocked`/`need_input` hand-back checked for being genuine. Free
-deterministic pre-gates run first (no model call); the LLM checklist runs
-only if those pass.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable the verify-gate |
-| `unsettled_advisory` | bool | `true` | Offer one nonblocking evidence advisory per genuine user turn, then re-gate normally |
-
-The advisory names the conditions the verifier left unknown. It is not sent when the agent changed state and a
-recognized check passed after its last change: the stop is then accepted, whatever `unsettled_advisory` is set to, and
-the unknown conditions are only reported to you. A hand-back stop (`blocked`, `need_input`) is never accepted this way. A condition the
-verifier ruled matched without a verbatim citation is reported the same way and never listed in the advisory.
-With gate evaluation enabled, a calibrated check removes
-conditions whose specific case a recorded action exercised (probability at least 0.5 in any evidence slice). Refused
-answers, unavailable evaluation, or disabled evaluation keep the conditions. Repeated uncertainty does not send
-another advisory within the same turn, and it never certifies success or becomes a blocking failure. Matched findings
-missing a verbatim citation receive one bounded protocol repair before any advisory decision; this shares the existing
-format-repair budget.
-
-With `[decision] supervisor = true`, a working-tree diff larger than the gate's size cut is not cut by size: the evaluation
-model scores every hunk in batched windows, as the condense seam scores tool-output chunks, and the verifier reads in full
-the hunks the request's conditions depend on (the work itself and the checks produced for it), bounded by what the
-verifier model's input window leaves. The rest become one-line stubs naming the hunk and marked unseen, so the verifier
-knows they exist and does not read them as absent changes. An unavailable or empty answer falls back to the size cut. The
-second-opinion refutation reads evidence over the evaluation state cap in slices and drops a finding any slice refutes.
-
-### `[supervisor.authorizer]`
-
-Checks exact proposed tool operations against role + user intent after native pre-call guards and before execution.
-Uses `[supervisor.model]`; uncertain or unavailable decisions allow calls. A block requires grounded source/argument
-evidence and independent confirmation by the same shared model. Requires the supervisor master switch for root sessions.
-Inherited delegation constraints remain enforced in child sessions. See [Tool authorization](../usage/14-supervisor.md#tool-authorization).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable user-intent tool authorization |
-
-### `[supervisor.plan]`
-
-Adaptive external plan manager. The specialist has no plan mutation tool; a sparse hidden signal emitted alongside real
-work wakes this manager only when planning or a transition is needed.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable adaptive external planning |
-
-### `[supervisor.condense]`
-
-Task-aware narrowing of oversized plain-text tool outputs. A result whose own output exceeds `tokens_threshold` becomes
-a candidate; smaller results in the same round are passed through untouched and never shown to the condenser. One shared
-supervisor-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the
-current task needs; kept lines are reconstructed verbatim, and irrelevant results get deterministic notices rather than
-model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The
-`mcp_response_tokens_threshold` prefix-cut is applied **before** condensation.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable condensation |
-| `adaptive` | bool | `false` | Adapt a process-local multiplier from realized savings, bounded to `0.5x`–`2.0x` of the configured baseline |
-| `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens of that single result); `0` = off. Keep well below `mcp_response_tokens_threshold` |
-
-```toml
-[supervisor]
-enabled = true
-max_identical_rounds = 10
-
-[supervisor.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 8192
-temperature = 0.0
-top_p = 1.0
-top_k = 0
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
-
-[supervisor.hindsight]
-enabled = false
-model = "muvon/hindsight"
-
-[supervisor.advise]
-enabled = false
-
-[supervisor.learning]
-enabled = true
-
-[supervisor.learning.evolution]
-enabled = false
-min_samples = 10
-noise_margin = 0.15
-cost_allowance = 0.10
-cost_per_gain = 2.0
-max_trial_uses = 40
-
-[supervisor.gate]
-enabled = true
-
-[supervisor.authorizer]
-enabled = false
-
-[supervisor.plan]
-enabled = true
-
-[supervisor.condense]
-enabled = true
-adaptive = false
-tokens_threshold = 5000
 ```
 
 ## Parsed fields absent from active template settings
@@ -850,20 +634,21 @@ These are accepted configuration surfaces, not additional shipped defaults. Runt
 | Path | Type | Omitted behavior | Meaning |
 |---|---|---|---|
 | Root `system` | optional string | Absent | Legacy serialized prompt; session prompts still come from roles. Mentioned only in template comments; place it before any table. |
-| `roles.model` | partial profile or model string | Inherit main profile | All nine `[model]` fields are accepted; the template roles omit it. |
-| `roles.temperature`, `roles.top_p`, `roles.top_k` | optional f32, f32, u32 | Inherit main | Legacy flat sampling input; nested model values win and new serialization uses the nested profile. |
+| `roles.model` | partial profile or model string | Inherit main profile | All `[model]` fields are accepted; the template roles omit it. |
 | `mcp.servers.auto_bind` | optional string array | No automatic binding | Exact-match role/tag activation. |
 | Stdio `mcp.servers.env` | string map | `{}` | Child environment overrides. |
 | Stdio `mcp.servers.cwd` | optional string | Inherit working directory | Child process directory. |
 | `commands.workdir` | string | `"."` | Execution directory relative to session workdir. |
 | Legacy `compression.decision` | partial profile | Used only if `compression.model` is absent | Load normalization maps it to `[compression.model]`; a nested `model` string becomes `name`. |
-| Legacy flat model fields on root/role/supervisor | Same eight parameter types as `[model]` | Fill nested-profile gaps | `reasoning_effort`, `max_tokens`, `temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, `request_timeout_seconds`. |
-| Legacy `supervisor.learning.model` and flat model parameters | Ignored | Removed during normalization | Learning uses the shared supervisor profile. |
+| Legacy flat model fields on root/role | Same parameter types as `[model]` | Fill nested-profile gaps | `reasoning_effort`, `max_tokens`, `max_retries`, `retry_timeout`, `request_timeout_seconds`, `stream_timeout_seconds`, `request_transport`. |
 | `registry.cache_ttl_hours` | u64 | `24` | Manifest refresh interval, described below. |
 
 The root `model` string and historical flat model parameters are migration/normalization inputs, not the version-12
 output format; use `[model]`. The `ProvidersConfig`/`OpenRouterConfig` compatibility types in `src/config/providers.rs`
 are not fields of the loaded `Config`; they do not enable TOML credential storage.
+
+`temperature`, `top_p`, and `top_k` are deprecated since config version 34. They are ignored and reported as
+deprecated when loaded; `octomind config --upgrade` removes them, and they will be removed in a later release.
 
 ## `[registry]`
 
@@ -962,8 +747,8 @@ octomind run brief
 Defaults and long prompt strings: [default.toml](../../config-templates/default.toml). Loading and merging:
 [loading.rs](../../src/config/loading.rs), [merge.rs](../../src/config/merge.rs). Schemas:
 [config/mod.rs](../../src/config/mod.rs), [model.rs](../../src/config/model.rs), [roles.rs](../../src/config/roles.rs),
-[mcp.rs](../../src/config/mcp.rs), [layer_trait.rs](../../src/session/layers/layer_trait.rs),
-[supervisor/mod.rs](../../src/supervisor/mod.rs).
+[mcp.rs](../../src/config/mcp.rs), [plugins.rs](../../src/config/plugins.rs),
+[layer_trait.rs](../../src/session/layers/layer_trait.rs).
 
 ## See also
 

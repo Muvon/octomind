@@ -29,12 +29,6 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub messages: &'a [Message],
 	/// Model identifier (e.g., "claude-3-5-sonnet", "gpt-4")
 	pub model: &'a str,
-	/// Sampling temperature (0.0 to 2.0)
-	pub temperature: f64,
-	/// Top-p nucleus sampling (0.0 to 1.0)
-	pub top_p: f64,
-	/// Top-k sampling (1 to infinity)
-	pub top_k: u32,
 	/// Maximum tokens to generate (0 = no limit)
 	pub max_tokens: u32,
 	/// Maximum retry attempts on failure
@@ -81,21 +75,10 @@ pub struct ChatCompletionWithValidationParams<'a> {
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
 	/// Create new chat completion with validation parameters
-	pub fn new(
-		messages: &'a [Message],
-		model: &'a str,
-		temperature: f64,
-		top_p: f64,
-		top_k: u32,
-		max_tokens: u32,
-		config: &'a Config,
-	) -> Self {
+	pub fn new(messages: &'a [Message], model: &'a str, max_tokens: u32, config: &'a Config) -> Self {
 		Self {
 			messages,
 			model,
-			temperature,
-			top_p,
-			top_k,
 			max_tokens,
 			max_retries: 0,
 			retry_timeout: config.retry_timeout,
@@ -118,9 +101,6 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 		Self {
 			messages,
 			model: &profile.model,
-			temperature: profile.temperature,
-			top_p: profile.top_p,
-			top_k: profile.top_k,
 			max_tokens: profile.max_tokens,
 			max_retries: profile.max_retries,
 			retry_timeout: profile.retry_timeout,
@@ -205,9 +185,6 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 pub struct ChatCompletionProviderParams<'a> {
 	pub messages: &'a [Message],
 	pub model: &'a str,
-	pub temperature: f64,
-	pub top_p: f64,
-	pub top_k: u32,
 	pub max_tokens: u32,
 	pub config: &'a Config,
 	pub max_retries: u32,
@@ -279,7 +256,7 @@ pub async fn chat_completion_with_validation(
 		// Skip the tool fetch when tools are disabled — they won't be sent,
 		// so counting them would overestimate and reject valid requests.
 		let tools = if params.tools {
-			crate::mcp::get_available_functions(params.config).await
+			crate::mcp::get_model_functions(params.config).await
 		} else {
 			Vec::new()
 		};
@@ -310,31 +287,23 @@ pub async fn chat_completion_with_validation(
 	}
 
 	// Input size is acceptable, proceed with API call
-	let mut chat_params = ChatCompletionParams::new(
-		params.messages,
-		&actual_model,
-		params.temperature,
-		params.top_p,
-		params.top_k,
-		params.max_tokens,
-		params.config,
-	)
-	.with_max_retries(params.max_retries)
-	.with_retry_timeout(std::time::Duration::from_secs(params.retry_timeout))
-	.with_request_timeout(match params.request_timeout_seconds {
-		0 => None,
-		n => Some(std::time::Duration::from_secs(n)),
-	})
-	.with_stream_timeout(match params.stream_timeout_seconds {
-		0 => None,
-		n => Some(std::time::Duration::from_secs(n)),
-	})
-	.with_request_transport(params.request_transport)
-	.with_purpose(params.purpose)
-	.with_vision(crate::session::model_utils::provider_supports_vision(
-		provider.as_ref(),
-		&actual_model,
-	));
+	let mut chat_params = ChatCompletionParams::new(params.messages, &actual_model, params.max_tokens, params.config)
+		.with_max_retries(params.max_retries)
+		.with_retry_timeout(std::time::Duration::from_secs(params.retry_timeout))
+		.with_request_timeout(match params.request_timeout_seconds {
+			0 => None,
+			n => Some(std::time::Duration::from_secs(n)),
+		})
+		.with_stream_timeout(match params.stream_timeout_seconds {
+			0 => None,
+			n => Some(std::time::Duration::from_secs(n)),
+		})
+		.with_request_transport(params.request_transport)
+		.with_purpose(params.purpose)
+		.with_vision(crate::session::model_utils::provider_supports_vision(
+			provider.as_ref(),
+			&actual_model,
+		));
 
 	if !params.tools {
 		chat_params = chat_params.without_tools();
@@ -442,20 +411,12 @@ pub async fn chat_completion_with_provider(params: ChatCompletionProviderParams<
 		ensure_structured_output_support(params.model)?;
 	}
 
-	let chat_params = ChatCompletionParams::new(
-		params.messages,
-		&actual_model,
-		params.temperature,
-		params.top_p,
-		params.top_k,
-		params.max_tokens,
-		params.config,
-	)
-	.with_max_retries(params.max_retries)
-	.with_vision(crate::session::model_utils::provider_supports_vision(
-		provider.as_ref(),
-		&actual_model,
-	));
+	let chat_params = ChatCompletionParams::new(params.messages, &actual_model, params.max_tokens, params.config)
+		.with_max_retries(params.max_retries)
+		.with_vision(crate::session::model_utils::provider_supports_vision(
+			provider.as_ref(),
+			&actual_model,
+		));
 
 	let chat_params = if let Some(schema) = params.schema {
 		chat_params.with_schema(schema)

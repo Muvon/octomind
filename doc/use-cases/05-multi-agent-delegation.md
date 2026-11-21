@@ -67,9 +67,6 @@ Use tools to search and read code. Be thorough but focused.
 {{CWD}}
 """
 
-[roles.model]
-temperature = 0.2
-
 [roles.mcp]
 server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view", "filesystem:workdir"]
@@ -87,9 +84,6 @@ You are a senior code reviewer. Analyze code for:
 Be specific: file, line, issue, suggestion.
 {{CWD}}
 """
-
-[roles.model]
-temperature = 0.1
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -114,7 +108,7 @@ workdir = "."
 
 With the `agent` server granted to the coordinator, each `[[agents]]` entry is exposed to the main session as a tool
 named `agent_<name>`. The positional argument in `command` (`octomind acp context_gatherer`) **is the role name** — the
-agent inherits its model, system prompt, temperature, and tools from the matching `[[roles]]` entry. The names need not
+agent inherits its model, system prompt, and tools from the matching `[[roles]]` entry. The names need not
 match, but keeping them identical makes the wiring obvious. `workdir` defaults to `"."` and resolves relative to the
 parent session working directory.
 
@@ -267,7 +261,7 @@ Call `agent` with the following payloads in order. The filesystem server must al
   "description": "Writes unit tests for given code",
   "system": "Write focused unit tests for the supplied task. Report changed paths and validation results.",
   "server_refs": ["filesystem"],
-  "allowed_tools": ["filesystem:view", "filesystem:text_editor"]
+  "allowed_tools": ["filesystem:view", "filesystem:text_edit"]
 }
 ```
 
@@ -316,7 +310,6 @@ a duplicate table). These examples require the named provider credentials and mo
 # Inside the context_gatherer role
 [roles.model]
 name = "openai:gpt-5.6-luna"
-temperature = 0.2
 ```
 
 For a separate review specialist:
@@ -325,13 +318,12 @@ For a separate review specialist:
 # Inside the code_reviewer role
 [roles.model]
 name = "anthropic:claude-sonnet-4-6"
-temperature = 0.1
 ```
 
-Octomind has exactly three model purposes: main, supervisor, and compression. Agent role overrides belong to the main
-purpose; they do not introduce another purpose. The shipped default for all three is `octohub:auto` after `octomind
+Octomind has two model purposes: main and compression. Agent role overrides belong to the main
+purpose; they do not introduce another purpose. The shipped default for both is `octohub:auto` after `octomind
 login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the specialist roles above do. The
-`filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_editor` for
+`filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_edit` for
 edits. Verify the complete effective tool surface before relying on a restricted role.
 
 ## See also

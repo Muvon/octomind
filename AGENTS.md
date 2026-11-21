@@ -1,6 +1,6 @@
 # Octomind — AGENTS.md
 
-Open-source AI coding agent and agent runtime: one Rust binary, any model (multi-provider via `octolib`), MCP-native. Sessions run interactively (CLI), non-interactively (`--format`), or as daemons (ACP stdio / WebSocket). TOML config is the single source of truth — model, tools, roles, compression, supervisor and learning all derive from it. Rust 1.95+ (MSRV enforced), tokio async, `clap` CLI.
+Open-source AI coding agent and agent runtime: one Rust binary, any model (multi-provider via `octolib`), MCP-native. Sessions run interactively (CLI), non-interactively (`--format`), or as daemons (ACP stdio / WebSocket). TOML config is the single source of truth — model, tools, roles, compression and plugins all derive from it. Rust 1.95+ (MSRV enforced), tokio async, `clap` CLI.
 
 ## Commands
 - Setup: `cargo build` · Hooks: `pip install pre-commit && pre-commit install` (fmt + clippy + check run on every commit)
@@ -27,8 +27,9 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 | Response / tool execution | `src/session/chat/response.rs`, `response/tool_execution.rs`, `response/tool_result_processor.rs` |
 | Skill auto-activation / validators | `src/mcp/runtime/skill_auto.rs` (`run_activation`, `run_validators`) |
 | Compression | `src/session/chat/conversation_compression/` (`decision.rs`, `apply.rs`, `schema.rs`, `attention/`) |
-| Supervisor (gate, plan, detect, condense, resolve, authorizer, stats) | `src/supervisor/` |
-| Learning (extract / inject / retention / file backend / evolution) | `src/supervisor/learning/` |
+| Code mode (`code` tool: scripts that call external MCP tools) | `src/mcp/code/` (`mod.rs` split + execute, `catalog.rs` signatures, `check.rs` + `checker.js` type check, `engine.rs` sandbox) → definitions sent to the model: `get_model_functions` in `src/mcp/mod.rs` → compiler bundle: `assets/typescript/vendor.sh` |
+| Plugin host (events, protocol, transports, install, workdir) | `src/plugins/` (`host.rs`, `protocol.rs`, `events.rs`, `install.rs`, `state.rs`, `workdir.rs`) + config `src/config/plugins.rs` |
+| Session pieces that outlived the built-in supervisor | `src/session/accounting/`, `src/session/self_report.rs`, `src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`, `src/mcp/agent/handback.rs` |
 | Workflows | `src/workflow/` (`schema.rs`, `run.rs`, `validate.rs`) + templates `config-templates/workflow*.toml` |
 | Taps (shareable project agents) | `src/agent/` (registry, taps, resolver, deps) |
 | Layers / guardrails / pipes | `src/session/layers/`, `src/session/guardrails.rs`, `src/session/pipe.rs` |
@@ -65,7 +66,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 - No `std::sync::Mutex` across `.await` (deadlock) — `tokio::sync::Mutex` or an actor; session-keyed state only via the task-local `SessionId`, never process globals
 - No wrapper methods, no speculative abstractions, no magic numbers; comments explain why; delete dead code instead of commenting it out
 - All config defaults in `config-templates/default.toml` — never hardcode values
-- Conventional Commits `type(scope): subject` (`!` = breaking); scopes = top-level modules (`mcp`, `session`, `supervisor`, `config`, `workflow`, `acp`, …); CHANGELOG is generated from subjects at release
+- Conventional Commits `type(scope): subject` (`!` = breaking); scopes = top-level modules (`mcp`, `session`, `plugins`, `config`, `workflow`, `acp`, …); CHANGELOG is generated from subjects at release
 - Misuse hints guide, never block: append a 💡 hint only when the better tool is actually enabled — gate on `crate::mcp::tool_map::get_server_for_tool("tool").is_some()` (see `src/mcp/hint_accumulator.rs`)
 - Dynamic tools: `register_dynamic_agent_tool()` / `register_dynamic_server_tools()` in `tool_map.rs`; local project tools: executable scripts in `<workdir>/.agents/tools/` (auto-discovered by `src/mcp/core/local_tool.rs`)
 
@@ -104,17 +105,13 @@ One codebase for Linux, macOS and Windows — CI runs the full test suite on all
 - A test that cannot pass on every OS must be explicitly gated with the reason stated in code — silent per-OS divergence hides regressions
 - musl/static release builds compile ORT from source in Alpine (see ci.yml `musl-build` + `Cross.toml`); a plain glibc `cargo build --release` binary is what runs in the Debian bench containers
 
-## Boundaries (telemetry, accounting, learning)
+## Boundaries (telemetry, accounting)
 Separate systems — wiring a metric into one does NOT make it appear in the others:
-- `src/supervisor/stats.rs` — process-local accumulator for `/info`/debug snapshots; not persisted, not anonymous telemetry; counters aggregate across all concurrent daemon/ACP/WebSocket sessions (no per-session split)
+- `src/session/accounting/` — what plugins and background folds spent on a session's behalf; shown in `/info` and kept in the cost record's `supervisor_accounting` part
 - `SessionInfo` (`src/session/mod.rs`) — the persisted per-session record; add there (with `#[serde(default)]` + resume coverage) only when a metric must survive restart
 - `src/telemetry.rs::Event` — the exact anonymous wire schema; an event is reported remotely only if it is defined there and populated by `record_session`. Audit each lifecycle path (CLI/piped/daemon exit, ACP disconnect, workflow, WebSocket — WS emits no session row today)
-- Adaptive controllers may stay session-keyed and ephemeral (e.g. condenser state, cleared by `cleanup_session`) — don't persist just to observe
-- Learning records: `memory_type = "learning"` = quote-first user rules (verbatim real-user quote + separate verifier); `"experience"` = learner-formed from valuable trajectories (REAL USER/TOOL citations, `verified|failed|unknown`, grounding verifier, one bounded repair, then fail closed). Storage: `learning/{project}/{role}/` — project-scoped, role-filtered
-- File records are the sole supervisor-learning authority; external memory MCP tools are specialists, never learning stores. `related` = stable file IDs, `evidence` = `session://…/message/…`, retrieval expands links one hop
-- Recall = one runtime-only Active Memory Pack per genuine user turn (token-bounded, materialized per provider request, dropped under headroom pressure); outcome credit only for pack IDs the specialist materially used
-- Retention: two-watermark hot/cold lifecycle, per-type token budgets; similarity selects merge candidates but never authorizes a merge; merges need a grounding verifier and move sources to `.archive/` only after the replacement is stored; cold recall is lexical paging via `.archive/catalog.jsonl`; materially used cold records promote to hot
-- Evolution (`[supervisor.learning.evolution]`): structured candidate → native-parser → verifier → shadow (control arm) → bounded trial (treatment arm, promoted only when it beats its shadow control beyond `noise_margin` at acceptable API-call cost) → active (pruned when the gain vanishes); learning text never becomes executable policy directly
+- Adaptive controllers may stay session-keyed and ephemeral (cleared by `cleanup_session`) — don't persist just to observe
+- Supervising and learning are not part of octomind: the Besydr program does them as a plugin (see `src/plugins/`, `src/config/plugins.rs`). Octomind keeps its own agent loop, compaction, guardrails, the `max_identical_rounds` hard stop, and the plan state shown by `/plan`
 
 ## Gotchas
 - `mcp-*.toml` loads AFTER all base `*.toml` regardless of sort order — the intended override mechanism
@@ -123,7 +120,8 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 - In TOML config files, scalar keys must come BEFORE nested table headers in a section — a scalar placed after `[x.y]` is parsed as a field of that table and silently ignored
 - The compression decision/summary model is `[compression.model]`, separate from `model` (the legacy `[compression.decision]` spelling is migrated away)
 - Log macros live in `src/config/mod.rs`; `src/lib.rs` only shadows the print macros
-- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
+- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (`code`, incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
+- `get_available_functions` is every callable tool; `get_model_functions` is what the model is sent — pick by purpose (routing/display vs request size)
 - Dynamic tools are session-owned — a tool registered in one session is rejected when called from another (intentional isolation)
 
 ## Never

@@ -103,6 +103,7 @@ fn extract_content_joins_text_blocks_and_skips_null_metadata() {
 	let result = McpToolResult {
 		tool_name: "tool".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	assert_eq!(result.extract_content(), "one\ntwo");
@@ -120,6 +121,7 @@ fn extract_content_replaces_mirrored_image_payloads_in_metadata() {
 	let result = McpToolResult {
 		tool_name: "read_media_file".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	let content = result.extract_content();
@@ -231,7 +233,7 @@ async fn available_functions_cover_each_builtin_server_arm() {
 #[tokio::test]
 async fn builtin_annotations_drive_mutation_classification() {
 	clear_function_cache();
-	let is_mutation = crate::supervisor::detect::is_mutation_call;
+	let is_mutation = crate::mcp::tool_shape::is_mutation_call;
 	let mut agent_cfg = config_with_servers(vec![
 		McpServerConfig::builtin("orchestration", 30, vec![]),
 		McpServerConfig::builtin("agent", 30, vec![]),
@@ -863,6 +865,7 @@ fn extract_content_skips_non_text_blocks() {
 	let result = McpToolResult {
 		tool_name: "tool".to_string(),
 		tool_id: "id-1".to_string(),
+		script_calls: Vec::new(),
 		result: call_result,
 	};
 	assert_eq!(result.extract_content(), "only-text");
@@ -1092,6 +1095,7 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 		let result = McpToolResult {
 			tool_name: "screenshot".into(),
 			tool_id: "call-image".into(),
+			script_calls: Vec::new(),
 			result: serde_json::from_value(json!({"content": blocks})).unwrap(),
 		};
 		assert_eq!(result.extract_content(), text.unwrap_or_default());
@@ -1104,7 +1108,7 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 			assert!(matches!(&image.data, crate::session::image::ImageData::Base64(value) if value == data));
 			assert_eq!(image.media_type, mime);
 		}
-		assert!(!crate::supervisor::condense::is_plain_text_result(&result));
+		assert!(!crate::mcp::tool_shape::is_plain_text_result(&result));
 	}
 	assert!(McpToolResult::success("view".into(), "call-text".into(), "body".into())
 		.extract_images()
@@ -1123,7 +1127,7 @@ fn shell_granted_follows_the_server_tool_filter() {
 	assert!(granted(&["view", "shell"]));
 	assert!(granted(&["sh*"]), "prefix pattern covers shell");
 	assert!(granted(&["*"]));
-	assert!(!granted(&["view", "text_editor"]));
+	assert!(!granted(&["view", "text_edit"]));
 	assert!(!granted(&["shell_jobs"]), "a longer name is not shell");
 }
 

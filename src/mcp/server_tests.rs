@@ -917,7 +917,7 @@ fn tools_to_functions_registers_command_shape_from_schema() {
 	.expect("deserialize rmcp Tool");
 	tools_to_functions("server-tests", &[runner, editor]);
 
-	use crate::supervisor::detect::is_mutation_call;
+	use crate::mcp::tool_shape::is_mutation_call;
 	let check = serde_json::json!({"command": "cargo test --all"});
 	assert!(!is_mutation_call("serverTestsRunner", &check));
 	assert!(is_mutation_call(

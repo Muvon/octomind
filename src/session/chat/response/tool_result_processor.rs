@@ -15,6 +15,7 @@
 // Tool result processor module - handles tool result processing, caching, and follow-up API calls
 
 use crate::config::Config;
+use crate::plugins::protocol::RequestPhase;
 use crate::session::chat::session::ChatSession;
 use crate::session::ChatCompletionWithValidationParams;
 use crate::{log_debug, log_info};
@@ -75,19 +76,10 @@ pub async fn process_tool_results(
 	let mut cache_check_time = 0u128;
 	add_tool_results(&tool_results, chat_session, config)?;
 
-	// External plan manager: a sparse hidden signal rides with the specialist's
-	// normal action batch. Reconcile only after results exist, then inject the
-	// manager-owned state before the already-needed follow-up request. With no
-	// signal this is a free no-op.
-	if config.supervisor.enabled && config.supervisor.plan.enabled {
-		animation_manager.set_phase("Reconciling plan …").await;
-		if let Err(error) =
-			crate::supervisor::plan::reconcile_after_actions(chat_session, config, operation_cancelled.clone()).await
-		{
-			crate::log_debug!("External plan reconciliation failed: {}", error);
-		}
-		animation_manager.clear_phase();
-	}
+	// Notes a plugin tied to this round's results, such as feedback on the plan,
+	// follow the results directly: a fold or the goal recitation below then
+	// sees them where the round left them.
+	chat_session.deliver_plugin_result_notes()?;
 
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
@@ -114,15 +106,15 @@ pub async fn process_tool_results(
 			);
 		}
 	}
-	// A background task resolution that finished lands before the recitation, so
-	// the next note carries its checklist.
-	crate::session::chat::session::settle_resolution(chat_session, false).await;
+	// Plugins hear about the follow-up request before the built-in steps below.
+	chat_session.send_request_before(config, RequestPhase::FollowUp).await?;
+	chat_session.deliver_plugin_context()?;
 	// Tool-loop follow-ups bypass the turn-entry executor, so recite here as well —
 	// on change only, before the ceiling check so the note is counted in it.
-	crate::supervisor::recite::inject_before_request(
+	crate::session::recite::inject_before_request(
 		chat_session,
 		config,
-		crate::supervisor::recite::RecitalRefresh::OnChangeOnly,
+		crate::session::recite::RecitalRefresh::OnChangeOnly,
 	)?;
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 
@@ -225,16 +217,8 @@ pub async fn process_tool_results(
 		chat_session.add_system_managed_user_message(&hint_message)?;
 	}
 
-	// Supervisor: deliver any queued steer note HERE — during the tool loop, before
-	// the follow-up call — not only at the next user turn. The detector sets
-	// `steer_pending` mid-loop, but it was previously consumed only at the turn-start
-	// injection point (api_executor), so a runaway identical-call loop never actually
-	// saw the steer (it only landed when a real user message began a fresh turn). This
-	// is the round-by-round delivery that makes the steer reach the model in the loop.
-	if let Some(note) = chat_session.steer_pending.take() {
-		chat_session.add_system_managed_user_message(&note)?;
-		crate::log_debug!("Supervisor steer injected (tool loop)");
-	}
+	// Notes plugins queued for this request land here, before the follow-up call.
+	chat_session.deliver_plugin_notes()?;
 
 	// Deliver everything that landed in the inbox WHILE this turn was running — a
 	// finished background job, a monitor batch, a tap reply. The inbox was drained
@@ -341,7 +325,6 @@ pub async fn process_tool_results(
 			// (handle_followup_api_error). Just log diagnostics, stop animation,
 			// and propagate so the caller can offer a Ctrl+G retry.
 			log_debug!("Follow-up API call failed for model {}: {}", chat_session.model, e);
-			log_debug!("Temperature: {}", chat_session.temperature);
 
 			// Stop animation on error before returning
 			animation_manager.stop_current().await;
@@ -398,6 +381,7 @@ pub fn add_tool_results(
 			&tool_result.tool_name,
 			config,
 			tool_result.extract_images(),
+			crate::mcp::code::kept_calls(&tool_result.script_calls, &tool_content),
 		)?;
 	}
 	Ok(())

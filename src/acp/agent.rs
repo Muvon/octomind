@@ -285,6 +285,20 @@ impl OctomindAgent {
 		}
 	}
 
+	/// Connection ended: tell each session's plugins, as the interactive path
+	/// does when it exits. The session is saved after their answer is booked.
+	async fn end_plugin_sessions(&self) {
+		let session_ids: Vec<String> = self.sessions.borrow().keys().cloned().collect();
+		for session_id in session_ids {
+			let entry = self.sessions.borrow_mut().remove(&session_id);
+			let Some((mut chat_session, cwd)) = entry else {
+				continue;
+			};
+			crate::plugins::lifecycle::session_ended(&mut chat_session, crate::plugins::lifecycle::REASON_EXIT).await;
+			self.sessions.borrow_mut().insert(session_id, (chat_session, cwd));
+		}
+	}
+
 	/// Inject the client connection once the ACP event loop starts serving. Supplied
 	/// by the `with_spawned` runner, which hands us a long-lived `ConnectionTo<Client>`.
 	pub fn set_connection(&self, conn: ConnectionTo<Client>) {
@@ -463,10 +477,10 @@ const NEW_TEXT_KEYS: &[&str] = &["new_text", "new_string"];
 /// names a file: `readOnlyHint: false` also covers tools that send, schedule
 /// or store, and those edit no file.
 fn tool_kind(tool_name: &str, names_file: bool) -> ToolKind {
-	if crate::supervisor::detect::executes_free_form_command(tool_name) {
+	if crate::mcp::tool_shape::executes_free_form_command(tool_name) {
 		return ToolKind::Execute;
 	}
-	match crate::supervisor::detect::tool_read_only_hint(tool_name) {
+	match crate::mcp::tool_shape::tool_read_only_hint(tool_name) {
 		Some(true) => ToolKind::Read,
 		Some(false) if names_file => ToolKind::Edit,
 		_ => ToolKind::Other,
@@ -793,8 +807,6 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		)),
 		AvailableCommand::new("status", "Show session status and diagnostics")
 			.input(unstructured("[agents|monitors|jobs]")),
-		AvailableCommand::new("learning", "Inspect or manage supervisor learning")
-			.input(unstructured("[list|show|delete|clear|evolution]")),
 		AvailableCommand::new("share", "Share the current session"),
 		AvailableCommand::new("analyze", "Analyze the current session"),
 		AvailableCommand::new("usage", "Show spend and quotas for your Octomind account"),
@@ -806,7 +818,11 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 /// Send the available commands list to the ACP client for the given session.
 async fn send_available_commands(conn: Option<ConnectionTo<Client>>, session_id: &str) {
 	if let Some(conn) = conn {
-		let update = SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(build_available_commands()));
+		// The plugins' commands are known only after their handshake, so this goes
+		// out after `session.start` was answered.
+		let mut commands = build_available_commands();
+		commands.extend(super::commands::plugin_available_commands(session_id));
+		let update = SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands));
 		let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id), update);
 		if let Err(e) = conn.send_notification(notif) {
 			log_error!("ACP: failed to send available_commands_update: {}", e);
@@ -949,7 +965,7 @@ impl OctomindAgent {
 							continue;
 						}
 
-						if let Err(e) = crate::supervisor::accounting::background(prepare_for_api_call(
+						if let Err(e) = crate::session::accounting::background(prepare_for_api_call(
 							&mut chat_session,
 							&config_for_role,
 							op_rx.clone(),
@@ -988,7 +1004,7 @@ impl OctomindAgent {
 							}
 						});
 
-						let result = crate::supervisor::accounting::background(execute_api_call_and_process_response(
+						let result = crate::session::accounting::background(execute_api_call_and_process_response(
 							&mut chat_session,
 							&config_for_role,
 							&role,
@@ -1158,16 +1174,11 @@ impl OctomindAgent {
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
-		let inherited_authorization = args
+		// A parent process with plugins names itself and hands down what its plugins chose.
+		let plugin_parentage = args
 			.meta
 			.as_ref()
-			.and_then(|meta| meta.get(crate::supervisor::authorizer::META_KEY))
-			.map(|value| serde_json::from_value::<crate::supervisor::authorizer::AuthorizationContext>(value.clone()))
-			.transpose()
-			.map_err(|e| {
-				agent_client_protocol::Error::invalid_params().data(format!("invalid inherited authorization: {e}"))
-			})?;
-		let has_inherited_authorization = inherited_authorization.is_some();
+			.and_then(crate::plugins::lifecycle::parentage_from_meta);
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
@@ -1186,25 +1197,39 @@ impl OctomindAgent {
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
-		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
-			.await
-			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
-
 		let session_id = chat_session.session.info.name.clone();
+		if let Some((parent_session_id, inherited)) = plugin_parentage {
+			crate::plugins::lifecycle::set_parentage(&session_id, &parent_session_id, inherited);
+		}
+		// Plugins connect before the system prompt is built: its status-line
+		// instruction lists the fields they registered, read in the session's scope.
+		crate::plugins::lifecycle::connect(
+			&session_id,
+			&session_role,
+			&crate::mcp::get_thread_working_directory(),
+			&config_for_role,
+		)
+		.await;
+		crate::session::context::with_session_id(
+			session_id.clone(),
+			setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false),
+		)
+		.await
+		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 		log_debug!("ACP: new_session created: {}", session_id);
-		chat_session.session.info.authorization.parent = inherited_authorization.map(Box::new);
-		crate::supervisor::authorizer::capture(&mut chat_session, &config_for_role);
 
 		// Initialize session-scoped inbox and job manager inside the session context
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
-		let session_id_for_restore = session_id.clone();
 		crate::session::context::with_session_id(session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
-			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
+		if let Err(error) =
+			crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, "startup").await
+		{
+			log_error!("ACP: plugin session start failed: {:#}", error);
+		}
 		crate::mcp::elicitation::set_answerer(&session_id, self.elicitation_support.get().answerer());
 
 		self.sessions
@@ -1236,14 +1261,7 @@ impl OctomindAgent {
 		// and processes messages automatically without waiting for user prompts.
 		self.spawn_inbox_monitor(session_id.clone());
 
-		let mut meta = Meta::new();
-		if has_inherited_authorization {
-			meta.insert(
-				crate::supervisor::authorizer::META_KEY.to_string(),
-				serde_json::Value::Bool(true),
-			);
-		}
-		Ok(NewSessionResponse::new(session_id).meta(meta))
+		Ok(NewSessionResponse::new(session_id).meta(Meta::new()))
 	}
 
 	async fn prompt(&self, args: PromptRequest) -> agent_client_protocol::Result<PromptResponse> {
@@ -1326,7 +1344,6 @@ impl OctomindAgent {
 					&mut chat_session,
 					&config_for_role,
 					operation_rx,
-					crate::session::chat::session::commands::LessonHandoff::Task,
 				)
 				.await
 				{
@@ -1434,7 +1451,15 @@ impl OctomindAgent {
 						| crate::session::chat::session::commands::CommandResult::SwitchSession(_),
 					) => "Session exit requested.".to_string(),
 					Ok(crate::session::chat::session::commands::CommandResult::TreatAsUserInput) => {
-						let available: Vec<&str> = crate::session::chat::COMMANDS.to_vec();
+						let mut available: Vec<String> = crate::session::chat::COMMANDS
+							.iter()
+							.map(|name| name.to_string())
+							.collect();
+						available.extend(
+							crate::plugins::commands(&session_id)
+								.into_iter()
+								.map(|command| format!("/{}", command.spec.name)),
+						);
 
 						format!(
 							"The {} command is not supported by Octomind.\n\nAvailable commands: {}",
@@ -1635,6 +1660,29 @@ impl OctomindAgent {
 				}
 			};
 
+			// A plugin may rewrite the prompt or refuse it. A refusal is an answer to
+			// the client, not a failure: its message is shown and the turn ends as refused.
+			let processed_input = match chat_session.submit_prompt(processed_input, &input).await {
+				Ok(v) => v,
+				Err(e) => {
+					self.sessions
+						.borrow_mut()
+						.insert(session_id.clone(), (chat_session, session_cwd));
+					if !e.is::<crate::plugins::PromptBlocked>() {
+						return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
+					}
+					let conn = self.conn.borrow().clone();
+					if let Some(conn) = conn {
+						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(e.to_string().into()));
+						let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id.as_str()), update);
+						if let Err(send_error) = conn.send_notification(notif) {
+							log_error!("ACP: failed to send the refused prompt's message: {}", send_error);
+						}
+					}
+					return Ok(PromptResponse::new(StopReason::Refusal));
+				}
+			};
+
 			// Include interactive /image and /video attachments alongside every ACP attachment.
 			let mut images = images;
 			let mut videos = videos;
@@ -1801,13 +1849,17 @@ impl OctomindAgent {
 			// tracks verification: an untracked child has no verdict to give, and
 			// silence keeps the parent on its own (conservative) signal.
 			if let Some(conn) = self.conn.borrow().as_ref().cloned() {
-				let tracks = config_for_role.supervisor.enabled && config_for_role.supervisor.gate.enabled;
-				let verified = tracks
-					&& !chat_session
-						.detectors
-						.needs_verification(crate::supervisor::workdir::fingerprint());
 				let mut meta = serde_json::Map::new();
-				meta.insert("octomind.verified".to_string(), serde_json::Value::Bool(verified));
+				// With plugins the verdict is the one a plugin gave at its last `turn.end`; a
+				// session no plugin judged reports none, so the parent keeps its own signal.
+				let reported = if config_for_role.has_plugins() {
+					chat_session.plugin_verified
+				} else {
+					Some(false)
+				};
+				if let Some(verified) = reported {
+					meta.insert("octomind.verified".to_string(), serde_json::Value::Bool(verified));
+				}
 				if let Some(stop) = spending_stop {
 					meta.insert(
 						"octomind.spending_stop".to_string(),
@@ -1915,22 +1967,35 @@ impl OctomindAgent {
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
-		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
-			.await
-			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
-
 		let actual_session_id = chat_session.session.info.name.clone();
+		// Plugins connect before the system prompt is rebuilt: its status-line
+		// instruction lists the fields they registered, read in the session's scope.
+		crate::plugins::lifecycle::connect(
+			&actual_session_id,
+			&session_role,
+			&crate::mcp::get_thread_working_directory(),
+			&config_for_role,
+		)
+		.await;
+		crate::session::context::with_session_id(
+			actual_session_id.clone(),
+			setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false),
+		)
+		.await
+		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
 		// Initialize session-scoped inbox, job manager, and skill pool inside the session context
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
-		let session_id_for_restore = actual_session_id.clone();
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
-			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
+		if let Err(error) =
+			crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, "resume").await
+		{
+			log_error!("ACP: plugin session start failed: {:#}", error);
+		}
 		crate::mcp::elicitation::set_answerer(&actual_session_id, self.elicitation_support.get().answerer());
 
 		self.sessions
@@ -2252,6 +2317,7 @@ pub(super) async fn serve(config: Config, role: String, options: crate::acp::Acp
 		log_debug!("ACP: connection ended: {}", e);
 	}
 	agent.finish_keepalives().await;
+	agent.end_plugin_sessions().await;
 	agent.record_telemetry();
 	Ok(())
 }

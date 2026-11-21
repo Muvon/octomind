@@ -53,9 +53,6 @@ pub(crate) fn summary_projection(message: &crate::session::Message) -> Option<St
 //   math and the adaptive depth controller driving the should-we-compress gate.
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
-// Shared with the supervisor: recovery of JSON from a text body when the
-// provider does not enforce a response schema.
-pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills, collect_recent_recall_context};
 use decision::{
 	adaptive_fire_line, at_turn_boundary, autonomous_runway, cache_known_expired, ceiling_reached, compression_depth,
@@ -131,7 +128,7 @@ pub fn replaces_prefix_on_next_request(session: &ChatSession, config: &Config, n
 			return false;
 		}
 		let current_step = crate::mcp::core::plan::active_step_index();
-		let agent_blocked = session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
+		let agent_blocked = session.last_self_report == Some(crate::session::self_report::SelfReport::Blocked);
 		if session
 			.fold_deferral
 			.is_some_and(|deferral| deferral.stands_against(current_step, agent_blocked))
@@ -786,6 +783,41 @@ async fn apply_fold_outcome(
 	finish_fold(session, config, ctx, summary, usage, force, force_done).await
 }
 
+/// Tell the plugins a fold is about to drop messages. `forced` is true when
+/// the user asked for it (`/done`).
+pub(crate) async fn send_compact_before(session: &mut ChatSession, forced: bool) -> Result<()> {
+	let session_id = session.session.info.name.clone();
+	if !crate::plugins::subscribed(&session_id, crate::plugins::protocol::event::COMPACT_BEFORE) {
+		return Ok(());
+	}
+	let parts = crate::plugins::payload::ContextParts::of(session);
+	let effects = crate::plugins::compact_before(
+		&parts.context(&session.session.messages, None),
+		crate::plugins::protocol::CompactBefore { forced },
+	)
+	.await;
+	crate::plugins::apply::apply(session, effects).await
+}
+
+/// Tell the plugins a fold was applied, with the summary it left in the
+/// anchor. Every plugin then gets the full message list with its next event.
+async fn send_compact_after(session: &ChatSession) {
+	let session_id = &session.session.info.name;
+	if !crate::plugins::active(session_id) {
+		return;
+	}
+	if crate::plugins::subscribed(session_id, crate::plugins::protocol::event::COMPACT_AFTER) {
+		let anchor = &session.session.info.anchor;
+		let payload = crate::plugins::protocol::CompactAfter {
+			carried_summary: (!anchor.is_empty()).then(|| anchor.to_xml()),
+			goal: (!anchor.intent.is_empty()).then(|| anchor.intent.clone()),
+		};
+		let parts = crate::plugins::payload::ContextParts::of(session);
+		crate::plugins::compact_after(&parts.context(&session.session.messages, None), payload).await;
+	}
+	crate::plugins::mark_history_reset(session_id);
+}
+
 /// Everything after the decision call: usage/metrics accounting, the veto and
 /// PACT validation, the drain itself, and the runway bookkeeping. Shared by
 /// the inline (forced) path and background collection.
@@ -907,20 +939,11 @@ async fn finish_fold(
 	};
 
 	log_info!("AI decided to compress older conversation exchanges");
-	// Capture learning input before apply_compression replaces the raw turns
-	// with one assistant summary. The extraction itself starts only after a
-	// successful apply, so a rejected/failed fold never teaches from a state
-	// transition that did not happen. Every fold hands over its snapshot: the
-	// tool-grounded memories (experience, orientation) come from exactly the
-	// turns it discards, and an autonomous run has one user message however
-	// long it works, so gating on user turns would lose them all.
-	let learning_snapshot = (!force_done && config.supervisor.learning.enabled).then(|| {
-		(
-			session.session.messages.clone(),
-			session.session.info.name.clone(),
-			session.learning_outcome,
-		)
-	});
+	// `/done` told the plugins before it started; only a fold nobody asked for
+	// is announced here, after its summary passed validation.
+	if !force_done {
+		send_compact_before(session, false).await?;
+	}
 
 	let preserve_bridge = ctx.preserve_recent_user_bridge
 		&& session.session.messages[ctx.end_idx + 1..]
@@ -947,21 +970,7 @@ async fn finish_fold(
 	)
 	.await?;
 
-	if let Some((messages, session_name, outcome)) = learning_snapshot {
-		// The session's own live role (kept current by `/role`), the same key
-		// recall reads: a process registry lookup here once came back empty under
-		// ACP and filed every lesson role-less, where recall never looks.
-		let role = session.role.clone();
-		let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
-			messages,
-			config,
-			role,
-			None,
-			session_name,
-			outcome,
-			session.session.session_file.clone(),
-		);
-	}
+	send_compact_after(session).await;
 
 	if force_done {
 		session.session.info.consecutive_compressions = 0;
@@ -1082,7 +1091,7 @@ async fn check_and_compress_conversation_inner(
 	// proceeds without a veto. Force skips the judgment: `/done` and the
 	// ceiling margin fold now, inline.
 	let current_step = crate::mcp::core::plan::active_step_index();
-	let agent_blocked = session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
+	let agent_blocked = session.last_self_report == Some(crate::session::self_report::SelfReport::Blocked);
 	let overruled = match session.fold_deferral {
 		Some(deferral) if !force && !idle && deferral.stands_against(current_step, agent_blocked) => {
 			// Corroborated: hold without paying for a fold call. The deferral
@@ -1361,7 +1370,8 @@ async fn check_and_compress_conversation_inner(
 		None
 	};
 	if let Some(pact) = pact.as_mut() {
-		pact.prune_dead_tool_packets(config).await;
+		let session_id = session.session.info.name.clone();
+		pact.prune_dead_tool_packets(&session_id).await;
 	}
 
 	// `analysis_findings` is runtime state, while the rendered summary is what
@@ -1434,7 +1444,7 @@ async fn check_and_compress_conversation_inner(
 			prepared,
 			cancel,
 		});
-		crate::supervisor::notify("compaction started in background");
+		crate::session::notice::supervisor_notice("compaction started in background");
 		log_debug!("Compression decision spawned in background");
 		return Ok(false);
 	}

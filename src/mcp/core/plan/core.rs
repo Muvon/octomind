@@ -14,9 +14,9 @@
 
 //! Runtime-owned plan storage, rendering, and sidecar transitions.
 //!
-//! Lifecycle changes enter through the `sidecar_*` functions under
-//! `supervisor::plan`. The specialist can only observe injected plan state and
-//! emit sparse hidden signals; there is no MCP command surface.
+//! Lifecycle changes enter through the `sidecar_*` functions, which apply a
+//! plan change a plugin answered with. The agent can only observe injected
+//! plan state; there is no MCP command surface.
 use super::memory_storage::MemoryPlanStorage;
 use super::storage::{PlanStorage, TaskData, TaskStatus};
 use anyhow::Result;
@@ -152,7 +152,14 @@ fn persist_plan_cleared() {
 	}
 }
 
-fn sidecar_tasks(tasks: &[crate::supervisor::plan::PlanTaskDirective], minimum: usize) -> Result<Vec<TaskData>> {
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanTaskDirective {
+	pub title: String,
+	pub done_when: String,
+}
+
+fn sidecar_tasks(tasks: &[PlanTaskDirective], minimum: usize) -> Result<Vec<TaskData>> {
 	if tasks.len() < minimum {
 		anyhow::bail!("A sidecar plan needs at least {minimum} meaningful task(s)");
 	}
@@ -178,7 +185,7 @@ fn sidecar_tasks(tasks: &[crate::supervisor::plan::PlanTaskDirective], minimum: 
 }
 
 /// Start a runtime-owned plan without a tool result or compression side effect.
-pub fn sidecar_start(title: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
+pub fn sidecar_start(title: &str, tasks: &[PlanTaskDirective]) -> Result<()> {
 	let title = title.trim();
 	if title.is_empty() {
 		anyhow::bail!("Plan title must be non-empty");
@@ -217,7 +224,7 @@ pub fn sidecar_advance(summary: &str) -> Result<()> {
 }
 
 /// Revise only the open tail after new evidence invalidates the route.
-pub fn sidecar_revise(reason: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
+pub fn sidecar_revise(reason: &str, tasks: &[PlanTaskDirective]) -> Result<()> {
 	if reason.trim().is_empty() {
 		anyhow::bail!("Plan revision reason must be non-empty");
 	}
@@ -261,72 +268,15 @@ pub fn sidecar_finish(summary: &str) -> Result<()> {
 	Ok(())
 }
 
-/// Restore the active plan (if any) from the session log into session-scoped storage.
-/// Called at session startup (all entry points) right after init_session_services.
-/// Safe no-op when the log file doesn't exist or contains no snapshot.
-pub fn restore_plan_for_session(session_name: &str) {
-	let log_file = match crate::session::logger::get_session_log_file(session_name) {
-		Ok(p) => p,
-		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: cannot resolve log file: {}", e);
-			return;
-		}
-	};
-	if !log_file.exists() {
-		return;
-	}
-
-	let log = match crate::session::persistence::SessionLog::open(&log_file) {
-		Ok(log) => log,
-		Err(e) => {
-			crate::log_debug!("restore_plan_for_session: {:#}", e);
-			return;
-		}
-	};
-	let mut latest_plan: Option<super::storage::ExecutionPlan> = None;
-
-	for line in log {
-		// Corruption: the latest plan may sit past it, so restore none.
-		let line = match line {
-			Ok(line) => line,
-			Err(e) => {
-				crate::log_error!("restore_plan_for_session: {:#}", e);
-				return;
-			}
-		};
-		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
-			continue;
-		};
-		let Some(t) = val.get("type").and_then(|t| t.as_str()) else {
-			continue;
-		};
-		match t {
-			"PLAN_SNAPSHOT" => {
-				if let Some(plan_val) = val.get("plan") {
-					match serde_json::from_value::<super::storage::ExecutionPlan>(plan_val.clone()) {
-						Ok(plan) => latest_plan = Some(plan),
-						Err(e) => {
-							crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
-						}
-					}
-				}
-			}
-			"PLAN_CLEARED" => {
-				latest_plan = None;
-			}
-			_ => {}
-		}
-	}
-
-	if let Some(plan) = latest_plan {
-		let session_id = session_name.to_string();
-		let storage = crate::session::context::get_plan_storage(&session_id);
-		let mut storage = storage.lock().unwrap();
-		if let Err(e) = storage.load_plan(plan) {
-			crate::log_debug!("restore_plan_for_session: load_plan failed: {}", e);
-		} else {
-			crate::log_debug!("Restored active plan for session '{}'", session_name);
-		}
+/// Put a plan read back from the session log into session-scoped storage.
+/// Called once, by the session load from disk.
+pub fn restore_plan(session_id: &crate::session::context::SessionId, plan: super::storage::ExecutionPlan) {
+	let storage = crate::session::context::get_plan_storage(session_id);
+	let mut storage = storage.lock().unwrap();
+	if let Err(e) = storage.load_plan(plan) {
+		crate::log_debug!("restore_plan: load_plan failed: {}", e);
+	} else {
+		crate::log_debug!("Restored active plan for session '{}'", session_id);
 	}
 }
 

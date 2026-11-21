@@ -674,7 +674,7 @@ fn write_project_skill(workdir: &std::path::Path, name: &str, frontmatter: &str)
 
 #[tokio::test]
 #[serial]
-async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
+async fn test_find_skills_across_universal_and_plugin_sources() {
 	let _data = DataDirGuard::new();
 	let _home = HomeGuard::new();
 	let sid = "__skilltest_multisource".to_string();
@@ -701,71 +701,13 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 	)
 	.expect("write SKILL.md");
 
-	// Evolution-generated skill: registry record + artifact on disk.
-	let evo_dir = crate::directories::get_learning_evolution_dir().expect("evolution dir");
-	let artifact = evo_dir.join("evo1").join("artifact");
-	std::fs::create_dir_all(&artifact).expect("artifact dir");
-	std::fs::write(
-		artifact.join("SKILL.md"),
-		"---\nname: skilltest-evo\ndescription: Generated fixture\n---\n\nEVO-BODY\n",
-	)
-	.expect("write SKILL.md");
-	let registry = serde_json::json!({
-		"schema_version": crate::supervisor::learning::evolution::REGISTRY_SCHEMA_VERSION,
-		"records": [{
-			"schema_version": crate::supervisor::learning::evolution::REGISTRY_SCHEMA_VERSION,
-			"id": "evo1",
-			"name": "skilltest-evo",
-			"description": "generated skill",
-			"kind": "skill",
-			"scope": { "project": null, "domain": null },
-			// Active applies in every session; a trial would depend on the
-			// session's randomized arm.
-			"state": "active",
-			"effect": "advisory",
-			"explicit_authorization": true,
-			"source_memory_ids": [],
-			"evidence": [],
-			"artifact_version": 1,
-			"parent_version": null,
-			"superseded_ids": [],
-			"generator_model": "m",
-			"verifier_model": "v",
-			"artifact_path": "SKILL.md",
-			"script_path": null,
-			"shadow_matches": 0,
-			"trial_uses": 0,
-			"successes": 0,
-			"failures": 0,
-			"false_triggers": 0,
-			"created": "2026-01-01T00:00:00Z",
-			"updated": "2026-01-01T00:00:00Z",
-			"promoted": null,
-			"last_used": null,
-			"retired": null,
-			"history": []
-		}]
-	});
-	std::fs::write(
-		evo_dir.join("registry.json"),
-		serde_json::to_string(&registry).expect("registry json"),
-	)
-	.expect("write registry");
-
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
-	config.supervisor.learning.evolution.enabled = true;
-	crate::session::context::set_session_config(&sid, &config);
-
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
-		crate::supervisor::learning::evolution::init_for_session("developer");
-
 		let names: Vec<String> = find_all_skills_with_details()
 			.into_iter()
 			.map(|(meta, _)| meta.name)
 			.collect();
-		for expected in ["skilltest-uni", "skilltest-plug", "skilltest-evo"] {
+		for expected in ["skilltest-uni", "skilltest-plug"] {
 			assert!(
 				names.iter().any(|n| n == expected),
 				"{expected} missing from discovery: {names:?}"
@@ -778,8 +720,6 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 		let (_, dir, plug) = find_skill_by_name_pub("skilltest-plug").expect("plugin resolves");
 		assert!(plug.contains("PLUG-BODY"));
 		assert!(dir.starts_with(&plugin_root), "plugin skill dir: {dir:?}");
-		let (_, _, evo) = find_skill_by_name_pub("skilltest-evo").expect("evolution resolves");
-		assert!(evo.contains("EVO-BODY"));
 	})
 	.await;
 

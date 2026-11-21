@@ -67,6 +67,7 @@ fn replay_saved_folds() {
 			.filter_map(|line| line.strip_prefix("constraint: "))
 			.map(|text| PinnedItem {
 				text: text.to_string(),
+				label: None,
 				source: None,
 			})
 			.collect();

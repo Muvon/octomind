@@ -343,15 +343,11 @@ fn test_truncate_tool_output_line_limit_wins_over_chars() {
 #[test]
 fn test_truncation_hint_matches_each_tool_family() {
 	// Reader tools share the line-range advice
-	for tool in ["view", "text_editor", "read", "extract_lines"] {
+	for tool in ["view", "batch_edit", "read"] {
 		assert!(truncation_hint(tool).contains("line range"), "{tool}");
 	}
 	assert!(truncation_hint("view_signatures").contains("fewer files"));
 	assert!(truncation_hint("shell").contains("grep"));
-	for tool in ["list_files", "workdir"] {
-		assert!(truncation_hint(tool).contains("subdirectory"), "{tool}");
-	}
-	assert!(truncation_hint("ast_grep").contains("pattern"));
 	// Substring match catches search-like tools whatever they are called
 	for tool in ["semantic_search", "find_references", "graphrag"] {
 		assert!(truncation_hint(tool).contains("more specific query"), "{tool}");

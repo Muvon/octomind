@@ -93,6 +93,15 @@ where
 	CURRENT_SESSION_ID.scope(id, f).await
 }
 
+/// Run a blocking closure within a session context, for code that runs on a
+/// `spawn_blocking` thread, where the task-local of the caller is not set.
+pub fn with_session_id_sync<F, T>(session_id: SessionId, f: F) -> T
+where
+	F: FnOnce() -> T,
+{
+	CURRENT_SESSION_ID.sync_scope(Arc::new(session_id), f)
+}
+
 /// Get the current session ID from task-local storage.
 ///
 /// Returns None if called outside of a session context.
@@ -573,6 +582,44 @@ pub fn has_hints_for_session(session_id: &SessionId) -> bool {
 /// Clear hints when a session ends.
 pub fn clear_hints_for_session(session_id: &SessionId) {
 	if let Ok(mut guard) = HINTS_REGISTRIES.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session-keyed record of script tools whose description the model was shown
+// ---------------------------------------------------------------------------
+
+/// The script tools whose full description a session's model was shown (see
+/// `mcp::code::script_direct_calls`) in one context epoch. A new epoch means
+/// the model may have lost what it was shown, so the record starts over.
+#[derive(Default)]
+struct ShownToolHelp {
+	epoch: u64,
+	tools: std::collections::HashSet<String>,
+}
+
+static SHOWN_TOOL_HELP: RwLock<Option<HashMap<SessionId, ShownToolHelp>>> = RwLock::new(None);
+
+/// Record that the calling session's model is shown the description of
+/// `tool`. Returns whether its context did not hold it yet.
+pub fn note_tool_help_shown(tool: &str) -> bool {
+	let epoch = context_epoch();
+	let session_id = current_session_id().unwrap_or_default();
+	let mut guard = SHOWN_TOOL_HELP.write().unwrap();
+	let shown = guard.get_or_insert_with(HashMap::new).entry(session_id).or_default();
+	if shown.epoch != epoch {
+		shown.epoch = epoch;
+		shown.tools.clear();
+	}
+	shown.tools.insert(tool.to_string())
+}
+
+/// Forget which descriptions a session was shown, when it ends.
+pub fn clear_shown_tool_help(session_id: &SessionId) {
+	if let Ok(mut guard) = SHOWN_TOOL_HELP.write() {
 		if let Some(registry) = guard.as_mut() {
 			registry.remove(session_id);
 		}
@@ -1139,6 +1186,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_context_epoch(session_id);
 	clear_schedule_storage(session_id);
 	clear_hints_for_session(session_id);
+	clear_shown_tool_help(session_id);
 	clear_dynamic_agents_for_session(session_id);
 	clear_dynamic_servers_for_session(session_id);
 	crate::mcp::runtime::capability::clear_session_capabilities(session_id);
@@ -1152,10 +1200,10 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::shell_jobs::clear_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
-	crate::supervisor::learning::evolution::clear_for_session(session_id);
-	crate::supervisor::delegate::clear_handback_for_session(session_id);
-	crate::supervisor::condense::clear_for_session(session_id);
-	crate::supervisor::authorizer::clear_for_session(session_id);
+	crate::mcp::agent::handback::clear_handback_for_session(session_id);
+	// A session that ended without `session.end` (a failed bind, a close with no
+	// chat session at hand) still frees its plugin state.
+	crate::plugins::end_session(session_id);
 	clear_schedule_notify(session_id);
 }
 
@@ -1169,13 +1217,11 @@ pub fn init_session_services(role: &str) {
 	set_session_role(&session_id, role);
 	// A (re)initialized session starts a context the servers have not served.
 	bump_context_epoch();
-	crate::supervisor::authorizer::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
 	crate::mcp::orchestration::schedule::execution::init_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();
 	crate::session::tap_runs::init_for_session();
 	crate::session::guardrails::init_for_session();
-	crate::supervisor::learning::evolution::init_for_session(role);
 	crate::mcp::agent::functions::init_job_manager();
 	// Extract domain from role/tag (e.g., "developer:general" → "developer")
 	let domain = role.split(':').next().unwrap_or(role);

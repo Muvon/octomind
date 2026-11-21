@@ -29,8 +29,8 @@
 //!   only kills in-memory tasks.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use tokio::sync::{mpsc, watch};
@@ -114,9 +114,16 @@ pub struct TapJobInfo {
 	pub live: TapLiveState,
 }
 
+/// Linear in `history` + `runs`: the log fold calls this once per snapshot over
+/// a history of hundreds of runs, so a per-run scan would be quadratic.
 pub(crate) fn merge_history(history: &mut Vec<TapJobInfo>, runs: impl IntoIterator<Item = TapJobInfo>) {
+	let mut index: HashMap<String, usize> = HashMap::with_capacity(history.len());
+	for (position, saved) in history.iter().enumerate() {
+		index.entry(saved.id.clone()).or_insert(position);
+	}
 	for mut run in runs {
-		if let Some(previous) = history.iter_mut().find(|saved| saved.id == run.id) {
+		if let Some(&position) = index.get(&run.id) {
+			let previous = &mut history[position];
 			match (&mut run.live.usage, previous.live.usage) {
 				(Some(usage), Some(old)) => {
 					usage.cost = usage.cost.max(old.cost);
@@ -132,9 +139,57 @@ pub(crate) fn merge_history(history: &mut Vec<TapJobInfo>, runs: impl IntoIterat
 			}
 			*previous = run;
 		} else {
+			index.insert(run.id.clone(), history.len());
 			history.push(run);
 		}
 	}
+}
+
+/// What one session has already written to its log in this process. Never
+/// persisted: after a restart the first snapshot writes both lists in full once.
+#[derive(Default)]
+struct LoggedState {
+	runs: HashMap<String, TapJobInfo>,
+	background_runs: BTreeSet<String>,
+}
+
+static LOGGED_RUNS: Mutex<Option<HashMap<SessionId, LoggedState>>> = Mutex::new(None);
+
+fn lock_logged_runs() -> std::sync::MutexGuard<'static, Option<HashMap<SessionId, LoggedState>>> {
+	// The map is only a write-dedup cache; a poisoned lock holds no broken invariant.
+	LOGGED_RUNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Trim a snapshot copy to what this process has not logged yet: runs that are
+/// new or changed, and background-run ids not yet written. Snapshots carry only
+/// these; the loader folds every snapshot (`merge_history` for runs, `merge_max`
+/// for the accounting), so the full lists are rebuilt from the deltas. Call
+/// `mark_logged` on the same copy once the entry is appended, so a failed append
+/// is retried by the next snapshot.
+pub(crate) fn keep_unlogged(info: &mut crate::session::SessionInfo) {
+	let guard = lock_logged_runs();
+	let Some(logged) = guard.as_ref().and_then(|sessions| sessions.get(&info.name)) else {
+		return;
+	};
+	info.agent_runs.retain(|run| logged.runs.get(&run.id) != Some(run));
+	info.supervisor_accounting
+		.background_runs
+		.retain(|id| !logged.background_runs.contains(id));
+}
+
+/// Record what a trimmed snapshot copy carried as logged for its session.
+pub(crate) fn mark_logged(info: &crate::session::SessionInfo) {
+	let mut guard = lock_logged_runs();
+	let logged = guard
+		.get_or_insert_with(HashMap::new)
+		.entry(info.name.clone())
+		.or_default();
+	for run in &info.agent_runs {
+		logged.runs.insert(run.id.clone(), run.clone());
+	}
+	logged
+		.background_runs
+		.extend(info.supervisor_accounting.background_runs.iter().cloned());
 }
 
 /// Old sessions have no agent snapshot; their structured tap receipts retain run IDs.
@@ -201,6 +256,9 @@ pub fn init_for_session() {
 /// Cancel every running job for the session and drop the bucket. Called
 /// from `cleanup_session` on session end.
 pub fn clear_for_session(session_id: &SessionId) {
+	if let Some(sessions) = lock_logged_runs().as_mut() {
+		sessions.remove(session_id);
+	}
 	let removed = {
 		let mut guard = match REGISTRY.write() {
 			Ok(g) => g,

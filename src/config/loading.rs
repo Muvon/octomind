@@ -18,23 +18,9 @@ use std::path::Path;
 
 use super::Config;
 
-fn reject_legacy_evaluate(value: &toml::Value) -> Result<()> {
-	if value
-		.get("supervisor")
-		.and_then(|supervisor| supervisor.get("evaluate"))
-		.is_some()
-	{
-		anyhow::bail!("supervisor.evaluate was removed in version 22; migrate to [decision]");
-	}
-	Ok(())
-}
-
-const MODEL_PROFILE_FIELDS: [&str; 10] = [
+const MODEL_PROFILE_FIELDS: [&str; 7] = [
 	"reasoning_effort",
 	"max_tokens",
-	"temperature",
-	"top_p",
-	"top_k",
 	"max_retries",
 	"retry_timeout",
 	"request_timeout_seconds",
@@ -78,15 +64,6 @@ fn normalize_model_profile_syntax(value: &mut toml::Value) {
 		for role in roles {
 			if let Some(role) = role.as_table_mut() {
 				normalize_model_owner(role);
-			}
-		}
-	}
-	if let Some(supervisor) = root.get_mut("supervisor").and_then(toml::Value::as_table_mut) {
-		normalize_model_owner(supervisor);
-		if let Some(learning) = supervisor.get_mut("learning").and_then(toml::Value::as_table_mut) {
-			learning.remove("model");
-			for key in MODEL_PROFILE_FIELDS {
-				learning.remove(key);
 			}
 		}
 	}
@@ -216,7 +193,6 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 
 		let mut value: toml::Value =
 			toml::from_str(&content).context(format!("Failed to parse TOML file: {}", file.display()))?;
-		reject_legacy_evaluate(&value)?;
 		normalize_model_profile_syntax(&mut value);
 
 		merged = Some(if let Some(base) = merged {
@@ -279,25 +255,20 @@ fn apply_config_overrides(merged: &mut toml::Value, overrides: &[String]) -> Res
 }
 
 impl Config {
-	fn initialize_config(&mut self) {}
-
 	pub fn ensure_octomind_dir() -> Result<std::path::PathBuf> {
 		// Use the system-wide directory
 		crate::directories::get_octomind_data_dir()
 	}
 
-	/// Copy the default configuration template when no config exists
+	/// Write a new configuration file when none exists: the default template
+	/// with the default plugin in its list.
 	pub fn copy_default_config_template(config_path: &std::path::Path) -> Result<()> {
-		// Default config template embedded in binary
-		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
-
 		// Ensure the parent directory exists
 		if let Some(parent) = config_path.parent() {
 			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
-		// Write the default template
-		fs::write(config_path, DEFAULT_CONFIG_TEMPLATE).context(format!(
+		fs::write(config_path, super::plugins::new_config_text()).context(format!(
 			"Failed to write default config template to {}",
 			config_path.display()
 		))?;
@@ -319,13 +290,11 @@ impl Config {
 		Ok(config_path)
 	}
 
-	/// Inject default configuration directly from embedded TOML template
+	/// The configuration of a first start, parsed in memory: the default
+	/// template with the default plugin in its list.
 	fn inject_default_config() -> Result<Self> {
-		// Use the existing embedded template, but parse directly into memory
-		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
-
-		let mut config: Config =
-			toml::from_str(DEFAULT_CONFIG_TEMPLATE).context("Failed to parse default configuration template")?;
+		let mut config: Config = toml::from_str(&super::plugins::new_config_text())
+			.context("Failed to parse default configuration template")?;
 
 		// Build role map from roles array
 		config.build_role_map();
@@ -365,7 +334,7 @@ impl Config {
 
 		if !config_dir.exists() {
 			if !overrides.is_empty() {
-				let mut merged_value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml"))
+				let mut merged_value: toml::Value = toml::from_str(&super::plugins::new_config_text())
 					.context("Failed to parse default configuration template")?;
 				apply_config_overrides(&mut merged_value, overrides)?;
 				return Self::deserialize_loaded_config(merged_value, config_path);
@@ -391,9 +360,8 @@ impl Config {
 
 			if !has_toml_files {
 				if !overrides.is_empty() {
-					let mut merged_value: toml::Value =
-						toml::from_str(include_str!("../../config-templates/default.toml"))
-							.context("Failed to parse default configuration template")?;
+					let mut merged_value: toml::Value = toml::from_str(&super::plugins::new_config_text())
+						.context("Failed to parse default configuration template")?;
 					apply_config_overrides(&mut merged_value, overrides)?;
 					return Self::deserialize_loaded_config(merged_value, config_path);
 				}
@@ -423,9 +391,6 @@ impl Config {
 
 		// Store the config path for future saves
 		config.config_path = Some(config_path);
-
-		// Initialize the configuration
-		config.initialize_config();
 
 		// Build role map from roles array
 		config.build_role_map();
@@ -481,7 +446,6 @@ impl Config {
 			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.join("config.toml"));
-			config.initialize_config();
 			config.build_role_map();
 			config.validate()?;
 
@@ -491,13 +455,11 @@ impl Config {
 			let config_str =
 				fs::read_to_string(path).context(format!("Failed to read config from {}", path.display()))?;
 			let mut value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
-			reject_legacy_evaluate(&value)?;
 			normalize_model_profile_syntax(&mut value);
 			let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value)?;
 			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.to_path_buf());
-			config.initialize_config();
 			config.build_role_map();
 			config.validate()?;
 
@@ -588,7 +550,6 @@ impl Config {
 			let config_str = fs::read_to_string(&config_path)
 				.context(format!("Failed to read config from {}", config_path.display()))?;
 			let value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
-			reject_legacy_evaluate(&value)?;
 			let mut config: Config = value.try_into().context("Failed to parse TOML configuration")?;
 			config.config_path = Some(config_path.clone());
 			// SIMPLIFIED: Don't initialize internal servers
@@ -633,7 +594,6 @@ impl Config {
 /// stack on top of the user's base config. All other keys use override semantics.
 pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	let mut agent_value: toml::Value = toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
-	reject_legacy_evaluate(&agent_value)?;
 	normalize_model_profile_syntax(&mut agent_value);
 
 	// Serialize base config to toml::Value so we can manipulate it
@@ -705,10 +665,12 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 		}
 	}
 
-	let mut merged: Config = base_value
-		.try_into()
+	let (mut merged, agent_ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(base_value)
 		.context("Failed to deserialize merged agent config")?;
-	merged.validate_evaluate_model()?;
+	merged.ignored_keys = base.ignored_keys.clone();
+	merged.ignored_keys.extend(agent_ignored_keys);
+	let mut seen = std::collections::HashSet::new();
+	merged.ignored_keys.retain(|key| seen.insert(key.clone()));
 	merged.build_role_map();
 	// The TOML round-trip above drops #[serde(skip)] fields; runtime_output_mode
 	// is set by the CLI for the live process, so carry it over from the base —

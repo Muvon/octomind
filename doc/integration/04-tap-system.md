@@ -131,9 +131,6 @@ name = "developer:general"
 system = "Review source code and explain implementation choices. Working directory: {{CWD}}."
 welcome = ""
 
-[roles.model]
-temperature = 0.3
-
 [roles.mcp]
 server_refs = ["core", "runtime", "orchestration"]
 allowed_tools = ["core:*", "runtime:*", "orchestration:*"]
@@ -154,7 +151,7 @@ Each domain (the `category` part of a tag, such as `developer`) can have one **o
 A domain that has agents but no `chief` has no orchestrator. `octomind run <domain>` then fails with an error that lists the domain's agents. If several taps provide `<domain>:chief`, the first tap in [priority](#tap-priority) wins.
 
 If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
-`server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is supervisor-internal, and
+`server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is done by a plugin, not a tool, and
 `core` is only needed for conditional `recall` when compression attention or governance is enabled.
 
 ## Skills
@@ -163,8 +160,8 @@ Skills are reusable instruction packs. Auto-activation uses declarative `rules:`
 [Skills](../usage/15-skills.md) for full documentation.
 
 Skills are **not tap-only**. They are resolved (first-wins, deduped by name) from, in order: taps, then
-`<workdir>/.agents/skills/`, then `~/.config/agents/skills/`. Plugin skills are searched next, followed by active
-generated skills from learning evolution. Later sources cannot shadow an authored skill already found by name.
+`<workdir>/.agents/skills/`, then `~/.config/agents/skills/`. Agent Plugin skills are searched next, followed by skills
+that a plugin such as Besydr generates. Later sources cannot shadow an authored skill already found by name.
 
 A skill may declare `capabilities: [...]` in its frontmatter. Activation loads their servers. Forgetting the skill
 releases its server references and offloads servers no remaining skill owns; old injected content is cleaned up at the
@@ -525,9 +522,7 @@ Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `t
 `my-agents:chief`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
 `run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
-description. The best one gets the task when it clears a score threshold and a margin over the second best. With
-`[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
-best-ranked candidates or none, and its pick gets the task. If nothing matches, `run` starts nothing and returns an
+description. The best one gets the task when it clears a score threshold and a margin over the second best. If nothing matches, `run` starts nothing and returns an
 error that lists the closest agents; the same call with `role` set to one of those names starts that agent without
 matching. Matching needs the local embedding
 model. Runs always execute in the

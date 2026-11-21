@@ -38,6 +38,10 @@ use std::sync::Arc;
 
 const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// Reasons sent with `session.end`.
+const SESSION_END_EXIT: &str = "exit";
+const SESSION_END_SWITCH: &str = "switch";
+
 /// RAII bundle of per-session listeners that must outlive the session loop.
 ///
 /// Dropping this ends session-owned work before process-wide MCP shutdown,
@@ -65,8 +69,8 @@ impl SessionRuntimeGuards {
 }
 
 /// Boot the per-session runtime services shared by interactive and
-/// non-interactive paths: session-scoped service registry, plan/schedule
-/// restoration, inject-listener socket, and webhook listeners.
+/// non-interactive paths: session-scoped service registry,
+/// inject-listener socket, and webhook listeners.
 ///
 /// Returns RAII guards the caller MUST hold for the session's lifetime —
 /// dropping them stops the listeners.
@@ -77,8 +81,13 @@ async fn init_session_runtime(
 	role: &str,
 ) -> Result<SessionRuntimeGuards> {
 	crate::session::context::init_session_services(role);
-	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-	crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
+	crate::plugins::lifecycle::connect(
+		&chat_session.session.info.name,
+		role,
+		&crate::mcp::get_thread_working_directory(),
+		config,
+	)
+	.await;
 	let inject = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 	Ok(SessionRuntimeGuards {
@@ -86,6 +95,15 @@ async fn init_session_runtime(
 		_inject: inject,
 		_webhooks: webhooks,
 	})
+}
+
+/// Why `session.start` is sent: a session loaded from disk resumes.
+fn session_start_source(chat_session: &ChatSession) -> &'static str {
+	if chat_session.was_resumed {
+		"resume"
+	} else {
+		"startup"
+	}
 }
 
 /// Stop any in-flight cache-keepalive task, bill its pings and record the
@@ -268,6 +286,8 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 		let mut first_message_processed = first_message_processed;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
+		let source = session_start_source(&chat_session);
+		crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, source).await?;
 
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 
@@ -661,15 +681,19 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 						};
 
 						let result = tokio::task::spawn_blocking(move || {
-							read_user_input(
-								estimated_cost,
-								&config_clone,
-								&role_clone,
-								current_context_tokens,
-								&session_name,
-								inbox_pending_clone,
-								reply,
-							)
+							// The input thread has no task-local of its own; completion
+							// and hints look up the session's plugin commands by it.
+							crate::session::context::with_session_id_sync(session_name.clone(), || {
+								read_user_input(
+									estimated_cost,
+									&config_clone,
+									&role_clone,
+									current_context_tokens,
+									&session_name,
+									inbox_pending_clone,
+									reply,
+								)
+							})
 						})
 						.await
 						.unwrap_or_else(|e| {
@@ -832,18 +856,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// `--format` run is different: there the model is mid-task
 							// waiting for a job it launched, so that loop does wait.)
 							// Ctrl+D pressed - graceful exit handled in input.rs
-							// Learning extraction on exit (skip if /done already extracted).
-							// Handed to a detached child process: the runtime dies with this
-							// loop, so an in-process task would be aborted, and awaiting one
-							// held the terminal for a whole LLM round-trip.
-							if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
-								crate::supervisor::learning::extract::extract_lessons_before_exit(
-									&chat_session,
-									&current_config,
-									role.clone(),
-									Some(&current_dir),
-								);
-							}
 							// Kill any running async jobs
 							crate::mcp::agent::functions::kill_all_jobs();
 							// Ensure session is saved
@@ -856,16 +868,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 
 					// Check if the input is an exit command
 					if input == "/exit" || input == "/quit" {
-						// Learning extraction on exit (skip if /done already extracted).
-						// Detached child process — see the Ctrl+D path above.
-						if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
-							crate::supervisor::learning::extract::extract_lessons_before_exit(
-								&chat_session,
-								&current_config,
-								role.clone(),
-								Some(&current_dir),
-							);
-						}
 						// Kill any running async jobs before exiting
 						crate::mcp::agent::functions::kill_all_jobs();
 						// Show resume command with session ID
@@ -921,9 +923,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// Wire cancellation to spinner so the watcher inside
 							// AnimationManager auto-clears on Ctrl+C, and race the
 							// handle_done future against operation_rx so a cancellation
-							// returns control to the prompt instantly. Lessons go to the
-							// detached distill child: a quick /exit right after would
-							// abort an in-process task with the runtime.
+							// returns control to the prompt instantly.
 							use crate::session::chat::get_animation_manager;
 							let animation_manager = get_animation_manager();
 							animation_manager.set_cancel_receiver(operation_rx.clone());
@@ -943,7 +943,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 									&mut chat_session,
 									&current_config,
 									operation_rx.clone(),
-									super::commands::LessonHandoff::DetachedProcess,
 								) => Some(r),
 							};
 
@@ -1002,6 +1001,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 								// This input should be treated as user input, fall through to normal processing
 							}
 							CommandResult::SwitchSession(new_session_name) => {
+								crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_SWITCH).await;
 								chat_session.save()?;
 								runtime_guards.shutdown().await?;
 								let workdir = crate::mcp::get_thread_working_directory();
@@ -1024,6 +1024,13 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 											init_session_runtime(args, &current_config, &new_session, &role).await?;
 										setup_system_prompt_and_cache(&mut new_session, &current_config, &role, true)
 											.await?;
+										let source = session_start_source(&new_session);
+										crate::plugins::lifecycle::session_started(
+											&mut new_session,
+											&current_config,
+											source,
+										)
+										.await?;
 										crate::mcp::runtime::skill_auto::load_env_skills(&mut new_session).await;
 										crate::mcp::runtime::capability::load_env_capabilities(&current_config, None)
 											.await;
@@ -1115,6 +1122,24 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 
 					// Run pipe pre-processing if a matching [[pipe]] is configured.
 					let processed_input = run_pipe_if_enabled(&input, &role, first_message_processed).await?;
+					// Control-plane input is not something the user typed.
+					let processed_input = if injected_source
+						.as_ref()
+						.is_some_and(|source| source.is_system_managed())
+					{
+						processed_input
+					} else {
+						match chat_session.submit_prompt(processed_input, &input).await {
+							Ok(prompt) => prompt,
+							// A plugin refused the prompt: say why and take the next input.
+							Err(error) if error.is::<crate::plugins::PromptBlocked>() => {
+								animation_manager.stop_current().await;
+								println!("{}", error.to_string().bright_yellow());
+								continue;
+							}
+							Err(error) => return Err(error),
+						}
+					};
 
 					// Check for cancellation after pipe processing
 					if cancellation.is_cancelled() {
@@ -1399,6 +1424,9 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 				break;
 			}
 		}
+		// Ctrl+D, /exit, /quit and the other commands that end the session all
+		// leave the loop above; a switch started a new session and ends only the old one.
+		crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 		drop(runtime_guards);
 
 		// Session is ending — drain any in-flight keepalive so its cost is
@@ -1514,6 +1542,8 @@ pub async fn run_interactive_session_with_input(
 
 		// Setup system prompt and cache using helper function (non-interactive mode)
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
+		let source = session_start_source(&chat_session);
+		crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, source).await?;
 
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		// Non-interactive paths have no spinner — env-capability progress events
@@ -1563,18 +1593,8 @@ pub async fn run_interactive_session_with_input(
 						.filter(|s| !s.is_empty())
 						.map(|s| s.to_owned());
 
-					// Force-compress the conversation and hand lessons to the learner.
-					// This process may end right after (bare `/done`, or the turn the
-					// instructions drive), so extraction goes to the detached distill
-					// child like the exit path: an in-process task dies with the runtime.
-					match super::commands::handle_done(
-						&mut chat_session,
-						&current_config,
-						operation_rx.clone(),
-						super::commands::LessonHandoff::DetachedProcess,
-					)
-					.await
-					{
+					// Force-compress the conversation.
+					match super::commands::handle_done(&mut chat_session, &current_config, operation_rx.clone()).await {
 						// Status notices go to stderr: stdout carries the run's data
 						// (`--format jsonl` events, plain answers) and must stay parseable.
 						Ok(outcome) => {
@@ -1605,6 +1625,7 @@ pub async fn run_interactive_session_with_input(
 						if let Err(e) = chat_session.save() {
 							crate::log_debug!("session save failed: {}", e);
 						}
+						crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 						return Ok(());
 					}
 				}
@@ -1632,6 +1653,7 @@ pub async fn run_interactive_session_with_input(
 						if let Err(e) = chat_session.save() {
 							crate::log_debug!("session save failed: {}", e);
 						}
+						crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 						return Ok(());
 					}
 					crate::session::chat::session::commands::CommandResult::Handled => {
@@ -1640,6 +1662,7 @@ pub async fn run_interactive_session_with_input(
 						if let Err(e) = chat_session.save() {
 							crate::log_debug!("session save failed: {}", e);
 						}
+						crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 						return Ok(());
 					}
 					crate::session::chat::session::commands::CommandResult::HandledWithOutput(mut json_output) => {
@@ -1650,6 +1673,7 @@ pub async fn run_interactive_session_with_input(
 						if let Err(e) = chat_session.save() {
 							crate::log_debug!("session save failed: {}", e);
 						}
+						crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 						return Ok(());
 					}
 				}
@@ -1660,6 +1684,7 @@ pub async fn run_interactive_session_with_input(
 
 			// Pipe pre-processing if a matching [[pipe]] is configured.
 			let processed_input = run_pipe_if_enabled(&input, &role, first_message_processed).await?;
+			let processed_input = chat_session.submit_prompt(processed_input, &input).await?;
 
 			// Inject @file mentions as rendered file content - same as interactive.
 			input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
@@ -2040,18 +2065,8 @@ pub async fn run_interactive_session_with_input(
 		// Drain any in-flight keepalive so its cost lands in the persisted log.
 		drain_keepalive_into_session(&mut keepalive, &mut chat_session, false).await;
 
-		// A finished one-shot run learns exactly as an interactive exit does: the
-		// transcript goes to the detached `octomind distill` child, so the caller
-		// gets its exit at once. Taken before a pending fold replaces the raw turns
-		// the learner quotes. Daemons keep running and learn on `/done` and
-		// compaction like the interactive loop.
-		if !daemon && current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
-			crate::supervisor::learning::extract::extract_lessons_before_exit(
-				&chat_session,
-				&current_config,
-				role.clone(),
-				Some(&current_dir),
-			);
+		if !daemon {
+			crate::plugins::lifecycle::session_ended(&mut chat_session, SESSION_END_EXIT).await;
 		}
 
 		// A detached child finishes one-shot folds for the next resume. Daemons
@@ -2117,18 +2132,12 @@ fn emit_cost_frame(chat_session: &mut ChatSession, config: &Config) {
 async fn pop_inbox_message(
 	chat_session: &ChatSession,
 	config: &Config,
-	operation_cancelled: tokio::sync::watch::Receiver<bool>,
+	_operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Option<crate::session::inbox::InboxMessage>> {
 	let Some(mut msg) = crate::session::inbox::try_pop_inbox_message() else {
 		return Ok(None);
 	};
-	shape_background_deliveries(
-		std::slice::from_mut(&mut msg),
-		chat_session,
-		config,
-		operation_cancelled,
-	)
-	.await?;
+	shape_background_deliveries(std::slice::from_mut(&mut msg), chat_session, config).await?;
 	Ok(Some(msg))
 }
 

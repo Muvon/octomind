@@ -26,7 +26,7 @@ server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) |
+| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) and `code` (scripts that call external tools; see [below](#calling-external-tools-from-scripts-code-tool)) |
 | `orchestration` | builtin | Delegation (`tap`), scheduled messages/tool calls (`schedule`), and event streams (`monitor`) |
 | `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
@@ -35,8 +35,8 @@ server for project scripts:
 Filesystem tools come from external servers such as `octofs`; they are not implemented by Octomind. Use your installed
 capability manifests or an explicit server configuration to enable them.
 
-Planning is supervisor-internal rather than an MCP tool. The specialist sees runtime-owned plan state and emits sparse
-hidden signals alongside normal work; the external planner owns transitions. `/plan` only displays that state.
+Planning is done by a plugin (Besydr, when it is installed and enabled) rather than by an MCP tool. Octomind keeps the plan
+state the plugin writes and shows it with `/plan`. See [Besydr plugin](14-supervisor.md).
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
 
@@ -179,11 +179,10 @@ This server will automatically be available for the `developer:general` tap agen
 
 ## Core Server Tools
 
-### Adaptive external planning
+### Planning by a plugin
 
-There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or
-context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate supervisor call
-updates runtime-owned state from bounded trajectory and evidence. Use this session command to inspect the current
+There is no model-callable `plan` MCP tool. Focused tasks execute directly. The plan comes from a plugin such as
+Besydr, which changes the plan octomind keeps for the session. Use this session command to inspect the current
 checklist:
 
 ```text
@@ -251,8 +250,6 @@ The candidates are the agents the caller may reach. A tap agent reaches the othe
 other domain). A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
-With `[decision] taps = true` (off by default), the ranking is only a shortlist: the decision model picks one of the 16
-best-ranked candidates or none, and its pick gets the task.
 
 When nothing matches, `run` starts nothing and returns an error that lists the five best-ranked candidates by name,
 title and description. The caller can send the task again with `role` set to one of those names: that agent starts
@@ -440,8 +437,6 @@ Manage in-process AI agents at runtime. Each registered agent becomes a tool pre
 | `description` | string, optional | Tool description; defaults to empty |
 | `welcome` | string, optional | Welcome message |
 | `model` | string, optional | Model-name override |
-| `temperature`, `top_p` | number, optional | Sampling overrides |
-| `top_k` | integer, optional | Sampling override |
 | `server_refs` | array, optional | Validated server names; when empty, inferred from `allowed_tools` |
 | `allowed_tools` | array, optional | Tool-name or wildcard filters |
 | `workdir` | string, optional | Working directory; defaults to `"."` |
@@ -553,6 +548,108 @@ installed capability named `database-postgres`:
 ```bash
 OCTOMIND_CAPABILITIES=database-postgres octomind run
 ```
+
+## Calling external tools from scripts (`code` tool)
+
+Instead of one JSON tool call per step, the model can write one short script that calls the tools of your external MCP
+servers (`stdio` or `http`), including servers added at runtime with the `mcp` tool or a capability. The `code` tool
+runs the script and returns only what the script prints or returns. The `code` tool is part of the `core` builtin
+server.
+
+**What the model is sent.** Builtin tools (`recall`, `tap`, `mcp`, ...) are sent as usual, plus `code`. External tools are
+not sent as tool definitions. The `code` description lists each one on a line: how to call it,
+`server.tool({arg: type, ...})` with the fields of nested objects and list items written out, then the first sentences
+of its description. The text also says why one script should hold several calls: each `code` call sends the
+conversation again. Inside a script, `help("server")` and
+`help("server.tool")` print the full descriptions on demand. If no external tool is listed (none connected, or all kept
+as definitions), `code` is not sent.
+
+When the list would be longer than one tool result may be (`mcp_response_tokens_threshold`, 20,000 tokens by default),
+it is not sent with every request. The `code` description then names each server with its number of tools, and a
+second builtin tool, `search_tools`, is sent with it. Given what a tool should do, in the model's own words or by name,
+it prints the five tools that match best, ready to call in the next script; `help("server")` inside a script lists a
+server's tools too. The match fuses two rankings with reciprocal rank fusion: BM25 over each tool's server, name,
+description and argument names, which finds the exact words a model types, and cosine similarity of embeddings from
+octomind's local embedding model, which finds a tool described in other words ("remove a file" for `delete_path`).
+Only the role's own tools are listed and searched. Like `code`, `search_tools` comes with code mode whatever the role
+grants, and is not sent while the whole list fits.
+
+Every call of a listed tool runs through a script. A model may still write such a call as a tool of its own, by the
+listed name (`server.tool`) or by the tool's own name; octomind turns it into the `code` call it means,
+`return await server.tool({...})`, before it is shown or run. Text that spells a number, a boolean, null, a list or an
+object is first read as the tool's schema types it, because the model wrote the call without the schema; the type check
+answers what still does not fit. A call that names a server instead of a tool becomes `help("server")`, which lists the
+server's tools. The first time a tool is called this way, the model is also given the tool's full description, and
+again after a compaction removed it.
+
+**Example.** Read two files in parallel, then replace a config file with multi-line text passed through `input`:
+
+```ts
+const [a, b] = await Promise.all([
+  files.read({ path: "src/a.rs" }),
+  files.read({ path: "src/b.rs" }),
+]);
+print(`a: ${a.split("\n").length} lines, b: ${b.split("\n").length} lines`);
+await files.write({ path: "notes.txt", content: input });
+```
+
+The `files` server and its tools stand for whatever your servers expose. The `input` argument of the `code` call holds
+the long text, so it does not need quoting inside the script.
+
+**Script rules.**
+- TypeScript; plain JavaScript is valid. Top-level `await` and `return` work.
+- `await server.tool({...})` resolves to the tool's text output. A tool that declares an MCP `outputSchema` resolves to
+  its structured result instead, typed from that schema; the list shows the type after `->`. A failed tool throws an
+  `Error`, and so does a tool that declares an output schema but returns no structured result.
+- The value of the last expression, or of `return`, is the result. `print(...)` adds lines to it.
+- `Promise.all` runs calls at the same time. `sleep(ms)` waits.
+- No imports, files, network or process access. Tools are the only way out.
+- Limits: 256 MB of script memory, 1 MB of printed and returned text, one hour in total. A script that computes for
+  10 seconds without calling a tool, sleeping or finishing is stopped.
+
+**Checks before a script runs.** The script is type-checked in strict mode by the TypeScript compiler (version 6.0.3). The
+compiler is embedded in the Octomind binary and runs in an embedded QuickJS engine, so Node.js is not needed. An unknown
+tool, a wrong or missing argument, a missing `await`, or a text result used as a list rejects the whole script, and no
+tool is called. Right before each call, the arguments are checked again against the tool's JSON schema. This catches
+values typed `any` and integer versus number.
+
+Each call a script makes passes the same guardrails and `tool.before` plugin check as a direct call; scripts run only
+inside a session, where those checks live. If a script fails half way, the error says which tool calls ran. The plugin
+is shown the conversation as it was when the round started, and marks such a call with `script_call_id`, the id of the
+`code` call. Notes or a plan change it returns for such a call are applied when the round ends.
+
+**What the rest of the session sees of a script.** The `code` result keeps a record of every call the script made: the
+tool, its arguments, whether it failed or was denied, and its output. The output of a read is kept only when the script
+printed it, because the model never saw the rest. With it:
+- the terminal shows one line per call under the `code` call (`▸ server.tool(arguments) ✓`);
+- compaction treats a file a script read and printed, or edited, like a file the model read or edited directly;
+- the `tool.after` plugin event lists each call under its `code` call in `script_calls`. A plugin can replace only the
+  `code` call's output: the script, not the model, read each call's result.
+
+A server is told which calls a script makes: octomind sends `script: true` in the session context of such a call
+(`experimental.session` in the client capabilities). The result of that call goes to the script, and the model sees only
+what the script prints. `octofs` uses this: a file a script views is not counted as seen by the model, so the model's
+own later view of it is complete. Everything else is the same for a script, including the line ids `octofs` puts on
+numbered file lines in shell output (`grep -n`, `nl -ba`): a script that prints such lines hands the model ids it can
+edit by.
+
+**Turning code mode off (`code_mode`).** `[mcp] code_mode` (default `true`) applies to every session: the main one,
+agents, layers and workflows. On, every external tool is reached through scripts, and `code` is there whenever the
+session has an external tool, whatever the role's servers and `allowed_tools` say; `allowed_tools` still decides which
+external tools the list shows. Two tools of one server whose script names collide: the second is numbered
+(`get_item_2`). Off, every tool is sent to the model as a plain tool definition and there is no `code` tool.
+
+```toml
+[mcp]
+code_mode = false
+```
+
+**Known limits.**
+- The first script of a process waits about one second while the compiler loads. Loading starts in the background as soon
+  as a request offers the `code` tool.
+
+The embedded compiler is rebuilt with `assets/typescript/vendor.sh` (pinned version, checksum-verified), which writes
+the files next to it.
 
 ## External Filesystem Tools
 

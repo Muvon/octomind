@@ -1436,15 +1436,15 @@ async fn test_enable_fails_when_server_registration_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation seam over the cosine decision (`evaluate_pick`). No embedding
-// model: the seam takes the ranked candidates as input.
+// A plugin's judgement over the cosine decision (`evaluate_pick`). No embedding
+// model: it takes the ranked candidates as input. A stub plugin answers `judge`.
 // ---------------------------------------------------------------------------
 
 use crate::agent::registry::ResolvedCapability;
-use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
-use crate::supervisor::evaluate::{Seam, CAPABILITY_QUESTION_ID};
+use crate::plugins::test_support::{connect_stub, StubPlugin};
+use crate::session::context::with_session_id;
 
-fn eval_cap(name: &str) -> ResolvedCapability {
+fn judged_cap(name: &str) -> ResolvedCapability {
 	ResolvedCapability {
 		name: name.to_string(),
 		description: format!("{name} capability"),
@@ -1459,125 +1459,140 @@ fn eval_cap(name: &str) -> ResolvedCapability {
 	}
 }
 
-fn evaluate_config() -> Config {
-	let mut config = test_config();
-	config.supervisor.enabled = true;
-	config.decision.capabilities = true;
-	config
+fn capability_choice(choice: &str, probabilities: &[(&str, f64)]) -> serde_json::Value {
+	let probabilities: std::collections::BTreeMap<&str, f64> = probabilities.iter().copied().collect();
+	serde_json::json!({"judgements": {"capability": {
+		"type": "choice",
+		"choice": choice,
+		"probabilities": probabilities,
+	}}})
+}
+
+async fn judging_plugin(sid: &str, answers: Vec<serde_json::Value>) -> StubPlugin {
+	let stub = StubPlugin::new(&["judge"]).queue(answers);
+	connect_stub(sid, "developer", std::path::Path::new("/tmp"), &stub).await;
+	stub
+}
+
+type Ranked<'a> = Vec<(f32, &'a ResolvedCapability)>;
+
+fn ranked_by_score(caps: &[ResolvedCapability]) -> Ranked<'_> {
+	caps.iter()
+		.enumerate()
+		.map(|(i, cap)| (0.9 - i as f32 * 0.1, cap))
+		.collect()
 }
 
 #[tokio::test]
-#[serial]
-async fn evaluate_pick_makes_no_call_when_the_seam_is_off() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
-		CAPABILITY_QUESTION_ID,
-		"none",
-		1.0,
-	))])
+async fn evaluate_pick_keeps_the_cosine_decision_without_a_plugin_that_judges() {
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| judged_cap(n)).collect();
+	let ranked = ranked_by_score(&caps);
+
+	let sid = "cap-judge-absent";
+	let picked = with_session_id(
+		sid.to_string(),
+		evaluate_pick("use a now please", Some(ranked[0]), &ranked),
+	)
 	.await;
-	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
-	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.9, &caps[0]), (0.5, &caps[1])];
-	let calls = evaluate_counter(Seam::Capabilities, "calls");
-
-	let picked = evaluate_pick(&test_config(), "use a now please", Some(ranked[0]), &ranked).await;
 	assert_eq!(picked.map(|(_, cap)| cap.name.as_str()), Some("a"));
-	assert_eq!(evaluate_counter(Seam::Capabilities, "calls"), calls);
-	assert!(fake.requests().is_empty());
 }
 
 #[tokio::test]
-#[serial]
 async fn evaluate_pick_vetoes_a_cosine_winner_the_choice_rejects() {
-	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "none", 0.99)),
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "a", 0.05)),
-	])
+	let sid = "cap-judge-veto";
+	let stub = judging_plugin(
+		sid,
+		vec![
+			capability_choice("none", &[("a", 0.01), ("none", 0.99)]),
+			capability_choice("b", &[("a", 0.05), ("b", 0.95)]),
+		],
+	)
 	.await;
 	let caps: Vec<ResolvedCapability> = ["a", "b", "c", "d", "e", "f", "g"]
 		.iter()
-		.map(|n| eval_cap(n))
+		.map(|n| judged_cap(n))
 		.collect();
-	let ranked: Vec<(f32, &ResolvedCapability)> = caps
-		.iter()
-		.enumerate()
-		.map(|(i, cap)| (0.9 - i as f32 * 0.1, cap))
-		.collect();
-	let config = evaluate_config();
-	let applied = evaluate_counter(Seam::Capabilities, "applied");
+	let ranked = ranked_by_score(&caps);
 
-	// The winner gets no mass at all: vetoed, and counted as applied.
-	let picked = evaluate_pick(&config, "brb", Some(ranked[0]), &ranked).await;
+	// The winner gets almost no mass: vetoed.
+	let picked = with_session_id(sid.to_string(), evaluate_pick("brb", Some(ranked[0]), &ranked)).await;
 	assert!(picked.is_none());
-	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
 
 	// At the confirm floor the cosine decision stands with its own score.
-	let picked = evaluate_pick(&config, "use a now please", Some(ranked[0]), &ranked).await;
+	let picked = with_session_id(
+		sid.to_string(),
+		evaluate_pick("use a now please", Some(ranked[0]), &ranked),
+	)
+	.await;
 	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.9, "a")));
-	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
 
-	// The Choice lists the top-K by score plus `none`, over the intent alone.
-	let requests = fake.requests();
-	assert_eq!(requests.len(), 2);
-	assert_eq!(requests[0].state, serde_json::Value::String("brb".into()));
-	match &requests[0].questions[CAPABILITY_QUESTION_ID] {
-		octolib::evaluation::Question::Choice { criteria, .. } => {
-			assert_eq!(
-				criteria.keys().cloned().collect::<Vec<_>>(),
-				vec!["a", "b", "c", "d", "e", "none"]
-			);
-			assert_eq!(criteria["a"], Some(serde_json::Value::String("a capability".into())));
-		}
-		other => panic!("expected a choice, got {other:?}"),
-	}
+	// The choice lists the top-K by score plus `none`, over the intent alone.
+	let asked = stub.sent("judge");
+	assert_eq!(asked.len(), 2);
+	assert_eq!(asked[0]["purpose"], "capabilities");
+	assert_eq!(asked[0]["subject"], "brb");
+	let options = asked[0]["questions"]["capability"]["options"]
+		.as_object()
+		.expect("options");
+	assert_eq!(
+		options.keys().map(String::as_str).collect::<Vec<_>>(),
+		vec!["a", "b", "c", "d", "e", "none"]
+	);
+	assert_eq!(options["a"], "a capability");
+
+	// Only the veto changed what octomind did, and the plugin hears of it once.
+	assert_eq!(asked[1]["judged"]["capabilities"], 1);
+	crate::plugins::end_session(sid);
 }
 
 #[tokio::test]
-#[serial]
-async fn evaluate_pick_promotes_the_choice_only_at_the_floor_and_falls_through_otherwise() {
-	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "b", 0.6)),
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "b", 0.59)),
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "none", 1.0)),
-		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "zzz", 1.0)),
-		FakeEvaluationStep::MissingKey("TYPESAFE_API_KEY"),
-	])
+async fn evaluate_pick_promotes_the_choice_only_at_the_floor() {
+	let sid = "cap-judge-promote";
+	let stub = judging_plugin(
+		sid,
+		vec![
+			capability_choice("b", &[("b", 0.6)]),
+			capability_choice("b", &[("b", 0.59)]),
+			capability_choice("none", &[("none", 1.0)]),
+		],
+	)
 	.await;
-	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
-	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.7, &caps[0]), (0.68, &caps[1])];
-	let config = evaluate_config();
-	let applied = evaluate_counter(Seam::Capabilities, "applied");
-	let unavailable = evaluate_counter(Seam::Capabilities, "unavailable");
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| judged_cap(n)).collect();
+	let ranked = ranked_by_score(&caps);
 
 	// Promoted at the floor, carrying the answer's probability as its score.
-	let picked = evaluate_pick(&config, "do the b thing please", None, &ranked).await;
+	let picked = with_session_id(sid.to_string(), evaluate_pick("do the b thing please", None, &ranked)).await;
 	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.6, "b")));
-	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
 
-	// Below the floor, `none`, a choice never offered, and a provider failure
-	// all leave the cosine abstain in place.
-	for _ in 0..4 {
-		let picked = evaluate_pick(&config, "do the b thing please", None, &ranked).await;
+	// Below the floor and `none` leave the cosine abstain in place.
+	for _ in 0..2 {
+		let picked = with_session_id(sid.to_string(), evaluate_pick("do the b thing please", None, &ranked)).await;
 		assert!(picked.is_none());
 	}
-	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
-	assert_eq!(evaluate_counter(Seam::Capabilities, "unavailable"), unavailable + 2);
-	assert_eq!(fake.requests().len(), 5);
+	assert_eq!(stub.sent("judge").len(), 3);
+	crate::plugins::end_session(sid);
 }
 
 #[tokio::test]
-#[serial]
-async fn evaluate_pick_keeps_the_cosine_decision_when_the_choice_is_refused() {
-	let _fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(
-		crate::session::chat::test_support::refusals(&[CAPABILITY_QUESTION_ID]),
-	)])
+async fn evaluate_pick_keeps_the_cosine_decision_when_the_plugin_gives_no_usable_answer() {
+	let sid = "cap-judge-unusable";
+	// An empty answer, then a choice that was never offered.
+	let stub = judging_plugin(
+		sid,
+		vec![serde_json::json!({}), capability_choice("zzz", &[("zzz", 1.0)])],
+	)
 	.await;
-	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
-	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.9, &caps[0]), (0.5, &caps[1])];
-	let unavailable = evaluate_counter(Seam::Capabilities, "unavailable");
-	let applied = evaluate_counter(Seam::Capabilities, "applied");
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| judged_cap(n)).collect();
+	let ranked = ranked_by_score(&caps);
 
-	let picked = evaluate_pick(&evaluate_config(), "use a now please", Some(ranked[0]), &ranked).await;
-	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.9, "a")));
-	assert_eq!(evaluate_counter(Seam::Capabilities, "unavailable"), unavailable + 1);
-	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied);
+	for _ in 0..2 {
+		let picked = with_session_id(
+			sid.to_string(),
+			evaluate_pick("use a now please", Some(ranked[0]), &ranked),
+		)
+		.await;
+		assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.9, "a")));
+	}
+	assert_eq!(stub.sent("judge").len(), 2);
+	crate::plugins::end_session(sid);
 }

@@ -38,6 +38,7 @@ fn test_automatic_cache_markers() {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 		Message {
 			role: "user".to_string(),
@@ -53,6 +54,7 @@ fn test_automatic_cache_markers() {
 			videos: None,
 			thinking: None,
 			id: None,
+			script_calls: Vec::new(),
 		},
 	];
 

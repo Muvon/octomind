@@ -832,31 +832,6 @@ async fn test_schema_branch_completes_structured_turn() {
 }
 
 // ---------------------------------------------------------------------------
-// Active memory pack lifecycle
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
-	let _guard = ENV_LOCK.lock().await;
-	let url = spawn_stub(vec![final_response("Hello from stub")]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-
-	// A pack left over from an earlier round must be dropped before the request.
-	let config = fake_provider_config();
-	let mut session = fake_session("hi there");
-	session.active_memory_pack = Some("stale pack content".to_string());
-
-	run_turn(&mut session, &config).await.expect("turn succeeds");
-
-	assert!(
-		session.active_memory_pack.is_none(),
-		"a pack must not survive into a request when learning is disabled"
-	);
-
-	std::env::remove_var("OLLAMA_API_URL");
-}
-
-// ---------------------------------------------------------------------------
 // Plugin events around a turn
 // ---------------------------------------------------------------------------
 
@@ -992,69 +967,61 @@ async fn continuations_stop_at_the_cap() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+// Context blocks join the history once, as messages the provider reads like
+// any other: an unchanged block is not added again, a changed one is added
+// once more, and each request extends the one before it.
 #[tokio::test]
-async fn context_blocks_reach_the_provider_and_never_the_history() {
+async fn context_blocks_join_the_history_once_per_change() {
 	let _guard = ENV_LOCK.lock().await;
-	let (url, requests) = spawn_recording_stub(vec![final_response("ok")]).await;
+	let (url, requests) = spawn_recording_stub(vec![final_response("ok"), final_response("again")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let config = fake_provider_config();
-	let stub = StubPlugin::new(&[event::REQUEST_BEFORE])
-		.respond(|_, _| Ok(json!({"context": [{"name": "one", "text": "ALPHA"}, {"name": "two", "text": "BETA"}]})));
+	let rounds = std::sync::atomic::AtomicUsize::new(0);
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE]).respond(move |_, _| {
+		let second = if rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+			"BETA"
+		} else {
+			"GAMMA"
+		};
+		Ok(json!({"context": [{"name": "one", "text": "ALPHA"}, {"name": "two", "text": second}]}))
+	});
 	let mut session = plugin_session("o5-context");
 	start_plugin_turn(&mut session, &stub, "fix the bug").await;
-
 	run_turn(&mut session, &config).await.expect("turn succeeds");
+	session.add_user_message("and the test").unwrap();
+	run_turn(&mut session, &config).await.expect("second turn succeeds");
 
-	let sent = requests.lock().unwrap();
-	assert_eq!(sent.len(), 1);
-	assert!(
-		sent[0].contains("ALPHABETA"),
-		"blocks of one plugin are joined with nothing between"
-	);
-	assert!(session
+	let one = format!("plugin_context:{}:one", stub.name());
+	let two = format!("plugin_context:{}:two", stub.name());
+	let order: Vec<String> = session
 		.session
 		.messages
 		.iter()
-		.all(|message| !message.content.contains("ALPHA") && message.name.as_deref() != Some("__active_memory_pack")));
+		.map(|message| message.name.clone().unwrap_or_else(|| message.role.clone()))
+		.collect();
+	assert_eq!(
+		order,
+		[
+			"user",
+			one.as_str(),
+			two.as_str(),
+			"assistant",
+			"user",
+			two.as_str(),
+			"assistant"
+		]
+	);
+	let sent = requests.lock().unwrap();
+	assert_eq!(sent.len(), 2);
+	for text in ["ALPHA", "BETA"] {
+		assert_eq!(sent[0].matches(text).count(), 1, "{text} in the first request");
+	}
+	for text in ["ALPHA", "BETA", "GAMMA"] {
+		assert_eq!(sent[1].matches(text).count(), 1, "{text} in the second request");
+	}
 	drop(sent);
 
 	crate::plugins::end_session("o5-context");
-	std::env::remove_var("OLLAMA_API_URL");
-}
-
-#[tokio::test]
-async fn blocks_marked_keep_survive_the_ceiling_fallback() {
-	let _guard = ENV_LOCK.lock().await;
-	let (url, requests) = spawn_recording_stub(vec![final_response("Done")]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-	let mut config = fake_provider_config();
-	config.compression.threshold = 0;
-	let optional = "OPTIONAL_CONTEXT ".repeat(4_000);
-	let stub = StubPlugin::new(&[event::REQUEST_BEFORE, event::TURN_END]).respond(move |method, _| {
-		Ok(if method == event::REQUEST_BEFORE {
-			json!({"context": [
-				{"name": "rules", "text": "KEEP_RULES", "keep": true},
-				{"name": "extra", "text": optional},
-			]})
-		} else {
-			json!({})
-		})
-	});
-	let mut session = plugin_session("o5-keep");
-	start_plugin_turn(&mut session, &stub, "fix the bug").await;
-	config.max_session_tokens_threshold = session.get_full_context_tokens(&config).await + 256;
-
-	run_turn(&mut session, &config).await.expect("turn succeeds");
-
-	let sent = requests.lock().unwrap();
-	assert_eq!(sent.len(), 1);
-	assert!(sent[0].contains("KEEP_RULES"));
-	assert!(!sent[0].contains("OPTIONAL_CONTEXT"));
-	drop(sent);
-	assert_eq!(session.active_memory_pack.as_deref(), Some("KEEP_RULES"));
-	assert_eq!(stub.sent(event::TURN_END)[0]["dropped_context"], json!(["extra"]));
-
-	crate::plugins::end_session("o5-keep");
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
@@ -1147,7 +1114,6 @@ async fn nothing_is_sent_for_a_session_without_a_plugin() {
 	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	assert!(events_heard(&stub).is_empty());
-	assert!(session.active_memory_pack.is_none());
 
 	crate::plugins::end_session("o5-elsewhere");
 	std::env::remove_var("OLLAMA_API_URL");

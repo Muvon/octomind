@@ -1826,7 +1826,6 @@ async fn plugin_pin_items_replace_the_supervisor_state_in_the_fold() {
 			plugin: stub.name().to_string(),
 			name: "rules".to_string(),
 			text: "section text".to_string(),
-			keep: false,
 			items: vec!["pinned rule".into(), "pinned policy".into()],
 		}],
 	);
@@ -2110,7 +2109,6 @@ async fn fold_with_pins(name: &str, items: Vec<PinItem>) -> PactContext {
 				plugin: stub.name().to_string(),
 				name: "rules".to_string(),
 				text: "section text".to_string(),
-				keep: false,
 				items,
 			}],
 		);

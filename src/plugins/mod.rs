@@ -117,11 +117,6 @@ pub fn record_plan_error(session_id: &str, reason: &str) {
 	host().record_plan_error(session_id, reason)
 }
 
-/// The host left these context blocks out of a model request for lack of room.
-pub fn record_dropped_context(session_id: &str, blocks: &[PluginBlock]) {
-	host().record_dropped_context(session_id, blocks)
-}
-
 /// Options each plugin announced at its handshake, in config order.
 pub fn options(session_id: &str) -> Vec<(String, PluginOptions)> {
 	host().options(session_id)

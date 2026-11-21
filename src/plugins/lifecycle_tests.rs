@@ -105,7 +105,6 @@ async fn resume_restores_the_pins_and_sends_the_full_message_list() {
 		plugin: stub.name().to_string(),
 		name: "goal".into(),
 		text: "Ship it.".into(),
-		keep: false,
 		items: Vec::new(),
 	};
 	chat.session.info.plugin_pins = vec![pin.clone()];

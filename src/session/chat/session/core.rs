@@ -265,15 +265,6 @@ pub struct ChatSession {
 	/// and keeps it within `compression.analysis_findings_max_tokens` using
 	/// current-task relevance, recency, and diversity.
 	pub analysis_findings: Vec<String>,
-	/// One runtime-only memory pack materialized as a non-persisted, replaceable
-	/// system-managed message before specialist calls in the active user turn.
-	pub active_memory_pack: Option<String>,
-	/// The pack text the latest attachment carried. A pack rides only on the
-	/// first request after it is set or changed: its copy leaves the transcript
-	/// after every request, so attaching the same text again would end each
-	/// request in a message the next one lacks, and no request would extend the
-	/// one before it for the provider's prompt cache.
-	pub attached_memory_pack: Option<String>,
 	/// The messages of the latest provider request, as sent. `session.messages`
 	/// holds the stored form; the cache keepalive replays this copy so a ping
 	/// matches the cached prefix without rebuilding the request.
@@ -396,8 +387,6 @@ impl ChatSession {
 			schema: None, // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
-			active_memory_pack: None,
-			attached_memory_pack: None,
 			last_sent_messages: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
 			reasoning_effort: Some(profile.reasoning_effort),
@@ -602,8 +591,6 @@ impl ChatSession {
 						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
-						active_memory_pack: None,
-						attached_memory_pack: None,
 						last_sent_messages: Vec::new(),
 						used_memory_ids: std::collections::HashSet::new(),
 						reasoning_effort: Some(effective_profile.reasoning_effort),
@@ -1273,30 +1260,16 @@ impl ChatSession {
 	}
 
 	/// The local (uncalibrated) estimate of the next request: every message as
-	/// the provider receives it, the cached tool definitions, and the active
-	/// memory pack when it is not yet in the slice. The pack rides only on the
-	/// first request after it is set or changed, so on the other requests of its
-	/// turn this errs high by the pack's size. `None` until the tool definitions
-	/// have been cached — a sample taken without them would pair the provider's
-	/// full prompt with a partial estimate.
+	/// the provider receives it and the cached tool definitions. `None` until
+	/// the tool definitions have been cached — a sample taken without them would
+	/// pair the provider's full prompt with a partial estimate.
 	pub fn raw_context_estimate(&self) -> Option<usize> {
 		let tools = self.cached_tools.as_deref()?;
-		let mut total =
-			crate::session::estimate_sent_full_context_tokens(&self.session.messages, Some(tools), &self.model);
-		if !self
-			.session
-			.messages
-			.iter()
-			.any(|message| message.name.as_deref() == Some("__active_memory_pack"))
-		{
-			if let Some(pack) = self.active_memory_pack.as_deref() {
-				let content = crate::session::ensure_system_managed(pack);
-				let mut message = crate::session::Session::build_message("user", &content);
-				message.name = Some("__active_memory_pack".to_string());
-				total = total.saturating_add(crate::session::estimate_sent_message_tokens(&message, &self.model));
-			}
-		}
-		Some(total)
+		Some(crate::session::estimate_sent_full_context_tokens(
+			&self.session.messages,
+			Some(tools),
+			&self.model,
+		))
 	}
 
 	/// A local estimate in the provider's units: scaled by the session's
@@ -1484,8 +1457,6 @@ impl ChatSession {
 			schema: None,
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
-			active_memory_pack: None,
-			attached_memory_pack: None,
 			used_memory_ids: std::collections::HashSet::new(),
 			reasoning_effort: None,
 			last_self_report: None,

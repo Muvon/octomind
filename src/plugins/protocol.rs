@@ -308,10 +308,6 @@ pub struct Event<P> {
 	/// Names of the skills active in the session now.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub active_skills: Vec<String>,
-	/// Names of this plugin's context blocks the host left out of the previous
-	/// model request for lack of room.
-	#[serde(default, skip_serializing_if = "Vec::is_empty")]
-	pub dropped_context: Vec<String>,
 	/// Files the plugin asked for with `read`, and files it read before that
 	/// changed on disk since.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -801,9 +797,9 @@ pub struct SessionEnd {
 /// optional. The host ignores an effect the event does not allow.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Answer {
-	/// Set or clear named context blocks: text added to each model request
-	/// and never written into the history. The host joins a plugin's blocks
-	/// in the order they were first set and adds nothing between them.
+	/// Set or clear named context blocks. The host adds a block's text to the
+	/// history once, when it is set or changed, as a managed user message named
+	/// `plugin_context:<plugin>:<block>`; clearing adds nothing.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub context: Vec<Block>,
 	/// Set or clear named pinned blocks: text the host keeps through every
@@ -901,9 +897,6 @@ pub struct Block {
 	/// `None` clears the block.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub text: Option<String>,
-	/// `context`: keep this block when the host drops blocks for room.
-	#[serde(default, skip_serializing_if = "is_false")]
-	pub keep: bool,
 	/// `pin`: lines the host keeps as separate items when it folds history.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub items: Vec<PinItem>,

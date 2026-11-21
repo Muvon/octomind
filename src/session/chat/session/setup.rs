@@ -102,7 +102,6 @@ pub async fn setup_and_initialize_session(
 	let resume_recent = args.resume_recent;
 	let model = args.model.clone();
 	let max_tokens = args.max_tokens;
-	let temperature = args.temperature;
 	let role = if args.role.is_empty() {
 		"core".to_string()
 	} else {
@@ -188,9 +187,6 @@ pub async fn setup_and_initialize_session(
 	}
 	if let Some(model) = model.clone() {
 		session_params = session_params.with_model(model);
-	}
-	if let Some(temperature) = temperature {
-		session_params = session_params.with_temperature(temperature);
 	}
 	if let Some(max_tokens) = max_tokens {
 		session_params = session_params.with_max_tokens(max_tokens);

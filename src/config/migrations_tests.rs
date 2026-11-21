@@ -18,7 +18,7 @@
 //! (`check_and_upgrade_config` / `force_upgrade_config`) against real files.
 
 use super::*;
-use crate::config::CURRENT_CONFIG_VERSION;
+use crate::config::{CURRENT_CONFIG_VERSION, DEPRECATED_SAMPLING_KEYS};
 
 /// The whole upgrade, as `check_and_upgrade_config` runs it.
 fn migrate_once(content: &str) -> String {
@@ -184,6 +184,135 @@ retry_timeout = 30
 		Some("openai:compression")
 	);
 	assert!(migrated.get("supervisor").is_none());
+}
+
+#[test]
+fn v34_removes_sampling_from_model_profiles_and_roles_without_disturbing_comments() {
+	let old = r#"version = 33
+
+[model]
+name = "openai:main" # keep main
+temperature = 0.4
+top_p = 0.8
+top_k = 40
+max_tokens = 1234 # keep root field
+
+[compression.model]
+name = "openai:compression" # keep compression
+temperature = 0.3
+top_p = 1.0
+top_k = 0
+max_tokens = 5678 # keep compression field
+
+[[roles]]
+name = "flat"
+temperature = 0.2
+top_p = 0.9
+top_k = 10
+system = "flat role" # keep flat role
+welcome = ""
+
+[[roles]]
+name = "nested"
+system = "nested role" # keep nested role
+welcome = ""
+
+[roles.model]
+name = "anthropic:worker" # keep role model
+temperature = 0.1
+top_p = 0.7
+top_k = 5
+max_retries = 2 # keep nested field
+"#;
+	let migrated = migrate_once(old);
+	let value = parse(&migrated);
+
+	for key in DEPRECATED_SAMPLING_KEYS {
+		assert!(value["model"].get(key).is_none());
+		assert!(value["compression"]["model"].get(key).is_none());
+		assert!(value["roles"][0].get(key).is_none());
+		assert!(value["roles"][1]["model"].get(key).is_none());
+	}
+	assert_eq!(value["model"]["max_tokens"].as_integer(), Some(1234));
+	assert_eq!(value["compression"]["model"]["max_tokens"].as_integer(), Some(5678));
+	assert_eq!(value["roles"][0]["system"].as_str(), Some("flat role"));
+	assert_eq!(value["roles"][1]["model"]["max_retries"].as_integer(), Some(2));
+	for comment in [
+		"# keep main",
+		"# keep root field",
+		"# keep compression",
+		"# keep compression field",
+		"# keep flat role",
+		"# keep nested role",
+		"# keep role model",
+		"# keep nested field",
+	] {
+		assert!(migrated.contains(comment), "missing {comment}");
+	}
+}
+
+#[test]
+fn v34_keeps_sampling_in_unrelated_model_tables() {
+	let old = r#"version = 33
+
+[custom.model]
+temperature = 25 # keep unrelated sampling
+label = "custom" # keep unrelated field
+"#;
+	let migrated = migrate_once(old);
+	let value = parse(&migrated);
+
+	assert_eq!(value["custom"]["model"]["temperature"].as_integer(), Some(25));
+	assert_eq!(value["custom"]["model"]["label"].as_str(), Some("custom"));
+	assert!(migrated.contains("# keep unrelated sampling"));
+	assert!(migrated.contains("# keep unrelated field"));
+}
+
+#[test]
+fn v34_removes_sampling_from_inline_roles() {
+	let old = concat!(
+		"version = 33\n",
+		"roles = [{ name = \"legacy\", system = \"x\", welcome = \"\", ",
+		"temperature = 0.3, top_p = 0.8, top_k = 20, ",
+		"model = { name = \"openai:worker\", temperature = 0.2, top_p = 0.7, ",
+		"top_k = 10, max_tokens = 1234 } }]\n",
+	);
+	let value = parse(&migrate_once(old));
+	let role = &value["roles"][0];
+
+	for key in DEPRECATED_SAMPLING_KEYS {
+		assert!(role.get(key).is_none());
+		assert!(role["model"].get(key).is_none());
+	}
+	assert_eq!(role["name"].as_str(), Some("legacy"));
+	assert_eq!(role["system"].as_str(), Some("x"));
+	assert_eq!(role["welcome"].as_str(), Some(""));
+	assert_eq!(role["model"]["name"].as_str(), Some("openai:worker"));
+	assert_eq!(role["model"]["max_tokens"].as_integer(), Some(1234));
+}
+
+#[test]
+fn v34_removes_sampling_from_inline_root_and_compression_models() {
+	let old = concat!(
+		"version = 33\n",
+		"model = { name = \"openai:main\", temperature = 0.4, top_p = 0.5, top_k = 40, max_tokens = 1234 }\n",
+		"compression = { model = { name = \"openai:compression\", temperature = 0.3, ",
+		"top_p = 0.6, top_k = 20, max_tokens = 5678 }, threshold = 0.9 }\n",
+	);
+	let value = parse(&migrate_once(old));
+
+	for key in DEPRECATED_SAMPLING_KEYS {
+		assert!(value["model"].get(key).is_none());
+		assert!(value["compression"]["model"].get(key).is_none());
+	}
+	assert_eq!(value["model"]["name"].as_str(), Some("openai:main"));
+	assert_eq!(value["model"]["max_tokens"].as_integer(), Some(1234));
+	assert_eq!(
+		value["compression"]["model"]["name"].as_str(),
+		Some("openai:compression")
+	);
+	assert_eq!(value["compression"]["model"]["max_tokens"].as_integer(), Some(5678));
+	assert_eq!(value["compression"]["threshold"].as_float(), Some(0.9));
 }
 
 #[test]

@@ -271,18 +271,12 @@ model = "openai:agent-model"
 
 [[roles]]
 name = "agent-role"
-temperature = 0.2
-top_p = 0.9
-top_k = 10
 system = "Agent."
 welcome = "Hi."
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
 name = "assistant"
-temperature = 0.1
-top_p = 0.5
-top_k = 5
 system = "OVERRIDE"
 welcome = "No."
 mcp = { server_refs = [], allowed_tools = [] }

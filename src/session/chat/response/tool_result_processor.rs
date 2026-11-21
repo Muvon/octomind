@@ -254,7 +254,8 @@ pub async fn process_tool_results(
 
 	// Make follow-up API call; summaries are projected only for the request.
 	let full_summaries = chat_session.prepare_request_messages();
-	// A plugin session's context blocks ride on this request as on the turn's first.
+	// A plugin session's context blocks ride on this request only when they
+	// changed since a request last carried them.
 	let plugin_context = crate::plugins::active(&chat_session.session.info.name);
 	if plugin_context {
 		chat_session.ensure_active_memory_pack_message();
@@ -333,7 +334,6 @@ pub async fn process_tool_results(
 			// (handle_followup_api_error). Just log diagnostics, stop animation,
 			// and propagate so the caller can offer a Ctrl+G retry.
 			log_debug!("Follow-up API call failed for model {}: {}", chat_session.model, e);
-			log_debug!("Temperature: {}", chat_session.temperature);
 
 			// Stop animation on error before returning
 			animation_manager.stop_current().await;

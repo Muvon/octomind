@@ -105,7 +105,7 @@ async fn resolve_config_and_role_merges_tap_manifest_end_to_end() {
 	let guard = ResolverDataDir::new();
 	install_default_tap_agent(
 		guard.path(),
-		"[[roles]]\nname = \"ztest:zz\"\nsystem = \"You are the {{ENV:OCTOMIND_RESOLVER_PROBE}} agent.\"\nwelcome = \"Hi.\"\ntemperature = 0.1\ntop_p = 0.9\ntop_k = 40\n\n[deps]\nrequire = [\"ztest/probe\"]\n",
+		"[[roles]]\nname = \"ztest:zz\"\nsystem = \"You are the {{ENV:OCTOMIND_RESOLVER_PROBE}} agent.\"\nwelcome = \"Hi.\"\n\n[deps]\nrequire = [\"ztest/probe\"]\n",
 	);
 
 	let had_probe = std::env::var_os("OCTOMIND_RESOLVER_PROBE");
@@ -158,7 +158,7 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 	let guard = ResolverDataDir::new();
 	install_default_tap_agent(
 		guard.path(),
-		"[[roles]]\nname = \"ztest:zz\"\nsystem = \"probe\"\nwelcome = \"Hi.\"\ntemperature = 0.1\ntop_p = 0.9\ntop_k = 40\n\n[deps]\nrequire = [\"ztest/probe\"]\n",
+		"[[roles]]\nname = \"ztest:zz\"\nsystem = \"probe\"\nwelcome = \"Hi.\"\n\n[deps]\nrequire = [\"ztest/probe\"]\n",
 	);
 
 	let mut config = base_config();
@@ -172,9 +172,6 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 		merged.model, "openai:gpt-4o",
 		"[taps] model override must win for this tag"
 	);
-	assert_eq!(merged.model_profile.temperature, config.model_profile.temperature);
-	assert_eq!(merged.model_profile.top_p, config.model_profile.top_p);
-	assert_eq!(merged.model_profile.top_k, config.model_profile.top_k);
 	assert_eq!(merged.model_profile.max_tokens, config.model_profile.max_tokens);
 	assert_eq!(merged.model_profile.max_retries, config.model_profile.max_retries);
 }
@@ -196,8 +193,7 @@ async fn resolve_config_and_role_rejects_manifest_without_new_role() {
 
 // --- bare domain resolution --------------------------------------------------
 
-const MANIFEST_BODY: &str =
-	"\n[[roles]]\nsystem = \"probe\"\nwelcome = \"Hi.\"\ntemperature = 0.1\ntop_p = 0.9\ntop_k = 40\n";
+const MANIFEST_BODY: &str = "\n[[roles]]\nsystem = \"probe\"\nwelcome = \"Hi.\"\n";
 
 /// Write a manifest with the given header comment lines into the default tap.
 fn install_default_tap_manifest(data_dir: &std::path::Path, category: &str, variant: &str, header: &str) {

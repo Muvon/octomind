@@ -321,7 +321,7 @@ fn score_capability_empty_triggers_returns_zero() {
 }
 
 #[test]
-fn score_capability_takes_mean_of_top_k() {
+fn score_capability_takes_mean_of_highest_scores() {
 	// Trigger vectors aligned with intent at varying degrees so the
 	// computed cosines are 1.0, 0.5, 0.0, 0.0 — top-3 mean is 0.5.
 	let intent = vec![1.0_f32, 0.0];

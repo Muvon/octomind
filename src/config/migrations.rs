@@ -229,6 +229,11 @@ fn plan() -> MigrationPlan {
 				to: 33,
 				apply: add_v33_code_mode,
 			},
+			VersionMigration {
+				from: 33,
+				to: 34,
+				apply: remove_v34_sampling,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -426,6 +431,51 @@ fn add_v33_code_mode(document: &mut toml_edit::DocumentMut, template: &toml_edit
 	merge_missing(mcp, template_mcp, "code_mode")
 }
 
+fn remove_v34_sampling(document: &mut toml_edit::DocumentMut, _template: &toml_edit::DocumentMut) -> Result<()> {
+	remove_sampling_from_model_tables(document.as_table_mut());
+	Ok(())
+}
+
+fn remove_sampling_from_model_tables(table: &mut toml_edit::Table) {
+	remove_model_sampling(table);
+
+	if let Some(compression) = table
+		.get_mut("compression")
+		.and_then(toml_edit::Item::as_table_like_mut)
+	{
+		remove_model_sampling(compression);
+	}
+
+	if let Some(roles) = table.get_mut("roles") {
+		if let Some(roles) = roles.as_array_of_tables_mut() {
+			for role in roles.iter_mut() {
+				remove_role_sampling(role);
+			}
+		} else if let Some(roles) = roles.as_array_mut() {
+			for role in roles.iter_mut().filter_map(toml_edit::Value::as_inline_table_mut) {
+				remove_role_sampling(role);
+			}
+		}
+	}
+}
+
+fn remove_role_sampling(role: &mut dyn toml_edit::TableLike) {
+	remove_sampling_keys(role);
+	remove_model_sampling(role);
+}
+
+fn remove_model_sampling(owner: &mut dyn toml_edit::TableLike) {
+	if let Some(model) = owner.get_mut("model").and_then(toml_edit::Item::as_table_like_mut) {
+		remove_sampling_keys(model);
+	}
+}
+
+fn remove_sampling_keys(table: &mut dyn toml_edit::TableLike) {
+	for key in super::DEPRECATED_SAMPLING_KEYS {
+		table.remove(key);
+	}
+}
+
 /// Add the required `compression.idle` switch (on); an existing value is kept.
 fn add_v28_idle_compaction(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
 	let template_compression = required_table(template.as_table(), "compression", "embedded config")?;
@@ -463,12 +513,9 @@ fn add_v20_timing(document: &mut toml_edit::DocumentMut, template: &toml_edit::D
 /// v12 nests one validated model profile under each actual model owner. Main is
 /// the baseline; roles inherit it, and compression remains a separate override.
 fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
-	const PROFILE_FIELDS: [&str; 9] = [
+	const PROFILE_FIELDS: [&str; 6] = [
 		"reasoning_effort",
 		"max_tokens",
-		"temperature",
-		"top_p",
-		"top_k",
 		"max_retries",
 		"retry_timeout",
 		"request_timeout_seconds",
@@ -485,7 +532,7 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 			}
 		}
 	}
-	for key in PROFILE_FIELDS {
+	for key in PROFILE_FIELDS.into_iter().chain(super::DEPRECATED_SAMPLING_KEYS) {
 		if let Some(value) = document.as_table_mut().remove(key) {
 			main.insert(key, value);
 		}
@@ -510,7 +557,7 @@ fn unify_v12_model_profiles(document: &mut toml_edit::DocumentMut, template: &to
 			if let Some(value) = role.remove("model") {
 				profile.insert("name", value);
 			}
-			for key in ["temperature", "top_p", "top_k"] {
+			for key in super::DEPRECATED_SAMPLING_KEYS {
 				if let Some(value) = role.remove(key) {
 					profile.insert(key, value);
 				}

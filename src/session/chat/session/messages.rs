@@ -42,10 +42,15 @@ impl ChatSession {
 	pub fn set_active_memory_pack(&mut self, pack: Option<String>) {
 		self.remove_active_memory_pack_message();
 		self.active_memory_pack = pack.filter(|value| !value.trim().is_empty());
+		if self.active_memory_pack.is_none() {
+			// A pack set again after it was taken away is new to the model.
+			self.attached_memory_pack = None;
+		}
 	}
 
-	/// Re-materialize the runtime pack if compression or error cleanup removed its
-	/// transient message. At most one copy may exist in the live request context.
+	/// Attach the runtime pack to the request about to be made, once after it is
+	/// set or changed (see `attached_memory_pack`). At most one copy may exist
+	/// in the live request context.
 	pub fn ensure_active_memory_pack_message(&mut self) {
 		if self.session.messages.iter().any(Self::is_active_memory_message) {
 			return;
@@ -53,14 +58,18 @@ impl ChatSession {
 		let Some(pack) = self.active_memory_pack.as_deref() else {
 			return;
 		};
+		if self.attached_memory_pack.as_deref() == Some(pack) {
+			return;
+		}
 		let content = crate::session::ensure_system_managed(pack);
 		let mut message = crate::session::Session::build_message("user", &content);
 		message.name = Some(Self::ACTIVE_MEMORY_MESSAGE_NAME.to_string());
+		self.attached_memory_pack = Some(pack.to_string());
 		self.session.messages.push(message);
 	}
 
 	/// Remove only the materialized request copy; keep `active_memory_pack` so a
-	/// tool follow-up can inject the same pack into its next specialist request.
+	/// tool follow-up attaches it again only once it changes.
 	pub fn remove_active_memory_pack_message(&mut self) {
 		self.session
 			.messages
@@ -68,8 +77,7 @@ impl ChatSession {
 	}
 
 	pub fn clear_active_memory_pack(&mut self) {
-		self.remove_active_memory_pack_message();
-		self.active_memory_pack = None;
+		self.set_active_memory_pack(None);
 		self.recalled_refs.clear();
 		self.used_memory_ids.clear();
 	}

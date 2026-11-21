@@ -47,6 +47,40 @@ fn is_err(result: &McpToolResult) -> bool {
 
 #[tokio::test]
 #[serial]
+async fn test_agent_add_ignores_deprecated_sampling_arguments() {
+	clear_all();
+	let name = "__dynagent_deprecated_sampling";
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({
+		"action": "add",
+		"name": name,
+		"description": "legacy caller",
+		"system": "You are a legacy agent.",
+		"temperature": 0.1,
+		"top_p": 0.2,
+		"top_k": 5
+	})))
+	.await
+	.expect("add dispatches");
+	assert!(!is_err(&result), "add failed: {}", text_of(&result));
+
+	let stored = list_agents()
+		.into_iter()
+		.find(|(agent, _)| agent.name == name)
+		.expect("agent must be registered")
+		.0;
+	let serialized = serde_json::to_value(stored).expect("agent serializes");
+	for key in ["temperature", "top_p", "top_k"] {
+		assert!(serialized.get(key).is_none(), "{key} must be ignored");
+		assert!(
+			get_agent_tool_function().parameters["properties"].get(key).is_none(),
+			"{key} must not be offered by the tool schema"
+		);
+	}
+	clear_all();
+}
+
+#[tokio::test]
+#[serial]
 async fn test_agent_tool_validation_arms() {
 	clear_all();
 

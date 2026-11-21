@@ -437,8 +437,6 @@ Manage in-process AI agents at runtime. Each registered agent becomes a tool pre
 | `description` | string, optional | Tool description; defaults to empty |
 | `welcome` | string, optional | Welcome message |
 | `model` | string, optional | Model-name override |
-| `temperature`, `top_p` | number, optional | Sampling overrides |
-| `top_k` | integer, optional | Sampling override |
 | `server_refs` | array, optional | Validated server names; when empty, inferred from `allowed_tools` |
 | `allowed_tools` | array, optional | Tool-name or wildcard filters |
 | `workdir` | string, optional | Working directory; defaults to `"."` |

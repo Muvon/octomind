@@ -75,9 +75,6 @@ This complete example keeps an explicit provider/model choice:
 name = "openrouter:anthropic/claude-sonnet-4-6"
 reasoning_effort = "medium"
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
@@ -157,7 +154,7 @@ allowed_tools = ["core:*", "orchestration:*", "runtime:*", "agent:*"]
 | Named tables such as `[developer]` | Use `[[roles]]` with `name`, `system`, and `welcome` |
 | Role `enabled` | Remove it; defined roles are selectable |
 | Role `enable_layers` or `workflow` | Remove it; use the external workflow CLI for multi-step orchestration |
-| Flat role model/sampling settings | Put overrides in `[roles.model]` |
+| Flat role model settings | Put supported overrides in `[roles.model]` |
 | MCP `enabled` | Select servers with `[roles.mcp].server_refs` and grant tools with `allowed_tools` |
 
 Start the local role above with:

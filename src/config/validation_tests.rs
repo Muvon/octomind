@@ -17,7 +17,7 @@
 //! cases the per-rule tests leave open.
 
 use super::*;
-use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
+use crate::config::{HookConfig, McpServerConfig};
 
 fn template_config() -> Config {
 	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
@@ -29,26 +29,6 @@ fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
 		bind: bind.to_string(),
 		script: script.to_string(),
 		timeout,
-	}
-}
-
-fn role_with(name: &str, temperature: f64, top_p: f64, top_k: u32) -> Role {
-	Role {
-		name: name.to_string(),
-		config: RoleConfig {
-			model: crate::config::ModelProfileOverride {
-				temperature: Some(temperature),
-				top_p: Some(top_p),
-				top_k: Some(top_k),
-				..Default::default()
-			},
-			system: "system prompt".to_string(),
-			welcome: "welcome".to_string(),
-			temperature: None,
-			top_p: None,
-			top_k: None,
-		},
-		mcp: Default::default(),
 	}
 }
 
@@ -66,14 +46,6 @@ fn full_validate_catches_a_malformed_hook() {
 	config.hooks = vec![hook("bad", "not-an-address", "s.sh", 30)];
 	let error = config.validate().unwrap_err().to_string();
 	assert!(error.contains("invalid bind address"), "got: {error}");
-}
-
-#[test]
-fn full_validate_catches_an_out_of_range_role_knob() {
-	let mut config = template_config();
-	config.roles = vec![role_with("runner", 2.5, 1.0, 100)];
-	let error = config.validate().unwrap_err().to_string();
-	assert!(error.contains("temperature"), "got: {error}");
 }
 
 #[test]
@@ -97,15 +69,6 @@ fn an_empty_roles_collection_passes_the_required_field_checks() {
 	config
 		.validate_required_fields()
 		.expect("no roles means no per-role checks");
-}
-
-#[test]
-fn role_checks_cover_every_role_not_just_the_first() {
-	let mut config = template_config();
-	config.roles = vec![role_with("fine", 1.0, 1.0, 100), role_with("broken", 1.0, 1.0, 1001)];
-	let error = config.validate_model_profiles().unwrap_err().to_string();
-	assert!(error.contains("broken"), "got: {error}");
-	assert!(error.contains("top_k"), "got: {error}");
 }
 
 #[test]
@@ -244,6 +207,81 @@ fn test_validate_reports_ignored_key_in_roles_model() {
 	assert!(
 		reports.iter().any(|r| r.path == "roles.0.model.unknown_model_key"),
 		"expected roles.0.model.unknown_model_key, got: {reports:?}"
+	);
+}
+
+#[test]
+fn deprecated_sampling_keys_load_and_use_the_deprecation_report_for_config_and_tap_roles() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template
+		.replace("\n[model]\n", "\n[model]\ntemperature = 0.4\ntop_p = 0.8\ntop_k = 40\n")
+		.replace(
+			"\n[compression.model]\n",
+			"\n[compression.model]\ntemperature = 0.3\ntop_p = 1.0\ntop_k = 0\n",
+		) + r#"
+
+[[roles]]
+name = "legacy:flat"
+temperature = 0.2
+top_p = 0.9
+top_k = 10
+system = "legacy flat tap role"
+welcome = ""
+
+[[roles]]
+name = "legacy:nested"
+system = "legacy nested tap role"
+welcome = ""
+
+[roles.model]
+temperature = 0.1
+top_p = 0.7
+top_k = 5
+"#;
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let role_count = value["roles"].as_array().unwrap().len();
+	let flat_index = role_count - 2;
+	let nested_index = role_count - 1;
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	config.ignored_keys = ignored_keys;
+	config.build_role_map();
+
+	let reports = config.check_ignored_keys();
+	let expected_paths = [
+		"model.temperature".to_string(),
+		"model.top_p".to_string(),
+		"model.top_k".to_string(),
+		"compression.model.temperature".to_string(),
+		"compression.model.top_p".to_string(),
+		"compression.model.top_k".to_string(),
+		format!("roles.{flat_index}.temperature"),
+		format!("roles.{flat_index}.top_p"),
+		format!("roles.{flat_index}.top_k"),
+		format!("roles.{nested_index}.model.temperature"),
+		format!("roles.{nested_index}.model.top_p"),
+		format!("roles.{nested_index}.model.top_k"),
+	];
+	assert_eq!(reports.len(), expected_paths.len(), "got: {reports:?}");
+	for path in expected_paths {
+		let report = reports
+			.iter()
+			.find(|report| report.path == path)
+			.unwrap_or_else(|| panic!("missing report for {path}; got: {reports:?}"));
+		assert_eq!(
+			report.format_warning(),
+			format!("warning: `{path}` is deprecated and ignored (sampling parameters are no longer sent); remove it")
+		);
+		assert!(!report.format_warning().contains("unknown configuration key"));
+	}
+	assert_eq!(
+		config.get_model_profile_for_role("legacy:flat"),
+		config.model_profile,
+		"flat sampling keys must have no effect"
+	);
+	assert_eq!(
+		config.get_model_profile_for_role("legacy:nested"),
+		config.model_profile,
+		"nested sampling keys must have no effect"
 	);
 }
 

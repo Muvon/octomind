@@ -37,8 +37,6 @@ pub struct SessionInitParams<'a> {
 	pub resume_recent: bool,
 	/// Optional model override
 	pub model: Option<String>,
-	/// Optional temperature override
-	pub temperature: Option<f64>,
 	/// Optional max tokens override
 	pub max_tokens: Option<u32>,
 	/// Optional max retries override
@@ -65,7 +63,6 @@ impl<'a> SessionInitParams<'a> {
 			resume: None,
 			resume_recent: false,
 			model: None,
-			temperature: None,
 			max_tokens: None,
 			max_retries: None,
 			output_mode: None,
@@ -103,12 +100,6 @@ impl<'a> SessionInitParams<'a> {
 	/// Set model override
 	pub fn with_model(mut self, model: String) -> Self {
 		self.model = Some(model);
-		self
-	}
-
-	/// Set temperature override
-	pub fn with_temperature(mut self, temperature: f64) -> Self {
-		self.temperature = Some(temperature);
 		self
 	}
 
@@ -211,9 +202,6 @@ pub struct ChatSession {
 	pub turn_answers: Vec<String>,
 	pub model: String,
 	pub role: String, // Role for the session
-	pub temperature: f64,
-	pub top_p: f64, // Top-p nucleus sampling parameter
-	pub top_k: u32, // Top-k sampling parameter
 	pub max_tokens: u32,
 	pub estimated_cost: f64,
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
@@ -280,6 +268,12 @@ pub struct ChatSession {
 	/// One runtime-only memory pack materialized as a non-persisted, replaceable
 	/// system-managed message before specialist calls in the active user turn.
 	pub active_memory_pack: Option<String>,
+	/// The pack text the latest attachment carried. A pack rides only on the
+	/// first request after it is set or changed: its copy leaves the transcript
+	/// after every request, so attaching the same text again would end each
+	/// request in a message the next one lacks, and no request would extend the
+	/// one before it for the provider's prompt cache.
+	pub attached_memory_pack: Option<String>,
 	/// The messages of the latest provider request, as sent. `session.messages`
 	/// holds the stored form; the cache keepalive replays this copy so a ping
 	/// matches the cached prefix without rebuilding the request.
@@ -379,9 +373,6 @@ impl ChatSession {
 			turn_answers: Vec::new(),
 			model: model_name,
 			role: params.role,
-			temperature: profile.temperature,
-			top_p: profile.top_p,
-			top_k: profile.top_k,
 			max_tokens: profile.max_tokens,
 			estimated_cost: 0.0,                // Initialize estimated cost as zero
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
@@ -406,6 +397,7 @@ impl ChatSession {
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
 			active_memory_pack: None,
+			attached_memory_pack: None,
 			last_sent_messages: Vec::new(),
 			used_memory_ids: std::collections::HashSet::new(),
 			reasoning_effort: Some(profile.reasoning_effort),
@@ -480,7 +472,6 @@ impl ChatSession {
 
 		let runtime_profile = crate::config::ModelProfileOverride {
 			model: params.model.clone(),
-			temperature: params.temperature,
 			max_tokens: params.max_tokens,
 			max_retries: params.max_retries,
 			..Default::default()
@@ -586,9 +577,6 @@ impl ChatSession {
 						turn_answers: Vec::new(),
 						model: restored_model, // Use restored model from session
 						role: role.to_string(),
-						temperature: effective_profile.temperature,
-						top_p: effective_profile.top_p,
-						top_k: effective_profile.top_k,
 						max_tokens: effective_profile.max_tokens,
 						estimated_cost: restored_cost, // FIXED: Use actual cost from session
 						spending_threshold_checkpoint: spending_checkpoint, // Restore from session.info
@@ -615,6 +603,7 @@ impl ChatSession {
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
 						active_memory_pack: None,
+						attached_memory_pack: None,
 						last_sent_messages: Vec::new(),
 						used_memory_ids: std::collections::HashSet::new(),
 						reasoning_effort: Some(effective_profile.reasoning_effort),
@@ -763,9 +752,6 @@ impl ChatSession {
 			model: self.model.clone(),
 			reasoning_effort: self.reasoning_effort.unwrap_or(config.reasoning_effort),
 			max_tokens: self.max_tokens,
-			temperature: self.temperature,
-			top_p: self.top_p,
-			top_k: self.top_k,
 			max_retries: self.max_retries,
 			retry_timeout: self.retry_timeout,
 			request_timeout_seconds: self.request_timeout_seconds,
@@ -777,9 +763,6 @@ impl ChatSession {
 	pub fn apply_model_profile(&mut self, profile: &crate::config::ModelProfile) {
 		self.model = profile.model.clone();
 		self.session.info.model = profile.model.clone();
-		self.temperature = profile.temperature;
-		self.top_p = profile.top_p;
-		self.top_k = profile.top_k;
 		self.max_tokens = profile.max_tokens;
 		self.max_retries = profile.max_retries;
 		self.retry_timeout = profile.retry_timeout;
@@ -1291,10 +1274,11 @@ impl ChatSession {
 
 	/// The local (uncalibrated) estimate of the next request: every message as
 	/// the provider receives it, the cached tool definitions, and the active
-	/// memory pack when it is not yet in the slice (it materializes around the
-	/// provider request). `None` until the tool definitions have been cached —
-	/// a sample taken without them would pair the provider's full prompt with a
-	/// partial estimate.
+	/// memory pack when it is not yet in the slice. The pack rides only on the
+	/// first request after it is set or changed, so on the other requests of its
+	/// turn this errs high by the pack's size. `None` until the tool definitions
+	/// have been cached — a sample taken without them would pair the provider's
+	/// full prompt with a partial estimate.
 	pub fn raw_context_estimate(&self) -> Option<usize> {
 		let tools = self.cached_tools.as_deref()?;
 		let mut total =
@@ -1476,9 +1460,6 @@ impl ChatSession {
 			turn_answers: Vec::new(),
 			model: "anthropic/claude-3-5-sonnet".to_string(),
 			role: "core".to_string(),
-			temperature: 0.7,
-			top_p: 1.0,
-			top_k: 0,
 			max_tokens: 4096,
 			estimated_cost: 0.0,
 			spending_threshold_checkpoint: 0.0,
@@ -1504,6 +1485,7 @@ impl ChatSession {
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
 			active_memory_pack: None,
+			attached_memory_pack: None,
 			used_memory_ids: std::collections::HashSet::new(),
 			reasoning_effort: None,
 			last_self_report: None,

@@ -20,7 +20,6 @@ fn pin(text: &str) -> crate::plugins::PluginBlock {
 		plugin: "stub".to_string(),
 		name: "pin".to_string(),
 		text: text.to_string(),
-		keep: false,
 		items: Vec::new(),
 	}
 }

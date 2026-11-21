@@ -549,7 +549,6 @@ async fn context_pin_usage_notice_and_register_are_kept() {
 		plugin: "a".into(),
 		name: name.into(),
 		text: text.into(),
-		keep: false,
 		items: Vec::new(),
 	};
 	assert_eq!(
@@ -672,14 +671,12 @@ async fn pinned_blocks_and_status_fields_are_restored_only_for_connected_plugins
 				plugin: "a".into(),
 				name: "p".into(),
 				text: "stored".into(),
-				keep: false,
 				items: vec!["one".into()],
 			},
 			PluginBlock {
 				plugin: "gone".into(),
 				name: "p".into(),
 				text: "dropped".into(),
-				keep: false,
 				items: Vec::new(),
 			},
 		],
@@ -1529,39 +1526,10 @@ async fn a_plan_error_goes_to_the_plugin_whose_plan_won_and_only_once() {
 }
 
 #[tokio::test]
-async fn dropped_context_names_go_to_their_own_plugin_until_an_event_is_answered() {
-	let rig = rig(vec![
-		plugin("a", failing_until(1)),
-		plugin("b", FakePlugin::new(&[event::REQUEST_BEFORE])),
-	])
-	.await;
-	let block = |plugin: &str, name: &str| PluginBlock {
-		plugin: plugin.into(),
-		name: name.into(),
-		text: String::new(),
-		keep: false,
-		items: Vec::new(),
-	};
-	rig.host.record_dropped_context(
-		SESSION,
-		&[block("a", "c1"), block("a", "c2"), block("b", "x"), block("ghost", "y")],
-	);
-	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
-	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
-	let a = rig.fake(0).sent(event::REQUEST_BEFORE);
-	// The first event failed, so the names are sent again; the second answer clears them.
-	assert_eq!(a[0]["dropped_context"], json!(["c1", "c2"]));
-	assert_eq!(a[1]["dropped_context"], json!(["c1", "c2"]));
-	let b = rig.fake(1).sent(event::REQUEST_BEFORE);
-	assert_eq!(b[0]["dropped_context"], json!(["x"]));
-	assert!(b[1].get("dropped_context").is_none());
-}
-
-#[tokio::test]
-async fn blocks_keep_their_order_and_flags() {
+async fn blocks_keep_their_order_and_items() {
 	let fake = FakePlugin::new(&[event::REQUEST_BEFORE]).answer(json!({
 		"context": [
-			{"name": "zeta", "text": "1", "keep": true},
+			{"name": "zeta", "text": "1"},
 			{"name": "alpha", "text": "2"}
 		],
 		"pin": [{"name": "p", "text": "t", "items": ["i1", "i2"]}]
@@ -1573,7 +1541,6 @@ async fn blocks_keep_their_order_and_flags() {
 		context.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
 		vec!["zeta", "alpha"]
 	);
-	assert!(context[0].keep && !context[1].keep);
 	assert_eq!(
 		rig.host.pinned_blocks(SESSION)[0].items,
 		vec!["i1".to_string(), "i2".to_string()]
@@ -1808,15 +1775,7 @@ async fn what_the_plugin_is_due_to_hear_survives_a_send_that_is_dropped() {
 		tools: None,
 		active_skills: Vec::new(),
 	};
-	let block = PluginBlock {
-		plugin: "a".into(),
-		name: "c1".into(),
-		text: String::new(),
-		keep: false,
-		items: Vec::new(),
-	};
 	host.record_rule_match(SESSION, "a", "r1", RuleOutcome::Applied);
-	host.record_dropped_context(SESSION, &[block]);
 
 	// The user cancels while the plugin is still working on the first event.
 	let cancelled = tokio::time::timeout(Duration::from_millis(100), host.request_before(&ctx, request_before())).await;
@@ -1826,7 +1785,6 @@ async fn what_the_plugin_is_due_to_hear_survives_a_send_that_is_dropped() {
 	let sent = fake.sent(event::REQUEST_BEFORE);
 	assert_eq!(sent.len(), 2);
 	assert_eq!(sent[1]["rule_matches"][0]["id"], "r1");
-	assert_eq!(sent[1]["dropped_context"], json!(["c1"]));
 }
 
 // ---------------------------------------------------------------------------

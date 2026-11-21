@@ -519,23 +519,23 @@ async fn test_process_tool_results_asks_plugins_before_the_follow_up_request() {
 		.messages
 		.iter()
 		.any(|m| m.role == "user" && m.content.contains("FOLLOW-NOTE")));
-	// The context block rode on the request and left no message behind.
-	assert_eq!(session.active_memory_pack.as_deref(), Some("FOLLOW-CONTEXT"));
+	// The context block joined the history as its own named message.
+	let name = format!("plugin_context:{}:facts", stub.name());
 	assert!(session
 		.session
 		.messages
 		.iter()
-		.all(|m| m.name.as_deref() != Some("__active_memory_pack")));
+		.any(|m| m.name.as_deref() == Some(name.as_str()) && m.content.contains("FOLLOW-CONTEXT")));
 
 	crate::plugins::end_session("o5-follow-up");
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-// Unchanged plugin context rides on one request only. Attaching it to every
+// Unchanged plugin context joins the history once. Attaching it to every
 // follow-up ended each request in a message the next one lacked, so no request
 // extended the one before and prompt caches missed on every call.
 #[tokio::test]
-async fn test_unchanged_plugin_context_rides_on_one_follow_up_only() {
+async fn test_unchanged_plugin_context_is_sent_once_and_each_request_extends_the_last() {
 	use crate::plugins::protocol::event;
 	use crate::plugins::test_support::{connect_stub, StubPlugin};
 
@@ -585,19 +585,13 @@ async fn test_unchanged_plugin_context_rides_on_one_follow_up_only() {
 			.collect()
 	};
 	let (first, second) = (messages(0), messages(1));
-	let carries_context = |(_, text): &(String, String)| text.contains("ONCE-CONTEXT");
-	assert!(
-		first.last().is_some_and(carries_context),
-		"the first follow-up carries the new context"
-	);
-	assert!(
-		!second.iter().any(carries_context),
-		"unchanged context is not attached again"
-	);
-	let carried = first.len() - 1;
+	let copies =
+		|request: &[(String, String)]| request.iter().filter(|(_, text)| text.contains("ONCE-CONTEXT")).count();
+	assert_eq!(copies(&first), 1, "the first follow-up carries the new context");
+	assert_eq!(copies(&second), 1, "unchanged context is not added again");
 	assert_eq!(
-		second[..carried],
-		first[..carried],
+		second[..first.len()],
+		first[..],
 		"the next request extends the previous one"
 	);
 

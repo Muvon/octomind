@@ -18,7 +18,6 @@ use super::core::{ChatSession, SpendingStop};
 use crate::config::Config;
 use crate::plugins::payload::{tool_infos, ContextParts};
 use crate::plugins::protocol::{event, PromptSubmit, RequestBefore, RequestPhase, TurnKind};
-use crate::plugins::PluginBlock;
 use crate::session::chat::response::tool_execution::shape_background_deliveries;
 use crate::session::inbox::InboxMessage;
 use crate::session::ProviderExchange;
@@ -27,61 +26,11 @@ use anyhow::Result;
 use colored::Colorize;
 use std::io::IsTerminal;
 
-/// Separator between the context texts of two plugins.
-const PLUGIN_CONTEXT_SEPARATOR: &str = "\n";
+/// Names a plugin context block's message in the history:
+/// `plugin_context:<plugin>:<block>`.
+const PLUGIN_CONTEXT_PREFIX: &str = "plugin_context:";
 
 impl ChatSession {
-	const ACTIVE_MEMORY_MESSAGE_NAME: &'static str = "__active_memory_pack";
-
-	fn is_active_memory_message(message: &crate::session::Message) -> bool {
-		message.name.as_deref() == Some(Self::ACTIVE_MEMORY_MESSAGE_NAME)
-	}
-
-	/// Replace the current turn's active memory pack without writing it to the
-	/// session log. The message is runtime context, not conversation history.
-	pub fn set_active_memory_pack(&mut self, pack: Option<String>) {
-		self.remove_active_memory_pack_message();
-		self.active_memory_pack = pack.filter(|value| !value.trim().is_empty());
-		if self.active_memory_pack.is_none() {
-			// A pack set again after it was taken away is new to the model.
-			self.attached_memory_pack = None;
-		}
-	}
-
-	/// Attach the runtime pack to the request about to be made, once after it is
-	/// set or changed (see `attached_memory_pack`). At most one copy may exist
-	/// in the live request context.
-	pub fn ensure_active_memory_pack_message(&mut self) {
-		if self.session.messages.iter().any(Self::is_active_memory_message) {
-			return;
-		}
-		let Some(pack) = self.active_memory_pack.as_deref() else {
-			return;
-		};
-		if self.attached_memory_pack.as_deref() == Some(pack) {
-			return;
-		}
-		let content = crate::session::ensure_system_managed(pack);
-		let mut message = crate::session::Session::build_message("user", &content);
-		message.name = Some(Self::ACTIVE_MEMORY_MESSAGE_NAME.to_string());
-		self.attached_memory_pack = Some(pack.to_string());
-		self.session.messages.push(message);
-	}
-
-	/// Remove only the materialized request copy; keep `active_memory_pack` so a
-	/// tool follow-up attaches it again only once it changes.
-	pub fn remove_active_memory_pack_message(&mut self) {
-		self.session
-			.messages
-			.retain(|message| !Self::is_active_memory_message(message));
-	}
-
-	pub fn clear_active_memory_pack(&mut self) {
-		self.set_active_memory_pack(None);
-		self.recalled_refs.clear();
-		self.used_memory_ids.clear();
-	}
-
 	/// `request.before`: tell the plugins a model request is about to be made
 	/// and apply their answer. Notes stay queued; the caller writes them at its
 	/// own safe point with [`Self::deliver_plugin_notes`].
@@ -110,38 +59,29 @@ impl ChatSession {
 		crate::plugins::apply::apply(self, effects).await
 	}
 
-	/// Hand the plugins' context blocks to the request about to be made, through
-	/// the same transient message the built-in memory pack uses. With no blocks the
-	/// transient text is cleared. When the context does not fit with every block,
-	/// only the blocks marked `keep` stay and the plugins hear about the others.
-	pub async fn set_plugin_context(&mut self, config: &Config) {
-		let session_id = self.session.info.name.clone();
-		if !crate::plugins::active(&session_id) {
-			return;
+	/// Add the plugins' context blocks to the history: each block whose text
+	/// differs from its latest copy there, as a managed user message named
+	/// `plugin_context:<plugin>:<block>`. The history only grows, so every model
+	/// request extends the one before it and the provider's prompt cache stays
+	/// valid. A block whose copy a compaction folded away is added again.
+	pub fn deliver_plugin_context(&mut self) -> Result<()> {
+		for block in crate::plugins::context_blocks(&self.session.info.name) {
+			let name = format!("{PLUGIN_CONTEXT_PREFIX}{}:{}", block.plugin, block.name);
+			let content = crate::session::ensure_system_managed(&block.text);
+			let delivered = self
+				.session
+				.messages
+				.iter()
+				.rev()
+				.find(|message| message.name.as_deref() == Some(name.as_str()))
+				.is_some_and(|message| message.content == content);
+			if !delivered {
+				let mut message = crate::session::Session::build_message("user", &content);
+				message.name = Some(name);
+				self.push_persisted(message)?;
+			}
 		}
-		let blocks = crate::plugins::context_blocks(&session_id);
-		self.set_active_memory_pack((!blocks.is_empty()).then(|| join_context_blocks(&blocks)));
-		if self.active_memory_pack.is_none()
-			|| crate::session::chat::conversation_compression::ensure_context_within_ceiling(self, config)
-				.await
-				.is_ok()
-		{
-			return;
-		}
-		log_debug!("Plugin context cut to the blocks marked keep: insufficient context headroom");
-		let (kept, dropped): (Vec<_>, Vec<_>) = blocks.into_iter().partition(|block| block.keep);
-		if !dropped.is_empty() {
-			crate::plugins::record_dropped_context(&session_id, &dropped);
-		}
-		self.set_active_memory_pack((!kept.is_empty()).then(|| join_context_blocks(&kept)));
-		if self.active_memory_pack.is_some()
-			&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(self, config)
-				.await
-				.is_err()
-		{
-			crate::plugins::record_dropped_context(&session_id, &kept);
-			self.set_active_memory_pack(None);
-		}
+		Ok(())
 	}
 
 	/// `prompt.submit`: let plugins rewrite or stop a user prompt before it
@@ -177,8 +117,7 @@ impl ChatSession {
 	/// persistence, later folds and extraction always see the full state. The
 	/// projection is a pure function of the stored text, so the cached prefix
 	/// is byte-identical across requests. Records the result as
-	/// `last_sent_messages`: the runtime memory pack joins after the newest
-	/// cache marker, so this copy already holds the whole cached prefix.
+	/// `last_sent_messages`, the request as the provider receives it.
 	pub fn prepare_request_messages(&mut self) -> Vec<(usize, String)> {
 		let mut originals = Vec::new();
 		for (index, message) in self.session.messages.iter_mut().enumerate() {
@@ -408,9 +347,9 @@ impl ChatSession {
 		}
 		self.session.messages.push(message);
 		self.begin_turn_timing();
-		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime
-		// pack only after persistence succeeds, preserving the atomic-add contract.
-		self.clear_active_memory_pack();
+		// Leftovers of the built-in learning; a genuine turn starts them empty.
+		self.recalled_refs.clear();
+		self.used_memory_ids.clear();
 		// A genuine user turn starts a new adaptive-compression phase. Preserve
 		// the exact post-compression watermark, but reset autonomous runway
 		// expansion so this request gets the normal short safety horizon. Keeping
@@ -469,13 +408,16 @@ impl ChatSession {
 	// system-managed (see `ensure_system_managed`).
 	pub fn add_system_managed_user_message(&mut self, content: &str) -> Result<()> {
 		let content = crate::session::ensure_system_managed(content);
-		let message = crate::session::Session::build_message("user", &content);
+		self.push_persisted(crate::session::Session::build_message("user", &content))
+	}
+
+	/// Write a message to the session log, then add it to the history.
+	fn push_persisted(&mut self, message: crate::session::Message) -> Result<()> {
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 		self.session.messages.push(message);
-
 		Ok(())
 	}
 
@@ -712,24 +654,6 @@ impl ChatSession {
 
 		Ok(())
 	}
-}
-
-/// The text of the plugins' context blocks as one transient message: one
-/// plugin's blocks follow each other with nothing between them, and the texts
-/// of two plugins are one line apart.
-fn join_context_blocks(blocks: &[PluginBlock]) -> String {
-	let mut per_plugin: Vec<(&str, String)> = Vec::new();
-	for block in blocks {
-		match per_plugin.iter_mut().find(|(plugin, _)| *plugin == block.plugin) {
-			Some((_, text)) => text.push_str(&block.text),
-			None => per_plugin.push((&block.plugin, block.text.clone())),
-		}
-	}
-	per_plugin
-		.into_iter()
-		.map(|(_, text)| text)
-		.collect::<Vec<_>>()
-		.join(PLUGIN_CONTEXT_SEPARATOR)
 }
 
 #[cfg(test)]

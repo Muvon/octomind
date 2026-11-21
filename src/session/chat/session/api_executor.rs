@@ -102,25 +102,6 @@ async fn end_turn_with_plugins(chat_session: &mut ChatSession, config: &Config) 
 	Ok(true)
 }
 
-/// Optional memories may yield headroom. The context blocks
-/// of plugins share the memory pack; they are cut the way they are at the start
-/// of the round: blocks marked `keep` stay, and the plugins hear of the rest.
-async fn make_room_for_memory(chat_session: &mut ChatSession, config: &Config) {
-	if chat_session.active_memory_pack.is_none()
-		|| crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config)
-			.await
-			.is_ok()
-	{
-		return;
-	}
-	crate::log_debug!("Optional memory dropped: insufficient context headroom");
-	if crate::plugins::active(&chat_session.session.info.name) {
-		chat_session.set_plugin_context(config).await;
-	} else {
-		chat_session.clear_active_memory_pack();
-	}
-}
-
 // Helper function to execute API call and process response
 pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	chat_session: &mut ChatSession,
@@ -217,16 +198,9 @@ async fn run_request_round<S: OutputSink>(
 
 	chat_session.send_request_before(config, phase).await?;
 
-	// Plugins' context blocks are the only source of the runtime-only active
-	// memory pack; one left over from an earlier round is dropped first.
-	if chat_session.active_memory_pack.is_some() {
-		chat_session.clear_active_memory_pack();
-	}
-
-	// Plugins' context blocks use the transient active-pack message.
-	chat_session.set_plugin_context(config).await;
-
-	// Notes plugins queued for this request land here, before the request is built.
+	// Context blocks and notes plugins set for this request land here, before
+	// the request is built.
+	chat_session.deliver_plugin_context()?;
 	chat_session.deliver_plugin_notes()?;
 
 	// Supervisor: goal and execution-boundary recitation (see
@@ -237,13 +211,11 @@ async fn run_request_round<S: OutputSink>(
 		crate::session::recite::RecitalRefresh::ByVolume,
 	)?;
 
-	// Optional context may yield headroom.
-	make_room_for_memory(chat_session, config).await;
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 
 	// Advance Anthropic-style content cache markers after persistent pre-call
-	// injections (inbox hints, steers, etc.) and before the runtime-only memory pack.
-	// This preserves the previous marker while moving the oldest marker to the latest
+	// injections (plugin context and notes, inbox hints, steers, etc.). This
+	// preserves the previous marker while moving the oldest marker to the latest
 	// user/tool boundary for this new request.
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let supports_caching = crate::session::model_supports_caching(&model);
@@ -252,11 +224,9 @@ async fn run_request_round<S: OutputSink>(
 	{
 		crate::log_debug!("pre-request cache marker advance failed: {}", e);
 	}
-	// Materialize the active pack and the bounded summary views only for the
-	// provider request. Neither may enter persistence, compression, extraction,
-	// or later conversation history.
+	// Project the bounded summary views only for the provider request; they may
+	// not enter persistence, compression, extraction, or later history.
 	let full_summaries = chat_session.prepare_request_messages();
-	chat_session.ensure_active_memory_pack_message();
 
 	// Make API call. `session.messages` is borrowed directly — no clone — and
 	// the validation params hold that shared borrow only until they're consumed
@@ -273,9 +243,7 @@ async fn run_request_round<S: OutputSink>(
 		validation_params
 	};
 	let api_result = chat_completion_with_validation(validation_params).await;
-	// Restore by index before the pack removal can shift anything.
 	chat_session.restore_summaries_after_request(full_summaries);
-	chat_session.remove_active_memory_pack_message();
 
 	// DON'T stop animation here - process_response stops it before tool output.
 	// After the tool header is printed, response.rs restarts the animation so it
@@ -377,10 +345,6 @@ async fn run_request_round<S: OutputSink>(
 
 	Ok(())
 }
-
-#[cfg(test)]
-#[path = "api_executor_inline_tests.rs"]
-mod inline_tests;
 
 #[cfg(test)]
 #[path = "api_executor_tests.rs"]

@@ -43,49 +43,6 @@ fn real_user_follow_up_does_not_clear_analysis_findings() {
 }
 
 #[test]
-fn active_memory_pack_is_single_runtime_message_and_clears_on_new_turn() {
-	let mut session = make_session(vec![msg("system", false)]);
-	session.set_active_memory_pack(Some(
-		"<active_memory_pack trust=\"test\">first</active_memory_pack>".to_string(),
-	));
-	session.set_active_memory_pack(Some(
-		"<active_memory_pack trust=\"test\">second</active_memory_pack>".to_string(),
-	));
-	assert_eq!(session.session.messages.len(), 1);
-	session.ensure_active_memory_pack_message();
-	session.ensure_active_memory_pack_message();
-	let packs: Vec<_> = session
-		.session
-		.messages
-		.iter()
-		.filter(|message| message.name.as_deref() == Some("__active_memory_pack"))
-		.collect();
-	assert_eq!(packs.len(), 1);
-	assert!(packs[0].content.contains("second"));
-	session.remove_active_memory_pack_message();
-	assert_eq!(session.session.messages.len(), 1);
-	assert!(session.active_memory_pack.is_some());
-	session.ensure_active_memory_pack_message();
-
-	session.used_memory_ids.insert("M1".to_string());
-	session.recalled_refs.push((
-		"M1".to_string(),
-		"rule".to_string(),
-		"role".to_string(),
-		"project".to_string(),
-	));
-	session.add_user_message("new task").unwrap();
-	assert!(session.active_memory_pack.is_none());
-	assert!(session.used_memory_ids.is_empty());
-	assert!(session.recalled_refs.is_empty());
-	assert!(!session
-		.session
-		.messages
-		.iter()
-		.any(|message| message.name.as_deref() == Some("__active_memory_pack")));
-}
-
-#[test]
 fn system_managed_event_does_not_take_ownership_of_the_human_task() {
 	let mut session = make_session(Vec::new());
 

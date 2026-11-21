@@ -108,7 +108,7 @@ pub async fn process_tool_results(
 	}
 	// Plugins hear about the follow-up request before the built-in steps below.
 	chat_session.send_request_before(config, RequestPhase::FollowUp).await?;
-	chat_session.set_plugin_context(config).await;
+	chat_session.deliver_plugin_context()?;
 	// Tool-loop follow-ups bypass the turn-entry executor, so recite here as well —
 	// on change only, before the ceiling check so the note is counted in it.
 	crate::session::recite::inject_before_request(
@@ -254,17 +254,8 @@ pub async fn process_tool_results(
 
 	// Make follow-up API call; summaries are projected only for the request.
 	let full_summaries = chat_session.prepare_request_messages();
-	// A plugin session's context blocks ride on this request only when they
-	// changed since a request last carried them.
-	let plugin_context = crate::plugins::active(&chat_session.session.info.name);
-	if plugin_context {
-		chat_session.ensure_active_memory_pack_message();
-	}
 	let follow_up_result = make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
 	chat_session.restore_summaries_after_request(full_summaries);
-	if plugin_context {
-		chat_session.remove_active_memory_pack_message();
-	}
 
 	// NOTE: Don't stop animation here - only stop when we're actually done with tools
 	// If there are more tools to call, the animation should continue running

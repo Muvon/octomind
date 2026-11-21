@@ -222,7 +222,6 @@ fn set_block_keeps_the_order_the_plugin_first_set_them_in() {
 	let block = |name: &str, text: Option<&str>| Block {
 		name: name.into(),
 		text: text.map(str::to_string),
-		keep: false,
 		items: Vec::new(),
 	};
 	let mut blocks = Vec::new();
@@ -233,7 +232,6 @@ fn set_block_keeps_the_order_the_plugin_first_set_them_in() {
 	set_block(
 		&mut blocks,
 		Block {
-			keep: true,
 			items: vec!["i".into()],
 			..block("alpha", Some("two"))
 		},
@@ -243,7 +241,6 @@ fn set_block_keeps_the_order_the_plugin_first_set_them_in() {
 	let names: Vec<&str> = blocks.iter().map(|held| held.name.as_str()).collect();
 	assert_eq!(names, vec!["zeta", "alpha"]);
 	assert_eq!(blocks[1].text, "two");
-	assert!(blocks[1].keep);
 	assert_eq!(blocks[1].items, vec!["i".to_string()]);
 }
 

@@ -111,7 +111,6 @@ struct Envelope {
 	rule_matches: Vec<RuleMatch>,
 	judged: BTreeMap<String, u64>,
 	plan_error: Option<String>,
-	dropped_context: Vec<String>,
 	/// The event carries no messages and leaves the plugin's place in the history.
 	detached: bool,
 	/// The tool list to send, and its hash to remember once the event is answered.
@@ -384,7 +383,6 @@ impl Host {
 					plugin: slot.name.clone(),
 					name: held.name.clone(),
 					text: held.text.clone(),
-					keep: held.keep,
 					items: held.items.clone(),
 				})
 			})
@@ -406,7 +404,6 @@ impl Host {
 				slot.pinned.push(StoredBlock {
 					name: block.name,
 					text: block.text,
-					keep: block.keep,
 					items: block.items,
 				});
 			}
@@ -592,22 +589,6 @@ impl Host {
 		}
 	}
 
-	/// The host left these blocks out of a model request for lack of room. Each
-	/// plugin hears the names of its own with its next event.
-	pub fn record_dropped_context(&self, session_id: &str, blocks: &[PluginBlock]) {
-		let mut sessions = self.sessions.lock();
-		let Some(session) = sessions.get_mut(session_id) else {
-			return;
-		};
-		for block in blocks {
-			if let Some(slot) = session.slots.iter_mut().find(|slot| slot.name == block.plugin) {
-				if !slot.dropped_context.contains(&block.name) {
-					slot.dropped_context.push(block.name.clone());
-				}
-			}
-		}
-	}
-
 	// -----------------------------------------------------------------------
 	// Sending
 	// -----------------------------------------------------------------------
@@ -724,7 +705,6 @@ impl Host {
 				rule_matches: slot.rule_matches.clone(),
 				judged: slot.judged.clone(),
 				plan_error: slot.plan_error.clone(),
-				dropped_context: slot.dropped_context.clone(),
 				detached: ctx.detached,
 				files: slot.waiting_files.clone(),
 				tools,
@@ -765,7 +745,6 @@ impl Host {
 			plan_error: envelope.plan_error.clone(),
 			tools: envelope.tools.as_ref().map(|(tools, _)| tools.clone()),
 			active_skills: ctx.active_skills.clone(),
-			dropped_context: envelope.dropped_context.clone(),
 			files: envelope.files.clone(),
 			judged: envelope.judged.clone(),
 			payload,
@@ -823,8 +802,6 @@ impl Host {
 		if slot.plan_error == envelope.plan_error {
 			slot.plan_error = None;
 		}
-		slot.dropped_context
-			.retain(|name| !envelope.dropped_context.contains(name));
 		if let Some((_, hash)) = &envelope.tools {
 			slot.tools_hash = Some(*hash);
 		}
@@ -986,7 +963,6 @@ impl Host {
 			plan_error: None,
 			tools: None,
 			active_skills: ctx.active_skills.clone(),
-			dropped_context: Vec::new(),
 			files: Vec::new(),
 			judged: BTreeMap::new(),
 			payload: serde_json::Map::<String, Value>::new(),

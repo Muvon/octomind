@@ -46,7 +46,6 @@ fn sample_event() -> Event<PromptSubmit> {
 		plan_error: None,
 		tools: None,
 		active_skills: Vec::new(),
-		dropped_context: Vec::new(),
 		files: Vec::new(),
 		judged: BTreeMap::new(),
 		payload: PromptSubmit {
@@ -68,14 +67,7 @@ fn event_flattens_its_payload_next_to_the_common_fields() {
 	assert!(value.get("parent_session_id").is_none());
 	assert!(value.get("plan").is_none());
 	assert_eq!(value["project"], "work");
-	for absent in [
-		"plan_error",
-		"tools",
-		"active_skills",
-		"dropped_context",
-		"goal",
-		"model",
-	] {
+	for absent in ["plan_error", "tools", "active_skills", "goal", "model"] {
 		assert!(value.get(absent).is_none(), "{absent}");
 	}
 }
@@ -121,7 +113,6 @@ fn full_event<P>(payload: P) -> Event<P> {
 		plan_error: Some("why".into()),
 		tools: Some(vec![tool_info()]),
 		active_skills: vec!["skill".into()],
-		dropped_context: vec!["block".into()],
 		files: vec![FileText {
 			path: "docs/api.md".into(),
 			hash: "ab12".into(),
@@ -339,13 +330,11 @@ fn every_answer_field_is_named_like_its_effect() {
 		context: vec![Block {
 			name: "a".into(),
 			text: None,
-			keep: false,
 			items: Vec::new(),
 		}],
 		pin: vec![Block {
 			name: "a".into(),
 			text: None,
-			keep: false,
 			items: Vec::new(),
 		}],
 		usage: vec![Usage::default()],
@@ -462,10 +451,9 @@ fn cancel_names_the_request_it_cancels() {
 #[test]
 fn blocks_default_to_plain_text_and_the_handshake_may_declare_timeouts() {
 	let block: Block = serde_json::from_value(json!({"name": "n", "text": "t"})).unwrap();
-	assert!(!block.keep && block.items.is_empty());
-	let kept: Block = serde_json::from_value(json!({"name": "n", "text": "t", "keep": true, "items": ["a"]})).unwrap();
-	assert!(kept.keep);
-	assert_eq!(kept.items, ["a"]);
+	assert!(block.items.is_empty());
+	let with_items: Block = serde_json::from_value(json!({"name": "n", "text": "t", "items": ["a"]})).unwrap();
+	assert_eq!(with_items.items, ["a"]);
 
 	let result: InitializeResult = serde_json::from_value(json!({
 		"protocol": 1,

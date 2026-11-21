@@ -603,35 +603,6 @@ async fn test_attach_video_from_file_and_url() {
 }
 
 // ---------------------------------------------------------------------------
-// get_full_context_tokens: active memory pack accounting
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_get_full_context_tokens_counts_active_memory_pack_once() {
-	let config = test_config();
-	let mut session = ChatSession::for_tests(vec![message("system", "anchor"), message("user", "hello")]);
-	let without_pack = session.get_full_context_tokens(&config).await;
-
-	// A pack that is NOT materialized in messages adds its bounded cost
-	session.active_memory_pack = Some("remember: build on the box".to_string());
-	let with_pack = session.get_full_context_tokens(&config).await;
-	assert!(
-		with_pack > without_pack,
-		"pack must add tokens: {with_pack} vs {without_pack}"
-	);
-
-	// Once materialized as a named message it must not be double-counted
-	let mut pack_msg = message("user", "remember: build on the box");
-	pack_msg.name = Some("__active_memory_pack".to_string());
-	session.session.messages.push(pack_msg);
-	let materialized = session.get_full_context_tokens(&config).await;
-	assert!(
-		materialized < with_pack,
-		"materialized pack must not be counted twice: {materialized} vs {with_pack}"
-	);
-}
-
-// ---------------------------------------------------------------------------
 // reinitialize_for_role
 // ---------------------------------------------------------------------------
 

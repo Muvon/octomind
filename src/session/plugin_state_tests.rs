@@ -20,7 +20,6 @@ fn pin() -> PluginBlock {
 		plugin: "besydr".into(),
 		name: "goal".into(),
 		text: "keep the API stable".into(),
-		keep: false,
 		items: vec!["no breaking changes".into()],
 	}
 }

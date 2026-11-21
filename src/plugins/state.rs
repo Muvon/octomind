@@ -63,9 +63,6 @@ pub struct PluginBlock {
 	pub plugin: String,
 	pub name: String,
 	pub text: String,
-	/// `context`: keep the block when the host drops blocks for room.
-	#[serde(default)]
-	pub keep: bool,
 	/// `pin`: lines the host keeps as separate items when it folds history.
 	#[serde(default)]
 	pub items: Vec<PinItem>,
@@ -95,7 +92,6 @@ pub struct PluginCommand {
 pub struct StoredBlock {
 	pub name: String,
 	pub text: String,
-	pub keep: bool,
 	pub items: Vec<PinItem>,
 }
 
@@ -107,14 +103,12 @@ pub fn set_block(blocks: &mut Vec<StoredBlock>, block: Block) {
 			blocks[at] = StoredBlock {
 				name: block.name,
 				text,
-				keep: block.keep,
 				items: block.items,
 			}
 		}
 		(Some(text), None) => blocks.push(StoredBlock {
 			name: block.name,
 			text,
-			keep: block.keep,
 			items: block.items,
 		}),
 		(None, Some(at)) => {
@@ -171,8 +165,6 @@ pub struct PluginSlot {
 	pub tools_hash: Option<u64>,
 	/// The host could not apply this plugin's last plan change.
 	pub plan_error: Option<String>,
-	/// Names of this plugin's context blocks the host left out of a request.
-	pub dropped_context: Vec<String>,
 	pub context: Vec<StoredBlock>,
 	pub pinned: Vec<StoredBlock>,
 	pub rules: Option<String>,
@@ -215,7 +207,6 @@ impl PluginSlot {
 			judged: BTreeMap::new(),
 			tools_hash: None,
 			plan_error: None,
-			dropped_context: Vec::new(),
 			context: Vec::new(),
 			pinned: Vec::new(),
 			rules: None,

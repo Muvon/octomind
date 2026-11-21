@@ -244,7 +244,6 @@ Options, all optional. Without an option the host sends the plain default.
 | `plan_error` | string, optional | The host could not apply the last `plan` effect. This is the reason. |
 | `tools` | list, optional | The session's tools. Always present on `session.start`; afterwards only when the list changed since the previous event this plugin answered. Each tool has `name`, `server`, `description`, `parameters` (JSON schema) and optionally `read_only`. |
 | `active_skills` | list of strings | Names of the skills active now. Sent when not empty. |
-| `dropped_context` | list of strings | Names of this plugin's context blocks the host left out of the previous model request for lack of room. Sent when not empty. |
 | `files` | list | Texts of files the plugin asked for with `read`. See [File reads](#file-reads). |
 | `judged` | table | How many of this plugin's judgements changed what the host did since the previous event, by `purpose`. Sent when not empty. See [judge](#judge). |
 
@@ -525,9 +524,12 @@ on request `n`. See [Time limits](#time-limits). Over `http` there is no channel
 An effect an event does not allow is ignored. Octomind writes a line to the debug log and nothing else; the user sees no
 notice, and the rest of the answer still counts.
 
+No effect changes or removes a message that a model request already carried: effects only add messages. Each request
+then extends the one before it, so providers that cache by prompt prefix reuse their cache on every call.
+
 | Effect | Value | What Octomind does |
 |--------|-------|--------------------|
-| `context` | list of `{name, text, keep}` | Keeps the block by `name`. Its text rides on the first model request of each turn and on the first request after the block changes, and is never written into the history. Repeating it on every request would end each request in text the next one lacks, so providers that cache by prompt prefix would miss on every call. A block with the same `name` is replaced in place. No `text` removes the block. A plugin's blocks are joined in the order they were first set, with nothing between them. When the context window is short, the host may leave blocks out; `keep: true` asks to keep that one, and `dropped_context` tells the plugin which blocks were left out. |
+| `context` | list of `{name, text}` | Keeps the block by `name` and writes its text into the history, just before the next model request, as a message managed by the system and named `plugin_context:<plugin>:<name>`. The text is written again only when it changes, or when a compaction folded the earlier copy away. A block with the same `name` is replaced. No `text` removes the block and adds nothing to the history; copies already written stay there. |
 | `pin` | list of `{name, text, items}` | Keeps text through every compaction and recites it near the end of the context. `items` are lines the host keeps as separate items when it folds history. An item is a string, or `{text, label, from_request}`: the fold lists it as `label: text` (`constraint: text` without a label), and with `from_request` it names the user's message as the source when that message contains the text. No `text` removes the block. A plugin's pinned blocks are joined in the order they were first set. Pins are stored with the session. |
 | `usage` | list of `{label, calls, input_tokens, output_tokens, reasoning_tokens, cost, wall_ms, blocking}` | Books the spend into the session's cost under the plugin. `label` is shown in `/info`, `cost` is in US dollars, `wall_ms` is milliseconds, `blocking` says the agent waited for the calls. |
 | `report` | `{mechanics, totals}` | Stores the plugin's accounting for the session as data, for the machine-readable cost output. A new report replaces the previous one. `mechanics` maps a name to any JSON; `totals` holds `chat_calls`, `decision_calls`, `wall_blocking_ms`, `wall_background_ms` (leave it out when the plugin cannot tell), `api_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens` and `cost`. |
@@ -649,7 +651,7 @@ such as context blocks, is not stored and must be sent again.
 ## Tutorial: a plugin in five steps
 
 This tutorial builds one Python program, `plugin.py`, and adds one behaviour per step. After step 5 the plugin refuses
-dangerous shell commands, adds an instruction to every turn, shortens long tool results, and sends the agent
+dangerous shell commands, gives the model a standing instruction, shortens long tool results, and sends the agent
 back to work once after a turn that changed files. It uses only the Python standard library. The finished program is
 listed at the end.
 
@@ -816,9 +818,9 @@ If nothing is refused:
   it.
 - Another plugin earlier in the `plugins` list sent a `deny` first. Later plugins are not asked.
 
-### Step 3: add an instruction to every turn
+### Step 3: give the model a standing instruction
 
-You get a text that the model sees with the first request of every turn and that is never written into the history.
+You get a text that Octomind writes into the history once, so the model sees it in every later request.
 
 Add this above `def answer_for`, with the constant at the top of the file:
 
@@ -831,9 +833,9 @@ def prompt_submit(params):
     return {"context": [{"name": "tutorial-instruction", "text": EXTRA_INSTRUCTION}]}
 ```
 
-`prompt.submit` is sent when the user sends a prompt, before the model sees it. A `context` effect holds named blocks. A
-block with the same name replaces the earlier one, so sending it at every prompt keeps one copy. Sending a block with
-no `text` removes it.
+`prompt.submit` is sent when the user sends a prompt, before the model sees it. A `context` effect holds named blocks.
+Octomind writes a block into the history when it is new or its text changed, so sending the same block at every prompt
+adds it once. Sending a block with no `text` removes it; the copy already in the history stays.
 
 Run: restart Octomind and send any prompt.
 
@@ -844,8 +846,6 @@ If the instruction is missing:
 
 - The `subscribing to` line does not list `prompt.submit`.
 - The model ignored the instruction. Ask it to quote the instruction, as above.
-- The context window was short and Octomind left the block out. The next event then carries `dropped_context` with
-  `tutorial-instruction`. Add `"keep": True` to the block to ask Octomind to keep it.
 
 ### Step 4: shorten a long result
 

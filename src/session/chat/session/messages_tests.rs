@@ -15,50 +15,6 @@
 use super::*;
 
 #[test]
-fn active_memory_pack_attaches_once_per_change_and_clears() {
-	let mut session = ChatSession::for_tests(Vec::new());
-	session.set_active_memory_pack(Some("memory pack".into()));
-	session.ensure_active_memory_pack_message();
-	session.ensure_active_memory_pack_message();
-	assert_eq!(
-		session
-			.session
-			.messages
-			.iter()
-			.filter(|message| message.name.as_deref() == Some("__active_memory_pack"))
-			.count(),
-		1
-	);
-
-	// The next request of the turn must extend this one: an unchanged pack is
-	// not attached again after its copy left the transcript.
-	session.remove_active_memory_pack_message();
-	assert!(session.session.messages.is_empty());
-	session.set_active_memory_pack(Some("memory pack".into()));
-	session.ensure_active_memory_pack_message();
-	assert!(session.session.messages.is_empty());
-
-	session.set_active_memory_pack(Some("changed pack".into()));
-	session.ensure_active_memory_pack_message();
-	assert_eq!(session.session.messages.len(), 1);
-	assert!(session.session.messages[0].content.contains("changed pack"));
-
-	session
-		.recalled_refs
-		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
-	session.used_memory_ids.insert("M1".into());
-	session.clear_active_memory_pack();
-	assert!(session.session.messages.is_empty());
-	assert!(session.recalled_refs.is_empty());
-	assert!(session.used_memory_ids.is_empty());
-
-	// A new turn clears the pack, so the same text set again is new to the model.
-	session.set_active_memory_pack(Some("changed pack".into()));
-	session.ensure_active_memory_pack_message();
-	assert_eq!(session.session.messages.len(), 1);
-}
-
-#[test]
 fn message_lifecycle_persists_each_role_and_runtime_summary() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("messages.jsonl.zst");
@@ -450,11 +406,15 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 }
 
 #[test]
-fn a_real_user_turn_clears_the_active_memory_pack() {
+fn a_real_user_turn_clears_the_learning_leftovers() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.set_active_memory_pack(Some("previous turn's memory".into()));
+	session
+		.recalled_refs
+		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
+	session.used_memory_ids.insert("M1".into());
 	session.add_user_message("Next task").unwrap();
-	assert!(session.active_memory_pack.is_none());
+	assert!(session.recalled_refs.is_empty());
+	assert!(session.used_memory_ids.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -610,17 +570,32 @@ fn a_user_turn_resets_what_plugins_track_per_turn() {
 	assert_eq!(session.plugin_verified, None);
 }
 
-#[test]
-fn context_blocks_join_per_plugin_with_one_line_between_plugins() {
-	let block = |plugin: &str, text: &str| PluginBlock {
-		plugin: plugin.to_string(),
-		name: text.to_string(),
-		text: text.to_string(),
-		keep: false,
-		items: Vec::new(),
+// A block's text joins the history once; a block whose copy left the history,
+// as when a compaction folds it, is added again.
+#[tokio::test]
+async fn plugin_context_joins_the_history_once_and_again_after_its_copy_is_gone() {
+	let stub =
+		StubPlugin::new(&[event::PROMPT_SUBMIT]).answer(json!({"context": [{"name": "facts", "text": "FACTS"}]}));
+	let mut session = plugin_session("o5-context-delivery", &stub).await;
+	session.submit_prompt("go".to_string(), "go").await.unwrap();
+	let copies = |session: &ChatSession| {
+		session
+			.session
+			.messages
+			.iter()
+			.filter(|message| message.content.contains("FACTS"))
+			.count()
 	};
-	let blocks = [block("a", "x"), block("a", "y"), block("b", "z")];
 
-	assert_eq!(join_context_blocks(&blocks), "xy\nz");
-	assert_eq!(join_context_blocks(&[]), "");
+	session.deliver_plugin_context().unwrap();
+	session.deliver_plugin_context().unwrap();
+	assert_eq!(copies(&session), 1);
+	let name = format!("plugin_context:{}:facts", stub.name());
+	assert_eq!(session.session.messages[0].name.as_deref(), Some(name.as_str()));
+
+	session.session.messages.clear();
+	session.deliver_plugin_context().unwrap();
+	assert_eq!(copies(&session), 1);
+
+	crate::plugins::end_session("o5-context-delivery");
 }

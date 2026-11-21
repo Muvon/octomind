@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 33
+version = 34
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -149,9 +149,6 @@ name = "octohub:auto"
 reasoning_effort = "medium"
 # Maximum output tokens (0 = provider default/unlimited where supported).
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 # Retry count and exponential-backoff base delay.
 max_retries = 1
 retry_timeout = 30
@@ -717,9 +714,6 @@ name = "octohub:auto"
 # with thinking off the same folds land in a fraction of the time.
 reasoning_effort = "none"
 max_tokens = 32000
-temperature = 0.3  # Lower temperature for consistent decisions
-top_p = 1.0
-top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300

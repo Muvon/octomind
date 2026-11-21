@@ -21,7 +21,7 @@ fn configure_changes_only_two_names_and_preserves_comments() {
 		[model] # main profile\n\
 		# keep the main comment\n\
 		name   =   \"old:main\" # main inline\n\
-		temperature = 0.7\n\n\
+		max_tokens = 1234\n\n\
 		[compression.model]\n\
 		name = \"old:compression\" # compression inline\n\
 		reasoning_effort = \"none\"\n\n\

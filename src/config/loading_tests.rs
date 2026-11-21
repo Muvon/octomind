@@ -530,9 +530,6 @@ timeout_seconds = 30
 [[roles]]
 name = "agent-extra-role"
 model = "ollama:agent"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = "agent extra role system prompt"
 welcome = "agent extra role welcome"
 "#;
@@ -551,6 +548,44 @@ welcome = "agent extra role welcome"
 	);
 	assert_eq!(base.model, base_model, "the base config is not mutated");
 }
+
+#[test]
+fn merge_agent_toml_reports_and_ignores_flat_deprecated_sampling_keys() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base_path = tmp.path().join("config.toml");
+	std::fs::write(&base_path, template_toml()).expect("write template");
+	let base = Config::load_from_path(&base_path).expect("load base");
+	let role_index = base.roles.len();
+	let merged = merge_agent_toml(
+		&base,
+		r#"
+[[roles]]
+name = "legacy:tap"
+temperature = 0.1
+top_p = 0.2
+top_k = 5
+system = "legacy tap role"
+welcome = ""
+"#,
+	)
+	.expect("deprecated tap manifest must load");
+
+	let reports = merged.check_ignored_keys();
+	for key in crate::config::DEPRECATED_SAMPLING_KEYS {
+		let path = format!("roles.{role_index}.{key}");
+		let warning = reports
+			.iter()
+			.find(|report| report.path == path)
+			.unwrap_or_else(|| panic!("missing {path}; got: {reports:?}"))
+			.format_warning();
+		assert_eq!(
+			warning,
+			format!("warning: `{path}` is deprecated and ignored (sampling parameters are no longer sent); remove it")
+		);
+	}
+	assert_eq!(merged.get_model_profile_for_role("legacy:tap"), base.model_profile);
+}
+
 #[test]
 fn merge_agent_toml_preserves_runtime_output_mode() {
 	let tmp = tempfile::tempdir().expect("tempdir");

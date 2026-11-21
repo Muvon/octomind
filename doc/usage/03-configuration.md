@@ -109,9 +109,6 @@ The main profile is complete and is the inheritance baseline:
 name = "octohub:auto"
 reasoning_effort = "medium"
 max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300

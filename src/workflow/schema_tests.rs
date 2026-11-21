@@ -358,3 +358,25 @@ fn workflow_model_remains_a_scalar_name_override() {
 	};
 	assert_eq!(step.model.as_deref(), Some("google:gemini-3-pro"));
 }
+
+#[test]
+fn workflow_step_deprecated_sampling_overrides_parse_and_have_no_effect() {
+	let workflow: WorkflowDef = toml::from_str(
+		r#"
+		name = "legacy"
+		[[steps]]
+		name = "run"
+		role = "developer"
+		prompt = "go"
+		model = "google:gemini-3-pro"
+		temperature = 0.1
+		top_p = 0.2
+		top_k = 5
+		"#,
+	)
+	.expect("deprecated sampling overrides must remain loadable");
+	let Step::Sequential(step) = &workflow.steps[0] else {
+		panic!("expected sequential step");
+	};
+	assert_eq!(step.model.as_deref(), Some("google:gemini-3-pro"));
+}

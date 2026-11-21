@@ -22,15 +22,6 @@ pub struct RoleConfig {
 	// Complete model-profile override. Every omitted field inherits main.
 	#[serde(default)]
 	pub model: ModelProfileOverride,
-	// Versionless tap manifests may still use the historical flat sampling
-	// fields. They are accepted as input and folded into `model`; new config is
-	// always written with `[roles.model]`.
-	#[serde(default, skip_serializing)]
-	pub temperature: Option<f64>,
-	#[serde(default, skip_serializing)]
-	pub top_p: Option<f64>,
-	#[serde(default, skip_serializing)]
-	pub top_k: Option<u32>,
 	// Custom system prompt (REQUIRED - defined in config template)
 	pub system: String,
 	// Custom welcome message with variable support
@@ -39,13 +30,7 @@ pub struct RoleConfig {
 
 impl RoleConfig {
 	pub fn model_override(&self) -> ModelProfileOverride {
-		ModelProfileOverride {
-			temperature: self.temperature,
-			top_p: self.top_p,
-			top_k: self.top_k,
-			..Default::default()
-		}
-		.overlay(&self.model)
+		self.model.clone()
 	}
 }
 

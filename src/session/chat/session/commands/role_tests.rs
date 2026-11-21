@@ -178,7 +178,7 @@ async fn test_switch_without_session_file_fails_and_reverts() {
 	session.role = "task_refiner".to_string();
 	let mut config = template_config();
 	let servers_before = config.mcp.servers.len();
-	let (model_before, temperature_before) = (session.model.clone(), session.temperature);
+	let model_before = session.model.clone();
 
 	let output = run(&mut session, &mut config, &["assistant"]).await;
 	let CommandOutput::Error { error, context } = output else {
@@ -193,7 +193,6 @@ async fn test_switch_without_session_file_fails_and_reverts() {
 	// Nothing half-switched: session and config are back to their snapshots
 	assert_eq!(session.role, "task_refiner");
 	assert_eq!(session.model, model_before);
-	assert_eq!(session.temperature, temperature_before);
 	assert_eq!(config.mcp.servers.len(), servers_before);
 }
 

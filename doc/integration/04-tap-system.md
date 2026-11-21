@@ -131,9 +131,6 @@ name = "developer:general"
 system = "Review source code and explain implementation choices. Working directory: {{CWD}}."
 welcome = ""
 
-[roles.model]
-temperature = 0.3
-
 [roles.mcp]
 server_refs = ["core", "runtime", "orchestration"]
 allowed_tools = ["core:*", "runtime:*", "orchestration:*"]

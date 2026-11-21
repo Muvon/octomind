@@ -18,12 +18,9 @@ use std::path::Path;
 
 use super::Config;
 
-const MODEL_PROFILE_FIELDS: [&str; 10] = [
+const MODEL_PROFILE_FIELDS: [&str; 7] = [
 	"reasoning_effort",
 	"max_tokens",
-	"temperature",
-	"top_p",
-	"top_k",
 	"max_retries",
 	"retry_timeout",
 	"request_timeout_seconds",
@@ -668,9 +665,12 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 		}
 	}
 
-	let mut merged: Config = base_value
-		.try_into()
+	let (mut merged, agent_ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(base_value)
 		.context("Failed to deserialize merged agent config")?;
+	merged.ignored_keys = base.ignored_keys.clone();
+	merged.ignored_keys.extend(agent_ignored_keys);
+	let mut seen = std::collections::HashSet::new();
+	merged.ignored_keys.retain(|key| seen.insert(key.clone()));
 	merged.build_role_map();
 	// The TOML round-trip above drops #[serde(skip)] fields; runtime_output_mode
 	// is set by the CLI for the live process, so carry it over from the base —

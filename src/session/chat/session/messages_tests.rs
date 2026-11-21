@@ -15,7 +15,7 @@
 use super::*;
 
 #[test]
-fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
+fn active_memory_pack_attaches_once_per_change_and_clears() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.set_active_memory_pack(Some("memory pack".into()));
 	session.ensure_active_memory_pack_message();
@@ -30,10 +30,19 @@ fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
 		1
 	);
 
+	// The next request of the turn must extend this one: an unchanged pack is
+	// not attached again after its copy left the transcript.
 	session.remove_active_memory_pack_message();
 	assert!(session.session.messages.is_empty());
+	session.set_active_memory_pack(Some("memory pack".into()));
+	session.ensure_active_memory_pack_message();
+	assert!(session.session.messages.is_empty());
+
+	session.set_active_memory_pack(Some("changed pack".into()));
 	session.ensure_active_memory_pack_message();
 	assert_eq!(session.session.messages.len(), 1);
+	assert!(session.session.messages[0].content.contains("changed pack"));
+
 	session
 		.recalled_refs
 		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
@@ -42,6 +51,11 @@ fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
 	assert!(session.session.messages.is_empty());
 	assert!(session.recalled_refs.is_empty());
 	assert!(session.used_memory_ids.is_empty());
+
+	// A new turn clears the pack, so the same text set again is new to the model.
+	session.set_active_memory_pack(Some("changed pack".into()));
+	session.ensure_active_memory_pack_message();
+	assert_eq!(session.session.messages.len(), 1);
 }
 
 #[test]

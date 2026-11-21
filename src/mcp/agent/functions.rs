@@ -419,8 +419,7 @@ async fn execute_dynamic_agent(
 /// Build a merged Config for a dynamic agent.
 ///
 /// Resolves server_refs from both the static config registry and the dynamic
-/// server registry, then overrides the model/temperature/top_p/top_k from
-/// the agent config.
+/// server registry, then overrides the model from the agent config.
 fn build_agent_config(
 	agent: &crate::mcp::runtime::dynamic_agents::DynamicAgentConfig,
 	base_config: &crate::config::Config,
@@ -571,9 +570,6 @@ fn run_dynamic_agent_in_process(
 			let validation_params = ChatCompletionWithValidationParams::new(
 				&messages,
 				&effective_model,
-				agent.temperature.unwrap_or(0.7),
-				agent.top_p.unwrap_or(0.9),
-				agent.top_k.unwrap_or(0),
 				agent_config.get_effective_max_tokens(),
 				agent_config,
 			)
@@ -684,9 +680,6 @@ fn run_dynamic_agent_in_process(
 					let follow_up_params = ChatCompletionWithValidationParams::new(
 						&conv_messages,
 						&effective_model,
-						agent.temperature.unwrap_or(0.7),
-						agent.top_p.unwrap_or(0.9),
-						agent.top_k.unwrap_or(0),
 						agent_config.get_effective_max_tokens(),
 						agent_config,
 					)

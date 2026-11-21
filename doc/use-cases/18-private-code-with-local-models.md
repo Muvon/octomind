@@ -115,9 +115,6 @@ plugins = [{ name = "besydr", type = "stdio", command = "besydr", enabled = fals
 name = "ollama:glm-5.3"
 reasoning_effort = "medium"
 max_tokens = 4096
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300

@@ -530,3 +530,77 @@ async fn test_process_tool_results_asks_plugins_before_the_follow_up_request() {
 	crate::plugins::end_session("o5-follow-up");
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+// Unchanged plugin context rides on one request only. Attaching it to every
+// follow-up ended each request in a message the next one lacked, so no request
+// extended the one before and prompt caches missed on every call.
+#[tokio::test]
+async fn test_unchanged_plugin_context_rides_on_one_follow_up_only() {
+	use crate::plugins::protocol::event;
+	use crate::plugins::test_support::{connect_stub, StubPlugin};
+
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
+		crate::session::chat::test_support::final_response("first"),
+		crate::session::chat::test_support::final_response("second"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("do the work");
+	session.session.info.name = "context-once".to_string();
+	let stub = StubPlugin::new(&[event::REQUEST_BEFORE])
+		.answer(serde_json::json!({"context": [{"name": "facts", "text": "ONCE-CONTEXT"}]}));
+	connect_stub("context-once", "assistant", std::path::Path::new("."), &stub).await;
+	for id in ["i1", "i2"] {
+		let results = vec![crate::mcp::McpToolResult::success(
+			"view".to_string(),
+			id.to_string(),
+			"body".to_string(),
+		)];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+			.await
+			.expect("follow-up round trip");
+	}
+
+	// Role and text of each message: cache marks may change a message's wire
+	// shape between requests without changing what the model reads.
+	let readable = |message: &serde_json::Value| {
+		let text = match &message["content"] {
+			serde_json::Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str()).collect(),
+			content => content.as_str().unwrap_or_default().to_string(),
+		};
+		(message["role"].as_str().unwrap_or_default().to_string(), text)
+	};
+	let requests = requests.lock().unwrap().clone();
+	assert_eq!(requests.len(), 2);
+	let messages = |index: usize| -> Vec<(String, String)> {
+		requests[index]["messages"]
+			.as_array()
+			.expect("request messages")
+			.iter()
+			.map(readable)
+			.collect()
+	};
+	let (first, second) = (messages(0), messages(1));
+	let carries_context = |(_, text): &(String, String)| text.contains("ONCE-CONTEXT");
+	assert!(
+		first.last().is_some_and(carries_context),
+		"the first follow-up carries the new context"
+	);
+	assert!(
+		!second.iter().any(carries_context),
+		"unchanged context is not attached again"
+	);
+	let carried = first.len() - 1;
+	assert_eq!(
+		second[..carried],
+		first[..carried],
+		"the next request extends the previous one"
+	);
+
+	crate::plugins::end_session("context-once");
+	std::env::remove_var("OLLAMA_API_URL");
+}

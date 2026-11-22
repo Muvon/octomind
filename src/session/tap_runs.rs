@@ -39,6 +39,11 @@ use crate::session::context::SessionId;
 
 const MAX_PENDING_PROMPTS: usize = 32;
 
+/// Why a run saved as running comes back failed when its session is read from
+/// disk: the process that ran it stopped (a restart, or the session unloaded)
+/// before the run finished.
+const INTERRUPTED_ERROR: &str = "interrupted: the process running it stopped before it finished";
+
 pub struct TapRunInput<'a> {
 	pub id: &'a str,
 	pub prompts: mpsc::Receiver<String>,
@@ -223,6 +228,9 @@ struct Registry {
 	jobs: HashMap<SessionId, Vec<TapJob>>,
 	prompts: HashMap<SessionId, HashMap<String, mpsc::Sender<String>>>,
 	websocket: HashMap<SessionId, Option<crate::websocket::run_events::RunEvents>>,
+	/// Runs found cut off when the session was read from disk, waiting for
+	/// `init_for_session` to queue their handbacks once the inbox exists.
+	interrupted: HashMap<SessionId, Vec<TapJobInfo>>,
 }
 
 static REGISTRY: RwLock<Option<Registry>> = RwLock::new(None);
@@ -236,21 +244,73 @@ where
 		jobs: HashMap::new(),
 		prompts: HashMap::new(),
 		websocket: HashMap::new(),
+		interrupted: HashMap::new(),
 	});
 	Some(f(reg))
 }
 
 /// Initialise the per-session bucket. Called from `init_session_services`.
+///
+/// Also hands back the runs `restore_runs` found cut off: the inbox only exists
+/// from `init_session_services` on, so their handbacks are queued here.
 pub fn init_for_session() {
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
 		None => return,
 	};
-	let _ = with_registry(|r| {
+	let interrupted = with_registry(|r| {
 		r.prompts.entry(session_id.clone()).or_default();
 		r.websocket.entry(session_id.clone()).or_default();
-		r.jobs.entry(session_id).or_default();
+		r.jobs.entry(session_id.clone()).or_default();
+		r.interrupted.remove(&session_id).unwrap_or_default()
+	})
+	.unwrap_or_default();
+	for run in interrupted {
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			content: format!(
+				"[Tap-run '{}' ({}) interrupted]\n\n{}, so no reply is coming. Its transcript is kept: \
+				 call tap(action=\"run\", session=\"{}\", prompt=...) to resume it, or finish the task without it.",
+				run.id, run.role, INTERRUPTED_ERROR, run.id
+			),
+			source: crate::session::inbox::InboxSource::TapRun {
+				id: run.id,
+				role: run.role,
+			},
+		});
+	}
+}
+
+/// Put a session's saved runs back into the registry when the session is read
+/// from disk, so `send`, `stop` and resume find them again. A run saved as
+/// running stopped with the process that ran it: it comes back failed, and its
+/// handback waits for `init_for_session`.
+pub fn restore_runs(session_id: &SessionId, runs: &[TapJobInfo]) {
+	let _ = with_registry(|r| {
+		let jobs = r.jobs.entry(session_id.clone()).or_default();
+		for run in runs {
+			// A live run of this session already speaks for itself.
+			if jobs.iter().any(|job| job.id == run.id) {
+				continue;
+			}
+			let mut run = run.clone();
+			if run.status == TapJobStatus::Running {
+				run.status = TapJobStatus::Failed;
+				run.error = Some(INTERRUPTED_ERROR.to_string());
+				r.interrupted.entry(session_id.clone()).or_default().push(run.clone());
+			}
+			jobs.push(TapJob {
+				id: run.id,
+				role: run.role,
+				workdir: run.workdir,
+				started_at: run.started_at,
+				status: Arc::new(RwLock::new(run.status)),
+				error: run.error,
+				cancel_tx: watch::channel(false).0,
+				live: Arc::new(RwLock::new(run.live)),
+			});
+		}
 	});
+	crate::log_debug!("Restored {} tap runs for session '{}'", runs.len(), session_id);
 }
 
 /// Cancel every running job for the session and drop the bucket. Called
@@ -268,6 +328,7 @@ pub fn clear_for_session(session_id: &SessionId) {
 			Some(reg) => {
 				reg.prompts.remove(session_id);
 				reg.websocket.remove(session_id);
+				reg.interrupted.remove(session_id);
 				reg.jobs.remove(session_id)
 			}
 			None => None,

@@ -667,7 +667,7 @@ impl ChatSession {
 						.filter(|content| !content.is_empty())
 						.collect();
 
-					// The one place a session read from disk puts its plan and schedule into the
+					// The one place a session read from disk puts its plan, schedule and tap runs into the
 					// session-scoped stores. Last, so a resume that fails above leaves none behind.
 					if let Some(plan) = plan {
 						crate::mcp::core::plan::core::restore_plan(&chat_session.session.info.name, plan);
@@ -678,6 +678,10 @@ impl ChatSession {
 							entries,
 						);
 					}
+					crate::session::tap_runs::restore_runs(
+						&chat_session.session.info.name,
+						&chat_session.session.info.agent_runs,
+					);
 
 					Ok(chat_session)
 				}

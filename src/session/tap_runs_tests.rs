@@ -340,6 +340,56 @@ async fn registry_is_isolated_by_session() {
 	assert!(visible);
 }
 
+#[tokio::test]
+#[serial]
+async fn restored_runs_can_resume_and_a_cut_off_run_hands_back_once() {
+	let session_id = "tap-runs-restore".to_string();
+	let saved = [
+		run_info("cut-off", TapJobStatus::Running, None, None),
+		run_info("finished", TapJobStatus::Done, None, None),
+	];
+	// The disk load restores before init_session_services creates the inbox.
+	restore_runs(&session_id, &saved);
+	let (cut_off, finished, handback, handed_back_again, resumed) =
+		crate::session::context::with_session_id(session_id.clone(), async {
+			crate::session::inbox::init_inbox_for_session();
+			init_for_session();
+			let handback = crate::session::inbox::drain_inbox_batch();
+			init_for_session();
+			let handed_back_again = crate::session::inbox::has_inbox_messages();
+			let cut_off = find_job("cut-off");
+			let finished = find_job("finished");
+			(
+				cut_off,
+				finished,
+				handback,
+				handed_back_again,
+				resume_run("cut-off").is_ok(),
+			)
+		})
+		.await;
+	crate::session::inbox::clear_inbox_for_session(&session_id);
+	clear_for_session(&session_id);
+
+	let cut_off = cut_off.expect("a cut-off run is back in the registry");
+	assert_eq!(cut_off.status, TapJobStatus::Failed);
+	assert_eq!(cut_off.error.as_deref(), Some(INTERRUPTED_ERROR));
+	assert_eq!(finished.expect("a finished run is back").status, TapJobStatus::Done);
+	assert_eq!(handback.len(), 1, "only the cut-off run hands back");
+	assert!(
+		handback[0].content.contains("'cut-off'"),
+		"got: {}",
+		handback[0].content
+	);
+	assert!(
+		handback[0].content.contains("session=\"cut-off\""),
+		"got: {}",
+		handback[0].content
+	);
+	assert!(!handed_back_again, "a re-init must not hand back twice");
+	assert!(resumed, "a restored run resumes like any finished run");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
 	use crate::websocket::protocol::{RunEvent, RunLogMessage};

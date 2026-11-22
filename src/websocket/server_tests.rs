@@ -1676,7 +1676,7 @@ command = "./definitely-missing-pipe-script.sh"
 	send_json(
 		&mut ws,
 		serde_json::json!({
-			"type": "message", "session_id": session_id, "content": "hello"
+			"type": "message", "session_id": session_id, "content": "hello", "request_id": "pipe-1"
 		}),
 	)
 	.await;
@@ -1690,6 +1690,12 @@ command = "./definitely-missing-pipe-script.sh"
 			.contains("was not found when the session started"),
 		"got: {error}"
 	);
+	assert_eq!(error["request_id"], "pipe-1", "got: {error}");
+	// A failed turn still closes with its cost, after the error.
+	let cost = read_json(&mut ws).await;
+	assert_eq!(cost["type"], "cost", "got: {cost}");
+	assert_eq!(cost["request_id"], "pipe-1", "got: {cost}");
+	assert!(cost.get("cancelled").is_none(), "a failure is not a stop: {cost}");
 
 	crate::session::context::cleanup_session(&session_id);
 }

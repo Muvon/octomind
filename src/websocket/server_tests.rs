@@ -3848,7 +3848,7 @@ async fn pre_user_drain_reports_inbox_and_user_persistence_failures() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn monitor_swallows_an_inbox_batch_it_cannot_persist_and_keeps_the_session() {
+async fn monitor_closes_an_inbox_batch_it_cannot_persist_and_keeps_the_session() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
@@ -3871,9 +3871,22 @@ async fn monitor_swallows_an_inbox_batch_it_cannot_persist_and_keeps_the_session
 	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
 	assert_eq!(injected["content"], "unpersistable monitor work", "got: {injected}");
 
-	// The batch cannot be persisted, so no AI turn may run.
+	// The batch cannot be persisted, so no AI turn runs: the injected turn closes
+	// with its error and then its cost, like every failed turn.
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.starts_with("Error processing injected message"),
+		"got: {error}"
+	);
+	let cost = read_json(&mut ws).await;
+	assert_eq!(cost["type"], "cost", "got: {cost}");
+	assert!(cost.get("cancelled").is_none(), "a failure is not a stop: {cost}");
 	let stray = tokio::time::timeout(Duration::from_millis(500), ws.next()).await;
-	assert!(stray.is_err(), "no frame may follow the failed batch, got: {stray:?}");
+	assert!(stray.is_err(), "no frame may follow the closed turn, got: {stray:?}");
 
 	assert!(
 		!inbox_has_messages(&session_id).await,

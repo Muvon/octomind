@@ -290,6 +290,10 @@ pub struct ChatSession {
 	/// that resumes the agent continues the same task, so it inherits
 	/// eligibility instead of being treated as a control-plane event.
 	pub gate_deferred: bool,
+	/// When this process last told the model the current time. The welcome
+	/// message carries the date the session was created, so a long-lived
+	/// session drifts from it; `None` makes the next turn note the time.
+	pub time_noted_at: Option<chrono::DateTime<chrono::Local>>,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
@@ -393,6 +397,7 @@ impl ChatSession {
 			last_self_report: None,
 			completion_gate_eligible: true,
 			gate_deferred: false,
+			time_noted_at: None,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
 			recalled_refs: Vec::new(),
@@ -597,6 +602,7 @@ impl ChatSession {
 						last_self_report: None,
 						completion_gate_eligible: true,
 						gate_deferred: false,
+						time_noted_at: None,
 						last_self_report_reason: None,
 						last_self_report_handoff: None,
 						recalled_refs: Vec::new(),
@@ -1462,6 +1468,9 @@ impl ChatSession {
 			last_self_report: None,
 			completion_gate_eligible: true,
 			gate_deferred: false,
+			// Tests start with the time already noted, so a turn adds only its own
+			// message; the time-note tests clear this.
+			time_noted_at: Some(chrono::Local::now()),
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
 			recalled_refs: Vec::new(),

@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.72.1] - 2026-11-22
+
+### 📋 Release Summary
+
+MCP task waits no longer wake the model. Conversation compression adjusts its firing line, omits unused schema fields, and stops retrying length-cut responses; condensation and tool flows preserve intent-relevant chunks and requested context. Supervisor checks and verifier diffs now account for task arguments and all mutated paths, while runtime, tool-use, workflow-continuation, and resolution guidance is clarified; post-check stops are accepted and advisories refined.
+
+### 🔧 Improvements & Optimizations
+
+- **compression**: raise default compression threshold `0bc18ecd`
+- **embeddings**: pin embeddings to the updated model revision `a74ebea8`
+- **dependencies**: upgrade octolib to 0.53.1 `bc964a84`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: stop waking the model to wait on MCP tasks `7d729126`
+- **conversation-compression**: raise fire line by a quarter of the room left `412f5e4c`
+- **conversation-compression**: omit unused fields from pact schema `6e74484a`
+- stop retrying length-cut compression responses `5835d8af`
+- **supervisor**: preserve intent-relevant chunks during condensation `74b60538`
+- **supervisor**: align data checks with task and arguments `50d0f1db`
+- preserve requested context across tool and condense flows `c60432a9`
+- clarify compression and resolution guidance `a0c5f110`
+- **supervisor**: clarify request-resolution criteria `ae030ace`
+- **prompts**: clarify runtime and supervisor prompt rules `02ad4da5`
+- **tap**: clarify workflow continuation guidance `e8b1f976`
+- **prompts**: clarify tool-use and verification guidance `84c0376f`
+- **supervisor**: include all mutated paths in verifier diffs `fb3dc9d2`
+- accept post-check stops and refine advisories `dde39d32`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.72.0] - 2026-11-15
 
 ### 📋 Release Summary

@@ -1359,18 +1359,23 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					.await
 					{
 						log_error!("WS monitor: failed to add inbox message: {}", e);
-						// A requested stop closes the turn the injected frames opened.
-						if cancellation.is_cancelled() {
-							let mut cost = crate::session::chat::response::session_cost_payload(
-								&mut chat_session,
-								session_id.clone(),
-							);
-							cost.cancelled = true;
-							emit(&ServerMessage::Cost(cost));
-							server.sessions.lock().await.insert(session_id.clone(), chat_session);
-							return;
+						let cancelled = cancellation.is_cancelled();
+						let error = format!("Error processing injected message: {}", e);
+						if let Err(e) = close_unanswered_turn(
+							&mut chat_session,
+							&session_id,
+							&stream,
+							cancelled,
+							error,
+							None,
+							false,
+						) {
+							log_error!("WS monitor: failed to emit a frame of session {}: {}", session_id, e);
 						}
 						server.sessions.lock().await.insert(session_id.clone(), chat_session);
+						if cancelled {
+							return;
+						}
 						continue;
 					}
 
@@ -1384,17 +1389,23 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
-						if cancellation.is_cancelled() {
-							let mut cost = crate::session::chat::response::session_cost_payload(
-								&mut chat_session,
-								session_id.clone(),
-							);
-							cost.cancelled = true;
-							emit(&ServerMessage::Cost(cost));
-							server.sessions.lock().await.insert(session_id.clone(), chat_session);
-							return;
+						let cancelled = cancellation.is_cancelled();
+						let error = format!("Error processing injected message: {}", e);
+						if let Err(e) = close_unanswered_turn(
+							&mut chat_session,
+							&session_id,
+							&stream,
+							cancelled,
+							error,
+							None,
+							false,
+						) {
+							log_error!("WS monitor: failed to emit a frame of session {}: {}", session_id, e);
 						}
 						server.sessions.lock().await.insert(session_id.clone(), chat_session);
+						if cancelled {
+							return;
+						}
 						continue;
 					}
 
@@ -1413,7 +1424,8 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 						ws_sink,
 					))
 					.await;
-					let turn_succeeded = result.is_ok() && !cancellation.is_cancelled();
+					let cancelled = *cancel_probe.borrow();
+					let turn_succeeded = result.is_ok() && !cancelled;
 
 					if let Err(e) = result {
 						log_debug!("WS monitor: error processing inbox message: {}", e);
@@ -1422,10 +1434,13 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 						// the Cost frame below reads to every client as an ordinary
 						// finished turn — so a handback that failed resolved the chat
 						// with "the agent sent no reply" and left no trace anywhere.
-						emit(&ServerMessage::error(format!(
-							"Error processing injected message: {}",
-							e
-						)));
+						// A requested stop is no failure: the cost's `cancelled` flag says it.
+						if !cancelled {
+							emit(&ServerMessage::error(format!(
+								"Error processing injected message: {}",
+								e
+							)));
+						}
 					}
 
 					// Send cost update after processing.
@@ -1437,7 +1452,7 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					}
 					let mut cost =
 						crate::session::chat::response::session_cost_payload(&mut chat_session, session_id.clone());
-					cost.cancelled = *cancel_probe.borrow();
+					cost.cancelled = cancelled;
 					emit(&ServerMessage::Cost(cost));
 					if turn_succeeded {
 						server.start_keepalive(&chat_session, &config_for_role, &stream);
@@ -2372,15 +2387,14 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 			.await
 			{
 				log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
-				// A requested stop ends the frame; any other failure skips this batch.
+				// A requested stop ends the frame; any other failure closes this
+				// injected turn and the drain goes on.
 				if cancellation.is_cancelled() {
 					drain_stopped = true;
 					break;
 				}
-				stream.emit(&ServerMessage::error(format!(
-					"Error processing injected message: {}",
-					e
-				)))?;
+				let error = format!("Error processing injected message: {}", e);
+				close_unanswered_turn(&mut chat_session, &session_id, &stream, false, error, None, true)?;
 				continue;
 			}
 			// Per-request spending boundary (see handle_user_message).
@@ -2391,10 +2405,8 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 					drain_stopped = true;
 					break;
 				}
-				stream.emit(&ServerMessage::error(format!(
-					"Error processing injected message: {}",
-					e
-				)))?;
+				let error = format!("Error processing injected message: {}", e);
+				close_unanswered_turn(&mut chat_session, &session_id, &stream, false, error, None, true)?;
 				continue;
 			}
 			let sink = StreamSink {
@@ -2418,16 +2430,8 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 			}
 			if let Err(e) = result {
 				log_debug!("Error processing pre-user inbox message (websocket): {}", e);
-				stream.emit(&ServerMessage::error(format!(
-					"Error processing injected message: {}",
-					e
-				)))?;
-				// A failed turn emits no cost of its own; close the injected turn
-				// here so clients see it end before the message's own turn starts.
-				let mut cost =
-					crate::session::chat::response::session_cost_payload(&mut chat_session, session_id.clone());
-				cost.pending_work = true;
-				stream.emit(&ServerMessage::Cost(cost))?;
+				let error = format!("Error processing injected message: {}", e);
+				close_unanswered_turn(&mut chat_session, &session_id, &stream, false, error, None, true)?;
 			}
 		}
 	}
@@ -2604,9 +2608,9 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 				))?;
 			}
 		}
-		// A cancelled turn is a requested stop, not a failure: the cost frame's
-		// `cancelled` flag reports it.
-		Err(e) if cancelled && crate::session::cancellation::is_cancelled(&e) => {
+		// A turn the client asked to stop is no failure, whatever error the stop
+		// caused: the cost frame's `cancelled` flag reports it.
+		Err(_) if cancelled => {
 			log_debug!("Turn cancelled for session {}", session_id);
 		}
 		Err(e) => {
@@ -2620,9 +2624,8 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	Ok(())
 }
 
-/// End a message turn that stopped before its model call. A requested stop
-/// closes it like every stopped turn: a cost frame flagged `cancelled`. Any
-/// other failure is an error frame for the frame's request.
+/// End a message turn that stopped before its model call and store its session
+/// back.
 async fn end_turn_early(
 	server: &ServerState,
 	stream: &SessionStream,
@@ -2633,21 +2636,46 @@ async fn end_turn_early(
 	error: String,
 ) -> Result<()> {
 	let cancelled = *operation_rx.borrow();
-	let frame = if cancelled {
+	if cancelled {
 		log_debug!("Turn cancelled before its model call for session {}", session_id);
-		let mut cost = crate::session::chat::response::session_cost_payload(&mut chat_session, session_id.to_string());
-		cost.cancelled = true;
-		cost.request_id = request_id;
-		ServerMessage::Cost(cost)
-	} else {
-		ServerMessage::error_for_request(error, request_id)
-	};
+	}
+	let closed = close_unanswered_turn(
+		&mut chat_session,
+		session_id,
+		stream,
+		cancelled,
+		error,
+		request_id,
+		false,
+	);
 	server
 		.sessions
 		.lock()
 		.await
 		.insert(session_id.to_string(), chat_session);
-	stream.emit(&frame)
+	closed
+}
+
+/// Close a turn that ended without its answer. Every turn that started ends with
+/// its cost frame. A failure is reported in an error frame first; a requested
+/// stop is no failure and only flags the cost `cancelled`.
+fn close_unanswered_turn(
+	chat_session: &mut ChatSession,
+	session_id: &str,
+	stream: &SessionStream,
+	cancelled: bool,
+	error: String,
+	request_id: Option<String>,
+	pending_work: bool,
+) -> Result<()> {
+	if !cancelled {
+		stream.emit(&ServerMessage::error_for_request(error, request_id.clone()))?;
+	}
+	let mut cost = crate::session::chat::response::session_cost_payload(chat_session, session_id.to_string());
+	cost.cancelled = cancelled;
+	cost.request_id = request_id;
+	cost.pending_work = pending_work;
+	stream.emit(&ServerMessage::Cost(cost))
 }
 
 /// Send a server message through WebSocket

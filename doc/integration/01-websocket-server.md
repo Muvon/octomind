@@ -312,10 +312,11 @@ request or inbox work:
 
 The busy error echoes the rejected frame's `request_id` (omitted when the frame had none).
 
-Wait for completion before sending the next request. AI turns normally end with `cost`; commands end with a `status`
-containing `data`, or an `error`. `done` with arguments sends its command status before the follow-up AI turn, so also
-wait for that turn's `cost`. Errors can end requests without a cost frame. Use separate connections for concurrent work
-on different sessions.
+Wait for completion before sending the next request. AI turns end with `cost`, also when they fail (an `error` frame
+comes first) or are stopped; commands end with a `status` containing `data`, or an `error`. `done` with arguments sends
+its command status before the follow-up AI turn, so also wait for that turn's `cost`. A `message` refused before its
+turn starts (an unknown or busy session, an unreadable attachment) ends with an `error` carrying its `request_id` and no
+cost frame. Use separate connections for concurrent work on different sessions.
 
 A turn does not depend on the connection that started it. If that client disconnects, the turn keeps running and its
 frames are held for the session's next bind (see [Stream position and resume](#stream-position-and-resume)); until it
@@ -341,7 +342,7 @@ ack can report the session's stream position. This confirms receipt, not success
 
 `request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do
 not produce `ack`; they produce an `error` frame instead, except decoded `run_log` requests, whose validation failures
-use a `run_log` reply with an `error` field. If a decoded frame fails protocol validation, its error echoes `request_id`. Some later errors, including unknown-command errors, omit it; busy-session errors echo it. Response streams do not
+use a `run_log` reply with an `error` field. If a decoded frame fails protocol validation, its error echoes `request_id`. Errors of a `message` frame echo it too; some command errors, including unknown-command errors, omit it. Response streams do not
 echo request IDs; the `cost` frame closing a `message` turn does (see Cost tracking).
 
 The `ack` for a `session` frame additionally carries `capabilities`, omitted on other acks:
@@ -561,8 +562,8 @@ Successful replies omit `error`. When neither live data nor a session file exist
 
 `request_id` echoes the id of the client frame whose turn this cost closes. Costs of turns the session runs by itself —
 injected work drained ahead of a `message`, or a background inbox turn — carry none, so a client matches its request's
-end exactly instead of counting cost frames. Every injected turn drained ahead of a message closes with its own cost,
-including one that failed.
+end exactly instead of counting cost frames. Every turn closes with its own cost: one that failed sends its `error` frame
+first, one a `cancel` stopped sends no `error` frame.
 
 **Status:**
 

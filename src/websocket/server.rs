@@ -1359,10 +1359,18 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					.await
 					{
 						log_error!("WS monitor: failed to add inbox message: {}", e);
-						server.sessions.lock().await.insert(session_id.clone(), chat_session);
+						// A requested stop closes the turn the injected frames opened.
 						if cancellation.is_cancelled() {
+							let mut cost = crate::session::chat::response::session_cost_payload(
+								&mut chat_session,
+								session_id.clone(),
+							);
+							cost.cancelled = true;
+							emit(&ServerMessage::Cost(cost));
+							server.sessions.lock().await.insert(session_id.clone(), chat_session);
 							return;
 						}
+						server.sessions.lock().await.insert(session_id.clone(), chat_session);
 						continue;
 					}
 
@@ -1376,10 +1384,17 @@ fn ensure_session_monitor(server: &ServerState, session_id: &str) {
 					.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
-						server.sessions.lock().await.insert(session_id.clone(), chat_session);
 						if cancellation.is_cancelled() {
+							let mut cost = crate::session::chat::response::session_cost_payload(
+								&mut chat_session,
+								session_id.clone(),
+							);
+							cost.cancelled = true;
+							emit(&ServerMessage::Cost(cost));
+							server.sessions.lock().await.insert(session_id.clone(), chat_session);
 							return;
 						}
+						server.sessions.lock().await.insert(session_id.clone(), chat_session);
 						continue;
 					}
 
@@ -2278,7 +2293,11 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	let mut chat_session = match lookup_session(session_id, server).await {
 		Ok(s) => s,
 		Err(error) => {
-			send_message(ws_sender, &ServerMessage::error(error)).await?;
+			send_message(
+				ws_sender,
+				&ServerMessage::error_for_request(error, msg.request_id.clone()),
+			)
+			.await?;
 			return Ok(());
 		}
 	};
@@ -2299,16 +2318,16 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 
 	// From here on every frame is the turn's: it goes to the session's stream.
 	let stream = turn_stream(server, &session_id, ws_sender);
+	// Registered once the session is loaded and owns this connection's output: a
+	// bind that finds a registered turn attaches to it (`lock_for_bind`), so both
+	// must hold by then. From here on a `cancel` reaches this frame, including the
+	// keepalive drain and the request preparation. One channel serves the whole
+	// frame, so a stop stays requested for the injected turns and the user's turn.
+	let cancellation = SessionCancellation::new();
+	let operation_rx = cancellation.operation_receiver();
+	let _turn = TurnGuard::register(server, &session_id, &cancellation);
 	let config_for_role = session_config(&server.config, &server.role_configs, &chat_session).await;
 	server.finish_keepalive(&mut chat_session, true).await;
-	let mut cancellation = SessionCancellation::new();
-	// Registered for the whole frame: the handle follows every new_operation()
-	// below, so a `cancel` stops whichever turn — injected or the user's — runs.
-	let _turn = TurnGuard::register(server, &session_id, &cancellation);
-	// The main-call `operation_rx` is created AFTER the pre-user inbox drain
-	// below: the drain calls new_operation() per message, each dropping the
-	// previous watch sender, so a receiver made here would be closed by the
-	// time the main call runs — which tool execution reads as instant cancel.
 
 	// Process any inbox messages that arrived before this user message
 	// (background agents, scheduled entries, skills) — each gets its own
@@ -2337,7 +2356,7 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 					session_id: session_id.clone(),
 				}))?;
 			}
-			let op_rx = cancellation.new_operation();
+			let op_rx = operation_rx.clone();
 			if let Err(e) = async {
 				crate::session::chat::conversation_compression::compact_before_inbox_batch(
 					&mut chat_session,
@@ -2353,6 +2372,11 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 			.await
 			{
 				log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
+				// A requested stop ends the frame; any other failure skips this batch.
+				if cancellation.is_cancelled() {
+					drain_stopped = true;
+					break;
+				}
 				stream.emit(&ServerMessage::error(format!(
 					"Error processing injected message: {}",
 					e
@@ -2363,6 +2387,10 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 			chat_session.start_request_spending_tracking();
 			if let Err(e) = prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await {
 				log_error!("WebSocket pre-user: failed to prepare API call: {}", e);
+				if cancellation.is_cancelled() {
+					drain_stopped = true;
+					break;
+				}
 				stream.emit(&ServerMessage::error(format!(
 					"Error processing injected message: {}",
 					e
@@ -2412,14 +2440,13 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		cost.request_id = msg.request_id.clone();
 		server.sessions.lock().await.insert(session_id.clone(), chat_session);
 		if let Err(e) = save_result {
-			stream.emit(&ServerMessage::error(format!("Failed to save session: {}", e)))?;
+			stream.emit(&ServerMessage::error_for_request(
+				format!("Failed to save session: {}", e),
+				msg.request_id.clone(),
+			))?;
 		}
 		return stream.emit(&ServerMessage::Cost(cost));
 	}
-
-	// Create the main call's cancellation receiver NOW — after the inbox drain,
-	// so it points at the live watch channel (see note above).
-	let operation_rx = cancellation.new_operation();
 
 	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
@@ -2427,9 +2454,17 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	let processed_input = match run_pipe_if_enabled(&input, &server.role, first_message_processed).await {
 		Ok(input) => input,
 		Err(e) => {
-			server.sessions.lock().await.insert(session_id.clone(), chat_session);
-			stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
-			return Ok(());
+			let error = format!("Error: {}", e);
+			return end_turn_early(
+				server,
+				&stream,
+				chat_session,
+				&session_id,
+				msg.request_id.clone(),
+				&operation_rx,
+				error,
+			)
+			.await;
 		}
 	};
 
@@ -2437,14 +2472,21 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	let processed_input = match chat_session.submit_prompt(processed_input, &input).await {
 		Ok(input) => input,
 		Err(e) => {
-			server.sessions.lock().await.insert(session_id.clone(), chat_session);
-			let text = if e.is::<crate::plugins::PromptBlocked>() {
+			let error = if e.is::<crate::plugins::PromptBlocked>() {
 				e.to_string()
 			} else {
 				format!("Error: {}", e)
 			};
-			stream.emit(&ServerMessage::error(text))?;
-			return Ok(());
+			return end_turn_early(
+				server,
+				&stream,
+				chat_session,
+				&session_id,
+				msg.request_id.clone(),
+				&operation_rx,
+				error,
+			)
+			.await;
 		}
 	};
 
@@ -2457,9 +2499,17 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	)
 	.await
 	{
-		server.sessions.lock().await.insert(session_id.clone(), chat_session);
-		stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
-		return Ok(());
+		let error = format!("Error: {}", e);
+		return end_turn_early(
+			server,
+			&stream,
+			chat_session,
+			&session_id,
+			msg.request_id.clone(),
+			&operation_rx,
+			error,
+		)
+		.await;
 	}
 
 	// Add user message
@@ -2468,9 +2518,17 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		loaded_attachments.images,
 		loaded_attachments.videos,
 	) {
-		server.sessions.lock().await.insert(session_id.clone(), chat_session);
-		stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
-		return Ok(());
+		let error = format!("Error: {}", e);
+		return end_turn_early(
+			server,
+			&stream,
+			chat_session,
+			&session_id,
+			msg.request_id.clone(),
+			&operation_rx,
+			error,
+		)
+		.await;
 	}
 
 	// Reset the per-request spending checkpoint at the request boundary, like the
@@ -2480,9 +2538,17 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 
 	// Prepare for API call
 	if let Err(e) = prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await {
-		server.sessions.lock().await.insert(session_id.clone(), chat_session);
-		stream.emit(&ServerMessage::error(format!("Error: {}", e)))?;
-		return Ok(());
+		let error = format!("Error: {}", e);
+		return end_turn_early(
+			server,
+			&stream,
+			chat_session,
+			&session_id,
+			msg.request_id.clone(),
+			&operation_rx,
+			error,
+		)
+		.await;
 	}
 
 	let ws_sink = StreamSink {
@@ -2521,7 +2587,10 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 	log_debug!("Session stored back in memory: {}", session_id);
 
 	if let Err(e) = save_result {
-		stream.emit(&ServerMessage::error(format!("Failed to save session: {}", e)))?;
+		stream.emit(&ServerMessage::error_for_request(
+			format!("Failed to save session: {}", e),
+			msg.request_id.clone(),
+		))?;
 		stream.emit(&cost_msg)?;
 		return Ok(());
 	}
@@ -2542,13 +2611,43 @@ async fn handle_user_message(msg: UserMessage, ws_sender: &WsSender, server: &Se
 		}
 		Err(e) => {
 			log_error!("API call failed: {}", e);
-			let error = ServerMessage::error(format!("Error: {}", e));
+			let error = ServerMessage::error_for_request(format!("Error: {}", e), msg.request_id.clone());
 			stream.emit(&error)?;
 		}
 	}
 	stream.emit(&cost_msg)?;
 
 	Ok(())
+}
+
+/// End a message turn that stopped before its model call. A requested stop
+/// closes it like every stopped turn: a cost frame flagged `cancelled`. Any
+/// other failure is an error frame for the frame's request.
+async fn end_turn_early(
+	server: &ServerState,
+	stream: &SessionStream,
+	mut chat_session: ChatSession,
+	session_id: &str,
+	request_id: Option<String>,
+	operation_rx: &tokio::sync::watch::Receiver<bool>,
+	error: String,
+) -> Result<()> {
+	let cancelled = *operation_rx.borrow();
+	let frame = if cancelled {
+		log_debug!("Turn cancelled before its model call for session {}", session_id);
+		let mut cost = crate::session::chat::response::session_cost_payload(&mut chat_session, session_id.to_string());
+		cost.cancelled = true;
+		cost.request_id = request_id;
+		ServerMessage::Cost(cost)
+	} else {
+		ServerMessage::error_for_request(error, request_id)
+	};
+	server
+		.sessions
+		.lock()
+		.await
+		.insert(session_id.to_string(), chat_session);
+	stream.emit(&frame)
 }
 
 /// Send a server message through WebSocket

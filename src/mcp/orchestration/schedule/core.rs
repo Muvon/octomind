@@ -181,34 +181,39 @@ pub fn next_due_in() -> Option<std::time::Duration> {
 	get_store().lock().unwrap().next_due_duration()
 }
 
+/// Longest single timer wait before the wall clock is read again. Tokio timers
+/// count monotonic time, which stops while the machine sleeps (macOS sleep, Linux
+/// suspend), so one long wait would fire late by however long the machine slept.
+/// Entry times are wall-clock times, so the wait is cut into steps this long.
+const WALL_CLOCK_RECHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Returns a future that resolves when the next scheduled entry is due.
-/// Returns `futures::future::pending()` (never resolves) when the store is empty —
-/// so the select! arm is a no-op when nothing is scheduled.
+/// Never resolves when the store is empty and there is no session — so the
+/// select! arm is a no-op when nothing is scheduled.
 ///
 /// Also wakes up when schedules change (new/edited/removed) via schedule notify.
 pub async fn next_schedule_sleep() {
 	let session_id = crate::session::context::current_session_id();
-	let duration = get_store().lock().unwrap().next_due_duration();
-
-	match (duration, session_id) {
-		(Some(d), Some(ref sid)) => {
-			// Wait for timer OR schedule change notification
-			let notify = crate::session::context::get_schedule_notify(sid);
-			tokio::select! {
-				_ = tokio::time::sleep(d) => {}
-				_ = notify.notified() => {}
+	loop {
+		let due_in = get_store().lock().unwrap().next_due_duration();
+		match (due_in, session_id.as_ref()) {
+			(Some(d), _) if d.is_zero() => return,
+			(Some(d), Some(sid)) => {
+				// Wait for the next step OR a schedule change notification
+				let notify = crate::session::context::get_schedule_notify(sid);
+				tokio::select! {
+					_ = tokio::time::sleep(d.min(WALL_CLOCK_RECHECK)) => {}
+					_ = notify.notified() => return,
+				}
 			}
-		}
-		(Some(d), None) => {
-			tokio::time::sleep(d).await;
-		}
-		(None, Some(ref sid)) => {
-			// No schedules - wait for notification that one was added
-			let notify = crate::session::context::get_schedule_notify(sid);
-			notify.notified().await;
-		}
-		(None, None) => {
-			futures::future::pending::<()>().await;
+			(Some(d), None) => tokio::time::sleep(d.min(WALL_CLOCK_RECHECK)).await,
+			(None, Some(sid)) => {
+				// No schedules - wait for notification that one was added
+				let notify = crate::session::context::get_schedule_notify(sid);
+				notify.notified().await;
+				return;
+			}
+			(None, None) => futures::future::pending::<()>().await,
 		}
 	}
 }

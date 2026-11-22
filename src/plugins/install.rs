@@ -398,7 +398,8 @@ fn extract_zip(archive: &Path, command: &str, out: &mut std::fs::File) -> Result
 		let entry = zip
 			.by_index(index)
 			.context("The download is not a readable zip archive")?;
-		if !entry_is_program(Path::new(entry.name()), command)? {
+		let name = entry.name().context("The download has an unreadable entry name")?;
+		if !entry_is_program(Path::new(&*name), command)? {
 			continue;
 		}
 		ensure!(entry.is_file(), "'{}' in the archive is not a regular file", command);

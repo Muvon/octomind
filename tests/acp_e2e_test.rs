@@ -297,10 +297,13 @@ async fn test_acp_text_resource_reaches_the_provider_prompt() {
 	{
 		let requests = captured.lock().expect("captured provider requests");
 		assert!(!requests.is_empty(), "a resource-only prompt must reach the provider");
+		// The prompt is the request's last user message: notes such as the
+		// current time come before it.
 		let user = requests[0]["messages"]
 			.as_array()
 			.expect("messages")
 			.iter()
+			.rev()
 			.find(|message| message["role"] == "user")
 			.expect("user prompt");
 		let content = user["content"].as_str().expect("text prompt");

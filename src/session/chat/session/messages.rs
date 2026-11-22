@@ -30,6 +30,10 @@ use std::io::IsTerminal;
 /// `plugin_context:<plugin>:<block>`.
 const PLUGIN_CONTEXT_PREFIX: &str = "plugin_context:";
 
+/// How long a time note stays fresh. Relative schedules ("in 10 minutes") are
+/// computed from it, so the model's clock is off by at most this much.
+const TIME_NOTE_INTERVAL_SECS: i64 = 5 * 60;
+
 impl ChatSession {
 	/// `request.before`: tell the plugins a model request is about to be made
 	/// and apply their answer. Notes stay queued; the caller writes them at its
@@ -311,6 +315,7 @@ impl ChatSession {
 		images: Vec<crate::session::image::ImageAttachment>,
 		videos: Vec<crate::session::video::VideoAttachment>,
 	) -> Result<()> {
+		self.note_current_time()?;
 		// Build the message in full WITHOUT pushing, attach image/video media,
 		// persist it, and only THEN push to the in-memory Vec. This keeps memory
 		// and disk strictly in sync — a persist failure leaves no orphan message.
@@ -402,6 +407,22 @@ impl ChatSession {
 		Ok(())
 	}
 
+	/// Tell the model the current time before a turn's message: on the first
+	/// turn of this process, then whenever the last note is stale. A note of its
+	/// own keeps the time out of the cached system prompt and the user's text.
+	fn note_current_time(&mut self) -> Result<()> {
+		let now = chrono::Local::now();
+		let fresh = self
+			.time_noted_at
+			.is_some_and(|noted| (now - noted).num_seconds().abs() < TIME_NOTE_INTERVAL_SECS);
+		if fresh {
+			return Ok(());
+		}
+		self.add_system_managed_user_message(&format!("Current time: {}", now.format("%Y-%m-%d %H:%M %:z, %A")))?;
+		self.time_noted_at = Some(now);
+		Ok(())
+	}
+
 	// Add a system-managed user-role message. Provider APIs still see role=user,
 	// but task/compression/learning logic must not treat it as a user request —
 	// enforced here: unmarked content is wrapped so it always classifies as
@@ -425,6 +446,7 @@ impl ChatSession {
 	/// response. Unlike supervisor/recall notes injected *inside* a user turn,
 	/// this message does not own the latest human task and cannot complete it.
 	pub fn add_system_managed_turn_message(&mut self, content: &str) -> Result<()> {
+		self.note_current_time()?;
 		self.add_system_managed_user_message(content)?;
 		self.abandon_turn_timing();
 		// A turn that ended with session-owned work in flight hands its open task

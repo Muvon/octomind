@@ -126,6 +126,33 @@ fn deferred_turn_hands_eligibility_to_the_resuming_delivery_once() {
 }
 
 #[test]
+fn first_turn_notes_the_time_and_a_fresh_note_is_not_repeated() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.time_noted_at = None;
+	session.add_user_message("first").unwrap();
+	session.add_user_message("second").unwrap();
+
+	let messages = &session.session.messages;
+	assert_eq!(messages.len(), 3, "one time note, then the two requests");
+	assert!(crate::session::is_system_managed_user_content(&messages[0].content));
+	assert!(messages[0].content.contains("Current time: "));
+	assert_eq!(messages[1].content, "first");
+	assert_eq!(messages[2].content, "second");
+}
+
+#[test]
+fn stale_time_note_is_renewed_before_a_system_managed_turn() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.time_noted_at = Some(chrono::Local::now() - chrono::Duration::seconds(TIME_NOTE_INTERVAL_SECS));
+	session.add_system_managed_turn_message("schedule fired").unwrap();
+
+	let messages = &session.session.messages;
+	assert_eq!(messages.len(), 2, "a fresh time note, then the turn's message");
+	assert!(messages[0].content.contains("Current time: "));
+	assert!(messages[1].content.contains("schedule fired"));
+}
+
+#[test]
 fn assistant_message_tracks_usage_and_cost_from_exchange() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let config = crate::session::chat::test_support::fake_provider_config();

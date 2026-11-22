@@ -286,7 +286,9 @@ fn a_file_edit_is_a_mutation_with_absolute_paths() {
 	assert!(outcome.mutation);
 	assert!(!outcome.free_form);
 	assert_eq!(outcome.command, None);
-	assert_eq!(outcome.paths, vec!["/work/src/a.rs".to_string()]);
+	// The path is joined the way the OS joins it: Windows puts `\` after the directory.
+	let joined = Path::new("/work").join("src/a.rs").to_string_lossy().into_owned();
+	assert_eq!(outcome.paths, vec![joined]);
 }
 
 #[test]
@@ -349,7 +351,8 @@ fn a_script_is_judged_by_the_calls_it_made() {
 	let outcome = script_outcome(vec![edit(false)]);
 	assert!(outcome.mutation);
 	assert!(!outcome.free_form);
-	assert_eq!(outcome.script_calls[0].paths, vec!["/work/a.js".to_string()]);
+	let joined = Path::new("/work").join("a.js").to_string_lossy().into_owned();
+	assert_eq!(outcome.script_calls[0].paths, vec![joined]);
 
 	let outcome = script_outcome(vec![edit(true)]);
 	assert!(!outcome.mutation);

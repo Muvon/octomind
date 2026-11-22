@@ -10,9 +10,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-client-protocol"
-version = "5.4.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5480352b071301dfa2ba98d36d02132ad95c336116b469548feca2f45eaf0b3d"
+checksum = "6720bf8b44f96762eaeb8e5869468a1b6aaec9b679b0862a22d07574ea2d8cb0"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -28,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "5.4.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2ff29b1cc0de7ea56df8971f559741872119ddf8d2245bce264a9fb2f577aaf"
+checksum = "cd38e8caca867056f167b830b2d4093efeb620c59648744c8cae23be39975fe1"
 dependencies = [
  "quote",
  "syn 3.0.10",
@@ -38,12 +38,13 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.19.0"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d27fec60e79b5682eae06f9c94e028eb7043dfc972a4a38e7008701b4408d21"
+checksum = "86bf185eeeb1eb20edcbd01bce65c4c2ed40c2f962e23ed9565db582cde1cc90"
 dependencies = [
  "anyhow",
  "derive_more",
+ "indexmap 2.14.2",
  "serde",
  "serde_json",
  "serde_with",
@@ -2077,9 +2078,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.1"
+version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
 dependencies = [
  "allocator-api2",
  "equivalent",
@@ -2535,7 +2536,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "serde",
  "serde_core",
 ]
@@ -2633,12 +2634,12 @@ dependencies = [
 
 [[package]]
 name = "jiff"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5d126d72eb017f10b302e73bdeca446bea405ee449af4d9e7866d6b082d83e"
+checksum = "c5e77cbfb9fff4798e283c2d69dff39fc2c45e7da017e5ce95b654e46ea41236"
 dependencies = [
  "jiff-core 1.0.1",
- "jiff-static 1.0.1",
+ "jiff-static 1.0.2",
  "jiff-tzdb-platform 1.0.0",
  "log",
  "portable-atomic",
@@ -2679,9 +2680,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0127e9bde3c6130d6169e7d8d68676e4be69c4bf7573c308b6f960a5089c428"
+checksum = "e9067a0b23e5be3147d56b2dcf652b18e6b1364caca93fb157653b6fbcab23a9"
 dependencies = [
  "jiff-core 1.0.1",
  "proc-macro2",
@@ -4390,7 +4391,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
 dependencies = [
  "async-lock",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "relative-path",
  "rquickjs-sys",
 ]
@@ -4745,7 +4746,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.14.2",
  "jiff 0.2.46",
- "jiff 1.0.1",
+ "jiff 1.0.2",
  "schemars 0.9.0",
  "schemars 1.2.3",
  "serde_core",

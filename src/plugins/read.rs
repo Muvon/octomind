@@ -34,6 +34,7 @@ const MISSING: &str = "missing";
 const IGNORED: &str = "ignored";
 const TOO_LARGE: &str = "too_large";
 const NOT_TEXT: &str = "not_text";
+const VERBATIM_PREFIX: &str = r"\\?\";
 
 /// The limits of one plugin: what it declared, capped by the host's own.
 #[derive(Debug, Clone, Copy)]
@@ -226,6 +227,15 @@ fn resolved(base: &Path, relative: &str) -> PathBuf {
 	path
 }
 
+/// `path` without the `\\?\` that `canonicalize` puts before a drive letter on
+/// Windows: the glob crate matches nothing below a path that starts with it.
+fn without_verbatim_prefix(path: &Path) -> PathBuf {
+	match path.to_string_lossy().strip_prefix(VERBATIM_PREFIX) {
+		Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+		_ => path.to_path_buf(),
+	}
+}
+
 /// Where a session's files are: the working directory and the Git top-level above it.
 struct Tree {
 	workdir: PathBuf,
@@ -276,8 +286,8 @@ impl Tree {
 				.map(str::to_string)
 				.collect();
 		}
-		let pattern = format!("{}/{glob}", glob::Pattern::escape(&self.workdir.to_string_lossy()));
-		let workdir = self.workdir.clone();
+		let workdir = without_verbatim_prefix(&self.workdir);
+		let pattern = format!("{}/{glob}", glob::Pattern::escape(&workdir.to_string_lossy()));
 		tokio::task::spawn_blocking(move || {
 			let Ok(paths) = glob::glob(&pattern) else {
 				return Vec::new();

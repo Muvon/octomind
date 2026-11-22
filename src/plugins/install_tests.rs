@@ -363,13 +363,18 @@ async fn an_installed_copy_is_found_without_any_download() {
 	let data = DataDir::new();
 	let plugin_dir = data.path.join("plugins").join("fake");
 	std::fs::create_dir_all(&plugin_dir).unwrap();
-	std::fs::write(plugin_dir.join("octomind-test-installed"), "program").unwrap();
+	// The installed file has the name the OS starts: with `.exe` on Windows.
+	let program = plugin_dir.join(program_file_name(
+		"octomind-test-installed",
+		std::env::consts::EXE_SUFFIX,
+	));
+	std::fs::write(&program, "program").unwrap();
 	// The manifest is unreachable on purpose: a download would fail the test.
 	let plugin = config(&format!(
 		"command = \"octomind-test-installed\"\ninstall_manifest = \"https://127.0.0.1:1/latest.json\"\ninstall_key = \"{OTHER_KEY}\"\n"
 	));
 	let found = resolve_command(&plugin).await.unwrap();
-	assert_eq!(found, plugin_dir.join("octomind-test-installed"));
+	assert_eq!(found, program);
 	assert_eq!(find_installed("octomind-test-installed", "fake").unwrap(), Some(found));
 }
 

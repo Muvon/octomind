@@ -148,6 +148,14 @@ async fn outside_a_repository_the_working_directory_is_the_root_and_globs_use_th
 	assert_eq!(skipped_reason(&texts, "../x"), Some("outside"));
 }
 
+#[test]
+fn only_the_prefix_before_a_drive_letter_is_dropped() {
+	let dropped = |path: &str| without_verbatim_prefix(Path::new(path));
+	assert_eq!(dropped(r"\\?\C:\work"), Path::new(r"C:\work"));
+	assert_eq!(dropped(r"\\?\UNC\server\share"), Path::new(r"\\?\UNC\server\share"));
+	assert_eq!(dropped("/work"), Path::new("/work"));
+}
+
 #[tokio::test]
 async fn the_count_limit_drops_the_files_beyond_it_in_the_order_given() {
 	let dir = repository();

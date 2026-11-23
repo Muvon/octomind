@@ -2975,6 +2975,56 @@ async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 	crate::session::context::cleanup_session(&session_id);
 }
 
+/// An early failure — a message rejected before its model call — closes its
+/// turn with an explicit `pending_work = false`. That must not erase the
+/// flag `session_cost_payload()` computed from live tap runs, jobs and inbox
+/// messages: the client would read a terminal cost frame while a handback
+/// is still coming, disconnect, and miss the result.
+#[tokio::test]
+#[serial_test::serial]
+async fn an_early_close_keeps_the_computed_pending_work() {
+	use crate::session::context::{init_session_services, with_session_id};
+
+	let id = format!("ws-early-close-{}", uuid::Uuid::new_v4());
+	let streams = Streams::default();
+	let stream = streams.open(&id);
+	let (sender, mut receiver) = WsSender::channel();
+	stream.own(&sender);
+
+	with_session_id(id.clone(), async {
+		init_session_services("assistant");
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::TapRun {
+				id: "tap-early-close-1".to_string(),
+				role: "assistant:researcher".to_string(),
+			},
+			content: "a handback still to deliver".to_string(),
+		});
+		assert!(crate::session::has_pending_handback());
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		close_unanswered_turn(&mut session, &id, &stream, false, "boom".into(), None, false)
+			.expect("closing must not fail");
+	})
+	.await;
+
+	let cost = tokio::time::timeout(Duration::from_secs(5), async {
+		loop {
+			let frame = receiver.recv().await.expect("the cost frame must arrive");
+			let text = frame.frame.to_text().expect("frames are text");
+			let value: serde_json::Value = serde_json::from_str(text).expect("frames are JSON");
+			if value["type"] == "cost" {
+				break value;
+			}
+		}
+	})
+	.await
+	.expect("the cost frame must arrive");
+	assert_eq!(cost["pending_work"], true, "the live tap handback must survive the early close: {cost}");
+
+	crate::session::context::cleanup_session(&id);
+}
+
 /// Parks the session's live monitor with a handback still queued: the push wakes
 /// it while the session lock is held (as a client frame would hold it), so it
 /// gives up its pass and parks, and releasing the lock does not wake it again.

@@ -2674,7 +2674,10 @@ fn close_unanswered_turn(
 	let mut cost = crate::session::chat::response::session_cost_payload(chat_session, session_id.to_string());
 	cost.cancelled = cancelled;
 	cost.request_id = request_id;
-	cost.pending_work = pending_work;
+	// The computed flag already covers live tap runs, jobs and inbox
+	// messages; the argument only adds work the caller knows about (the
+	// pre-user drain), never erases what is still in flight.
+	cost.pending_work |= pending_work;
 	stream.emit(&ServerMessage::Cost(cost))
 }
 

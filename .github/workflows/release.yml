@@ -146,9 +146,17 @@ jobs:
               if [ ! -f "$ORT_LIB_LOCATION/_deps/re2-build/libre2.a" ]; then
                 echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
                 rm -rf "$ORT_SRC"
-                git clone --single-branch --branch v1.24.2 --recursive \
-                  https://github.com/microsoft/onnxruntime.git "$ORT_SRC"
+                # github.com/microsoft/onnxruntime returns 404 since 2026-11-17, so
+                # clone a mirror and pin the v1.24.2 commit. The official PyPI
+                # 1.24.2 wheel reports the same commit id (058787ceea).
+                git clone --single-branch --branch v1.24.2 --depth 1 \
+                  https://gitcode.com/gh_mirrors/on/onnxruntime.git "$ORT_SRC"
                 cd "$ORT_SRC"
+                if [ "$(git rev-parse HEAD)" != 058787ceead760166e3c50a0a4cba8a833a6f53f ]; then
+                  echo "onnxruntime mirror: v1.24.2 is not the pinned commit" >&2
+                  exit 1
+                fi
+                git submodule update --init --recursive
                 ./build.sh \
                   --config Release \
                   --build_dir build \
@@ -215,8 +223,16 @@ jobs:
           if [ ! -f "$ORT_LIB_LOCATION/_deps/re2-build/libre2.a" ]; then
             echo "==> Building ONNX Runtime 1.24.2 from source (static, macOS x86_64)"
             rm -rf "$ORT_SRC"
-            git clone --single-branch --branch v1.24.2 --recursive \
-              https://github.com/microsoft/onnxruntime.git "$ORT_SRC"
+            # github.com/microsoft/onnxruntime returns 404 since 2026-11-17, so
+            # clone a mirror and pin the v1.24.2 commit. The official PyPI
+            # 1.24.2 wheel reports the same commit id (058787ceea).
+            git clone --single-branch --branch v1.24.2 --depth 1 \
+              https://gitcode.com/gh_mirrors/on/onnxruntime.git "$ORT_SRC"
+            if [ "$(git -C "$ORT_SRC" rev-parse HEAD)" != 058787ceead760166e3c50a0a4cba8a833a6f53f ]; then
+              echo "onnxruntime mirror: v1.24.2 is not the pinned commit" >&2
+              exit 1
+            fi
+            git -C "$ORT_SRC" submodule update --init --recursive
             (cd "$ORT_SRC" && ./build.sh \
               --config Release \
               --build_dir build \

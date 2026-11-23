@@ -91,7 +91,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 - `cargo fmt --all` clean · `cargo clippy --all-targets --all-features -- -D warnings` exits 0 · `cargo check --all-targets --all-features` exits 0 · `cargo test` passes
 - New `.rs` files carry the Apache header; test bodies in sibling `*_tests.rs`
 - Session-scoped changes: `rg init_session_services` confirms all four entry points covered
-- Config changes: `config-templates/default.toml` updated first
+- Config changes: `config-templates/default.toml` updated first; a key added, renamed, moved or removed also raises `version` there and adds a step to `plan()` in `src/config/migrations.rs`, with a test that upgrades a file of the previous version
 - CLI flag, config key, install or login changes: the skills other LLMs install updated too — `../octomind-plugin/plugins/octomind/skills/cli/SKILL.md` (+ its `../octomind-plugin/evidence/cli.md` rows) and the Hermes skill `skills/octomind/SKILL.md`
 - Every changed line traces to the request — no opportunistic cleanups
 

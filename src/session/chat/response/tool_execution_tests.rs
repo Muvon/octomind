@@ -1638,3 +1638,33 @@ async fn an_event_of_a_chat_session_tells_the_plugin_its_model() {
 
 	assert_eq!(rig.stub.sent(event::TOOL_AFTER)[0]["model"], "openrouter:test-model");
 }
+
+/// A tool call's future passes through these task-local wrappers before it is
+/// spawned. A wrapper that keeps its own copy doubles the future: four of them
+/// in a row grew an 11 KB call to 195 KB, and a tool round overflowed the 1 MiB
+/// main-thread stack on Windows.
+#[test]
+fn test_task_local_wrappers_do_not_copy_the_wrapped_future() {
+	const CALL_STATE_BYTES: usize = 4096;
+	let call = async {
+		let state = [0u8; CALL_STATE_BYTES];
+		tokio::task::yield_now().await;
+		state.len()
+	};
+	let call_bytes = std::mem::size_of_val(&call);
+	assert!(call_bytes >= CALL_STATE_BYTES);
+
+	let wrapped = crate::plugins::payload::with_round_snapshot(None, call);
+	let wrapped = crate::mcp::code::as_script_call(wrapped);
+	let wrapped = crate::session::context::with_session_id("wrapper-size".to_string(), wrapped);
+	let wrapped = crate::mcp::workdir::with_working_directory(std::path::PathBuf::from("."), wrapped);
+	let wrapped = crate::agent::inputs::with_non_interactive(wrapped);
+	let wrapped = crate::session::accounting::background(wrapped);
+	let wrapped = crate::session::accounting::inherit(wrapped);
+
+	let wrapped_bytes = std::mem::size_of_val(&wrapped);
+	assert!(
+		wrapped_bytes < 2 * call_bytes,
+		"the wrappers grew a {call_bytes}-byte future to {wrapped_bytes} bytes"
+	);
+}

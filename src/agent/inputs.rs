@@ -54,11 +54,13 @@ tokio::task_local! {
 /// Run `f` with the non-interactive flag set. Any `prompt_user` call inside
 /// the future returns a `Missing …` error instead of reading stdin. CLI
 /// entry points never call this, so the interactive flow is unchanged.
-pub async fn with_non_interactive<F, T>(f: F) -> T
+///
+/// Not an `async fn`: its state would hold `f` twice, doubling the size of what it wraps.
+pub fn with_non_interactive<F, T>(f: F) -> impl Future<Output = T>
 where
 	F: Future<Output = T>,
 {
-	NON_INTERACTIVE.scope(true, f).await
+	NON_INTERACTIVE.scope(true, f)
 }
 
 /// Set for the whole process by entry points that have no person at stdin:

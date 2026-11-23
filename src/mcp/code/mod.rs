@@ -342,8 +342,10 @@ tokio::task_local! {
 }
 
 /// Run `call`, the execution of a tool call a script makes, marked as such.
-pub(crate) async fn as_script_call<F: std::future::Future>(call: F) -> F::Output {
-	SCRIPT_CALL.scope((), call).await
+///
+/// Not an `async fn`: its state would hold `call` twice, doubling the size of what it wraps.
+pub(crate) fn as_script_call<F: std::future::Future>(call: F) -> impl std::future::Future<Output = F::Output> {
+	SCRIPT_CALL.scope((), call)
 }
 
 /// Whether the tool call being executed is made by a script.

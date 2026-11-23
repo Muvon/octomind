@@ -49,8 +49,13 @@ pub(crate) fn working_directory_override() -> Option<PathBuf> {
 }
 
 /// A deferred call keeps its captured directory without changing the parent session's directory.
-pub(crate) async fn with_working_directory<F: std::future::Future>(path: PathBuf, future: F) -> F::Output {
-	WORKING_DIRECTORY_OVERRIDE.scope(path, future).await
+///
+/// Not an `async fn`: its state would hold `future` twice, doubling the size of what it wraps.
+pub(crate) fn with_working_directory<F: std::future::Future>(
+	path: PathBuf,
+	future: F,
+) -> impl std::future::Future<Output = F::Output> {
+	WORKING_DIRECTORY_OVERRIDE.scope(path, future)
 }
 
 /// Set the session working directory. Call at every session boundary.

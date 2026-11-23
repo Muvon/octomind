@@ -85,12 +85,14 @@ tokio::task_local! {
 ///
 /// This sets up the task-local session ID so that session-scoped state
 /// can be accessed from anywhere in the async call stack.
-pub async fn with_session_id<F, T>(session_id: SessionId, f: F) -> T
+///
+/// Not an `async fn`: its state would hold `f` twice, as the argument and
+/// again inside the scope, so every future wrapped here would double in size.
+pub fn with_session_id<F, T>(session_id: SessionId, f: F) -> impl std::future::Future<Output = T>
 where
 	F: std::future::Future<Output = T>,
 {
-	let id = Arc::new(session_id);
-	CURRENT_SESSION_ID.scope(id, f).await
+	CURRENT_SESSION_ID.scope(Arc::new(session_id), f)
 }
 
 /// Run a blocking closure within a session context, for code that runs on a

@@ -21,6 +21,7 @@ pub mod report;
 use crate::plugins::protocol;
 use crate::session::context::{current_session_id, SessionId};
 use crate::session::Session;
+use futures::future::Either;
 use report::Outcome;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -282,20 +283,21 @@ tokio::task_local! {
 	static DETACHED_USAGE: Arc<Mutex<Bank>>;
 }
 
-pub async fn background<T>(future: impl std::future::Future<Output = T>) -> T {
-	BACKGROUND.scope(true, future).await
+/// Not an `async fn`: its state would hold `future` twice, doubling the size of what it wraps.
+pub fn background<T>(future: impl std::future::Future<Output = T>) -> impl std::future::Future<Output = T> {
+	BACKGROUND.scope(true, future)
 }
 
 /// Awaited tool tasks inherit their caller's mode; spawning them does not detach the turn.
+///
+/// The scopes are nested directly, with no `async` block around them: a block
+/// would hold `future` twice, doubling the size of every spawned tool task.
 pub fn inherit<F: std::future::Future>(future: F) -> impl std::future::Future<Output = F::Output> {
 	let background = BACKGROUND.try_with(|value| *value).unwrap_or(false);
-	let detached = DETACHED_USAGE.try_with(Arc::clone).ok();
-	async move {
-		let future = BACKGROUND.scope(background, future);
-		match detached {
-			Some(bank) => DETACHED_USAGE.scope(bank, future).await,
-			None => future.await,
-		}
+	let future = BACKGROUND.scope(background, future);
+	match DETACHED_USAGE.try_with(Arc::clone) {
+		Ok(bank) => Either::Left(DETACHED_USAGE.scope(bank, future)),
+		Err(_) => Either::Right(future),
 	}
 }
 

@@ -24,6 +24,7 @@ use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use crate::session::chat::session::ChatSession;
 use crate::session::self_report;
 use crate::session::Message;
+use futures::future::Either;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -118,10 +119,15 @@ tokio::task_local! {
 }
 
 /// Run `work`, one tool of a round, with the round's snapshot readable.
-pub async fn with_round_snapshot<F: std::future::Future>(snapshot: Option<Arc<RoundSnapshot>>, work: F) -> F::Output {
+///
+/// Not an `async fn`: its state would hold `work` twice, doubling the size of what it wraps.
+pub fn with_round_snapshot<F: std::future::Future>(
+	snapshot: Option<Arc<RoundSnapshot>>,
+	work: F,
+) -> impl std::future::Future<Output = F::Output> {
 	match snapshot {
-		Some(snapshot) => ROUND_SNAPSHOT.scope(snapshot, work).await,
-		None => work.await,
+		Some(snapshot) => Either::Left(ROUND_SNAPSHOT.scope(snapshot, work)),
+		None => Either::Right(work),
 	}
 }
 

@@ -19,7 +19,6 @@ TARGETS := \
 	aarch64-unknown-linux-gnu \
 	aarch64-unknown-linux-musl \
 	x86_64-pc-windows-gnu \
-	x86_64-apple-darwin \
 	aarch64-apple-darwin
 
 # Linux targets (require cross)
@@ -35,7 +34,6 @@ WINDOWS_TARGETS := \
 
 # macOS targets (native only)
 MACOS_TARGETS := \
-	x86_64-apple-darwin \
 	aarch64-apple-darwin
 
 # Determine host OS for conditional compilation

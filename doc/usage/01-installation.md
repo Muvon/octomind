@@ -63,7 +63,6 @@ contain the matching asset:
 |----------|--------|
 | Linux x86_64 | `x86_64-unknown-linux-musl` |
 | Linux ARM64 | `aarch64-unknown-linux-musl` |
-| macOS Intel | `x86_64-apple-darwin` |
 | macOS Apple Silicon | `aarch64-apple-darwin` |
 | Windows x86_64 | `x86_64-pc-windows-msvc` |
 | Windows ARM64 | `aarch64-pc-windows-msvc` |
@@ -88,7 +87,7 @@ and the main and compression models.
 brew install muvon/tap/octomind
 ```
 
-The [Muvon tap](https://github.com/muvon/homebrew-tap) provides release binaries for Apple Silicon and Intel Macs.
+The [Muvon tap](https://github.com/muvon/homebrew-tap) provides release binaries for Apple Silicon Macs.
 After installation, follow the sign-in and startup steps above.
 
 ### Scoop (Windows)

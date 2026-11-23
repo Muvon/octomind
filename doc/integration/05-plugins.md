@@ -153,7 +153,7 @@ The manifest is a JSON file with a `version` and a `targets` table. Each target 
 ```
 
 Octomind picks the target of the machine: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`,
-`x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc`. The steps, in order:
+`aarch64-apple-darwin`, `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc`. The steps, in order:
 
 1. Fetch the manifest (at most 64 KiB) and its detached signature from the same URL plus `.sig`, standard base64.
 2. Check the signature over the exact manifest bytes with `install_key`. If it does not match, nothing is installed.

@@ -311,7 +311,7 @@ fn this_target() -> Result<&'static str> {
 	Ok(match (os, arm) {
 		("linux", false) => "x86_64-unknown-linux-musl",
 		("linux", true) => "aarch64-unknown-linux-musl",
-		("macos", false) => "x86_64-apple-darwin",
+		("macos", false) => bail!("There are no plugin releases for Macs with an Intel processor"),
 		("macos", true) => "aarch64-apple-darwin",
 		(_, false) => "x86_64-pc-windows-msvc",
 		(_, true) => "aarch64-pc-windows-msvc",

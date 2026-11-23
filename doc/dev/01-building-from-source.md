@@ -143,13 +143,13 @@ pre-commit run --all-files
 
 ## Cross-Compilation
 
-The `Makefile` defines seven build targets and requests static CRT linking using
+The `Makefile` defines six build targets and requests static CRT linking using
 [`cross`](https://github.com/cross-rs/cross):
 
 - `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`
 - `aarch64-unknown-linux-gnu`, `aarch64-unknown-linux-musl`
 - `x86_64-pc-windows-gnu`
-- `x86_64-apple-darwin`, `aarch64-apple-darwin` (built natively on macOS hosts only)
+- `aarch64-apple-darwin` (built natively on macOS hosts only)
 
 ```bash
 # Install Rust targets, cross, and audit tooling

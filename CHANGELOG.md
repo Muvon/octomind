@@ -1,5 +1,90 @@
 # Changelog
 
+## [0.73.0] - 2026-11-23
+
+### 📋 Release Summary
+
+Code mode adds ranked, searchable MCP tools, direct/external script routing, tracked script calls, configurable routing, and nested tool schemas. Plugins support external lifecycle plugins, judgements with result feedback, and session-model events; runtime judgements extend across decisions. Sessions refresh model time context, persist plugin context in history, and restore runtime state from snapshots; fixes address cancellation, scheduling, paths, and compression.
+
+### 🚨 Breaking Changes
+
+- **plugins**: persist plugin context in session history `9d78504c`
+- **config**: ignore deprecated sampling overrides `a167004a`
+- **mcp**: make MCP tool routing configurable by code mode `5d3d14fd`
+- **session**: type restore IDs as SessionId `53f3aa43`
+- **session**: restore runtime state from session snapshots `09533885`
+- **plugins**: support external lifecycle plugins `15817ef3`
+
+### ✨ New Features & Enhancements
+
+- **session**: refresh model time context before turns `f8aa8334`
+- **mcp**: expose ranked tool search in code mode `f2cdbb6b`
+- **mcp**: support searchable tools and tracked script calls `c95aeeab`
+- **mcp**: route direct tool calls through code scripts `d96163c9`
+- **mcp**: show nested schemas in tool call forms `63ce1784`
+- **mcp**: route external MCP calls through code scripts `c1714b2a`
+- **plugins**: include the session model in plugin events `69e32241`
+- **runtime**: extend plugin judgement across runtime decisions `5115b96a`
+- **plugins**: support plugin judgements and result feedback `d6022e14`
+
+### 🔧 Improvements & Optimizations
+
+- **async**: reduce task-local wrapper future size `0bf0a48f`
+- **platform**: drop Intel macOS release support `66295537`
+- **acp**: check the last user message in provider prompts `c31fc66d`
+- **websocket**: assert monitor persistence failures close turns `7d40d486`
+- **dependencies**: use registry octolib 0.55.0 `d92e308a`
+- **config**: update default besydr install settings `a7caada3`
+- **plugins**: test multi-task plans and dropped event timing `baf99c02`
+- **config**: consolidate configuration migration plans `b6f97835`
+- **release**: 0.72.1 `45887c57`
+- **compression**: raise default compression threshold `0bc18ecd`
+- **embeddings**: pin embeddings to the updated model revision `a74ebea8`
+- **dependencies**: upgrade octolib to 0.53.1 `bc964a84`
+
+### 🐛 Bug Fixes & Stability
+
+- **schedule**: reject non-string 'every' in add `4a6eccb0`
+- **workflow**: reject a dynamic parallel match regex with no capture group `736fcf01`
+- **session**: expand ~ in /image and /video paths `868a709d`
+- **acp**: report locations and diffs for per-item edit lists `acca86e4`
+- **plugins**: normalize Windows paths before glob matching `68e17417`
+- **websocket**: close unanswered websocket turns consistently `16b697b4`
+- **tap-runs**: restore tap runs after session reload `9799f7bb`
+- **websocket**: handle pre-model turn cancellation `23b4c7ba`
+- **schedule**: recheck deadlines during long waits `e0742f70`
+- **plugins**: handle unreadable zip entry names `79393ebb`
+- **mcp**: encourage batching independent tool calls `5a25e5cd`
+- **chat**: split multi-file view paths consistently `dda58c01`
+- **tools**: recognize renamed filesystem tools `1cf65b60`
+- **tools**: align tool handling with current tool names `49f49f35`
+- **session**: restore disk-loaded session state `cd8e9ea0`
+- **session**: preserve runtime state when restoring sessions `2d7bebf7`
+- **spill**: use the spill extension for stored results `3c1392c3`
+- **session**: isolate tool execution test sessions `5abaeb28`
+- **session**: stop waking the model to wait on MCP tasks `7d729126`
+- **conversation-compression**: raise fire line by a quarter of the room left `412f5e4c`
+- **conversation-compression**: omit unused fields from pact schema `6e74484a`
+- stop retrying length-cut compression responses `5835d8af`
+- **supervisor**: preserve intent-relevant chunks during condensation `74b60538`
+- **supervisor**: align data checks with task and arguments `50d0f1db`
+- preserve requested context across tool and condense flows `c60432a9`
+- clarify compression and resolution guidance `a0c5f110`
+- **supervisor**: clarify request-resolution criteria `ae030ace`
+- **prompts**: clarify runtime and supervisor prompt rules `02ad4da5`
+- **tap**: clarify workflow continuation guidance `e8b1f976`
+- **prompts**: clarify tool-use and verification guidance `84c0376f`
+- **supervisor**: include all mutated paths in verifier diffs `fb3dc9d2`
+- accept post-check stops and refine advisories `dde39d32`
+
+### 📚 Documentation & Examples
+
+- **config**: document config migration requirements `61cd6148`
+
+### 🔄 Other Changes
+
+8 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.72.1] - 2026-11-22
 
 ### 📋 Release Summary

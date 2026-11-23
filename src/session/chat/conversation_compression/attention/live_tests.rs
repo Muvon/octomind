@@ -27,7 +27,7 @@ fn read_session() -> (Vec<Message>, String) {
 	let mut result = message(
 		"tool",
 		&(1..=80)
-			.map(|n| format!("{n}:ab|needed material {n}"))
+			.map(|n| octolib::utils::line_hash::format_line(n, &format!("needed material {n}")))
 			.collect::<Vec<_>>()
 			.join("\n"),
 	);

@@ -128,14 +128,14 @@ fn made(tool: &str, output: &str, error: bool) -> ScriptCall {
 #[test]
 fn kept_calls_drop_only_unprinted_read_output() {
 	let calls = vec![
-		made("kept_test_view", "1:aa|shown line", false),
-		made("kept_test_view", "1:bb|never printed", false),
-		made("kept_test_text_edit", "+1:cc|edited", false),
+		made("kept_test_view", "1:c0 shown line", false),
+		made("kept_test_view", "1:c8 never printed", false),
+		made("kept_test_text_edit", "+1:e9 edited", false),
 		made("kept_test_view", "no such file", true),
 	];
-	let kept = kept_calls(&calls, "before\n1:aa|shown line\nafter");
+	let kept = kept_calls(&calls, "before\n1:c0 shown line\nafter");
 	let outputs: Vec<&str> = kept.iter().map(|made| made.output.as_str()).collect();
-	assert_eq!(outputs, vec!["1:aa|shown line", "", "+1:cc|edited", "no such file"]);
+	assert_eq!(outputs, vec!["1:c0 shown line", "", "+1:e9 edited", "no such file"]);
 	assert_eq!(kept.len(), calls.len());
 	assert!(kept.iter().all(|made| made.arguments == json!({"path": "a.rs"})));
 }

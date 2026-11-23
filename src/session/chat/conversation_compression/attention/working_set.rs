@@ -16,6 +16,7 @@
 //! Coordinates are transcript-relative; no live artifact is opened during folding.
 
 use super::*;
+use octolib::utils::line_hash::parse_line;
 use regex::Regex;
 use serde_json::Value;
 use std::sync::LazyLock;
@@ -27,8 +28,8 @@ const REGION_CLOSE: &str = "[/ARTIFACT]";
 /// admitting a whole large view because one line was referenced.
 pub(super) const WORKING_WINDOWS: usize = 4;
 
-static NUMBERED: LazyLock<Regex> =
-	LazyLock::new(|| Regex::new(r"^\+?(\d+):(?:[[:xdigit:]]+\|| ?)(.*)$").expect("numbered observation"));
+// A row some tool numbered: an id line, or `12:text` from a search. Never a path header.
+static NUMBERED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\+?\d+:").expect("numbered row"));
 static DELETED: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"^-(\d+):[[:xdigit:]]+(?:\.\.(\d+):[[:xdigit:]]+)?").expect("deleted region"));
 static SHIFT: LazyLock<Regex> =
@@ -185,18 +186,13 @@ fn observations(content: &str, args: &Value) -> Vec<Observation> {
 		let mut numbered = BTreeMap::new();
 		let mut added = BTreeMap::new();
 		for line in &lines {
-			if let Some(c) = NUMBERED.captures(line) {
-				let n: usize = c[1].parse().expect("digits");
-				if n == 0 {
-					continue;
-				}
-				// Hash ranges and omission markers are not observed bytes.
-				if !line.contains('|') {
-					continue;
-				}
-				numbered.insert(n, c[2].to_string());
-				if line.starts_with('+') {
-					added.insert(n, c[2].to_string());
+			// Only a line whose hash is its content's own is observed bytes: hash
+			// ranges, omission markers and numbered rows of other tools are not.
+			let written = line.strip_prefix('+');
+			if let Some((n, text)) = parse_line(written.unwrap_or(line)) {
+				numbered.insert(n, text.to_string());
+				if written.is_some() {
+					added.insert(n, text.to_string());
 				}
 			}
 		}

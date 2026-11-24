@@ -517,6 +517,15 @@ async fn test_mcp_subcommands_read_config() {
 		"/mcp dump",
 		"/mcp validate",
 		"/mcp bogus-subcommand",
+		// Subcommands are matched case-insensitively, like the other commands
+		// (`/context ALL`, `/copy ALL`); the prompt highlighter already colours
+		// them green, so pressing Enter must not reject them.
+		"/mcp LIST",
+		"/mcp Info",
+		"/mcp FULL",
+		"/mcp HEALTH",
+		"/mcp Dump",
+		"/mcp Validate",
 	] {
 		let result = dispatch_rendered(&mut session, &mut config, input)
 			.await

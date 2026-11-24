@@ -23,8 +23,9 @@ pub async fn handle_mcp(config: &Config, role: &str, params: &[&str]) -> Result<
 	// Handle /mcp command for showing MCP server status and tools
 	// Support subcommands: list, info, full
 	let subcommand = if params.is_empty() { "info" } else { params[0] };
+	let subcommand = subcommand.to_ascii_lowercase();
 
-	match subcommand {
+	match subcommand.as_str() {
 		"list" => handle_mcp_list(config, role).await,
 		"info" => handle_mcp_info(config, role).await,
 		"full" => handle_mcp_full(config, role).await,

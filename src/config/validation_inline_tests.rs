@@ -64,6 +64,20 @@ fn markdown_theme_cannot_be_empty() {
 }
 
 #[test]
+fn markdown_theme_rejects_unknown_values_and_accepts_case_insensitive_names() {
+	let mut config = template_config();
+	config.markdown_theme = "solarised".into();
+	let error = config.validate_required_fields().unwrap_err().to_string();
+	assert!(error.contains("solarised"), "got: {error}");
+	for theme in ["Dark", "monokai"] {
+		config.markdown_theme = theme.into();
+		config
+			.validate_required_fields()
+			.unwrap_or_else(|error| panic!("{theme} should be accepted: {error}"));
+	}
+}
+
+#[test]
 fn hooks_validation_accepts_well_formed_hooks() {
 	let mut config = template_config();
 	config.hooks = vec![

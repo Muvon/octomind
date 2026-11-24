@@ -15,6 +15,7 @@
 use anyhow::{anyhow, Result};
 
 use super::Config;
+use crate::session::chat::markdown::MarkdownTheme;
 
 impl Config {
 	/// Validate the configuration for common issues - STRICT MODE
@@ -121,6 +122,13 @@ impl Config {
 	fn validate_required_fields(&self) -> Result<()> {
 		if self.markdown_theme.is_empty() {
 			return Err(anyhow!("Markdown theme field cannot be empty"));
+		}
+		if self.markdown_theme.parse::<MarkdownTheme>().is_err() {
+			return Err(anyhow!(
+				"Invalid Markdown theme '{}'. Valid themes: {}",
+				self.markdown_theme,
+				MarkdownTheme::all_themes().join(", ")
+			));
 		}
 
 		Ok(())

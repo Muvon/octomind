@@ -340,7 +340,7 @@ pub fn init_pool(domain: &str) {
 		}
 	}
 
-	// 2. Universal skill dirs (npx skills) — fallback after taps
+	// 2. Shared agent skill directories, project before global
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in super::skill::universal_skill_dirs(&workdir) {
 		let dir_entries = match std::fs::read_dir(&dir) {

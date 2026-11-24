@@ -160,7 +160,7 @@ Skills are reusable instruction packs. Auto-activation uses declarative `rules:`
 [Skills](../usage/15-skills.md) for full documentation.
 
 Skills are **not tap-only**. They are resolved (first-wins, deduped by name) from, in order: taps, then
-`<workdir>/.agents/skills/`, then `~/.config/agents/skills/`. Agent Plugin skills are searched next, followed by skills
+`<workdir>/.agents/skills/`, then `~/.agents/skills/`. Agent Plugin skills are searched next, followed by skills
 that a plugin such as Besydr generates. Later sources cannot shadow an authored skill already found by name.
 
 A skill may declare `capabilities: [...]` in its frontmatter. Activation loads their servers. Forgetting the skill

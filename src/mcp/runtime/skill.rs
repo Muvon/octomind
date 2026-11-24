@@ -563,27 +563,21 @@ pub fn find_all_skills_with_details() -> Vec<(SkillMeta, PathBuf)> {
 	find_all_skills()
 }
 
-/// Returns universal skill directories used by `npx skills` (the open agent skills ecosystem).
-///
-/// These are scanned AFTER taps, so tap skills take priority on name collisions.
-/// Two locations:
-/// - Project: `<workdir>/.agents/skills/`
-/// - Global: `~/.config/agents/skills/` (xdg-basedir, same as npx skills)
+/// Returns existing shared agent skill directories in precedence order.
+/// `<workdir>/.agents/skills/` comes before `~/.agents/skills/`, so a project's
+/// skill wins over a global one of the same name. Both are scanned after taps.
 pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
 	let mut dirs = Vec::new();
 
-	// Project-level: .agents/skills/ in current workdir
-	let project_skills = workdir.join(".agents").join("skills");
+	let project_skills = workdir.join(".agents/skills");
 	if project_skills.is_dir() {
 		dirs.push(project_skills);
 	}
 
-	// Global: ~/.config/agents/skills/ (xdg-basedir, matching npx skills CLI)
-	let global_skills = dirs::home_dir()
-		.map(|h| h.join(".config").join("agents").join("skills"))
-		.unwrap_or_else(|| PathBuf::from("/dev/null"));
-	if global_skills.is_dir() {
-		dirs.push(global_skills);
+	if let Some(global_skills) = dirs::home_dir().map(|home| home.join(".agents/skills")) {
+		if global_skills.is_dir() {
+			dirs.push(global_skills);
+		}
 	}
 
 	dirs
@@ -641,7 +635,7 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 	}
 
-	// 2. Universal skill dirs (npx skills) — fallback after taps
+	// 2. Shared agent skill directories, project before global
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in universal_skill_dirs(&workdir) {
 		let entries = match std::fs::read_dir(&dir) {
@@ -747,7 +741,7 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		}
 	}
 
-	// 2. Universal skill dirs (npx skills) — fallback after taps
+	// 2. Shared agent skill directories, project before global
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in universal_skill_dirs(&workdir) {
 		let skill_dir = dir.join(name);

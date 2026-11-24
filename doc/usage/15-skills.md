@@ -47,7 +47,7 @@ Octomind discovers skills in this order, with **first-wins** deduplication by fr
 
 1. **Taps** (highest priority) — `<tap>/skills/<name>/SKILL.md`
 2. **Project universal dir** — `<workdir>/.agents/skills/<name>/SKILL.md`
-3. **Global universal dir** — `~/.config/agents/skills/<name>/SKILL.md`
+3. **Global universal dir** — `~/.agents/skills/<name>/SKILL.md`
 4. **Agent plugins** — skills below discovered plugin roots (`plugins/<plugin>/skills/<name>/SKILL.md`)
 5. **Generated evolution skills** — eligible machine-local trial/active artifacts, always lowest authority
 
@@ -232,8 +232,8 @@ octomind run developer
 - Skills are loaded at startup and marked as env-loaded; successful `/done` compression omits their injected blocks,
   while automatic compression preserves active skill blocks
 - Declarative rules are not evaluated for env-loaded skills
-- Each name is validated against available skills across all locations (taps and the universal `.agents/skills` /
-  `~/.config/agents/skills` dirs)
+- Each name is validated against available skills across all locations, including taps and the universal
+  `<workdir>/.agents/skills` and `~/.agents/skills` directories
 - Unknown skill names are skipped with a warning
 - No alias, substring, glob, or semantic lookup is applied to `OCTOMIND_SKILLS`
 - Already-active skills are not re-injected

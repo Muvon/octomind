@@ -714,22 +714,13 @@ mod tests {
 	}
 
 	#[test]
-	fn test_universal_skill_dirs_project_only() {
-		let with_project = tempfile::tempdir().unwrap();
-		fs::create_dir_all(with_project.path().join(".agents/skills")).unwrap();
-		let dirs = universal_skill_dirs(with_project.path());
-		assert!(dirs.contains(&with_project.path().join(".agents/skills")));
+	fn test_universal_skill_dirs_includes_project_directory() {
+		let workdir = tempfile::tempdir().unwrap();
+		let project = workdir.path().join(".agents/skills");
+		assert!(!universal_skill_dirs(workdir.path()).contains(&project));
 
-		let without_project = tempfile::tempdir().unwrap();
-		let dirs = universal_skill_dirs(without_project.path());
-		// The global dir may or may not exist on this machine; when it doesn't,
-		// a project without .agents/skills yields no dirs at all.
-		let global = dirs::home_dir()
-			.map(|h| h.join(".config").join("agents").join("skills"))
-			.unwrap_or_else(|| std::path::PathBuf::from("/dev/null"));
-		if !global.is_dir() {
-			assert!(dirs.is_empty());
-		}
+		fs::create_dir_all(&project).unwrap();
+		assert_eq!(universal_skill_dirs(workdir.path()).first(), Some(&project));
 	}
 	#[test]
 	#[serial_test::serial]
@@ -879,16 +870,21 @@ mod tests {
 	#[cfg(unix)]
 	#[test]
 	#[serial_test::serial]
-	fn test_universal_skill_dirs_includes_global_home_dir() {
+	fn test_universal_skill_dirs_project_before_global() {
 		let _env = EnvGuard::new(&["HOME"]);
 		let home = tempfile::tempdir().unwrap();
-		let global = home.path().join(".config").join("agents").join("skills");
-		fs::create_dir_all(&global).unwrap();
 		std::env::set_var("HOME", home.path());
 
 		let workdir = tempfile::tempdir().unwrap();
-		let dirs = universal_skill_dirs(workdir.path());
-		assert!(dirs.contains(&global), "global skills dir must be listed: {dirs:?}");
+		assert!(universal_skill_dirs(workdir.path()).is_empty());
+
+		let project = workdir.path().join(".agents/skills");
+		fs::create_dir_all(&project).unwrap();
+		assert_eq!(universal_skill_dirs(workdir.path()), vec![project.clone()]);
+
+		let global = home.path().join(".agents/skills");
+		fs::create_dir_all(&global).unwrap();
+		assert_eq!(universal_skill_dirs(workdir.path()), vec![project, global]);
 	}
 
 	#[tokio::test]

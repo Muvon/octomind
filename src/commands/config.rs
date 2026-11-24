@@ -58,19 +58,31 @@ pub struct ConfigArgs {
 	pub markdown_theme: Option<String>,
 
 	/// List all available markdown themes
-	#[arg(long)]
+	#[arg(long, conflicts_with_all = [
+		"model", "api_key", "log_level", "mcp_providers", "mcp_server", "system", "markdown_enable", "markdown_theme",
+		"show", "validate", "upgrade",
+	])]
 	pub list_themes: bool,
 
 	/// Show current configuration values with defaults
-	#[arg(long)]
+	#[arg(long, conflicts_with_all = [
+		"model", "api_key", "log_level", "mcp_providers", "mcp_server", "system", "markdown_enable", "markdown_theme",
+		"list_themes", "validate", "upgrade",
+	])]
 	pub show: bool,
 
 	/// Validate configuration without making changes
-	#[arg(long)]
+	#[arg(long, conflicts_with_all = [
+		"model", "api_key", "log_level", "mcp_providers", "mcp_server", "system", "markdown_enable", "markdown_theme",
+		"list_themes", "show", "upgrade",
+	])]
 	pub validate: bool,
 
 	/// Upgrade config file to latest version
-	#[arg(long)]
+	#[arg(long, conflicts_with_all = [
+		"model", "api_key", "log_level", "mcp_providers", "mcp_server", "system", "markdown_enable", "markdown_theme",
+		"list_themes", "show", "validate",
+	])]
 	pub upgrade: bool,
 }
 

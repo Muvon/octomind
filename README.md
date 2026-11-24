@@ -170,7 +170,7 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | **Roles** | Per-role model, system prompt, and tools | [Roles](doc/usage/06-roles.md) |
 | **Workflows** | Multi-step pipelines, each step with its own model and toolset | [Workflows](doc/usage/09-workflows.md) |
 | **MCP client** | stdio and Streamable HTTP servers, with OAuth; enable/disable servers mid-session | [MCP tools](doc/usage/07-mcp-tools.md) |
-| **Agent Skills** | Standard `SKILL.md` skills from taps, project `.agents/skills/`, and `~/.agents/skills/` in that order. They activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |
+| **Agent Skills** | Standard `SKILL.md` skills from taps, `~/.agents/skills/`, and project `.agents/skills/` in that order. They activate on demand, so your context stays small | [Skills](doc/usage/15-skills.md) |
 | **Local project tools** | Executable scripts in `.agents/tools/` auto-register as tools | [Local tools](doc/usage/17-local-tools.md) |
 | **Plugins & `AGENTS.md`** | Agent Plugins (`plugin.json` + skills + `mcp.json`) from taps, `.agents/plugins/`, or `~/.config/agents/plugins/`; project `AGENTS.md` loads at session start | [Configuration](doc/usage/03-configuration.md) |
 | **Besydr plugin** | Optional plugin that plans, checks completion, condenses tool output and keeps lessons per project and role; octomind runs it, and `enabled = false` turns it off | [Besydr plugin](doc/usage/14-supervisor.md), [Learning](doc/usage/13-learning.md) |

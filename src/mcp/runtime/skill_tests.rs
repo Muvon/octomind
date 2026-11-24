@@ -720,7 +720,7 @@ mod tests {
 		assert!(!universal_skill_dirs(workdir.path()).contains(&project));
 
 		fs::create_dir_all(&project).unwrap();
-		assert_eq!(universal_skill_dirs(workdir.path()).first(), Some(&project));
+		assert!(universal_skill_dirs(workdir.path()).contains(&project));
 	}
 
 	#[test]

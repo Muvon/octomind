@@ -718,7 +718,7 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 	}
 
-	// 2. Shared agent skill directories, project before global
+	// 2. Shared agent skill directories, global before project
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in universal_skill_dirs(&workdir) {
 		let entries = match std::fs::read_dir(&dir) {
@@ -824,7 +824,7 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		}
 	}
 
-	// 2. Shared agent skill directories, project before global
+	// 2. Shared agent skill directories, global before project
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in universal_skill_dirs(&workdir) {
 		let skill_dir = dir.join(name);

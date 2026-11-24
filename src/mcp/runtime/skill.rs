@@ -26,7 +26,10 @@
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 // Thread-local to pass skill content from execute_use(silent=true) to caller.
 thread_local! {
@@ -563,10 +566,72 @@ pub fn find_all_skills_with_details() -> Vec<(SkillMeta, PathBuf)> {
 	find_all_skills()
 }
 
+pub(super) fn migrate_legacy_global_skills(home: &Path) {
+	let legacy = home.join(".config/agents/skills");
+	let entries = match fs::read_dir(&legacy) {
+		Ok(entries) => entries,
+		Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => return,
+		Err(e) => {
+			crate::log_error!("Failed to read legacy skills directory {}: {}", legacy.display(), e);
+			return;
+		}
+	};
+
+	let global = home.join(".agents/skills");
+	if let Err(e) = fs::create_dir_all(&global) {
+		crate::log_error!("Failed to create global skills directory {}: {}", global.display(), e);
+		return;
+	}
+
+	let mut moved = 0;
+	for entry in entries {
+		let entry = match entry {
+			Ok(entry) => entry,
+			Err(e) => {
+				crate::log_error!("Failed to read an entry in legacy skills directory {}: {}", legacy.display(), e);
+				continue;
+			}
+		};
+		let source = entry.path();
+		let destination = global.join(entry.file_name());
+		match fs::symlink_metadata(&destination) {
+			Ok(_) => {
+				crate::log_info!("Keeping legacy skill {} because {} already exists", source.display(), destination.display());
+				continue;
+			}
+			Err(e) if e.kind() == ErrorKind::NotFound => {}
+			Err(e) => {
+				crate::log_error!("Failed to check skill destination {}: {}", destination.display(), e);
+				continue;
+			}
+		}
+		match fs::rename(&source, &destination) {
+			Ok(()) => moved += 1,
+			Err(e) => crate::log_error!("Failed to move legacy skill {} to {}: {}", source.display(), destination.display(), e),
+		}
+	}
+	if let Err(e) = fs::remove_dir(&legacy) {
+		if !matches!(e.kind(), ErrorKind::DirectoryNotEmpty | ErrorKind::NotFound) {
+			crate::log_error!("Failed to remove legacy skills directory {}: {}", legacy.display(), e);
+		}
+	}
+	if moved > 0 {
+		crate::log_info!("Moved {} entries from {} to {}", moved, legacy.display(), global.display());
+	}
+}
+
 /// Returns existing shared agent skill directories in precedence order.
 /// `<workdir>/.agents/skills/` comes before `~/.agents/skills/`, so a project's
 /// skill wins over a global one of the same name. Both are scanned after taps.
 pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
+	static MIGRATE_LEGACY_SKILLS: Once = Once::new();
+	let home = dirs::home_dir();
+	MIGRATE_LEGACY_SKILLS.call_once(|| {
+		if let Some(home) = &home {
+			migrate_legacy_global_skills(home);
+		}
+	});
+
 	let mut dirs = Vec::new();
 
 	let project_skills = workdir.join(".agents/skills");
@@ -574,7 +639,7 @@ pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
 		dirs.push(project_skills);
 	}
 
-	if let Some(global_skills) = dirs::home_dir().map(|home| home.join(".agents/skills")) {
+	if let Some(global_skills) = home.map(|home| home.join(".agents/skills")) {
 		if global_skills.is_dir() {
 			dirs.push(global_skills);
 		}

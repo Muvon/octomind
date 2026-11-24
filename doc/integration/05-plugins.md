@@ -234,7 +234,7 @@ Options, all optional. Without an option the host sends the plain default.
 | `role` | string | The role the session runs. |
 | `workdir` | string | Working directory of the session. |
 | `project` | string | Base name of the repository root, or of the workdir outside a repository. |
-| `git_remote` | string, optional | URL of the `origin` remote, when the workdir has one. |
+| `git_remote` | string, optional | URL of the `origin` remote, when the workdir has one. A login stored in the address is removed: user and password for `http(s)`, the password for other schemes. |
 | `model` | string, optional | The model the agent's requests go to, as `provider:model`. Absent on events sent from places that have no chat session at hand, such as `judge`, `subagent.start` and `subagent.end`. |
 | `messages` | list | Messages added to the session since the previous event this plugin answered. With `messages_reset` it is the full list. Empty on `subagent.start`, `subagent.end` and `judge`, which are sent from places that have no message list; these events do not move the cursor. |
 | `messages_reset` | bool | The host rewrote its history (a compaction, a resume, a rollback). `messages` then replaces everything the plugin holds for this session. |

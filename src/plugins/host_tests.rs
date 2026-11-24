@@ -454,6 +454,32 @@ async fn the_status_plan_and_git_remote_of_the_event_are_sent() {
 	assert!(sent.get("git_remote").is_none());
 }
 
+#[test]
+fn a_login_stored_in_the_git_remote_is_not_sent() {
+	let stripped = |remote: &str| strip_remote_credentials(remote).expect("remote kept");
+	assert_eq!(
+		stripped("https://user:ghp_secret@github.com/o/r.git"),
+		"https://github.com/o/r.git"
+	);
+	// A token alone sits in the user part.
+	assert_eq!(
+		stripped("https://ghp_secret@github.com/o/r.git"),
+		"https://github.com/o/r.git"
+	);
+	// Over ssh the user names the account; only a password is a secret.
+	assert_eq!(
+		stripped("ssh://git:pw@github.com/o/r.git"),
+		"ssh://git@github.com/o/r.git"
+	);
+	for untouched in [
+		"https://github.com/o/r.git",
+		"ssh://git@github.com/o/r.git",
+		"git@github.com:o/r.git",
+	] {
+		assert_eq!(stripped(untouched), untouched);
+	}
+}
+
 #[tokio::test]
 async fn rule_matches_are_drained_into_the_next_event() {
 	let rig = rig(vec![plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]))]).await;

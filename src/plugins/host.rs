@@ -1040,6 +1040,27 @@ async fn deliver<P: Serialize>(
 	serde_json::from_value(value).context("unreadable answer")
 }
 
+/// The remote address as a plugin may see it. A login kept in the address
+/// (`https://user:token@host/...`) stays on this machine. `None` when the login
+/// cannot be removed: sending no remote is safer than sending the secret.
+fn strip_remote_credentials(remote: &str) -> Option<String> {
+	let Ok(mut url) = url::Url::parse(remote) else {
+		// scp-style `git@host:path` is not a URL and has no place for a password.
+		return Some(remote.to_string());
+	};
+	// Over HTTP the user part is often the secret itself (`https://TOKEN@host/...`);
+	// over ssh it only names the account.
+	let drop_user = matches!(url.scheme(), "http" | "https") && !url.username().is_empty();
+	if !drop_user && url.password().is_none() {
+		return Some(remote.to_string());
+	}
+	if drop_user {
+		url.set_username("").ok()?;
+	}
+	url.set_password(None).ok()?;
+	Some(url.into())
+}
+
 async fn read_git_remote(workdir: &Path) -> Option<String> {
 	let output = tokio::process::Command::new("git")
 		.args(["remote", "get-url", "origin"])
@@ -1050,7 +1071,11 @@ async fn read_git_remote(workdir: &Path) -> Option<String> {
 	match tokio::time::timeout(GIT_REMOTE_TIMEOUT, output).await {
 		Ok(Ok(output)) if output.status.success() => {
 			let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
-			(!remote.is_empty()).then_some(remote)
+			if remote.is_empty() {
+				None
+			} else {
+				strip_remote_credentials(&remote)
+			}
 		}
 		Ok(Ok(_)) => None,
 		Ok(Err(error)) => {

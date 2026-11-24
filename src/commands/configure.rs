@@ -14,17 +14,13 @@
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use crossterm::{
-	event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-	terminal,
-};
 use octolib::llm::providers::chatgpt;
 use octolib::llm::{ProviderFactory, ProviderSetupInfo};
+use octolib::terminal::{pick_index, read_secret, Picked};
 use octomind::account;
 use octomind::branding::{icon_beside, name_and_version};
 use octomind::directories::get_config_dir;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
-use octomind::session::picker::{pick_index, Picked};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -480,52 +476,6 @@ fn parse_yes(answer: &str) -> Result<bool> {
 		"" | "y" | "yes" => Ok(true),
 		"n" | "no" => Ok(false),
 		other => bail!("answer y or n, got `{other}`"),
-	}
-}
-
-/// `None` means Esc: back to the provider list.
-fn read_secret(name: &str) -> Result<Option<String>> {
-	terminal::enable_raw_mode()?;
-	let result = prompt_secret(name, &mut io::stderr(), event::read);
-	terminal::disable_raw_mode()?;
-	eprintln!();
-	result
-}
-
-fn prompt_secret(
-	name: &str,
-	output: &mut impl Write,
-	mut read_event: impl FnMut() -> io::Result<Event>,
-) -> Result<Option<String>> {
-	loop {
-		write!(output, "{name} (hidden, Esc to go back): ")?;
-		output.flush()?;
-		let mut value = String::new();
-		loop {
-			if let Event::Key(key) = read_event()? {
-				if key.kind == KeyEventKind::Release {
-					continue;
-				}
-				match key.code {
-					KeyCode::Enter => {
-						if value.trim().is_empty() {
-							write!(output, "\r\n{name}: a non-empty value is required\r\n")?;
-							break;
-						}
-						return Ok(Some(value.trim().to_string()));
-					}
-					KeyCode::Esc => return Ok(None),
-					KeyCode::Char('c' | 'd') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-						bail!("{name}: input cancelled");
-					}
-					KeyCode::Backspace => {
-						value.pop();
-					}
-					KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => value.push(c),
-					_ => {}
-				}
-			}
-		}
 	}
 }
 

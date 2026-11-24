@@ -135,10 +135,12 @@ pub fn get_monitor_function() -> McpFunction {
 		name: "monitor".to_string(),
 		freeform: None,
 		annotations: None,
-		description: r#"Run and manage a long-lived inline shell command that watches an external source and writes new events to stdout. The runtime starts the command once, accumulates stdout, and injects bounded batches into this session at a guarded interval, so the AI reacts to new events without active polling or a recurring schedule.
+		description: r#"Watch a source that keeps producing events (a log file, a directory, a polled API or job status) and get each new event delivered into this session without polling. Not for running work: run commands that do work (builds, tests, scripts, downloads) with the shell tool, which moves a long command to the background after about 10 s, with no deadline, and reports its exit code and output once when it finishes. To follow such a command's progress, have it write to a log file and watch that file here, e.g. `tail -f build.log | grep --line-buffered -E 'error|FAILED|passed'`.
+
+The runtime starts the watcher once, accumulates its stdout, and injects bounded batches into this session at a guarded interval.
 
 Actions:
-- start: launch one inline monitoring command. Required: command. Optional: description, working_directory, flush_interval_seconds, max_batch_bytes, timeout_ms, persistent.
+- start: launch one watcher command. Required: command. Optional: description, working_directory, flush_interval_seconds, max_batch_bytes, timeout_ms, persistent.
 - list: show what is running, to get an ID for stop. Not a way to wait or to check progress, not even once: batches and background task results arrive on their own.
 - stop: cancel one monitor, or one background MCP task (id `mcp-task:...`), by id.
 
@@ -146,7 +148,7 @@ The command runs through `sh -c` in the session working directory. It should rem
 
 flush_interval_seconds defaults to 30 and must be within 5..3600 seconds. max_batch_bytes defaults to 65536 and must be within 1024..1048576 bytes. Out-of-range values are rejected, not clamped. timeout_ms defaults to 600000; set persistent=true for no deadline. Monitors are owned by the current session and stop when it is cleaned up.
 
-On Unix, the deadline kills the watcher and every process it started. Use the shell tool for builds, tests, and other work; it runs long commands in the background without a deadline and reports when they finish."#.to_string(),
+On Unix, the deadline kills the watcher and every process it started."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -157,7 +159,7 @@ On Unix, the deadline kills the watcher and every process it started. Use the sh
 				},
 				"command": {
 					"type": "string",
-					"description": "Inline shell command that stays open and emits new monitoring events on stdout. Required for start."
+					"description": "Watcher command that stays open and prints new events on stdout, e.g. `tail -f <log> | grep --line-buffered <pattern>`. Required for start."
 				},
 				"description": {
 					"type": "string",

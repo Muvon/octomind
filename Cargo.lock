@@ -53,12 +53,12 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.8.12"
+version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+checksum = "0fca89247609239eeb6915e6991111866b92d7b31025e69302bbf430cc4d2c38"
 dependencies = [
  "cfg-if",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "serde",
  "version_check",
@@ -2252,9 +2252,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.12.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
+checksum = "229c6ff5584df4c6becbfe00567128bac768c8cd32ebc8a8366bd81ed072e8f3"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3386,9 +3386,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.55.2"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01c9a0f16f0ffffe56fd378a5669597d6194291ce3c96cbd9b721ff945a0ef2c"
+checksum = "dff9218194a406542f82ee976ab56f4a82d8be81fd5fd1c7d29fbc4061617f2a"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3397,10 +3397,12 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "crossterm",
  "dirs 7.0.0",
  "fastembed",
  "fs4",
  "futures-util",
+ "fuzzy-matcher",
  "hex",
  "hf-hub",
  "hickory-resolver",
@@ -3773,9 +3775,9 @@ dependencies = [
 
 [[package]]
 name = "process-wrap"
-version = "10.0.1"
+version = "10.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f21b97672d2dc848e7b25701ab4535618b92f4861c13cc3f7f7bed52ad3c8da"
+checksum = "89291549ac1d51b93677833a3de18d4ad0bc97b25cbea8a7b3dc5377c3990dab"
 dependencies = [
  "futures",
  "indexmap 2.14.2",

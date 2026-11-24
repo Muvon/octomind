@@ -1,10 +1,9 @@
 # Supervisor: Completion Checks, Planning and Loop Notes Now Come From Besydr
 
-Until configuration version 31, Octomind carried a built-in supervisor: a completion check at the end of each turn, a
-check on tool calls before they run, condensing of long tool output, a plan manager, notes when the agent loops, and
-lessons learned from sessions. That code is no longer part of Octomind. The same work is done by **Besydr**, a separate
-program that Octomind runs as a plugin. This page says how Octomind lists and starts the plugin, what Octomind still does
-by itself, and where the old settings went.
+Octomind no longer has a built-in supervisor: completion checks, tool-call checks, plans, loop notes and lessons now come
+from the Besydr plugin. Until configuration version 31 that work, along with condensing of long tool output, was part of
+Octomind. **Besydr** is a separate program that Octomind runs as a plugin. This page says how Octomind lists and starts
+the plugin, what Octomind still does by itself, and where the old settings went.
 
 ## What a plugin is
 

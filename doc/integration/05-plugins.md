@@ -1,8 +1,8 @@
 # Plugins: Extend the Agent Loop with a Separate Program
 
-A plugin is a separate program that Octomind sends events to and whose answers Octomind applies. Octomind sends one event
-at each fixed point of the agent loop (a session starts, the user sends a prompt, tools are about to run, a turn ends,
-and so on). The plugin answers with effects: text to add to the model's context, a note for the model, a tool call to
+A plugin is a separate program that receives an event at each fixed point of the agent loop and answers with effects
+that Octomind applies. The points are where a session starts, the user sends a prompt, tools are about to run, a turn
+ends, and so on. The effects are: text to add to the model's context, a note for the model, a tool call to
 refuse, a result to replace, a turn to continue, and a few more. A plugin never calls Octomind; it only answers. This
 page is for people who write a plugin. Besydr, the supervisor described in [Supervisor](../usage/14-supervisor.md), is a
 plugin and is the only one a new configuration lists.

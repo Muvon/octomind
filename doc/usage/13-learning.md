@@ -1,7 +1,7 @@
 # Cross-Session Learning: Agent Memory Across Sessions
 
-Cross-session learning stores the corrections and rules you give an agent as lessons, and adds the lessons that fit the
-current request to the agent's context in later sessions. Octomind no longer does this itself. The Besydr plugin
+Cross-session learning stores the corrections and rules you give an agent as lessons, and adds the ones that fit a later
+request to its context. Octomind no longer does this itself. The Besydr plugin
 provides it. This page says how to get it, how to turn it off, and where the settings went.
 
 ## Where it comes from

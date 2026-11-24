@@ -639,8 +639,8 @@ pub(super) fn migrate_legacy_global_skills(home: &Path) {
 }
 
 /// Returns existing shared agent skill directories in precedence order.
-/// `<workdir>/.agents/skills/` comes before `~/.agents/skills/`, so a project's
-/// skill wins over a global one of the same name. Both are scanned after taps.
+/// `~/.agents/skills/` comes before `<workdir>/.agents/skills/`, so a global
+/// skill wins over a project one of the same name. Both are scanned after taps.
 pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
 	static MIGRATE_LEGACY_SKILLS: Once = Once::new();
 	let home = dirs::home_dir();
@@ -652,15 +652,15 @@ pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
 
 	let mut dirs = Vec::new();
 
-	let project_skills = workdir.join(".agents/skills");
-	if project_skills.is_dir() {
-		dirs.push(project_skills);
-	}
-
 	if let Some(global_skills) = home.map(|home| home.join(".agents/skills")) {
 		if global_skills.is_dir() {
 			dirs.push(global_skills);
 		}
+	}
+
+	let project_skills = workdir.join(".agents/skills");
+	if project_skills.is_dir() {
+		dirs.push(project_skills);
 	}
 
 	dirs

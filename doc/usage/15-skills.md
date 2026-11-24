@@ -46,8 +46,8 @@ skill’s instruction body is injected into the session context, giving the AI d
 Octomind discovers skills in this order, with **first-wins** deduplication by frontmatter `name`:
 
 1. **Taps** (highest priority) — `<tap>/skills/<name>/SKILL.md`
-2. **Project universal dir** — `<workdir>/.agents/skills/<name>/SKILL.md`
-3. **Global universal dir** — `~/.agents/skills/<name>/SKILL.md`
+2. **Global universal dir** — `~/.agents/skills/<name>/SKILL.md`
+3. **Project universal dir** — `<workdir>/.agents/skills/<name>/SKILL.md`
 4. **Agent plugins** — skills below discovered plugin roots (`plugins/<plugin>/skills/<name>/SKILL.md`)
 5. **Generated evolution skills** — eligible machine-local trial/active artifacts, always lowest authority
 

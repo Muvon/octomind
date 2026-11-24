@@ -920,7 +920,7 @@ mod tests {
 	#[cfg(unix)]
 	#[test]
 	#[serial_test::serial]
-	fn test_universal_skill_dirs_project_before_global() {
+	fn test_universal_skill_dirs_global_before_project() {
 		let _env = EnvGuard::new(&["HOME"]);
 		let home = tempfile::tempdir().unwrap();
 		std::env::set_var("HOME", home.path());
@@ -934,7 +934,7 @@ mod tests {
 
 		let global = home.path().join(".agents/skills");
 		fs::create_dir_all(&global).unwrap();
-		assert_eq!(universal_skill_dirs(workdir.path()), vec![project, global]);
+		assert_eq!(universal_skill_dirs(workdir.path()), vec![global, project]);
 	}
 
 	#[tokio::test]

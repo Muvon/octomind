@@ -613,7 +613,7 @@ mod tests {
 	// ActivateCheck::matches — filesystem, env, and regex checks
 	// ---------------------------------------------------------------------------
 
-	use crate::mcp::runtime::skill::{universal_skill_dirs, ActivateCheck};
+	use crate::mcp::runtime::skill::{migrate_legacy_global_skills, universal_skill_dirs, ActivateCheck};
 	use crate::session::chat::test_support::EnvGuard;
 
 	#[test]
@@ -722,6 +722,56 @@ mod tests {
 		fs::create_dir_all(&project).unwrap();
 		assert_eq!(universal_skill_dirs(workdir.path()).first(), Some(&project));
 	}
+
+	#[test]
+	fn test_migrate_legacy_global_skills_moves_entries_and_removes_legacy_directory() {
+		let home = tempfile::tempdir().unwrap();
+		let legacy = home.path().join(".config/agents/skills");
+		let global = home.path().join(".agents/skills");
+		for name in ["first-skill", "second-skill"] {
+			let skill = legacy.join(name);
+			fs::create_dir_all(&skill).unwrap();
+			fs::write(skill.join("SKILL.md"), name).unwrap();
+		}
+
+		migrate_legacy_global_skills(home.path());
+
+		for name in ["first-skill", "second-skill"] {
+			assert_eq!(fs::read_to_string(global.join(name).join("SKILL.md")).unwrap(), name);
+		}
+		assert!(!legacy.exists());
+		assert!(legacy.parent().unwrap().is_dir());
+	}
+
+	#[test]
+	fn test_migrate_legacy_global_skills_keeps_conflicting_entry() {
+		let home = tempfile::tempdir().unwrap();
+		let legacy = home.path().join(".config/agents/skills");
+		let global = home.path().join(".agents/skills");
+		let legacy_skill = legacy.join("shared-skill");
+		let global_skill = global.join("shared-skill");
+		fs::create_dir_all(&legacy_skill).unwrap();
+		fs::write(legacy_skill.join("SKILL.md"), "legacy").unwrap();
+		fs::create_dir_all(&global_skill).unwrap();
+		fs::create_dir_all(legacy.join("unique-skill")).unwrap();
+
+		migrate_legacy_global_skills(home.path());
+
+		assert_eq!(fs::read_to_string(legacy_skill.join("SKILL.md")).unwrap(), "legacy");
+		assert_eq!(fs::read_dir(&global_skill).unwrap().count(), 0);
+		assert!(global.join("unique-skill").is_dir());
+		assert!(!legacy.join("unique-skill").exists());
+	}
+
+	#[test]
+	fn test_migrate_legacy_global_skills_without_legacy_directory() {
+		let home = tempfile::tempdir().unwrap();
+
+		migrate_legacy_global_skills(home.path());
+
+		assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+	}
+
 	#[test]
 	#[serial_test::serial]
 	fn test_find_skill_by_name_tap_source_and_name_mismatch() {

@@ -51,6 +51,8 @@ Octomind discovers skills in this order, with **first-wins** deduplication by fr
 4. **Agent plugins** — skills below discovered plugin roots (`plugins/<plugin>/skills/<name>/SKILL.md`)
 5. **Generated evolution skills** — eligible machine-local trial/active artifacts, always lowest authority
 
+The first time Octomind starts, it moves skills from `~/.config/agents/skills/` to `~/.agents/skills/`, leaving any skill whose name already exists there in the old folder and logging the conflict.
+
 A skill pack in either universal directory works without a tap. Plugin skills support listing and manual/env loading,
 but the automatic activation pool currently scans taps, universal directories, and generated bindings only.
 

@@ -588,7 +588,11 @@ pub(super) fn migrate_legacy_global_skills(home: &Path) {
 		let entry = match entry {
 			Ok(entry) => entry,
 			Err(e) => {
-				crate::log_error!("Failed to read an entry in legacy skills directory {}: {}", legacy.display(), e);
+				crate::log_error!(
+					"Failed to read an entry in legacy skills directory {}: {}",
+					legacy.display(),
+					e
+				);
 				continue;
 			}
 		};
@@ -596,7 +600,11 @@ pub(super) fn migrate_legacy_global_skills(home: &Path) {
 		let destination = global.join(entry.file_name());
 		match fs::symlink_metadata(&destination) {
 			Ok(_) => {
-				crate::log_info!("Keeping legacy skill {} because {} already exists", source.display(), destination.display());
+				crate::log_info!(
+					"Keeping legacy skill {} because {} already exists",
+					source.display(),
+					destination.display()
+				);
 				continue;
 			}
 			Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -607,7 +615,12 @@ pub(super) fn migrate_legacy_global_skills(home: &Path) {
 		}
 		match fs::rename(&source, &destination) {
 			Ok(()) => moved += 1,
-			Err(e) => crate::log_error!("Failed to move legacy skill {} to {}: {}", source.display(), destination.display(), e),
+			Err(e) => crate::log_error!(
+				"Failed to move legacy skill {} to {}: {}",
+				source.display(),
+				destination.display(),
+				e
+			),
 		}
 	}
 	if let Err(e) = fs::remove_dir(&legacy) {
@@ -616,7 +629,12 @@ pub(super) fn migrate_legacy_global_skills(home: &Path) {
 		}
 	}
 	if moved > 0 {
-		crate::log_info!("Moved {} entries from {} to {}", moved, legacy.display(), global.display());
+		crate::log_info!(
+			"Moved {} entries from {} to {}",
+			moved,
+			legacy.display(),
+			global.display()
+		);
 	}
 }
 

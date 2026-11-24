@@ -99,6 +99,7 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 			);
 			Some(McpFunction {
 				name,
+				freeform: None,
 				annotations: tool.annotations.clone(),
 				description: tool.description.as_deref().unwrap_or("").to_string(),
 				parameters,

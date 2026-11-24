@@ -88,6 +88,7 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 			.iter()
 			.map(|agent_config| McpFunction {
 				name: format!("agent_{}", agent_config.name),
+				freeform: None,
 				// A delegated agent may change anything its own tools can.
 				annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
 		description: format!(

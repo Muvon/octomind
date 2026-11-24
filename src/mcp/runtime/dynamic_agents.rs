@@ -381,6 +381,7 @@ pub fn clear_all() {
 pub fn get_agent_tool_function() -> McpFunction {
 	McpFunction {
 		name: "agent".to_string(),
+		freeform: None,
 		annotations: None,
 		description: "Manage agents at runtime without editing config. Use when:\n- You need a specialized agent for a specific task\n- You want to test an agent temporarily before adding to config\n- You need different agents for different tasks\n\nIMPORTANT: This is for MANAGING agents (add/list/remove), NOT for executing agents.\nTo execute an agent, use the tool agent_<name> directly after adding it.\n\nActions:\n- list: show currently loaded dynamic agents\n- add: register a new agent config (does NOT enable it yet)\n- enable: enable a registered agent (makes it available for execution)\n- disable: disable an agent (config stays registered)\n- remove: unregister an agent entirely\n\nExample to add: {action: \"add\", name: \"researcher\", system: \"You are a research assistant...\", description: \"Research agent\"}".to_string(),
 		parameters: json!({
@@ -722,6 +723,7 @@ pub fn get_all_functions() -> Vec<McpFunction> {
 		.map(|agent_config| {
 			McpFunction {
 				name: format!("agent_{}", agent_config.name),
+				freeform: None,
 				// A delegated agent may change anything its own tools can.
 				annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
 				description: format!(

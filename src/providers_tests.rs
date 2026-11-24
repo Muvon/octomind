@@ -494,6 +494,57 @@ async fn test_octolib_params_defaults_and_passthrough() {
 }
 
 #[tokio::test]
+async fn test_octolib_params_pass_through_freeform_tool_parameter() {
+	use crate::config::McpServerConfig;
+	use crate::session::context::{
+		cleanup_session, enable_dynamic_server_for_session, register_dynamic_server_for_session, with_session_id,
+	};
+
+	let mut config = test_config();
+	config.mcp.code_mode = true;
+	config
+		.mcp
+		.servers
+		.push(McpServerConfig::builtin("orchestration", 30, vec![]));
+	let session_id = format!("freeform-tool-{}", uuid::Uuid::new_v4());
+	with_session_id(session_id.clone(), async {
+		let server_name = "freeform-test-files";
+		let server = McpServerConfig::http(server_name, "http://127.0.0.1:1", 30, vec![]);
+		register_dynamic_server_for_session(&session_id, server);
+		assert!(enable_dynamic_server_for_session(
+			&session_id,
+			server_name,
+			vec![crate::mcp::McpFunction {
+				name: "freeform_test_read".to_string(),
+				description: "Read a file.".to_string(),
+				parameters: serde_json::json!({"type": "object"}),
+				freeform: None,
+				annotations: None,
+			}],
+		));
+
+		let messages = vec![msg("user", "hi")];
+		let params = ChatCompletionParams::new(&messages, "m", 10, &config)
+			.to_octolib_params("openai")
+			.await
+			.expect("conversion succeeds");
+		let tools = params.tools.expect("MCP tools attached");
+		let code = tools
+			.iter()
+			.find(|tool| tool.name == "code")
+			.expect("code tool attached");
+		let monitor = tools
+			.iter()
+			.find(|tool| tool.name == "monitor")
+			.expect("monitor attached");
+		assert_eq!(code.freeform.as_deref(), Some("script"));
+		assert_eq!(monitor.freeform, None);
+	})
+	.await;
+	cleanup_session(&session_id);
+}
+
+#[tokio::test]
 async fn test_octolib_params_carry_provider_items() {
 	let config = test_config();
 	let items = serde_json::json!([

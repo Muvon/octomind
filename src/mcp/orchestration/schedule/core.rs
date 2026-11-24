@@ -225,6 +225,7 @@ pub async fn next_schedule_sleep() {
 pub fn get_schedule_function() -> McpFunction {
 	McpFunction {
 		name: "schedule".to_string(),
+		freeform: None,
 		annotations: None,
 		description: r#"Schedule either a message to yourself or a direct MCP tool call in the current session — once at a future time, on next idle, or repeatedly. The session stays alive while schedules or their tool executions remain pending; this is session-bound scheduling, not system cron.
 

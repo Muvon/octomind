@@ -30,6 +30,7 @@ fn function(name: &str) -> McpFunction {
 			"properties": { "path": { "type": "string" } },
 			"required": ["path"]
 		}),
+		freeform: None,
 		annotations: None,
 	}
 }
@@ -47,6 +48,23 @@ fn session_tools() -> Vec<(Option<String>, McpFunction)> {
 
 fn names(functions: &[McpFunction]) -> Vec<&str> {
 	functions.iter().map(|function| function.name.as_str()).collect()
+}
+
+#[test]
+fn the_code_tool_exposes_input_only_in_its_json_schema() {
+	let code = get_code_function();
+	assert_eq!(code.freeform.as_deref(), Some("script"));
+	assert_eq!(code.parameters["required"], json!(["script"]));
+	assert_eq!(code.parameters["additionalProperties"], json!(false));
+	let properties = code.parameters["properties"].as_object().expect("parameter properties");
+	assert_eq!(properties.len(), 2);
+	assert_eq!(properties["script"]["type"], json!("string"));
+	assert_eq!(properties["input"]["type"], json!("object"));
+	assert!(!code.description.contains("`input`"));
+	assert_eq!(
+		properties["input"]["description"],
+		json!("`input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`.")
+	);
 }
 
 #[test]

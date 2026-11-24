@@ -65,6 +65,7 @@ pub fn get_all_functions() -> Vec<McpFunction> {
     vec![McpFunction {
         name: "text_length".to_string(),
         description: "Count Unicode scalar values in a non-empty string.".to_string(),
+        freeform: None,
         parameters: json!({
             "type": "object",
             "properties": {

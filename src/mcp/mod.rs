@@ -237,6 +237,9 @@ pub struct McpFunction {
 	pub name: String,
 	pub description: String,
 	pub parameters: Value,
+	/// String parameter that carries the entire input on freeform-capable providers.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub freeform: Option<String>,
 	/// MCP tool annotations. External servers send theirs; builtin, dynamic and
 	/// local tools declare them in code. Only `readOnlyHint` drives behaviour
 	/// (mutation classification, see `tool_shape::is_mutation_call`).

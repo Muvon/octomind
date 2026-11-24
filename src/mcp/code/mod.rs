@@ -80,7 +80,6 @@ const DESCRIPTION: &str = "Run a script that calls the tools listed under \"Tool
 - A tool is an async function that takes one object of arguments. Call it by the name written in the list and `await` it. It resolves to the tool's text output (use `JSON.parse` when that text is JSON), or to a value of the type the list shows after `->`. A tool that fails throws an `Error` carrying the tool's message.\n\
 - The value of the last expression, or of `return`, is the result. `print(...)` adds lines to it.\n\
 - `help(name)` prints a tool's full description and arguments when given a name from the list, and every tool of a server with a summary when given only the part before the dot. Read it before the first use of a tool whose arguments the list does not make obvious.\n\
-- `input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`.\n\
 - Before it runs, the script is type-checked in strict mode against the tool signatures. An unknown tool, a wrong or missing argument, a missing `await`, or a text result used as a list rejects the whole script, and no tool is called. Strict mode also wants a type on every parameter of a function you write: `(path: string) => ...`.\n\
 - No imports, files or network: tools are the only way out. `sleep(ms)` waits.";
 
@@ -99,12 +98,13 @@ pub fn get_code_function() -> McpFunction {
 				},
 				"input": {
 					"type": "object",
-					"description": "Data for the script, readable there as `input`."
+					"description": "`input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`."
 				}
 			},
 			"required": ["script"],
 			"additionalProperties": false
 		}),
+		freeform: Some("script".to_string()),
 		annotations: None,
 	}
 }
@@ -125,6 +125,7 @@ pub fn get_search_function() -> McpFunction {
 			"required": ["query"],
 			"additionalProperties": false
 		}),
+		freeform: None,
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(true).open_world(false)),
 	}
 }

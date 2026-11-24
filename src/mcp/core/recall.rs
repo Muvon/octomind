@@ -44,6 +44,7 @@ pub const RECALL_TOOL_NAME: &str = "recall";
 pub fn get_recall_function() -> McpFunction {
 	McpFunction {
 		name: RECALL_TOOL_NAME.to_string(),
+		freeform: None,
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(true).open_world(false)),
 		description: "Retrieve the verbatim archived messages behind compressed-context block IDs.
 

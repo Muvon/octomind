@@ -210,6 +210,13 @@ async fn input_passes_text_without_javascript_quoting() {
 }
 
 #[tokio::test]
+async fn omitted_input_is_undefined() {
+	let (run, _) = run_script("return input === undefined ? 'undefined' : 'defined'", Value::Null).await;
+	assert_eq!(run.error, None);
+	assert_eq!(run.output, "undefined");
+}
+
+#[tokio::test]
 async fn help_prints_signatures() {
 	let (run, _) = run_script("help('files')", Value::Null).await;
 	assert_eq!(run.error, None);

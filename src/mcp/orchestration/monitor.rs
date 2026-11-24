@@ -133,6 +133,7 @@ pub fn has_running_monitors() -> bool {
 pub fn get_monitor_function() -> McpFunction {
 	McpFunction {
 		name: "monitor".to_string(),
+		freeform: None,
 		annotations: None,
 		description: r#"Run and manage a long-lived inline shell command that watches an external source and writes new events to stdout. The runtime starts the command once, accumulates stdout, and injects bounded batches into this session at a guarded interval, so the AI reacts to new events without active polling or a recurring schedule.
 
@@ -143,7 +144,9 @@ Actions:
 
 The command runs through `sh -c` in the session working directory. It should remain running, write event text to stdout as events arrive, and use stderr for diagnostics. Empty intervals produce no turn. Output is capped per batch; excess bytes are reported as omitted rather than growing memory. A pending delivery from the same monitor is coalesced and bounded. Non-zero exit, I/O failure, or an unexpected clean exit is injected once as terminal status; monitors are never auto-restarted, preventing broken-command failure loops.
 
-flush_interval_seconds defaults to 30 and must be within 5..3600 seconds. max_batch_bytes defaults to 65536 and must be within 1024..1048576 bytes. Out-of-range values are rejected, not clamped. timeout_ms defaults to 600000; set persistent=true for no deadline. Monitors are owned by the current session and stop when it is cleaned up."#.to_string(),
+flush_interval_seconds defaults to 30 and must be within 5..3600 seconds. max_batch_bytes defaults to 65536 and must be within 1024..1048576 bytes. Out-of-range values are rejected, not clamped. timeout_ms defaults to 600000; set persistent=true for no deadline. Monitors are owned by the current session and stop when it is cleaned up.
+
+On Unix, the deadline kills the watcher and every process it started. Use the shell tool for builds, tests, and other work; it runs long commands in the background without a deadline and reports when they finish."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -183,7 +186,7 @@ flush_interval_seconds defaults to 30 and must be within 5..3600 seconds. max_ba
 					"minimum": MIN_TIMEOUT_MS,
 					"maximum": MAX_TIMEOUT_MS,
 					"default": DEFAULT_TIMEOUT_MS,
-					"description": "Maximum monitor lifetime in milliseconds unless persistent is true."
+					"description": "Maximum monitor lifetime in milliseconds (unless persistent is true), after which the command and, on Unix, its descendants are killed."
 				},
 				"persistent": {
 					"type": "boolean",
@@ -437,8 +440,12 @@ async fn start_monitor(session_id: SessionId, spec: MonitorSpec, flush_interval:
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped())
 		.kill_on_drop(true);
+	#[cfg(unix)]
+	std::os::unix::process::CommandExt::process_group(command.as_std_mut(), 0);
 	crate::mcp::process::run_as_workload(command.as_std_mut());
 	let mut child = command.spawn()?;
+	#[cfg(unix)]
+	let pgid = child.id().expect("newly spawned monitor has a pid") as libc::pid_t;
 	let stdout = child
 		.stdout
 		.take()
@@ -460,7 +467,13 @@ async fn start_monitor(session_id: SessionId, spec: MonitorSpec, flush_interval:
 		started_at: SystemTime::now(),
 		cancel_tx,
 	};
-	register_monitor(&session_id, job)?;
+	if let Err(error) = register_monitor(&session_id, job) {
+		#[cfg(unix)]
+		if let Err(cleanup_error) = terminate_monitor_group(&mut child, pgid).await {
+			crate::log_error!("Monitor [{}] cleanup failed: {}", id, cleanup_error);
+		}
+		return Err(error);
+	}
 
 	let task_id = id.clone();
 	tokio::spawn(async move {
@@ -472,6 +485,8 @@ async fn start_monitor(session_id: SessionId, spec: MonitorSpec, flush_interval:
 			flush_interval,
 			spec.timeout_ms.map(Duration::from_millis),
 			child,
+			#[cfg(unix)]
+			pgid,
 			stdout,
 			stderr,
 			cancel_rx,
@@ -490,6 +505,7 @@ async fn run_monitor(
 	flush_interval: Duration,
 	max_runtime: Option<Duration>,
 	mut child: tokio::process::Child,
+	#[cfg(unix)] pgid: libc::pid_t,
 	mut stdout: ChildStdout,
 	mut stderr: ChildStderr,
 	mut cancel_rx: watch::Receiver<bool>,
@@ -515,8 +531,11 @@ async fn run_monitor(
 			biased;
 			changed = cancel_rx.changed() => {
 				if changed.is_err() || *cancel_rx.borrow() {
-					let _ = child.kill().await;
-					let _ = child.wait().await;
+					#[cfg(not(unix))]
+					{
+						let _ = child.kill().await;
+						let _ = child.wait().await;
+					}
 					break MonitorOutcome::Stopped;
 				}
 			}
@@ -524,8 +543,11 @@ async fn run_monitor(
 				flush_batch(&session_id, &id, &description, &mut output, max_batch_bytes, None);
 			}
 			_ = &mut deadline => {
-				let _ = child.kill().await;
-				let _ = child.wait().await;
+				#[cfg(not(unix))]
+				{
+					let _ = child.kill().await;
+					let _ = child.wait().await;
+				}
 				break MonitorOutcome::TimedOut;
 			}
 			status = child.wait() => {
@@ -539,8 +561,11 @@ async fn run_monitor(
 					Ok(0) => stdout_closed = true,
 					Ok(count) => output.push(&stdout_chunk[..count]),
 					Err(error) => {
-						let _ = child.kill().await;
-						let _ = child.wait().await;
+						#[cfg(not(unix))]
+						{
+							let _ = child.kill().await;
+							let _ = child.wait().await;
+						}
 						break MonitorOutcome::Failed(format!("failed reading stdout: {error}"));
 					}
 				}
@@ -556,6 +581,12 @@ async fn run_monitor(
 				}
 			}
 		}
+	};
+
+	#[cfg(unix)]
+	let outcome = match terminate_monitor_group(&mut child, pgid).await {
+		Ok(()) => outcome,
+		Err(error) => MonitorOutcome::Failed(format!("failed cleaning up command process group: {error}")),
 	};
 
 	// The child may exit while bytes remain buffered in its pipes. Drain them
@@ -588,6 +619,20 @@ async fn run_monitor(
 		);
 	}
 	remove_monitor(&session_id, &id);
+}
+
+#[cfg(unix)]
+async fn terminate_monitor_group(child: &mut tokio::process::Child, pgid: libc::pid_t) -> std::io::Result<()> {
+	// SAFETY: the PID captured at spawn identifies the child's own process group,
+	// which can outlive the shell that led it.
+	if unsafe { libc::killpg(pgid, libc::SIGKILL) } == -1 {
+		let error = std::io::Error::last_os_error();
+		if error.raw_os_error() != Some(libc::ESRCH) {
+			return Err(error);
+		}
+	}
+	child.wait().await?;
+	Ok(())
 }
 
 async fn drain_reader<R: AsyncRead + Unpin>(reader: &mut R, buffer: &mut BoundedBuffer) {

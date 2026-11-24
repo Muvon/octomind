@@ -287,6 +287,7 @@ async fn test_disable_via_command_flips_enabled_and_empties_functions() {
 		"__dyntest_disable".to_string(),
 		vec![McpFunction {
 			name: "__dyntest_disable_tool".to_string(),
+			freeform: None,
 			annotations: None,
 			description: String::new(),
 			parameters: serde_json::json!({}),
@@ -468,6 +469,7 @@ async fn test_tool_name_lookups_in_cli_mode() {
 		"__dyntest_lookup".to_string(),
 		vec![McpFunction {
 			name: "__dyntest_lookup_tool".to_string(),
+			freeform: None,
 			annotations: None,
 			description: String::new(),
 			parameters: serde_json::json!({}),

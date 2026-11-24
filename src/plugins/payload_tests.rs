@@ -481,6 +481,7 @@ fn a_tool_function_becomes_a_tool_info_with_its_read_only_hint() {
 		name: "payload_info".to_string(),
 		description: "Reads a thing".to_string(),
 		parameters: json!({"type": "object"}),
+		freeform: None,
 		annotations: None,
 	};
 

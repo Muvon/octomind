@@ -347,6 +347,7 @@ impl<'a> ChatCompletionParams<'a> {
 						name: f.name,
 						description: f.description,
 						parameters: f.parameters,
+						freeform: f.freeform,
 						cache_control: None, // Will be set below if needed
 					})
 					.collect();

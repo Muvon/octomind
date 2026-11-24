@@ -64,6 +64,7 @@ fn tool_call(name: &str, params: serde_json::Value) -> McpToolCall {
 fn fn_def(name: &str) -> McpFunction {
 	McpFunction {
 		name: name.to_string(),
+		freeform: None,
 		annotations: None,
 		description: format!("description for {name}"),
 		parameters: json!({"type": "object"}),

@@ -3020,7 +3020,10 @@ async fn an_early_close_keeps_the_computed_pending_work() {
 	})
 	.await
 	.expect("the cost frame must arrive");
-	assert_eq!(cost["pending_work"], true, "the live tap handback must survive the early close: {cost}");
+	assert_eq!(
+		cost["pending_work"], true,
+		"the live tap handback must survive the early close: {cost}"
+	);
 
 	crate::session::context::cleanup_session(&id);
 }

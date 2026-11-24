@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.73.2] - 2026-11-24
+
+### 📋 Release Summary
+
+Agent skill lookup now searches global skills before project skills. Plugin remotes are sanitized, and legacy skills are migrated.
+
+### ✨ New Features & Enhancements
+
+- **skill**: search global agent skills before project skills `df73d07c`
+
+### 🔧 Improvements & Optimizations
+
+- **skills**: cover legacy skill migration behavior `764b84ee`
+
+### 🐛 Bug Fixes & Stability
+
+- sanitize plugin remotes and migrate legacy skills `c0b38206`
+
+### 📚 Documentation & Examples
+
+- **docs**: clarify plugin and supervisor descriptions `6a4c1d70`
+
 ## [0.73.1] - 2026-11-24
 
 ### 📋 Release Summary

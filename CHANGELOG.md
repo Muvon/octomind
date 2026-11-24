@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.73.1] - 2026-11-24
+
+### 📋 Release Summary
+
+MCP tools now support freeform parameters. Pending work is preserved when closing an unanswered turn, and line hashes separated by spaces are parsed correctly.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: support freeform MCP tool parameters `e5239b66`
+
+### 🔧 Improvements & Optimizations
+
+- **monitor**: clarify watcher command guidance `43a7e44c`
+- **websocket**: format pending-work assertion `88f71bf5`
+- **terminal**: use octolib terminal utilities `7e6a61cb`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: keep pending_work when closing an unanswered turn `0921c34b`
+- **line-format**: parse space-delimited line hashes `818d0f19`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.73.0] - 2026-11-23
 
 ### 📋 Release Summary

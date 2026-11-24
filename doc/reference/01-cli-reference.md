@@ -147,8 +147,8 @@ runtime — API keys can never be stored in the config file for security reasons
 instead, using the credential example in [Environment Variables](04-environment-variables.md). See [Environment
 Variables](04-environment-variables.md) for credential variables.
 
-Inspection precedence is `--list-themes`, `--show`, `--validate`, then `--upgrade`; the first matching mode returns
-before mutations (including the `--api-key` rejection). Value options take one value. `--markdown-enable` requires
+`--list-themes`, `--show`, `--validate` and `--upgrade` run alone: combining one with another of them or with a
+mutating flag (including `--api-key`) is rejected as a usage error. Value options take one value. `--markdown-enable` requires
 `true` or `false`; `--system default` clears the legacy prompt.
 
 ```bash

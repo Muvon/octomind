@@ -20,6 +20,7 @@
 
 use super::*;
 use crate::commands::test_support::EnvGuard;
+use clap::Parser;
 use octomind::config::LogLevel;
 use serial_test::serial;
 use std::path::PathBuf;
@@ -93,6 +94,35 @@ fn test_validate_template_config() {
 	let mut a = args();
 	a.validate = true;
 	execute(&a, template_config()).expect("template config must validate");
+}
+
+#[derive(clap::Parser)]
+struct Cli {
+	#[command(flatten)]
+	args: ConfigArgs,
+}
+
+#[test]
+fn test_read_only_flags_reject_other_flags() {
+	for argv in [
+		&["octomind", "--show", "--model", "a:b"][..],
+		&["octomind", "--validate", "--log-level", "info"],
+		&["octomind", "--list-themes", "--markdown-theme", "dark"],
+		&["octomind", "--upgrade", "--mcp-providers", "core"],
+		&["octomind", "--show", "--validate"],
+	] {
+		let err = Cli::try_parse_from(argv)
+			.err()
+			.unwrap_or_else(|| panic!("{argv:?} must be rejected"));
+		assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict, "{argv:?}");
+	}
+}
+
+#[test]
+fn test_read_only_flags_parse_alone() {
+	for flag in ["--show", "--validate", "--list-themes", "--upgrade"] {
+		Cli::try_parse_from(["octomind", flag]).unwrap_or_else(|e| panic!("{flag} alone must parse: {e}"));
+	}
 }
 
 #[test]

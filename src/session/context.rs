@@ -994,6 +994,35 @@ pub fn clear_job_manager_for_session(session_id: &SessionId) {
 /// Each entry is the skill name that has been injected into context via `skill(use)`.
 static ACTIVE_SKILLS: RwLock<Option<HashMap<SessionId, Vec<String>>>> = RwLock::new(None);
 
+// Server-qualified skill reference -> verified manifest in the calling session.
+static REMOTE_SKILL_MANIFESTS: RwLock<Option<HashMap<SessionId, HashMap<String, String>>>> = RwLock::new(None);
+
+pub(crate) fn record_remote_skill_manifest(session_id: &SessionId, skill: String, manifest: String) {
+	REMOTE_SKILL_MANIFESTS
+		.write()
+		.unwrap()
+		.get_or_insert_with(HashMap::new)
+		.entry(session_id.clone())
+		.or_default()
+		.insert(skill, manifest);
+}
+
+pub(crate) fn has_remote_skill_manifest(session_id: &SessionId, skill: &str, manifest: &str) -> bool {
+	REMOTE_SKILL_MANIFESTS
+		.read()
+		.unwrap()
+		.as_ref()
+		.and_then(|sessions| sessions.get(session_id))
+		.and_then(|skills| skills.get(skill))
+		.is_some_and(|approved| approved == manifest)
+}
+
+fn clear_remote_skill_manifests(session_id: &SessionId) {
+	if let Some(sessions) = REMOTE_SKILL_MANIFESTS.write().unwrap().as_mut() {
+		sessions.remove(session_id);
+	}
+}
+
 /// Register a skill as active for a session.
 pub fn add_active_skill(session_id: &SessionId, skill_name: &str) {
 	let mut guard = ACTIVE_SKILLS.write().unwrap();
@@ -1194,6 +1223,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::mcp::runtime::capability::clear_session_capabilities(session_id);
 	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
+	clear_remote_skill_manifests(session_id);
 	crate::mcp::runtime::skill_auto::clear_pool_for_session(session_id);
 	clear_env_skills(session_id);
 	clear_capability_refcounts(session_id);

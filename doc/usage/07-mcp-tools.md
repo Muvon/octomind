@@ -456,14 +456,16 @@ Then call `agent_summarizer`:
 
 ### `skill` — Skill Management from Taps
 
-Manage skills (reusable instruction packs) from taps.
+Manage local, tap, and MCP skills (reusable instruction packs).
 
 **Parameters:**
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
 | `action` | string, required | `"list"`, `"use"`, `"forget"` |
-| `name` | string | Skill name (required for `use` and `forget`) |
+| `name` | string | Local skill name or server-qualified MCP skill reference (required for `use` and local `forget`) |
+| `resource` | string | Supporting file URI for MCP skill `use` |
+| `manifest` | string | Manifest identifier from MCP skill `use`, required for supporting files |
 | `pattern` | string | Substring filter (for `list`) |
 | `offset` | integer | Pagination offset (default: 0) |
 | `limit` | integer | Max results (default: 20) |
@@ -478,6 +480,12 @@ Call `skill` to list, activate, then forget an installed skill. Replace `code-re
 
 Activation injects instructions; forgetting removes the active entry and lets the next automatic compression clean up
 its old content.
+
+For Skills over MCP (SEP-2640), `list` includes skills from connected servers enabled for the session. Pass the
+server-qualified reference, for example `docs:skill://release/SKILL.md`, to `use`. Octomind asks the user to approve
+the skill and returns its verified instructions as tool output. To read a supporting file, call `use` with the same
+`name`, the file URI as `resource`, and the returned `manifest` identifier. MCP skills require a static manifest and
+a session that can answer elicitation. Existing session tool permissions apply.
 
 **Skill resources:** Skills can include `scripts/`, `references/`, and `assets/` subdirectories. When activated, a
 resource catalog with absolute paths is provided.

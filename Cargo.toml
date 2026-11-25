@@ -92,6 +92,7 @@ termimad = "0.35.5"
 # and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
+yaml_serde = "0.10"
 url = "2.5.9"
 dirs = "7.0.0"
 glob = "0.3.4"

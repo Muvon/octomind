@@ -31,6 +31,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
+#[path = "skill_remote.rs"]
+mod remote;
+
 // Thread-local to pass skill content from execute_use(silent=true) to caller.
 thread_local! {
 	static LAST_SKILL_CONTENT: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -890,14 +893,14 @@ pub fn get_skill_function() -> McpFunction {
 		name: "skill".to_string(),
 		freeform: None,
 		annotations: None,
-		description: r#"Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
+		description: r#"Manage local, tap, and MCP skills. Skills are reusable instruction packs that inject domain knowledge into context.
 
 Actions:
-- list: discover available skills across all taps. Supports optional pattern (substring filter on name/description), offset, and limit (default 20).
-- use: inject a skill's full content into the current session context. Instructions become immediately active.
-- forget: remove a skill from context. The injected text is cleaned up at the next compression, not at once.
+- list: discover available skills, including server-qualified MCP skill references. Supports optional pattern (substring filter on name/description), offset, and limit (default 20).
+- use: activate a local skill or load an MCP skill as tool output. For an MCP skill, use the server-qualified reference from list, or a direct skill:// URI when only one MCP skills server is connected.
+- forget: remove an activated local skill from context. The injected text is cleaned up at the next compression, not at once.
 
-Workflow: list to explore, use to activate, forget when no longer needed."#.to_string(),
+Workflow: list to explore and use to load a skill. Forget a local skill when it is no longer needed."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -908,7 +911,15 @@ Workflow: list to explore, use to activate, forget when no longer needed."#.to_s
 				},
 				"name": {
 					"type": "string",
-					"description": "Skill name (required for use and forget actions)"
+					"description": "Local skill name or server-qualified MCP skill reference (required for use and local forget)"
+				},
+				"resource": {
+					"type": "string",
+					"description": "With use on an MCP skill, read a supporting file by its URI"
+				},
+				"manifest": {
+					"type": "string",
+					"description": "Manifest identifier returned by the MCP skill. Required when reading a supporting file"
 				},
 				"pattern": {
 					"type": "string",
@@ -952,7 +963,7 @@ pub async fn execute_skill_tool(call: &McpToolCall) -> Result<McpToolResult, Str
 	};
 
 	match action.as_str() {
-		"list" => execute_list(call),
+		"list" => execute_list(call).await,
 		"use" => execute_use(call, false).await,
 		"use_silent" => execute_use(call, true).await,
 		"forget" => execute_forget(call),
@@ -964,7 +975,7 @@ pub async fn execute_skill_tool(call: &McpToolCall) -> Result<McpToolResult, Str
 	}
 }
 
-fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
+async fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 	let pattern = match call.parameters.get("pattern") {
 		Some(Value::String(p)) => Some(p.to_lowercase()),
 		_ => None,
@@ -980,18 +991,31 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 		_ => 20,
 	};
 
-	let all_skills = find_all_skills();
-
-	// Filter by pattern (case-insensitive substring on name + description)
-	let filtered: Vec<_> = all_skills
+	let local = find_all_skills();
+	let remote = match remote::list().await {
+		Ok(skills) => skills,
+		Err(error) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("{error:#}"),
+			))
+		}
+	};
+	let filtered: Vec<_> = local
 		.iter()
-		.filter(|(meta, _)| {
-			if let Some(ref pat) = pattern {
-				meta.name.to_lowercase().contains(pat.as_str())
-					|| meta.description.to_lowercase().contains(pat.as_str())
-			} else {
-				true
-			}
+		.map(|(meta, _)| (meta.name.clone(), meta.description.as_str(), Some(meta)))
+		.chain(remote.iter().map(|(server, skill)| {
+			(
+				format!("{server}:{}", skill.uri),
+				skill.frontmatter.description.as_str(),
+				None,
+			)
+		}))
+		.filter(|(name, description, _)| {
+			pattern.as_ref().is_none_or(|pattern| {
+				name.to_lowercase().contains(pattern) || description.to_lowercase().contains(pattern)
+			})
 		})
 		.collect();
 
@@ -1027,23 +1051,27 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 	)];
 	lines.push(String::new());
 
-	for (meta, _) in page {
-		let active_marker = if active_skills.contains(&meta.name) {
+	for (name, description, meta) in page {
+		let active_marker = if active_skills.contains(name) {
 			" ✓ [active]"
 		} else {
 			""
 		};
-		// Check tool compatibility for this skill
-		let unavailable = missing_tools(&meta.allowed_tools);
-		let compat_marker = if unavailable.is_empty() {
-			String::new()
-		} else {
-			format!(" ⚠️ [missing tools: {}]", unavailable.join(", "))
+		let compat_marker = match meta {
+			Some(meta) => {
+				let unavailable = missing_tools(&meta.allowed_tools);
+				if unavailable.is_empty() {
+					String::new()
+				} else {
+					format!(" ⚠️ [missing tools: {}]", unavailable.join(", "))
+				}
+			}
+			None => " [MCP]".to_string(),
 		};
-		lines.push(format!("**{}**{}{}", meta.name, active_marker, compat_marker));
-		lines.push(format!("  {}", meta.description));
-		if let Some(ref compat) = meta.compatibility {
-			lines.push(format!("  Compatibility: {}", compat));
+		lines.push(format!("**{name}**{active_marker}{compat_marker}"));
+		lines.push(format!("  {description}"));
+		if let Some(compat) = meta.and_then(|meta| meta.compatibility.as_ref()) {
+			lines.push(format!("  Compatibility: {compat}"));
 		}
 		lines.push(String::new());
 	}
@@ -1143,6 +1171,15 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 			))
 		}
 	};
+
+	if !silent {
+		if let Some(reference) = remote::reference(&name) {
+			return Ok(match remote::load(reference, call).await {
+				Ok(content) => McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), content),
+				Err(error) => McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), format!("{error:#}")),
+			});
+		}
+	}
 
 	// Already active — inform but don't re-inject
 	if crate::session::context::has_active_skill(&session_id, &name) {

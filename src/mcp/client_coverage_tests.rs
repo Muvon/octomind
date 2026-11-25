@@ -2099,3 +2099,140 @@ async fn task_unknown_after_a_reconnect_is_reported_lost() {
 		"unexpected error: {error}"
 	);
 }
+
+#[tokio::test]
+async fn remote_skill_loads_verified_files_only_after_approval() {
+	use crate::mcp::elicitation::{self, Answerer};
+	use crate::session::context;
+	use crate::websocket::ServerMessage;
+	use rmcp::model::{
+		ElicitResult, ElicitationAction, GetSkillResult, ListSkillsResult, ServerCapabilities, Skill, SkillFrontmatter,
+		SkillResource, SkillResources, SKILLS_EXTENSION_ID,
+	};
+	use serde_json::json;
+
+	const URI: &str = "skill://release/SKILL.md";
+	const REFERENCE: &str = "skill://release/references/checklist.md";
+	const SKILL: &str = "---\nname: release\ndescription: Publish a release\n---\nFollow the checklist.\n";
+	const CHECKLIST: &str = "Check the release notes.";
+	let name = unique_server("remote-skill");
+	let config = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
+	let skill = Skill::new(
+		URI,
+		SkillFrontmatter::new("release", "Publish a release"),
+		SkillResources::Files(vec![
+			SkillResource::from_bytes(URI, SKILL.as_bytes()),
+			SkillResource::from_bytes(REFERENCE, CHECKLIST.as_bytes()),
+		]),
+	);
+	let mut capabilities = ServerCapabilities::default();
+	capabilities.extensions = Some([(SKILLS_EXTENSION_ID.to_owned(), Default::default())].into());
+	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
+	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
+	let service = rmcp::service::serve_directly(
+		OctoClientHandler::new(&config),
+		(out_tx, in_rx),
+		Some(rmcp::model::ServerPeerInfo::new(
+			ProtocolVersion::V_2026_07_28,
+			capabilities,
+		)),
+	);
+	register(&name, service);
+	let reads = StdArc::new(AtomicUsize::new(0));
+	let resource_reads = reads.clone();
+	let corrupted = StdArc::new(AtomicBool::new(false));
+	let tamper = corrupted.clone();
+	let responder = spawn_responder(out_rx, in_tx, move |request| {
+		Some(match request {
+			ClientRequest::ListSkillsRequest(_) => {
+				ServerResult::ListSkillsResult(ListSkillsResult::with_all_items(vec![skill.clone()]))
+			}
+			ClientRequest::GetSkillRequest(request) => {
+				assert_eq!(request.params.uri, URI);
+				ServerResult::GetSkillResult(GetSkillResult::new(skill.clone()))
+			}
+			ClientRequest::ReadResourceRequest(request) => {
+				resource_reads.fetch_add(1, Ordering::SeqCst);
+				let text = match request.params.uri.as_str() {
+					URI => SKILL,
+					REFERENCE if tamper.load(Ordering::SeqCst) => "Corrupted checklist",
+					REFERENCE => CHECKLIST,
+					uri => panic!("unexpected resource URI {uri}"),
+				};
+				ServerResult::ReadResourceResult(ReadResourceResult::new(vec![ResourceContents::text(
+					text,
+					request.params.uri,
+				)]))
+			}
+			request => panic!("unexpected request {request:?}"),
+		})
+	});
+
+	let id = format!("remote-skill-{}", uuid::Uuid::new_v4());
+	super::super::tool_map::isolate_session_tool_map(&id);
+	context::register_dynamic_server_for_session(&id, config);
+	assert!(context::enable_dynamic_server_for_session(&id, &name, Vec::new()));
+	let (sender, mut frames) = tokio::sync::mpsc::unbounded_channel();
+	context::set_notification_sender_for_session(&id, sender);
+	elicitation::set_answerer(&id, Some(Answerer::Client));
+	let call = |parameters| McpToolCall {
+		tool_name: "skill".into(),
+		tool_id: "skill-call".into(),
+		parameters,
+	};
+	let execute = crate::mcp::runtime::execute_skill_tool;
+	let reference = format!("{name}:{URI}");
+
+	context::with_session_id(id.clone(), async {
+		let listed = execute(&call(json!({"action": "list", "pattern": &name})))
+			.await
+			.unwrap();
+		assert!(listed.extract_content().contains(&reference));
+		assert_eq!(reads.load(Ordering::SeqCst), 0);
+
+		let load = call(json!({"action": "use", "name": URI}));
+		let answer = async |approved, frames: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>| {
+			let Some(ServerMessage::Elicitation(question)) = tokio::time::timeout(WAIT, frames.recv())
+				.await
+				.expect("expected skill approval")
+			else {
+				panic!("expected skill elicitation");
+			};
+			assert_eq!(question.server, name);
+			assert!(elicitation::resolve(
+				&id,
+				&question.id,
+				ElicitResult::new(ElicitationAction::Accept).with_content(json!({"approve": approved}))
+			));
+		};
+
+		let (denied, ()) = tokio::join!(execute(&load), answer(false, &mut frames));
+		assert!(denied.unwrap().is_error());
+		assert_eq!(reads.load(Ordering::SeqCst), 0);
+
+		let (loaded, ()) = tokio::join!(execute(&load), answer(true, &mut frames));
+		let loaded = loaded.unwrap();
+		assert!(!loaded.is_error());
+		let content = loaded.extract_content();
+		assert!(content.contains("Follow the checklist."));
+		assert!(content.contains(REFERENCE));
+		let manifest = content.lines().find_map(|line| line.strip_prefix("Manifest ")).unwrap();
+		assert_eq!(reads.load(Ordering::SeqCst), 1);
+
+		let supporting =
+			call(json!({"action": "use", "name": &reference, "resource": REFERENCE, "manifest": manifest}));
+		assert!(execute(&supporting)
+			.await
+			.unwrap()
+			.extract_content()
+			.contains(CHECKLIST));
+		corrupted.store(true, Ordering::SeqCst);
+		let failure = execute(&supporting).await.unwrap();
+		assert!(failure.is_error());
+		assert!(failure.extract_content().contains("verification failed"));
+	})
+	.await;
+	context::cleanup_session(&id);
+	disconnect(&name);
+	responder.abort();
+}

@@ -950,7 +950,7 @@ async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
 
 /// Request metadata naming the calling session. A connection is shared by every
 /// session, but its connect-time capabilities belong to one of them.
-fn session_request_meta(server: &McpServerConfig) -> RequestMetaObject {
+pub(super) fn session_request_meta(server: &McpServerConfig) -> RequestMetaObject {
 	let mut meta = RequestMetaObject::default();
 	meta.set_client_capabilities(
 		build_client_info(ProtocolVersion::V_2026_07_28, super::shell_granted(server)).capabilities,

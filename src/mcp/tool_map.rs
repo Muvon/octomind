@@ -94,6 +94,7 @@ struct ToolMapState {
 	/// Tools that originated from the static role config. Capability deactivation
 	/// must never evict these — they belong to the role, not to any capability.
 	static_tools: HashSet<String>,
+	role_servers: Vec<McpServerConfig>,
 	/// Whether the tool map has been successfully initialized
 	initialized: bool,
 	/// Configuration hash used to detect if reinitialization is needed
@@ -141,6 +142,7 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 	{
 		let mut state = tool_map_state.write().unwrap();
 		state.static_tools = tool_to_server.keys().cloned().collect();
+		state.role_servers.clone_from(&config.mcp.servers);
 		state.tool_to_server = tool_to_server;
 		state.initialized = true;
 		state.config_hash = config_hash;
@@ -292,6 +294,13 @@ pub fn get_all_server_names() -> std::collections::HashSet<String> {
 		.values()
 		.map(|server| server.name().to_string())
 		.collect()
+}
+
+pub(crate) fn role_servers() -> Vec<McpServerConfig> {
+	match active_tool_map() {
+		Some(map) => map.read().unwrap().role_servers.clone(),
+		None => Vec::new(),
+	}
 }
 
 /// Register a dynamic agent tool in the tool map

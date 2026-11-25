@@ -248,7 +248,7 @@ impl CacheManager {
 		if has_cached_system && supports_caching {
 			// Check if MCP servers are configured (which means tool definitions exist)
 			let has_tools = if let Some(cfg) = config {
-				!cfg.mcp.servers.is_empty()
+				crate::mcp::has_session_tools(cfg)
 			} else {
 				// Fallback: infer from session usage or provider behavior
 				// If we have tool calls, we definitely have tool definitions

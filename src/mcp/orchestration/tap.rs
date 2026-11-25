@@ -84,7 +84,7 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run or send, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings, and it is also the only text a specialist is matched on. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
+					"description": "Prompt for run or send, or capability-need phrase for capability. This text is the delegation brief and the only input used to match a specialist. Same-workspace tap runs can search authorized ancestor context for omitted details. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
 				},
 				"role": {
 					"type": "string",
@@ -397,7 +397,8 @@ fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
 }
 
 async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
-	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
+	use crate::session::delegation_context as delegation;
+	let mut prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
 		_ => {
 			return Ok(McpToolResult::error(
@@ -434,7 +435,7 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	// Resolve (id, role, title, workdir, status, cancel_rx) for resume vs. fresh.
 	// Conversation history is persisted on disk by the ACP subprocess under
 	// the session name `<id>` — we don't track messages in-memory anymore.
-	let (id, role, title, workdir, status, cancel_rx) = if let Some(sid) = session {
+	let (id, role, title, workdir, status, cancel_rx, launch) = if let Some(sid) = session {
 		let claim = match tap_runs::resume_run(&sid) {
 			Ok(claim) => claim,
 			Err(error) => {
@@ -445,7 +446,15 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 				));
 			}
 		};
-		(sid, claim.role, None, claim.workdir, claim.status, claim.cancel_rx)
+		(
+			sid,
+			claim.role,
+			None,
+			claim.workdir,
+			claim.status,
+			claim.cancel_rx,
+			None,
+		)
 	} else {
 		let specialist = match super::tap_route::route_task(&prompt, role_param.as_deref()).await {
 			Ok(specialist) => specialist,
@@ -475,7 +484,57 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 		if let Err(error) = tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role)) {
 			crate::log_error!("Tap run {}: failed to start event stream: {}", id, error);
 		}
-		(id, role, specialist.header.title, workdir, status, cancel_rx)
+		let launch = delegation::DISPATCH.try_with(Clone::clone).ok().flatten();
+		(
+			id,
+			role,
+			specialist.header.title,
+			workdir,
+			status,
+			cancel_rx,
+			Some(launch),
+		)
+	};
+
+	let workdir_path = std::path::PathBuf::from(&workdir);
+	let session_id = crate::session::context::current_session_id();
+	let context_grant = (|| -> Result<Option<delegation::ActiveGrant>> {
+		let Some(parent) = &session_id else { return Ok(None) };
+		match launch {
+			Some(Some((file, request))) => {
+				let workspace = crate::session::context::get_session_workdir_anchor(parent)
+					.ok_or_else(|| anyhow::anyhow!("parent workspace unavailable for delegation"))?
+					.canonicalize()?;
+				if workdir_path.canonicalize()? != workspace {
+					return Ok(None);
+				}
+				let source = delegation::Source::capture(parent, &file, delegation::current_grant().is_some())?;
+				let grant = delegation::issue(&id, workspace, source)?;
+				let mut context = String::from("\n\nParent conversation is available through the context tool. Search it for earlier instructions, decisions or evidence if needed.");
+				if let Some(request) = request {
+					context.push_str("\n\nOriginal user request excerpt:\n");
+					context.push_str(&request);
+				}
+				prompt.push_str(&context);
+				Ok(Some(grant))
+			}
+			Some(None) => Ok(None),
+			None => delegation::resume(&id, parent, &workdir_path),
+		}
+	})();
+	let context_grant = match context_grant {
+		Ok(grant) => grant,
+		Err(error) => {
+			if let Err(finish_error) = tap_runs::finish_run(&id, &status, TapJobStatus::Failed, Some(error.to_string()))
+			{
+				crate::log_error!("Tap run {}: failed to publish terminal status: {}", id, finish_error);
+			}
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				error.to_string(),
+			));
+		}
 	};
 
 	// Resolve the path to the currently-running octomind binary so the
@@ -499,8 +558,6 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	// and resumes it if it does — works for both the first call and
 	// every subsequent turn against the same tap-run id.
 	let acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
-	let workdir_path = std::path::PathBuf::from(&workdir);
-	let session_id = crate::session::context::current_session_id();
 	let prompts = match session_id
 		.as_ref()
 		.map(|_| tap_runs::open_prompt_channel(&id))
@@ -523,8 +580,10 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	let id_owned = id.clone();
 	let role_owned = role.clone();
 	let status_bg = Arc::clone(&status);
+	let grant_id = context_grant.as_ref().map(|grant| grant.id);
 	tokio::spawn(async move {
 		let run = async move {
+			let _active_grant = context_grant;
 			let arg_refs: Vec<&str> = acp_args.iter().map(|s| s.as_str()).collect();
 			let outcome = run_acp_command(
 				&exe,
@@ -532,7 +591,11 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 				&prompt,
 				&workdir_path,
 				cancel_rx,
-				prompts.map(|prompts| tap_runs::TapRunInput { id: &id_owned, prompts }),
+				prompts.map(|prompts| tap_runs::TapRunInput {
+					id: &id_owned,
+					prompts,
+					context_grant: grant_id,
+				}),
 				true,
 			)
 			.await;
@@ -590,6 +653,7 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 				"id": id,
 				"role": role,
 				"workdir": workdir,
+				"context": if grant_id.is_some() { "available" } else { "unavailable" },
 				"message": "Tap-run started. Reply will be injected as a user message when ready.",
 			});
 			// What the matched specialist does, so a wrong match is visible and can be stopped.

@@ -53,6 +53,7 @@ pub(crate) fn summary_projection(message: &crate::session::Message) -> Option<St
 //   math and the adaptive depth controller driving the should-we-compress gate.
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
+pub(crate) use apply::COMPRESSION_MESSAGE_NAME;
 use apply::{apply_compression, collect_preserved_skills, collect_recent_recall_context};
 use decision::{
 	adaptive_fire_line, at_turn_boundary, autonomous_runway, cache_known_expired, ceiling_reached, compression_depth,
@@ -60,6 +61,7 @@ use decision::{
 	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
 pub(crate) use detached::detach_fold_before_exit;
+pub(crate) use range::is_conversation_summary;
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 // The model's deferral crosses module boundaries: recorded on the session,
 // judged by `decision`. `DeferReason` itself is named only from test code —

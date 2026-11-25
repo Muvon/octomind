@@ -47,6 +47,7 @@ const INTERRUPTED_ERROR: &str = "interrupted: the process running it stopped bef
 pub struct TapRunInput<'a> {
 	pub id: &'a str,
 	pub prompts: mpsc::Receiver<String>,
+	pub(crate) context_grant: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

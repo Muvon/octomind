@@ -36,6 +36,7 @@ mod project_context;
 pub mod video; // Video processing and attachment utilities // Project context collection and management
 			   // Provider abstraction layer moved to src/providers
 pub mod background_jobs;
+pub(crate) mod delegation_context;
 pub mod guardrails; // Project-local deny rules evaluated before each tool call
 pub mod hooks; // Post-result hooks → inbox injection
 pub mod inbox; // Unified message injection queue for all session sources

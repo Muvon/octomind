@@ -71,8 +71,15 @@ fn test_session_info(name: &str) -> SessionInfo {
 	}
 }
 
+fn parse_result(lines: &[String]) -> Result<ParsedLogLines> {
+	let jsonl = format!("{}\n", lines.join("\n"));
+	let compressed = zstd::encode_all(jsonl.as_bytes(), 1)?;
+	let mut log = SessionLog::new(Cursor::new(compressed));
+	parse_log_lines(&mut log, None)
+}
+
 fn parse(lines: &[String]) -> ParsedLogLines {
-	parse_log_lines(lines.iter().cloned().map(Ok)).expect("parse log lines")
+	parse_result(lines).expect("parse log lines")
 }
 
 fn summary_json_line(info: &SessionInfo, timestamp: u64) -> String {
@@ -510,15 +517,13 @@ fn parse_log_lines_summary_without_session_info_keeps_none() {
 
 #[test]
 fn parse_log_lines_invalid_session_info_in_summary_errors() {
-	let result = parse_log_lines(std::iter::once(Ok(
-		json!({"type": "SUMMARY", "session_info": {"name": 123}}).to_string(),
-	)));
+	let result = parse_result(&[json!({"type": "SUMMARY", "session_info": {"name": 123}}).to_string()]);
 	assert!(result.is_err());
 }
 
 #[test]
 fn parse_log_lines_legacy_summary_with_invalid_json_errors() {
-	let result = parse_log_lines(std::iter::once(Ok("SUMMARY: not json at all".to_string())));
+	let result = parse_result(&["SUMMARY: not json at all".to_string()]);
 	assert!(result.is_err());
 }
 

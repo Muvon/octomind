@@ -166,6 +166,15 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 /// If the tool map is not initialized, this function returns `None` and the
 /// caller should fall back to the original `build_tool_server_map()` logic.
 pub fn get_server_for_tool(tool_name: &str) -> Option<McpServerConfig> {
+	if tool_name == crate::mcp::core::context::TOOL_NAME
+		&& crate::session::delegation_context::current_grant().is_some()
+	{
+		return Some(McpServerConfig::builtin(
+			"core",
+			crate::config::DEFAULT_MCP_TIMEOUT_SECONDS,
+			vec![tool_name.to_owned()],
+		));
+	}
 	let mapped = active_tool_map().and_then(|tool_map_state| {
 		let state = tool_map_state.read().unwrap();
 		if !state.initialized {

@@ -1668,3 +1668,54 @@ fn test_task_local_wrappers_do_not_copy_the_wrapped_future() {
 		"the wrappers grew a {call_bytes}-byte future to {wrapped_bytes} bytes"
 	);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn missing_delegation_log_does_not_abort_the_tool_batch() {
+	let tmp = tempfile::tempdir().unwrap();
+	write_local_tool(
+		tmp.path(),
+		"delegation_batch_sibling",
+		"#!/bin/sh\n# @description Verify a sibling call ran.\nprintf '%s' sibling-ran\n",
+	);
+	let config = template_config();
+	let sid = TEST_SESSION.to_owned();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		crate::session::context::init_session_services("assistant");
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.session_file = Some(tmp.path().join("missing.jsonl.zst"));
+		let mut processor = ToolProcessor::new();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let calls = vec![
+			crate::mcp::McpToolCall {
+				tool_name: "tap".to_owned(),
+				tool_id: "tap-with-missing-context".to_owned(),
+				parameters: serde_json::json!({"action": "run", "prompt": "Inspect a constraint"}),
+			},
+			crate::mcp::McpToolCall {
+				tool_name: "delegation_batch_sibling".to_owned(),
+				tool_id: "sibling".to_owned(),
+				parameters: serde_json::json!({}),
+			},
+		];
+		let (results, _, _) = execute_tools_parallel(
+			calls,
+			"",
+			&mut session,
+			&config,
+			&mut processor,
+			rx,
+			OutputMode::NonInteractive,
+		)
+		.await
+		.unwrap();
+		assert_eq!(results.len(), 2);
+		let sibling = results.iter().find(|result| result.tool_id == "sibling").unwrap();
+		assert!(!sibling.is_error(), "{}", sibling.extract_content());
+		assert!(sibling.extract_content().contains("sibling-ran"));
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

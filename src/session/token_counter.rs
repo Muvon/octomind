@@ -307,7 +307,7 @@ pub async fn calculate_minimum_session_tokens(
 	let system_tokens = estimate_tokens(system_prompt);
 
 	// Get tool definitions tokens
-	let tool_tokens = if !config.mcp.servers.is_empty() {
+	let tool_tokens = if crate::mcp::has_session_tools(config) {
 		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {
@@ -350,7 +350,7 @@ pub async fn validate_session_token_threshold(
 	let system_tokens = estimate_tokens(system_prompt);
 
 	// Calculate tool tokens
-	let tool_tokens = if !config.mcp.servers.is_empty() {
+	let tool_tokens = if crate::mcp::has_session_tools(config) {
 		let tools = crate::mcp::get_model_functions(config).await;
 		tool_definition_tokens(&tools)
 	} else {

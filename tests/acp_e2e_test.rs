@@ -654,3 +654,137 @@ async fn test_acp_sub_agent_tool_round() {
 		}
 	}
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tap_child_searches_the_parent_through_the_real_acp_launch() {
+	use serde_json::json;
+
+	const EARLIER: &str = "Only src/delegated.rs is approved (PARENT_EDIT_SCOPE).";
+	const DELEGATE: &str = "START_TAP_PARENT";
+	const PASSWORD: &str = "synthetic-delegation-password";
+	let triggering_request = format!(r#"{DELEGATE} PARENT_EDIT_SCOPE fixture {{"password": "{PASSWORD}"}}"#,);
+	const BRIEF: &str = "START_TAP_CHILD";
+	const CHILD_CONTEXT: &str = "Parent conversation is available through the context tool";
+	let (stub_url, captured) = spawn_openai_stub(Some(vec![
+		(
+			Some(CHILD_CONTEXT),
+			tool_call_message("child-search", "context", json!({"query": "PARENT_EDIT_SCOPE"})),
+		),
+		(Some(CHILD_CONTEXT), text_message("child retrieved the constraint")),
+		(
+			Some(DELEGATE),
+			tool_call_message(
+				"parent-tap",
+				"tap",
+				json!({"action": "run", "role": "developer:general", "prompt": BRIEF}),
+			),
+		),
+		(Some(DELEGATE), text_message("parent delegated the task")),
+		(None, text_message("standing user constraint recorded")),
+		(None, text_message("parent received the specialist result")),
+	]))
+	.await;
+	let home = tempfile::tempdir().unwrap();
+	write_sandbox_config(home.path());
+	let role = home
+		.path()
+		.join(".local/share/octomind/taps/muvon/octomind-tap/agents/developer");
+	std::fs::create_dir_all(&role).unwrap();
+	std::fs::write(
+		role.join("general.toml"),
+		"# Title: Context specialist\n# Description: Verifies constraints.\n[[roles]]\nname = \"general\"\nsystem = \"Verify the task constraints.\"\nwelcome = \"Ready.\"\n",
+	)
+	.unwrap();
+
+	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
+	client
+		.request("initialize", json!({"protocolVersion": 1, "clientCapabilities": {}}))
+		.await;
+	let (session, _) = client
+		.request("session/new", json!({"cwd": home.path(), "mcpServers": []}))
+		.await;
+	for text in [EARLIER, &triggering_request] {
+		let (response, _) = client
+			.request(
+				"session/prompt",
+				json!({
+					"sessionId": session["sessionId"],
+					"prompt": [{"type": "text", "text": text}],
+				}),
+			)
+			.await;
+		assert_eq!(response["stopReason"], "end_turn");
+	}
+
+	let evidence = tokio::time::timeout(Duration::from_secs(30), async {
+		loop {
+			{
+				let requests = captured.lock().unwrap();
+				if let Some(request) = requests.iter().find(|request| {
+					request["messages"].as_array().is_some_and(|messages| {
+						messages.iter().any(|message| {
+							message["role"] == "tool"
+								&& message["content"]
+									.as_str()
+									.is_some_and(|content| content.contains(EARLIER))
+						})
+					})
+				}) {
+					break request.clone();
+				}
+			}
+			tokio::time::sleep(Duration::from_millis(20)).await;
+		}
+	})
+	.await
+	.unwrap_or_else(|_| {
+		panic!(
+			"child search never reached the provider. Parent log:\n{}",
+			client.stderr_dump()
+		)
+	});
+	assert!(evidence["tools"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.any(|tool| tool["function"]["name"] == "context"));
+
+	{
+		let requests = captured.lock().unwrap();
+		assert!(
+			requests.iter().any(|request| {
+				let rendered = request.to_string();
+				rendered.contains(DELEGATE) && rendered.contains(PASSWORD)
+			}),
+			"the parent provider received the synthetic password"
+		);
+		let child_requests: Vec<_> = requests
+			.iter()
+			.filter(|request| {
+				request["tools"]
+					.as_array()
+					.is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "context"))
+			})
+			.collect();
+		assert!(
+			child_requests.len() >= 2,
+			"observe both launch and search at the child provider"
+		);
+		for request in child_requests {
+			let rendered = request.to_string();
+			assert!(rendered.contains(BRIEF));
+			assert!(
+				!rendered.contains(PASSWORD),
+				"the synthetic password crossed the delegation boundary"
+			);
+		}
+	}
+
+	let AcpClient { mut child, stdin, .. } = client;
+	drop(stdin);
+	assert!(tokio::time::timeout(Duration::from_secs(10), child.wait())
+		.await
+		.unwrap()
+		.unwrap()
+		.success());
+}

@@ -471,7 +471,7 @@ pub async fn process_response<S: OutputSink>(params: ResponseProcessingParams<'_
 		check_cancellation(operation_cancelled_ref)?;
 
 		// Check for tool calls if MCP has any servers configured
-		if !params.config.mcp.servers.is_empty() {
+		if crate::mcp::has_session_tools(params.config) {
 			// Resolve current tool calls for this iteration
 			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 			// A listed external tool called as a tool of its own becomes its `code`

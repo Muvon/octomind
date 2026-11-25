@@ -1231,6 +1231,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::inbox::clear_inbox_for_session(session_id);
 	crate::session::shell_jobs::clear_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
+	crate::session::delegation_context::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
 	crate::mcp::agent::handback::clear_handback_for_session(session_id);
 	// A session that ended without `session.end` (a failed bind, a close with no

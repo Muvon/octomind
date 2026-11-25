@@ -102,7 +102,7 @@ cat >/dev/null
 			};
 			if !background { send(); }
 			let args = ["-c", &script, "tap-send-test", requests.to_str().unwrap()];
-			let driver = run_acp_command("sh", &args, "initial", dir.path(), cancel_rx, Some(TapRunInput { id: "run", prompts }), false);
+			let driver = run_acp_command("sh", &args, "initial", dir.path(), cancel_rx, Some(TapRunInput { id: "run", prompts, context_grant: None }), false);
 			let send_later = async {
 				if background {
 					loop {
@@ -153,6 +153,7 @@ async fn tap_followup_error_or_early_eof_fails_the_run() {
 				Some(crate::session::tap_runs::TapRunInput {
 					id: "followup-failure",
 					prompts,
+					context_grant: None,
 				}),
 				false,
 			),
@@ -187,6 +188,7 @@ async fn tap_closes_input_when_background_work_reports_idle() {
 			Some(crate::session::tap_runs::TapRunInput {
 				id: "background-idle",
 				prompts,
+				context_grant: None,
 			}),
 			false,
 		),
@@ -217,6 +219,7 @@ async fn dropping_tap_input_owner_cancels_pending_background_work() {
 			Some(crate::session::tap_runs::TapRunInput {
 				id: "owner-gone",
 				prompts,
+				context_grant: None,
 			}),
 			false,
 		),
@@ -263,6 +266,7 @@ async fn streams_live_updates_into_tap_registry() {
 				Some(tap_runs::TapRunInput {
 					id: "tap-test-live-000001",
 					prompts: tap_runs::open_prompt_channel("tap-test-live-000001").unwrap(),
+					context_grant: None,
 				}),
 				false,
 			)
@@ -293,6 +297,7 @@ async fn streams_live_updates_into_tap_registry() {
 				Some(tap_runs::TapRunInput {
 					id: "tap-test-live-000001",
 					prompts: tap_runs::open_prompt_channel("tap-test-live-000001").unwrap(),
+					context_grant: None,
 				}),
 				false,
 			)

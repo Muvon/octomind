@@ -1192,6 +1192,13 @@ impl OctomindAgent {
 			.meta
 			.as_ref()
 			.and_then(crate::plugins::lifecycle::parentage_from_meta);
+		let delegation_grant = args
+			.meta
+			.as_ref()
+			.and_then(|meta| meta.get(crate::session::delegation_context::ACP_META))
+			.map(|value| serde_json::from_value::<String>(value.clone()))
+			.transpose()
+			.map_err(|error| agent_client_protocol::Error::invalid_params().data(error.to_string()))?;
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
@@ -1211,6 +1218,12 @@ impl OctomindAgent {
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
 		let session_id = chat_session.session.info.name.clone();
+		if let Some(grant) = delegation_grant {
+			let grant = uuid::Uuid::parse_str(&grant)
+				.map_err(|error| agent_client_protocol::Error::invalid_params().data(error.to_string()))?;
+			crate::session::delegation_context::bind(&session_id, &session_cwd, grant)
+				.map_err(|error| agent_client_protocol::Error::invalid_params().data(error.to_string()))?;
+		}
 		if let Some((parent_session_id, inherited)) = plugin_parentage {
 			crate::plugins::lifecycle::set_parentage(&session_id, &parent_session_id, inherited);
 		}
@@ -1228,7 +1241,10 @@ impl OctomindAgent {
 			setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false),
 		)
 		.await
-		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+		.map_err(|e| {
+			crate::session::delegation_context::clear_for_session(&session_id);
+			agent_client_protocol::Error::internal_error().data(e.to_string())
+		})?;
 		log_debug!("ACP: new_session created: {}", session_id);
 
 		// Initialize session-scoped inbox and job manager inside the session context

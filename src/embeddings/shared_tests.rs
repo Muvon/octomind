@@ -45,7 +45,10 @@ async fn a_client_can_rejoin_after_its_owner_exits() {
 	let Role::Client(client) = client.role else {
 		panic!("second participant must be a client")
 	};
-	let error = client.embed_many(&["owner recovery".into()]).await.unwrap_err();
+	let error = client
+		.embed_many(&["owner recovery".into()], CachePolicy::Reusable)
+		.await
+		.unwrap_err();
 	assert!(is_disconnected(&error));
 	let replacement = join_at(&path).await.unwrap();
 	assert!(matches!(replacement.role, Role::Owner(_)));
@@ -53,7 +56,10 @@ async fn a_client_can_rejoin_after_its_owner_exits() {
 	let Role::Client(client) = rejoined.role else {
 		panic!("rejoined participant must be a client")
 	};
-	let vectors = client.embed_many(&["owner recovery".into()]).await.unwrap();
+	let vectors = client
+		.embed_many(&["owner recovery".into()], CachePolicy::Reusable)
+		.await
+		.unwrap();
 	assert_eq!(vectors[0].len(), super::super::EMBED_DIM);
 }
 
@@ -69,7 +75,7 @@ fn embedding_client_process_fixture() {
 			panic!("child must use the parent's model")
 		};
 		let texts = vec!["ACP specialist model sharing".to_string(); MAX_BATCH_TEXTS + 1];
-		let vectors = client.embed_many(&texts).await.unwrap();
+		let vectors = client.embed_many(&texts, CachePolicy::Reusable).await.unwrap();
 		assert_eq!(vectors.len(), texts.len());
 		assert_eq!(vectors[0].len(), super::super::EMBED_DIM);
 		assert!(vectors.iter().all(|vector| vector == &vectors[0]));
@@ -225,7 +231,10 @@ async fn second_participant_becomes_a_client_of_the_owner() {
 		unreachable!("asserted above");
 	};
 	let texts = vec!["shared embedding service round trip".to_string()];
-	let remote = client.embed_many(&texts).await.expect("remote embed");
+	let remote = client
+		.embed_many(&texts, CachePolicy::Reusable)
+		.await
+		.expect("remote embed");
 	assert_eq!(remote.len(), 1);
 	assert_eq!(remote[0].len(), super::super::EMBED_DIM);
 
@@ -304,4 +313,21 @@ async fn an_owner_serving_another_revision_is_refused() {
 	assert!(error.to_string().contains("this build needs"), "error: {error:#}");
 	let current: Endpoint = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 	assert_eq!(current.token, "other", "a live owner's endpoint must stay");
+}
+
+#[tokio::test]
+#[serial_test::serial(embed_model)]
+async fn transient_requests_do_not_enter_the_reusable_trigger_cache() {
+	let directory = tempfile::tempdir().unwrap();
+	let path = directory.path().join("embed.json");
+	let _owner = join_at(&path).await.unwrap();
+	let elected = join_at(&path).await.unwrap();
+	let Role::Client(client) = elected.role else {
+		panic!("second participant must be a client");
+	};
+	let texts = vec![format!("private conversation excerpt {}", uuid::Uuid::new_v4())];
+	let key = super::super::cache_key(&texts[0]);
+	let vectors = client.embed_many(&texts, CachePolicy::Transient).await.unwrap();
+	assert_eq!(vectors[0].len(), super::super::EMBED_DIM);
+	assert!(!super::super::cache().read().unwrap().vectors.contains_key(&key));
 }

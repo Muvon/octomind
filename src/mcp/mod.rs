@@ -573,15 +573,23 @@ pub async fn get_model_functions(config: &crate::config::Config) -> Vec<McpFunct
 	definitions
 }
 
+pub(crate) fn has_session_tools(config: &crate::config::Config) -> bool {
+	!config.mcp.servers.is_empty() || crate::session::delegation_context::current_grant().is_some()
+}
+
 /// Every tool the session can call, each with the external (stdio/http)
 /// server it comes from; `None` for builtin, agent and project-local tools.
 pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Option<String>, McpFunction)> {
-	if config.mcp.servers.is_empty() {
+	let context = crate::session::delegation_context::current_grant().is_some();
+	if config.mcp.servers.is_empty() && !context {
 		crate::log_debug!("MCP has no servers configured, no functions available");
 		return Vec::new();
 	}
 
 	let mut functions = Vec::new();
+	if context {
+		functions.push((None, core::context::definition()));
+	}
 	let session_id = crate::session::context::current_session_id();
 	for server in &config.mcp.servers {
 		// Skip config servers that are disabled in the dynamic registry
@@ -749,7 +757,7 @@ pub async fn execute_tool_call(
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(McpToolResult, u64)> {
 	// Only execute if MCP has any servers configured
-	if config.mcp.servers.is_empty() {
+	if config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
 	}
 
@@ -813,7 +821,7 @@ async fn try_execute_tool_call(
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
 	// Only execute if MCP has any servers configured
-	if config.mcp.servers.is_empty() {
+	if config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
 	}
 
@@ -869,6 +877,7 @@ async fn route_builtin_tool(
 				// Runs other tools, so it carries the turn's cancellation into them.
 				code::TOOL_NAME => return Ok(code::execute(call, config, cancellation_token).await),
 				code::SEARCH_TOOL_NAME => return Ok(code::execute_search(call, config).await),
+				core::context::TOOL_NAME => return Ok(core::context::execute(call).await),
 				"recall" => core::recall::execute_recall(call)
 					.await
 					.map_err(|e| format!("Recall failed: {}", e)),
@@ -955,7 +964,6 @@ async fn execute_tool_without_cancellation(
 	config: &crate::config::Config,
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	// STATIC ROUTING: Use pre-built tool map ONLY
 	if let Some(target_server) = tool_map::get_server_for_tool(&call.tool_name) {
 		// Session-ownership check: the global tool map may contain tools registered
 		// by other sessions. In a session context, verify dynamic tools belong to us.
@@ -978,9 +986,13 @@ async fn execute_tool_without_cancellation(
 			// session's servers.
 			let attached_by_code_mode =
 				config.mcp.code_mode && [code::TOOL_NAME, code::SEARCH_TOOL_NAME].contains(&call.tool_name.as_str());
+			let attached_context = call.tool_name == core::context::TOOL_NAME
+				&& target_server.name() == "core"
+				&& crate::session::delegation_context::current_grant().is_some();
 			if !runtime::dynamic::is_dynamic_by_tool(&call.tool_name)
 				&& target_server.name() != core::local_tool::SERVER_NAME
 				&& !attached_by_code_mode
+				&& !attached_context
 			{
 				let is_config_server = config.mcp.servers.iter().any(|s| s.name() == target_server.name());
 				if !is_config_server {

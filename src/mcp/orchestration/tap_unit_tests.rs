@@ -680,3 +680,38 @@ async fn workflow_name_without_input_shows_definition_and_runs_nothing() {
 	assert!(missing.is_error());
 	assert!(missing.extract_content().contains("nope"));
 }
+
+#[tokio::test]
+#[serial]
+async fn cross_workspace_tap_does_not_open_the_parent_log() {
+	use crate::session::delegation_context::DISPATCH;
+
+	let guard = TempDataDir::new();
+	install_rust_agent(guard.path());
+	let parent = tempfile::tempdir().unwrap();
+	let other = tempfile::tempdir().unwrap();
+	let session = "delegation-other-workspace".to_owned();
+	crate::session::context::set_session_workdir(&session, parent.path().to_path_buf());
+	crate::session::context::with_session_id(session.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let source = crate::session::logger::get_session_log_file(&session).unwrap();
+		assert!(!source.exists());
+		let config = unit_config();
+		let call = tap_call(json!({
+			"action": "run",
+			"role": "developer:general",
+			"prompt": RUST_TASK,
+			"workdir": other.path(),
+		}));
+		let result = DISPATCH
+			.scope(Some((source, None)), execute_tap_command(&call, &config))
+			.await
+			.unwrap();
+		assert!(!result.is_error(), "{}", result.extract_content());
+		let started: serde_json::Value = serde_json::from_str(&result.extract_content()).unwrap();
+		assert_eq!(started["context"], "unavailable");
+		wait_terminal_status(started["id"].as_str().unwrap()).await;
+	})
+	.await;
+	crate::session::context::cleanup_session(&session);
+}

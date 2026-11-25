@@ -77,7 +77,7 @@ const MODEL_NAME: &str = "muvon/octomind-embed";
 /// weights, this commit and the recalibrated thresholds change together. The
 /// full 40-character SHA, in the `@<revision>` form of octolib's ONNX model
 /// string.
-const MODEL_REVISION: &str = "52329bc20c36e717fbbcd3b852414f071b055ee6";
+pub(crate) const MODEL_REVISION: &str = "52329bc20c36e717fbbcd3b852414f071b055ee6";
 
 /// Which octolib provider loads `MODEL_NAME`.
 ///
@@ -407,10 +407,14 @@ async fn shared() -> Result<Arc<Elected>> {
 
 /// Embed via whichever side of the service this process is on: local
 /// inference for the owner, a request to the owner for everyone else.
-async fn embed_via_service(elected: &Arc<Elected>, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+async fn embed_via_service(
+	elected: &Arc<Elected>,
+	texts: &[String],
+	policy: shared::CachePolicy,
+) -> Result<Vec<Vec<f32>>> {
 	let vectors = match &elected.role {
 		Role::Owner(_) => embed_local(texts).await?,
-		Role::Client(client) => match client.embed_many(texts).await {
+		Role::Client(client) => match client.embed_many(texts, policy).await {
 			Ok(vectors) => vectors,
 			Err(error) if shared::is_disconnected(&error) => {
 				let replacement = {
@@ -431,7 +435,7 @@ async fn embed_via_service(elected: &Arc<Elected>, texts: &[String]) -> Result<V
 				// Inference is read-only: after a dead owner, one resubmission is safe.
 				match &replacement.role {
 					Role::Owner(_) => embed_local(texts).await?,
-					Role::Client(client) => client.embed_many(texts).await?,
+					Role::Client(client) => client.embed_many(texts, policy).await?,
 				}
 			}
 			Err(error) => return Err(error),
@@ -534,11 +538,15 @@ pub async fn embed(text: &str) -> Result<Vec<f32>> {
 	if let Some(v) = cache().read().unwrap().vectors.get(&key) {
 		return Ok(v.clone());
 	}
-	let v = embed_via_service(&s, std::slice::from_ref(&text.to_string()))
-		.await?
-		.into_iter()
-		.next()
-		.context("embedding service returned no vector")?;
+	let v = embed_via_service(
+		&s,
+		std::slice::from_ref(&text.to_string()),
+		shared::CachePolicy::Reusable,
+	)
+	.await?
+	.into_iter()
+	.next()
+	.context("embedding service returned no vector")?;
 	cache().write().unwrap().insert(key, v.clone());
 	Ok(v)
 }
@@ -557,6 +565,11 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 	let s = shared().await?;
 	ensure_disk_cache_loaded(&s.revision);
 	embed_many_cached(texts, &s.revision, Inference::Shared(&s)).await
+}
+
+/// Conversation vectors belong to the caller's bounded session index.
+pub(crate) async fn embed_transient(texts: &[String]) -> Result<Vec<Vec<f32>>> {
+	embed_via_service(&shared().await?, texts, shared::CachePolicy::Transient).await
 }
 
 async fn embed_local(texts: &[String]) -> Result<Vec<Vec<f32>>> {
@@ -602,7 +615,7 @@ async fn embed_many_cached(texts: &[String], revision: &str, inference: Inferenc
 		}
 
 		let computed = match inference {
-			Inference::Shared(elected) => embed_via_service(elected, &unique).await?,
+			Inference::Shared(elected) => embed_via_service(elected, &unique, shared::CachePolicy::Reusable).await?,
 			Inference::Local => embed_local(&unique).await?,
 		};
 		anyhow::ensure!(

@@ -61,8 +61,11 @@ struct Auth {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Request {
-	texts: Vec<String>,
+#[serde(untagged)]
+enum Request {
+	// Older owners reject this request because it has no `texts` field.
+	Transient { transient_texts: Vec<String> },
+	Cached { texts: Vec<String> },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,6 +83,12 @@ fn endpoint_path() -> Result<PathBuf> {
 pub(super) struct Client {
 	addr: SocketAddr,
 	token: String,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CachePolicy {
+	Reusable,
+	Transient,
 }
 
 impl Client {
@@ -108,12 +117,18 @@ impl Client {
 		.context("embedding service handshake timed out")?
 	}
 
-	pub(super) async fn embed_many(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+	pub(super) async fn embed_many(&self, texts: &[String], policy: CachePolicy) -> Result<Vec<Vec<f32>>> {
 		let mut vectors = Vec::with_capacity(texts.len());
 		for batch in texts.chunks(MAX_BATCH_TEXTS) {
 			let response = tokio::time::timeout(SERVICE_TIMEOUT, async {
 				let (mut reader, _) = self.connect().await?;
-				write_line(reader.get_mut(), &Request { texts: batch.to_vec() }).await?;
+				let request = match policy {
+					CachePolicy::Reusable => Request::Cached { texts: batch.to_vec() },
+					CachePolicy::Transient => Request::Transient {
+						transient_texts: batch.to_vec(),
+					},
+				};
+				write_line(reader.get_mut(), &request).await?;
 				let line = read_line(&mut reader).await?.ok_or_else(|| {
 					std::io::Error::new(
 						std::io::ErrorKind::UnexpectedEof,
@@ -302,13 +317,23 @@ async fn handle(stream: TcpStream, token: &str, hello: &str) -> Result<()> {
 	reader.get_mut().write_all(b"\n").await?;
 	while let Some(line) = read_line(&mut reader).await? {
 		let request: Request = serde_json::from_str(&line)?;
+		let (texts, policy) = match request {
+			Request::Cached { texts } => (texts, CachePolicy::Reusable),
+			Request::Transient { transient_texts } => (transient_texts, CachePolicy::Transient),
+		};
 		anyhow::ensure!(
-			request.texts.len() <= MAX_BATCH_TEXTS,
+			texts.len() <= MAX_BATCH_TEXTS,
 			"embedding service batch exceeds text limit"
 		);
-		let model = super::model().await?;
-		super::ensure_disk_cache_loaded(&model.revision);
-		let response = match super::embed_many_cached(&request.texts, &model.revision, super::Inference::Local).await {
+		let result = match policy {
+			CachePolicy::Reusable => {
+				let model = super::model().await?;
+				super::ensure_disk_cache_loaded(&model.revision);
+				super::embed_many_cached(&texts, &model.revision, super::Inference::Local).await
+			}
+			CachePolicy::Transient => super::embed_local(&texts).await,
+		};
+		let response = match result {
 			Ok(vectors) => Response {
 				vectors: Some(vectors),
 				error: None,

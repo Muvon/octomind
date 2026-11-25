@@ -26,7 +26,7 @@ server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) and `code` (scripts that call external tools; see [below](#calling-external-tools-from-scripts-code-tool)) |
+| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled, `context` in authorized tap children) and `code` (scripts that call external tools; see [below](#calling-external-tools-from-scripts-code-tool)) |
 | `orchestration` | builtin | Delegation (`tap`), scheduled messages/tool calls (`schedule`), and event streams (`monitor`) |
 | `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
@@ -204,6 +204,19 @@ this payload:
 The ID shown illustrates the format; it must be replaced with a block ID cited in your own session.
 
 ## Orchestration Server Tools
+
+### `context` — Search the Conversation Behind a Delegation
+
+Same-workspace `tap run` specialists can search earlier user decisions, assistant discussion, and selected evidence
+from their authorized ancestors. Pass `query` and optionally `scope` (`ancestors`, `parent`, or `root`) and `limit`
+(defaults to 5, with a maximum of 12). Results include a source label, ancestor depth, reference, and exact excerpt.
+Check the lexical and semantic coverage flags before treating an empty result as conclusive.
+
+Each ancestor is fixed at its dispatch boundary. Resuming an existing run keeps the same boundaries. Use `tap send` to
+send new instructions to a running specialist. Use `recall` with a compression block ID to retrieve exact archived
+material from the current session.
+
+If the parent cancels and removes a turn, ancestor search excludes it, including from existing grants.
 
 ### `tap` tool: Run Specialist Roles from Taps
 

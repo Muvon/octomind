@@ -165,7 +165,7 @@ pub async fn setup_system_prompt_and_cache(
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
 		// This ensures consistent caching behavior across all supported models
 		let supports_caching = model_supports_caching(&chat_session.model);
-		let has_tools = !config_for_role.mcp.servers.is_empty();
+		let has_tools = crate::mcp::has_session_tools(config_for_role);
 
 		if supports_caching {
 			let cache_manager = CacheManager::new();

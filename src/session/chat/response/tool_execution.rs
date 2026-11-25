@@ -574,6 +574,28 @@ async fn execute_tools_with_context(
 		}
 		_ => None,
 	};
+	let delegation = match &*context {
+		ToolExecutionContext::MainSession { chat_session, .. }
+			if current_tool_calls.iter().zip(&block_messages).any(|(call, blocked)| {
+				blocked.is_none()
+					&& call.tool_name == "tap"
+					&& call.parameters.get("action").and_then(|action| action.as_str()) == Some("run")
+					&& call
+						.parameters
+						.get("session")
+						.and_then(|session| session.as_str())
+						.is_none_or(|s| s.trim().is_empty())
+			}) =>
+		{
+			use crate::session::delegation_context as delegation;
+			let session = &chat_session.session;
+			session
+				.session_file
+				.as_ref()
+				.map(|file| (file.clone(), delegation::launch_request(&session.messages)))
+		}
+		_ => None,
+	};
 
 	// A write is a barrier on both sides: reads must not observe an unfinished
 	// earlier write, and a later write must not overtake earlier reads. Closing
@@ -624,6 +646,7 @@ async fn execute_tools_with_context(
 		let layer = !matches!(context, ToolExecutionContext::MainSession { .. });
 		let workdir_override = crate::mcp::workdir::working_directory_override();
 		let snapshot = round_snapshot.clone();
+		let delegation = (tool_name == "tap").then(|| delegation.clone()).flatten();
 		let task = tokio::spawn(crate::session::accounting::inherit(async move {
 			let _release = release;
 			for mut predecessor in predecessors {
@@ -643,7 +666,9 @@ async fn execute_tools_with_context(
 					crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
 				} else {
 					let execution = crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task);
-					payload::with_round_snapshot(snapshot, execution).await
+					crate::session::delegation_context::DISPATCH
+						.scope(delegation, payload::with_round_snapshot(snapshot, execution))
+						.await
 				}
 			});
 			if let Some(workdir) = workdir_override {

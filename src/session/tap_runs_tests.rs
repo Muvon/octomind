@@ -49,6 +49,7 @@ async fn sent_prompts_are_bounded_ordered_and_closed_atomically() {
 		let (job, _cancel) = test_job("run", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
 		register_job(job);
 		let mut input = TapRunInput {
+			context_grant: None,
 			id: "run",
 			prompts: open_prompt_channel("run").unwrap(),
 		};

@@ -18,8 +18,9 @@ use super::{Message, Session, SessionInfo};
 use anyhow::{Context, Result};
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Deserializer};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self as std_fs, File, OpenOptions};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use zstd::stream::read::Decoder as ZstdDecoder;
@@ -420,11 +421,51 @@ struct ToolCallEntry {
 	parameters: Option<serde_json::Value>,
 }
 
+#[derive(Default)]
+pub(crate) struct WithdrawnMessages {
+	positions: HashSet<(u64, u32)>,
+	fingerprints: HashMap<u64, (u64, u32)>,
+}
+
+impl WithdrawnMessages {
+	pub(crate) fn contains_position(&self, frame: u64, line: u32, fingerprint: u64) -> bool {
+		self.positions.contains(&(frame, line))
+			|| self
+				.fingerprints
+				.get(&fingerprint)
+				.is_some_and(|&marker| (frame, line) < marker)
+	}
+
+	pub(crate) fn contains_archived(&self, message: &Message) -> bool {
+		self.fingerprints.contains_key(&withdrawal_fingerprint(message))
+	}
+}
+
+pub(crate) fn withdrawal_fingerprint(message: &Message) -> u64 {
+	let mut hash = DefaultHasher::new();
+	(&message.role, message.timestamp, &message.content).hash(&mut hash);
+	hash.finish()
+}
+
+pub(crate) const TRUNCATION_POINT: &str = "TRUNCATION_POINT";
+
+pub(crate) fn withdrawn_messages(path: &Path, through: u64) -> Result<WithdrawnMessages> {
+	let mut log = SessionLog::open(path)?.through(through);
+	let mut withdrawn = WithdrawnMessages::default();
+	parse_log_lines(&mut log, Some(&mut withdrawn))?;
+	anyhow::ensure!(log.torn_at().is_none(), "delegation withdrawal log is incomplete");
+	Ok(withdrawn)
+}
+
 /// Parse a session log file line by line, extracting messages and session metadata.
 ///
 /// Handles both the current JSON format and the legacy prefix-based format.
 /// Returns the raw parsed state — callers decide which messages to use.
-fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<ParsedLogLines> {
+fn parse_log_lines<R: BufRead + Seek>(
+	log: &mut SessionLog<R>,
+	mut withdrawn: Option<&mut WithdrawnMessages>,
+) -> Result<ParsedLogLines> {
+	let mut active_positions = Vec::new();
 	let mut session_info: Option<SessionInfo> = None;
 	let mut last_summary_timestamp: u64 = 0;
 	let mut background_supervisor = Vec::new();
@@ -441,8 +482,9 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 	let mut schedule: Option<Vec<crate::mcp::orchestration::schedule::storage::ScheduleEntry>> = None;
 
 	// Process the file line by line to avoid loading the entire file into memory
-	for line in lines {
-		let line = line?;
+	while let Some(line) = log.next().transpose()? {
+		let (frame_start, _) = log.frame_bounds();
+		let frame_line = log.frame_line();
 
 		// Dispatch on the entry type alone: SUMMARY and STATS lines run to hundreds of KB
 		// and most entry types are not read here, so only the arm that consumes a line parses it.
@@ -475,11 +517,13 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 				"RESTORATION_POINT" => {
 					// Found a restoration point - this means the session was optimized with /done
 					restoration_point_found = true;
+					active_positions.clear();
 					messages.clear();
 					restoration_messages.clear();
 					pending_tool_calls.clear(); // Clear stale tool calls from before restoration
 				}
 				"COMPRESSION_POINT" => {
+					active_positions.clear();
 					// Found a compression point - messages before this were compressed
 					// Clear messages like RESTORATION_POINT to reflect compressed state
 					if restoration_point_found {
@@ -499,12 +543,26 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 						);
 					}
 				}
-				"TRUNCATION_POINT" => {
+				TRUNCATION_POINT => {
 					// Found a truncation point - this means messages were removed due to Ctrl+C cleanup
 					// Truncate to the specified message count to reflect the cleaned state
 					let entry: TruncationPointEntry = serde_json::from_str(&line)?;
 					if let Some(message_count) = entry.message_count {
 						let target_count = message_count as usize;
+						if let Some(withdrawn) = withdrawn.as_deref_mut() {
+							let active = if restoration_point_found {
+								&restoration_messages
+							} else {
+								&messages
+							};
+							let keep = target_count.min(active.len());
+							withdrawn.positions.extend(active_positions.drain(keep..).flatten());
+							withdrawn.fingerprints.extend(
+								active[keep..]
+									.iter()
+									.map(|message| (withdrawal_fingerprint(message), (frame_start, frame_line))),
+							);
+						}
 						if restoration_point_found {
 							restoration_messages.truncate(target_count);
 							crate::log_debug!(
@@ -525,6 +583,7 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 				// messages here so the rebuilt snapshot (persisted as message lines after
 				// this marker by command_executor) is the only state that survives reload.
 				"OUTPUT_MODE_REPLACE" | "OUTPUT_MODE_RESTART" => {
+					active_positions.clear();
 					if restoration_point_found {
 						restoration_messages.clear();
 					} else {
@@ -662,14 +721,10 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 					messages.push(message);
 				}
 			}
-		} else if !line.starts_with('{') {
-			// Fallback to legacy prefix-based format for backward compatibility
-			if line.starts_with("SUMMARY: ") {
-				if let Some(content) = line.strip_prefix("SUMMARY: ") {
-					session_info = Some(serde_json::from_str(content)?);
-				}
-			} else if line.starts_with("INFO: ") {
-				if let Some(content) = line.strip_prefix("INFO: ") {
+		} else if let Some(row) = legacy_metadata(&line) {
+			match row {
+				LegacyMetadata::Summary(content) => session_info = Some(serde_json::from_str(content)?),
+				LegacyMetadata::Info(content) => {
 					let mut old_info: SessionInfo = serde_json::from_str(content)?;
 					old_info.input_tokens = 0;
 					old_info.output_tokens = 0;
@@ -685,53 +740,61 @@ fn parse_log_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Parsed
 					old_info.total_layer_time_ms = 0;
 					session_info = Some(old_info);
 				}
-			} else if line.starts_with("RESTORATION_POINT: ") {
-				restoration_point_found = true;
-				messages.clear();
-				restoration_messages.clear();
-			} else if !line.starts_with("API_REQUEST: ")
-				&& !line.starts_with("API_RESPONSE: ")
-				&& !line.starts_with("TOOL_CALL: ")
-				&& !line.starts_with("TOOL_RESULT: ")
-				&& !line.starts_with("CACHE: ")
-				&& !line.starts_with("ERROR: ")
-				&& !line.starts_with("EXCHANGE: ")
-				&& !line.is_empty()
-			{
-				// Try to parse as message JSON or legacy prefixed formats
-				if line.contains("\"role\":") && line.contains("\"content\":") {
-					if let Ok(message) = serde_json::from_str::<Message>(&line) {
-						if restoration_point_found {
-							restoration_messages.push(message);
-						} else {
-							messages.push(message);
-						}
-					}
-				} else if let Some(content) = line.strip_prefix("SYSTEM: ") {
-					if let Ok(message) = serde_json::from_str::<Message>(content) {
-						if restoration_point_found {
-							restoration_messages.push(message);
-						} else {
-							messages.push(message);
-						}
-					}
-				} else if let Some(content) = line.strip_prefix("USER: ") {
-					if let Ok(message) = serde_json::from_str::<Message>(content) {
-						if restoration_point_found {
-							restoration_messages.push(message);
-						} else {
-							messages.push(message);
-						}
-					}
-				} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
-					if let Ok(message) = serde_json::from_str::<Message>(content) {
-						if restoration_point_found {
-							restoration_messages.push(message);
-						} else {
-							messages.push(message);
-						}
+				LegacyMetadata::RestorationPoint => {
+					restoration_point_found = true;
+					active_positions.clear();
+					messages.clear();
+					restoration_messages.clear();
+				}
+				LegacyMetadata::Diagnostic => {}
+			}
+		} else if !line.starts_with('{') && !line.is_empty() {
+			// Try to parse as message JSON or legacy prefixed formats
+			if line.contains("\"role\":") && line.contains("\"content\":") {
+				if let Ok(message) = serde_json::from_str::<Message>(&line) {
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
 					}
 				}
+			} else if let Some(content) = line.strip_prefix("SYSTEM: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
+				}
+			} else if let Some(content) = line.strip_prefix("USER: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
+				}
+			} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
+				}
+			}
+		}
+		if withdrawn.is_some() {
+			let message_count = if restoration_point_found {
+				restoration_messages.len()
+			} else {
+				messages.len()
+			};
+			if active_positions.len() < message_count {
+				// Replayed TOOL_CALL rows can synthesize an assistant slot before
+				// the physical tool message. Only the latter has a source position.
+				active_positions.resize(message_count - 1, None);
+				active_positions.push(Some((frame_start, frame_line)));
 			}
 		}
 	}
@@ -898,7 +961,7 @@ pub fn load_session_with_runtime_state(session_file: &PathBuf) -> Result<LoadedS
 	let file = OpenOptions::new().read(true).write(true).open(session_file)?;
 	file.lock()?;
 	let mut log = SessionLog::new(BufReader::new(&file));
-	let parsed = parse_log_lines(&mut log)?;
+	let parsed = parse_log_lines(&mut log, None)?;
 	if let Some(complete_len) = log.torn_at() {
 		let torn_len = file.metadata()?.len() - complete_len;
 		file.set_len(complete_len)?;
@@ -1133,11 +1196,35 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 		})?;
 		return Err(error).with_context(|| format!("append to {} failed", session_file.display()));
 	}
+	drop(file);
+	if let Some(session) = super::context::current_session_id() {
+		super::delegation_context::advance(&session, session_file);
+	}
 	Ok(())
 }
 
 /// Every zstd frame starts with these bytes (RFC 8878 §3.1.1).
 const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
+pub(crate) enum LegacyMetadata<'a> {
+	Summary(&'a str),
+	Info(&'a str),
+	RestorationPoint,
+	Diagnostic,
+}
+
+pub(crate) fn legacy_metadata(line: &str) -> Option<LegacyMetadata<'_>> {
+	let (prefix, content) = line.split_once(": ")?;
+	match prefix {
+		"SUMMARY" => Some(LegacyMetadata::Summary(content)),
+		"INFO" => Some(LegacyMetadata::Info(content)),
+		"RESTORATION_POINT" => Some(LegacyMetadata::RestorationPoint),
+		"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE" | "ERROR" | "EXCHANGE" => {
+			Some(LegacyMetadata::Diagnostic)
+		}
+		_ => None,
+	}
+}
 
 /// The `type` of a log entry, read without building the entry: serde skips
 /// every other field. `None` for a message line (it has no `type`) and for a
@@ -1161,6 +1248,9 @@ pub(crate) fn entry_kind(line: &str) -> Option<&str> {
 /// decode is corruption and is returned as an error: no reader skips past it.
 pub struct SessionLog<R> {
 	input: R,
+	end: Option<u64>,
+	frame_start: u64,
+	frame_line: u32,
 	lines: VecDeque<String>,
 	// Bytes of a line still open at the end of the last frame read.
 	unterminated: Vec<u8>,
@@ -1182,12 +1272,38 @@ impl<R: BufRead + Seek> SessionLog<R> {
 	pub fn new(input: R) -> Self {
 		Self {
 			input,
+			end: None,
+			frame_start: 0,
+			frame_line: 0,
 			lines: VecDeque::new(),
 			unterminated: Vec::new(),
 			complete_len: 0,
 			torn: false,
 			finished: false,
 		}
+	}
+
+	pub(crate) fn through(mut self, end: u64) -> Self {
+		self.end = Some(end);
+		self
+	}
+
+	pub(crate) fn at_frame(mut self, start: u64) -> Result<Self> {
+		self.input.seek(SeekFrom::Start(start))?;
+		self.complete_len = start;
+		Ok(self)
+	}
+
+	pub(crate) fn frame_bounds(&self) -> (u64, u64) {
+		(self.frame_start, self.complete_len)
+	}
+
+	pub(crate) fn frame_line(&self) -> u32 {
+		self.frame_line
+	}
+
+	pub(crate) fn has_buffered_rows(&self) -> bool {
+		!self.lines.is_empty()
 	}
 
 	/// Length of the log's complete frames, when it ended on a torn final frame.
@@ -1197,11 +1313,16 @@ impl<R: BufRead + Seek> SessionLog<R> {
 
 	/// Decode the next frame into `lines`; false once the log has ended.
 	fn read_frame(&mut self) -> Result<bool> {
+		let remaining = self.end.map_or(u64::MAX, |end| end.saturating_sub(self.complete_len));
+		if remaining == 0 {
+			return Ok(false);
+		}
 		if self.input.fill_buf()?.is_empty() {
+			anyhow::ensure!(self.end.is_none(), "session log ended before its bound");
 			return Ok(false);
 		}
 		let mut frame = Vec::new();
-		let decoded = ZstdDecoder::with_buffer(&mut self.input)
+		let decoded = ZstdDecoder::with_buffer(self.input.by_ref().take(remaining))
 			.map(|decoder| decoder.single_frame())
 			.and_then(|mut decoder| decoder.read_to_end(&mut frame));
 		if let Err(error) = decoded {
@@ -1216,6 +1337,8 @@ impl<R: BufRead + Seek> SessionLog<R> {
 				anyhow::Error::new(error).context(format!("corrupt session log frame at byte {}", self.complete_len))
 			);
 		}
+		self.frame_start = self.complete_len;
+		self.frame_line = 0;
 		self.complete_len = self.input.stream_position()?;
 
 		self.unterminated.extend_from_slice(&frame);
@@ -1251,6 +1374,7 @@ impl<R: BufRead + Seek> Iterator for SessionLog<R> {
 	fn next(&mut self) -> Option<Self::Item> {
 		loop {
 			if let Some(line) = self.lines.pop_front() {
+				self.frame_line += 1;
 				return Some(Ok(line));
 			}
 			if self.finished {
@@ -1262,6 +1386,7 @@ impl<R: BufRead + Seek> Iterator for SessionLog<R> {
 					self.finished = true;
 					// A last line written without its newline (older logs) is still a line.
 					if !self.unterminated.is_empty() {
+						self.frame_line += 1;
 						return Some(String::from_utf8(std::mem::take(&mut self.unterminated)).map_err(Into::into));
 					}
 				}

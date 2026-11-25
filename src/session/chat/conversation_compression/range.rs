@@ -46,7 +46,7 @@ use anyhow::Result;
 /// True when a message is a synthetic compression summary — an assistant-role
 /// message this module inserted (by name) or whose body carries the summary
 /// tag. It is compacted state, never a live assistant turn.
-fn is_synthetic_summary(m: &crate::session::Message) -> bool {
+pub(crate) fn is_conversation_summary(m: &crate::session::Message) -> bool {
 	m.role == "assistant"
 		&& (m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
 			|| m.content.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
@@ -66,7 +66,7 @@ fn states_task(m: &crate::session::Message) -> bool {
 		// always carries. A summary missing one (older session file, a different
 		// insertion path) would otherwise become invisible here and accumulate in
 		// the prefix forever, stale task and all.
-		|| is_synthetic_summary(m)
+		|| is_conversation_summary(m)
 }
 
 /// Find the compression range deterministically from message structure.
@@ -142,7 +142,7 @@ pub(super) fn find_compression_range_preserving_turn(
 		// to drain and force wedged. Drain through the unanswered request.
 		match messages[..tail_idx]
 			.iter()
-			.rposition(|message| message.role == "assistant" && !(force && is_synthetic_summary(message)))
+			.rposition(|message| message.role == "assistant" && !(force && is_conversation_summary(message)))
 		{
 			Some(previous_assistant_idx) => {
 				let unanswered = messages[previous_assistant_idx + 1..tail_idx]

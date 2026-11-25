@@ -15,6 +15,7 @@
 // Core MCP provider - modular structure
 // Handles core tools: plan, tap
 
+pub(crate) mod context;
 pub mod functions;
 pub mod local_tool;
 pub mod plan;

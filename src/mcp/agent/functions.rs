@@ -833,6 +833,9 @@ pub async fn run_acp_command(
 	if let Some(parent) = &plugin_parent {
 		crate::plugins::lifecycle::write_child_meta(&mut new_session_params, parent, &plugin_inherited);
 	}
+	if let Some(grant) = tap_input.as_ref().and_then(|input| input.context_grant) {
+		new_session_params["_meta"][crate::session::delegation_context::ACP_META] = json!(grant.to_string());
+	}
 	// 2. session/new
 	write_acp_request(
 		stdin.as_mut().expect("child stdin is open during session creation"),

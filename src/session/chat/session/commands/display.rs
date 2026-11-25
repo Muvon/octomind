@@ -2888,20 +2888,357 @@ fn display_skill_list(data: &serde_json::Value) {
 	block_close_ok("/skill", Some(&format!("{} skill(s) · {} active", total, active_count)));
 	println!();
 }
-
+/// Print a plugin's answer as one block. Besydr answers `/learning` with the
+/// block to show as plain `text` plus the `data` it was laid out from: framing
+/// that text nests a block in a block without the colours, so a known answer
+/// is shown from its `data`. Anything else is the plugin's `text` in a frame.
 pub fn display_plugin(output: &CommandOutput) {
 	let CommandOutput::Plugin {
-		plugin, command, text, ..
+		plugin,
+		command,
+		text,
+		data,
+		..
 	} = output
 	else {
 		return;
 	};
+	// Only Besydr answers `/learning` with this payload shape; another plugin's
+	// answer keeps its own text, and so does an answer with no data to lay out.
+	if command == LEARNING_COMMAND
+		&& plugin == crate::config::plugins::DEFAULT_PLUGIN_NAME
+		&& display_learning(command, data)
+	{
+		return;
+	}
 	block_open(command, Some(plugin));
 	for line in text.lines() {
 		block_line(line);
 	}
 	block_close_ok(command, None);
 	println!();
+}
+
+/// The plugin command whose answers `display_learning` lays out.
+const LEARNING_COMMAND: &str = "/learning";
+
+/// `/learning` as Besydr answers it, laid out and coloured as the built-in
+/// command was. `false` (printing nothing) for a subcommand not known here.
+fn display_learning(command: &str, data: &serde_json::Value) -> bool {
+	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
+	match subcommand {
+		"list" => {
+			let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
+			let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+			let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
+			let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(0);
+			let pattern = data.get("pattern").and_then(|v| v.as_str());
+
+			let subtitle = if let Some(pat) = pattern {
+				format!("{}/{} · filter '{}'", role, project, pat)
+			} else {
+				format!("{}/{}", role, project)
+			};
+			block_open(command, Some(&subtitle));
+			if let Some(storage) = data.get("storage") {
+				let number = |key| storage.get(key).and_then(|value| value.as_u64()).unwrap_or(0);
+				block_row_text(
+					&format!(
+						"hot: {} item(s) / {} tok · cold: {} item(s) / {} tok · scope: {} local + {} global",
+						number("hot_items"),
+						number("hot_tokens"),
+						number("cold_items"),
+						number("cold_tokens"),
+						number("scoped_hot") + number("scoped_cold"),
+						number("global_hot") + number("global_cold")
+					)
+					.dimmed()
+					.to_string(),
+				);
+				if let Some(types) = storage.get("by_type").and_then(|value| value.as_object()) {
+					let summary = types
+						.iter()
+						.map(|(name, counts)| {
+							format!(
+								"{} {}/{}",
+								name,
+								counts.get("hot").and_then(|value| value.as_u64()).unwrap_or(0),
+								counts.get("cold").and_then(|value| value.as_u64()).unwrap_or(0)
+							)
+						})
+						.collect::<Vec<_>>()
+						.join(" · ");
+					if !summary.is_empty() {
+						block_row_text(&format!("types hot/cold: {summary}").dimmed().to_string());
+					}
+				}
+			}
+
+			let lessons = match data.get("lessons").and_then(|v| v.as_array()) {
+				Some(l) if !l.is_empty() => l,
+				_ => {
+					block_line(&"No lessons found.".yellow().to_string());
+					block_close_ok(command, Some("empty"));
+					println!();
+					return true;
+				}
+			};
+
+			for lesson in lessons {
+				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
+				let title = lesson.get("title").and_then(|v| v.as_str()).unwrap_or("");
+				let memory_type = lesson.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
+				let importance = lesson.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
+				let confidence = lesson.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
+				let scope = lesson.get("scope").and_then(|v| v.as_str()).unwrap_or("scoped");
+				let tags = lesson
+					.get("tags")
+					.and_then(|v| v.as_array())
+					.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+					.unwrap_or_default();
+				let created = lesson.get("created").and_then(|v| v.as_str()).unwrap_or("");
+				let outcome = lesson.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+				let related = lesson.get("related").and_then(|v| v.as_array()).map_or(0, Vec::len);
+				let evidence = lesson.get("evidence").and_then(|v| v.as_array()).map_or(0, Vec::len);
+
+				let imp_indicator = if importance >= 0.7 {
+					"[high]".bright_yellow().to_string()
+				} else if importance >= 0.4 {
+					"[med] ".dimmed().to_string()
+				} else {
+					"[low] ".dimmed().to_string()
+				};
+
+				let display_source = if memory_type == "experience" && !title.is_empty() {
+					title
+				} else {
+					content
+				};
+				let content_display = if display_source.chars().count() > 80 {
+					format!("{}…", display_source.chars().take(79).collect::<String>())
+				} else {
+					display_source.to_string()
+				};
+
+				let scope_tag = if scope == "global" {
+					" (global)".bright_cyan().to_string()
+				} else {
+					String::new()
+				};
+				block_section(&format!("#{} {}{} ({})", index, imp_indicator, scope_tag, memory_type));
+				block_row_text(&content_display.bright_white().to_string());
+
+				let mut meta = Vec::new();
+				if !confidence.is_empty() {
+					meta.push(format!("confidence: {}", confidence));
+				}
+				if !tags.is_empty() {
+					meta.push(format!("tags: {}", tags));
+				}
+				if !created.is_empty() {
+					let date: String = created.chars().take(10).collect();
+					meta.push(format!("created: {}", date));
+				}
+				if !outcome.is_empty() && outcome != "unknown" {
+					meta.push(format!("outcome: {}", outcome));
+				}
+				if related > 0 {
+					meta.push(format!("links: {}", related));
+				}
+				if evidence > 0 {
+					meta.push(format!("evidence: {}", evidence));
+				}
+				if !meta.is_empty() {
+					block_row_text(&meta.join(" | ").dimmed().to_string());
+				}
+			}
+
+			if total_pages > 1 {
+				let mut nav = Vec::new();
+				if page > 1 {
+					nav.push(format!("/learning list {}", page - 1));
+				}
+				if page < total_pages {
+					nav.push(format!("/learning list {}", page + 1));
+				}
+				block_line(
+					&format!("Page {}/{}  {}", page, total_pages, nav.join("  "))
+						.dimmed()
+						.to_string(),
+				);
+			}
+			block_line(
+				&"/learning show <n> · /learning delete <n> · /learning clear"
+					.dimmed()
+					.to_string(),
+			);
+			block_close_ok(command, Some(&format!("{} lesson(s)", total)));
+			println!();
+		}
+		"show" => {
+			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+			let memory_type = data.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
+			let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
+			let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+			block_open(command, Some(&format!("#{} · {} · {}", index, memory_type, title)));
+			for line in content.lines() {
+				block_row_text(line);
+			}
+			let mut meta = Vec::new();
+			for (key, label) in [
+				("outcome", "outcome"),
+				("confidence", "confidence"),
+				("scope", "scope"),
+				("path", "file"),
+			] {
+				if let Some(value) = data.get(key).and_then(|v| v.as_str()) {
+					if !value.is_empty() {
+						meta.push(format!("{label}: {value}"));
+					}
+				}
+			}
+			let related = data
+				.get("related")
+				.and_then(|v| v.as_array())
+				.map(|items| {
+					items
+						.iter()
+						.filter_map(|item| item.as_str())
+						.collect::<Vec<_>>()
+						.join(", ")
+				})
+				.unwrap_or_default();
+			if !related.is_empty() {
+				meta.push(format!("related: {related}"));
+			}
+			let evidence = data
+				.get("evidence")
+				.and_then(|v| v.as_array())
+				.map(|items| {
+					items
+						.iter()
+						.filter_map(|item| item.as_str())
+						.collect::<Vec<_>>()
+						.join(", ")
+				})
+				.unwrap_or_default();
+			if !evidence.is_empty() {
+				meta.push(format!("evidence: {evidence}"));
+			}
+			if !meta.is_empty() {
+				block_section("provenance");
+				for line in meta {
+					block_row_text(&line.dimmed().to_string());
+				}
+			}
+			block_close_ok(command, Some("memory inspected"));
+			println!();
+		}
+		"delete" => {
+			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+			let preview = data.get("content_preview").and_then(|v| v.as_str()).unwrap_or("");
+			block_open(command, None);
+			let kw = key_width(["deleted"]);
+			block_row(
+				"deleted",
+				&format!("#{}: {}…", index, preview).bright_green().to_string(),
+				kw,
+			);
+			block_close_ok(command, Some(&format!("deleted #{}", index)));
+			println!();
+		}
+		"clear" => {
+			let deleted = data.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+			let errors = data
+				.get("errors")
+				.and_then(|v| v.as_array())
+				.map(|a| a.len())
+				.unwrap_or(0);
+			block_open(command, None);
+			if deleted == 0 {
+				block_line(&"No lessons to clear.".yellow().to_string());
+				block_close_ok(command, Some("empty"));
+			} else {
+				let kw = key_width(["cleared", "warnings"]);
+				block_row(
+					"cleared",
+					&format!("{} lesson(s)", deleted).bright_green().to_string(),
+					kw,
+				);
+				if errors > 0 {
+					block_row(
+						"warnings",
+						&format!("{} file(s) could not be removed", errors).yellow().to_string(),
+						kw,
+					);
+				}
+				block_close_ok(command, Some(&format!("cleared {}", deleted)));
+			}
+			println!();
+		}
+		"evolution_list" => {
+			let records = data
+				.get("records")
+				.and_then(|value| value.as_array())
+				.cloned()
+				.unwrap_or_default();
+			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
+			let domain = data.get("domain").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", Some(&format!("{project}/{domain}")));
+			if records.is_empty() {
+				block_line(&"No matching evolved behavior.".yellow().to_string());
+			} else {
+				for record in &records {
+					let id = record.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+					let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+					let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+					let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+					block_section(&format!("{name} · {kind} · {state}"));
+					block_row_text(&id.dimmed().to_string());
+				}
+			}
+			block_line(
+				&"/learning evolution show <id> · approve · reject · rollback"
+					.dimmed()
+					.to_string(),
+			);
+			block_close_ok("/learning evolution", Some(&format!("{} artifact(s)", records.len())));
+			println!();
+		}
+		"evolution_show" => {
+			let record = data.get("record").cloned().unwrap_or_default();
+			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", Some(&format!("{name} · {state}")));
+			if let Some(native) = data.get("native_artifact").and_then(|v| v.as_str()) {
+				for line in native.lines() {
+					block_row_text(line);
+				}
+			}
+			block_close_ok("/learning evolution", Some("artifact inspected"));
+			println!();
+		}
+		"evolution_action" => {
+			let action = data.get("action").and_then(|v| v.as_str()).unwrap_or("updated");
+			let record = data.get("record").cloned().unwrap_or_default();
+			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", None);
+			block_row_text(&format!("{action}: {name} -> {state}").bright_green().to_string());
+			block_close_ok("/learning evolution", Some(action));
+			println!();
+		}
+		"error" => {
+			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+			block_open(command, None);
+			block_close_err(command, msg);
+			println!();
+		}
+		_ => return false,
+	}
+	true
 }
 
 /// Width of the usage bars. Short enough to sit inside a narrow terminal.
@@ -3269,3 +3606,7 @@ fn display_agent_status(data: &serde_json::Value) {
 #[cfg(test)]
 #[path = "display_render_tests.rs"]
 mod render_tests;
+
+#[cfg(test)]
+#[path = "display_plugin_tests.rs"]
+mod plugin_tests;

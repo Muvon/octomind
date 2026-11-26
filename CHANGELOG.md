@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.74.0] - 2026-11-26
+
+Delegated context search, approval-based loading of remote MCP skills, and formatting for recognized plugin responses are now available.
+
+### ✨ New Features & Enhancements
+
+- **delegation**: enable delegated context search `15a40ec5`
+- **mcp**: load remote MCP skills with approval `8153744f`
+- **display**: format recognized plugin responses `de324ce9`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.73.2] - 2026-11-24
 
 ### 📋 Release Summary

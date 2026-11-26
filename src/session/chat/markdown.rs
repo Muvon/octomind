@@ -21,10 +21,12 @@ use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use termimad::minimad::{Composite, Line, Text};
-use termimad::{FmtText, MadSkin};
+use termimad::MadSkin;
 
 #[path = "markdown_links.rs"]
 mod links;
+#[path = "markdown_tables.rs"]
+mod tables;
 
 // Fenced code-block matcher, compiled once. Reused by every render call
 // (streaming re-renders the same buffer repeatedly).
@@ -423,7 +425,7 @@ impl MarkdownRenderer {
 		}
 		// Style parsed compounds before layout so ANSI escapes never affect
 		// wrapping or table widths, and existing inline/fenced code stays intact.
-		links::render_links(FmtText::from_text(&self.skin, text, Some(width)), &links)
+		links::render_links(tables::layout(&self.skin, text, width), &links)
 	}
 
 	pub fn render(&self, markdown: &str) -> Result<String> {

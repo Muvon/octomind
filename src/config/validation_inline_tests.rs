@@ -69,6 +69,7 @@ fn markdown_theme_rejects_unknown_values_and_accepts_case_insensitive_names() {
 	config.markdown_theme = "solarised".into();
 	let error = config.validate_required_fields().unwrap_err().to_string();
 	assert!(error.contains("solarised"), "got: {error}");
+	assert!(error.contains(&MarkdownTheme::all_themes().join(", ")), "got: {error}");
 	for theme in ["Dark", "monokai"] {
 		config.markdown_theme = theme.into();
 		config

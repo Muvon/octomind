@@ -244,6 +244,26 @@ fn staging_a_file_does_not_move_the_fingerprint() {
 	assert_ne!(staged, edited, "an edit after staging is still observed");
 }
 
+/// A changed file whose name has a non-ASCII character is not escaped by git status,
+/// so its content is included in the hash and subsequent edits move the fingerprint.
+#[test]
+#[serial_test::serial]
+fn edits_to_non_ascii_filenames_move_the_fingerprint() {
+	let tmp = temp_repo();
+	git_in(tmp.path(), &["config", "core.quotePath", "true"]);
+	let file = tmp.path().join("é.txt");
+	std::fs::write(&file, "one").unwrap();
+
+	let first = fingerprint().expect("temp repo fingerprint");
+	std::fs::write(&file, "two").unwrap();
+	let second = fingerprint().expect("temp repo fingerprint");
+
+	assert_ne!(
+		first, second,
+		"edits to a non-ASCII named file must move the fingerprint"
+	);
+}
+
 /// A tool that rewrites a file with the bytes already in it changed nothing.
 /// Folding mtime made that no-op read as a mutation.
 #[test]

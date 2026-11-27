@@ -14,14 +14,9 @@
 
 use super::super::fixtures::catalog;
 use super::*;
-use serde_json::{json, Value};
 
 async fn problems(script: &str) -> Vec<Problem> {
-	problems_with_input(script, None).await
-}
-
-async fn problems_with_input(script: &str, input: Option<&Value>) -> Vec<Problem> {
-	match check(script, &catalog().declarations(input)).await {
+	match check(script, &catalog().declarations()).await {
 		Ok(_) => Vec::new(),
 		Err(problems) => problems,
 	}
@@ -47,7 +42,7 @@ print(hits.length);
 #[tokio::test]
 async fn typescript_syntax_is_accepted_and_compiled_away() {
 	let script = "interface Row { n: number }\nconst rows: Row[] = JSON.parse(await files.read({ path: 'a' }));\nrows.filter((row) => row.n > 1).length";
-	let checked = check(script, &catalog().declarations(None)).await.unwrap();
+	let checked = check(script, &catalog().declarations()).await.unwrap();
 	assert!(!checked.javascript.contains("interface"), "{}", checked.javascript);
 	assert!(!checked.javascript.contains(": Row"), "{}", checked.javascript);
 	assert!(
@@ -60,7 +55,7 @@ async fn typescript_syntax_is_accepted_and_compiled_away() {
 #[tokio::test]
 async fn top_level_return_and_await_are_allowed() {
 	assert_eq!(
-		problems("if (!input) return 'none';\nreturn await files.read({ path: 'a' });").await,
+		problems("if (1 > 2) return 'none';\nreturn await files.read({ path: 'a' });").await,
 		Vec::new()
 	);
 }
@@ -143,21 +138,13 @@ async fn something_the_sandbox_does_not_have_is_caught() {
 	);
 }
 
+/// `input` was a global of the sandbox while the tool had a second
+/// parameter; a script that still reads it names what does not exist.
 #[tokio::test]
-async fn input_is_typed_by_its_value() {
-	let good = json!({"edit": {"content": "line1\nline2 `tick` ${x}", "path": "a"}, "mode": "docs"});
-	assert_eq!(
-		problems_with_input(
-			"await files.write(input.edit);\nawait my_search.find_all({ query: 'q', mode: input.mode });",
-			Some(&good)
-		)
-		.await,
-		Vec::new()
-	);
-	let bad = json!({"edit": {"path": "a"}});
-	let found = problems_with_input("await files.write(input.edit)", Some(&bad)).await;
+async fn a_script_that_reads_input_is_rejected() {
+	let found = problems("await files.write(input)").await;
 	assert_eq!(found.len(), 1, "{found:?}");
-	assert!(found[0].message.contains("Property 'content' is missing"), "{found:?}");
+	assert!(found[0].message.contains("Cannot find name 'input'"), "{found:?}");
 }
 
 #[tokio::test]
@@ -170,18 +157,16 @@ async fn reading_a_caught_error_is_allowed() {
 
 #[tokio::test]
 async fn a_trailing_expression_becomes_the_result() {
-	let checked = check("const a = 1;\na + 1", &catalog().declarations(None))
-		.await
-		.unwrap();
+	let checked = check("const a = 1;\na + 1", &catalog().declarations()).await.unwrap();
 	assert!(checked.javascript.contains("return a + 1"), "{}", checked.javascript);
-	let checked = check("const a = 1;", &catalog().declarations(None)).await.unwrap();
+	let checked = check("const a = 1;", &catalog().declarations()).await.unwrap();
 	assert!(!checked.javascript.contains("return"), "{}", checked.javascript);
 }
 
 #[tokio::test]
 async fn compiled_lines_map_back_to_the_script() {
 	let script = "interface Row {\n\tn: number;\n}\nconst rows: Row[] = [];\nprint(rows.length);";
-	let checked = check(script, &catalog().declarations(None)).await.unwrap();
+	let checked = check(script, &catalog().declarations()).await.unwrap();
 	let compiled: Vec<&str> = checked.javascript.lines().collect();
 	let print_at = compiled
 		.iter()

@@ -51,20 +51,15 @@ fn names(functions: &[McpFunction]) -> Vec<&str> {
 }
 
 #[test]
-fn the_code_tool_exposes_input_only_in_its_json_schema() {
+fn the_code_tool_takes_only_a_script() {
 	let code = get_code_function();
 	assert_eq!(code.freeform.as_deref(), Some("script"));
 	assert_eq!(code.parameters["required"], json!(["script"]));
 	assert_eq!(code.parameters["additionalProperties"], json!(false));
 	let properties = code.parameters["properties"].as_object().expect("parameter properties");
-	assert_eq!(properties.len(), 2);
+	assert_eq!(properties.len(), 1);
 	assert_eq!(properties["script"]["type"], json!("string"));
-	assert_eq!(properties["input"]["type"], json!("object"));
 	assert!(!code.description.contains("`input`"));
-	assert_eq!(
-		properties["input"]["description"],
-		json!("`input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`.")
-	);
 }
 
 #[test]
@@ -266,4 +261,28 @@ async fn a_call_without_a_script_is_refused() {
 	let result = execute(&call, &config(true), None).await;
 	assert!(result.is_error());
 	assert_eq!(result.extract_content(), "script: non-empty string required");
+}
+
+/// The schema admits `script` alone: a call with any other field — the
+/// retired `input`, alone or next to a script, or an invented one — is
+/// refused with what the tool takes, before anything runs.
+#[tokio::test]
+async fn a_call_with_a_field_other_than_script_is_refused() {
+	for (parameters, field) in [
+		(json!({ "script": "print(1)", "input": { "path": "a.rs" } }), "input"),
+		(json!({ "input": { "path": "a.rs" } }), "input"),
+		(json!({ "script": "print(1)", "path": "a.rs" }), "path"),
+	] {
+		let call = McpToolCall {
+			tool_name: TOOL_NAME.to_string(),
+			parameters,
+			tool_id: "call-1".to_string(),
+		};
+		let result = execute(&call, &config(true), None).await;
+		assert!(result.is_error());
+		assert_eq!(
+			result.extract_content(),
+			format!("{field} is not a parameter of this tool; script is its only parameter")
+		);
+	}
 }

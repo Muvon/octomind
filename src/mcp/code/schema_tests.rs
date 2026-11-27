@@ -291,23 +291,6 @@ fn a_declaration_parameter_is_optional_when_nothing_is_required() {
 }
 
 #[test]
-fn a_value_is_typed_as_exactly_as_it_is() {
-	let value = json!({
-		"count": 3,
-		"flag": true,
-		"long": "x".repeat(200),
-		"modes": ["code", "docs", "code"],
-		"multi-line": "a\nb",
-		"none": null,
-		"nothing": []
-	});
-	assert_eq!(
-		value_type(&value),
-		"{count: 3, flag: true, long: string, modes: (\"code\"|\"docs\")[], \"multi-line\": string, none: null, nothing: never[]}"
-	);
-}
-
-#[test]
 fn argument_descriptions_are_listed_with_nesting() {
 	let schema = json!({
 		"type": "object",

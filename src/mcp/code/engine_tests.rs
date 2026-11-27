@@ -55,19 +55,18 @@ impl Host for Arc<Recorder> {
 	}
 }
 
-async fn run_script(script: &str, input: Value) -> (Run, Arc<Recorder>) {
+async fn run_script(script: &str) -> (Run, Arc<Recorder>) {
 	let recorder = Arc::new(Recorder::default());
-	let run = run_with(script, input, recorder.clone()).await;
+	let run = run_with(script, recorder.clone()).await;
 	(run, recorder)
 }
 
-async fn run_with(script: &str, input: Value, recorder: Arc<Recorder>) -> Run {
+async fn run_with(script: &str, recorder: Arc<Recorder>) -> Run {
 	let catalog = catalog();
-	let input = (!input.is_null()).then_some(input);
-	let checked = check::check(script, &catalog.declarations(input.as_ref()))
+	let checked = check::check(script, &catalog.declarations())
 		.await
 		.expect("test scripts pass the check");
-	run(checked, input.as_ref(), Arc::new(catalog), Arc::new(recorder)).await
+	run(checked, Arc::new(catalog), Arc::new(recorder)).await
 }
 
 /// A last expression that only did things leaves nothing to show. A list with
@@ -75,26 +74,26 @@ async fn run_with(script: &str, input: Value, recorder: Arc<Recorder>) -> Run {
 #[tokio::test]
 async fn a_result_that_holds_nothing_is_not_shown() {
 	let script = "await Promise.all(['a', 'b'].map(async (word: string) => print(word)))";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "a\nb");
 
-	let (run, _) = run_script("[null, 1]", Value::Null).await;
+	let (run, _) = run_script("[null, 1]").await;
 	assert_eq!(run.output, "[null,1]");
-	let (run, _) = run_script("const none: string[] = [];\nnone", Value::Null).await;
+	let (run, _) = run_script("const none: string[] = [];\nnone").await;
 	assert_eq!(run.output, "[]");
 }
 
 #[tokio::test]
 async fn printed_text_and_the_result_come_back() {
-	let (run, _) = run_script("print('a', 1, {b: 2});\n'done'", Value::Null).await;
+	let (run, _) = run_script("print('a', 1, {b: 2});\n'done'").await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "a 1 {\"b\":2}\ndone");
 }
 
 #[tokio::test]
 async fn a_single_call_is_its_own_result() {
-	let (run, recorder) = run_script("files.read({path: 'a.txt'})", Value::Null).await;
+	let (run, recorder) = run_script("files.read({path: 'a.txt'})").await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "contents of a.txt");
 	assert_eq!(
@@ -111,14 +110,14 @@ async fn a_single_call_is_its_own_result() {
 #[tokio::test]
 async fn a_structured_result_arrives_as_a_value() {
 	let script = "const stats: any = await files.read({path: 'stats.json'});\nreturn stats.lines + stats.names.length";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "5");
 }
 
 #[tokio::test]
 async fn a_call_reaches_the_server_under_its_real_name() {
-	let (run, recorder) = run_script("return await my_search.find_all({query: 'q'})", Value::Null).await;
+	let (run, recorder) = run_script("return await my_search.find_all({query: 'q'})").await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "my-search.find-all ran");
 	assert_eq!(recorder.calls.lock()[0].0, "my-search");
@@ -132,7 +131,7 @@ const first = await files.read({ path: "a.txt" });
 const second = await files.read({ path: first.split(" ").pop() ?? "" });
 print(second.length);
 "#;
-	let (run, recorder) = run_script(script, Value::Null).await;
+	let (run, recorder) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "17");
 	assert_eq!(recorder.calls.lock().len(), 2);
@@ -144,7 +143,7 @@ async fn promise_all_runs_calls_at_the_same_time() {
 const texts = await Promise.all(["a", "b", "c", "d"].map((path) => files.read({ path })));
 print(texts.length);
 "#;
-	let (run, recorder) = run_script(script, Value::Null).await;
+	let (run, recorder) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "4");
 	assert_eq!(recorder.peak.load(Ordering::SeqCst), 4);
@@ -159,7 +158,7 @@ try {
 	print("caught:", error.message);
 }
 "#;
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "caught: no such file: missing.txt");
 }
@@ -167,7 +166,7 @@ try {
 #[tokio::test]
 async fn an_uncaught_failure_ends_the_script_and_keeps_what_was_printed() {
 	let script = "print('before');\nawait files.read({ path: 'missing.txt' });\nprint('after');";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(run.output, "before");
 	let error = run.error.expect("the script failed");
 	assert_eq!(error, "Error: no such file: missing.txt\n  at line 2");
@@ -176,7 +175,7 @@ async fn an_uncaught_failure_ends_the_script_and_keeps_what_was_printed() {
 #[tokio::test]
 async fn the_failing_line_is_the_one_in_the_script_as_written() {
 	let script = "interface Unused {\n\tn: number;\n}\nprint('before');\nawait files.read({ path: 'missing.txt' });";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(
 		run.error.as_deref(),
 		Some("Error: no such file: missing.txt\n  at line 5")
@@ -187,7 +186,7 @@ async fn the_failing_line_is_the_one_in_the_script_as_written() {
 async fn values_the_types_cannot_see_are_checked_when_the_call_is_made() {
 	// `JSON.parse` gives `any`, so the type check lets this through.
 	let script = "const args = JSON.parse('{\"file\": \"a\"}');\nawait files.read(args);";
-	let (run, recorder) = run_script(script, Value::Null).await;
+	let (run, recorder) = run_script(script).await;
 	let error = run.error.expect("the call is refused");
 	assert!(error.contains("unknown argument `file`"), "{error}");
 	assert!(
@@ -200,25 +199,24 @@ async fn values_the_types_cannot_see_are_checked_when_the_call_is_made() {
 	);
 }
 
+/// The text a script needs is written in it as a template literal; the
+/// TypeScript escapes are all that stand between a backtick, `${` or a quote
+/// and the value the tool receives.
 #[tokio::test]
-async fn input_passes_text_without_javascript_quoting() {
-	let text = "line1\nline2 `tick` ${x} \\n \"quoted\"";
-	let input = serde_json::json!({"path": "a.rs", "content": text});
-	let (run, recorder) = run_script("files.write(input)", input.clone()).await;
+async fn a_template_literal_passes_multi_line_text() {
+	let script = r#"files.write({ path: "a.rs", content: `line1
+line2 \`tick\` \${x} \\n "quoted"` })"#;
+	let (run, recorder) = run_script(script).await;
 	assert_eq!(run.error, None);
-	assert_eq!(recorder.calls.lock()[0].2, input);
-}
-
-#[tokio::test]
-async fn omitted_input_is_undefined() {
-	let (run, _) = run_script("return input === undefined ? 'undefined' : 'defined'", Value::Null).await;
-	assert_eq!(run.error, None);
-	assert_eq!(run.output, "undefined");
+	assert_eq!(
+		recorder.calls.lock()[0].2,
+		json!({"path": "a.rs", "content": "line1\nline2 `tick` ${x} \\n \"quoted\""})
+	);
 }
 
 #[tokio::test]
 async fn help_prints_signatures() {
-	let (run, _) = run_script("help('files')", Value::Null).await;
+	let (run, _) = run_script("help('files')").await;
 	assert_eq!(run.error, None);
 	assert!(
 		run.output.contains("files.read({path: string, limit?: number})"),
@@ -229,7 +227,7 @@ async fn help_prints_signatures() {
 
 #[tokio::test]
 async fn a_tool_name_the_types_cannot_see_is_still_refused_when_unknown() {
-	let (run, _) = run_script("const server: any = files;\nawait server.nope({});", Value::Null).await;
+	let (run, _) = run_script("const server: any = files;\nawait server.nope({});").await;
 	let error = run.error.expect("unknown tool");
 	assert!(
 		error.contains("files.nope is not a tool. Tools of files: read, write"),
@@ -240,7 +238,7 @@ async fn a_tool_name_the_types_cannot_see_is_still_refused_when_unknown() {
 #[tokio::test]
 async fn sleep_and_set_timeout_work() {
 	let script = "await sleep(5);\nawait new Promise((resolve) => setTimeout(resolve, 5));\n'woke'";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(run.error, None);
 	assert_eq!(run.output, "woke");
 }
@@ -249,7 +247,7 @@ async fn sleep_and_set_timeout_work() {
 async fn the_sandbox_has_no_way_out_but_tools() {
 	let script = "const globals: any = globalThis;\n\
 		['require', 'process', 'fetch', 'Deno', 'os', 'std', 'XMLHttpRequest'].map((name) => typeof globals[name]).join(' ')";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(
 		run.output,
 		"undefined undefined undefined undefined undefined undefined undefined"
@@ -258,7 +256,7 @@ async fn the_sandbox_has_no_way_out_but_tools() {
 
 #[tokio::test]
 async fn a_promise_that_never_settles_does_not_hang() {
-	let (run, _) = run_script("await new Promise(() => {});", Value::Null).await;
+	let (run, _) = run_script("await new Promise(() => {});").await;
 	let error = run.error.expect("the script cannot finish");
 	assert!(error.contains("never settles"), "{error}");
 }
@@ -266,7 +264,7 @@ async fn a_promise_that_never_settles_does_not_hang() {
 #[tokio::test]
 async fn output_past_the_limit_is_dropped_and_reported() {
 	let script = "for (let i = 0; i < 2000; i++) print('x'.repeat(1000));\n'done'";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	let error = run.error.expect("more output than a script may produce");
 	assert!(error.contains("more than 1024 KB"), "{error}");
 	assert!(run.output.len() <= MAX_OUTPUT_BYTES);
@@ -275,7 +273,7 @@ async fn output_past_the_limit_is_dropped_and_reported() {
 #[tokio::test]
 async fn a_helper_that_fails_names_both_lines() {
 	let script = "async function load(path: string) {\n\treturn await files.read({ path });\n}\nprint('x');\nawait load('missing.txt');";
-	let (run, _) = run_script(script, Value::Null).await;
+	let (run, _) = run_script(script).await;
 	assert_eq!(
 		run.error.as_deref(),
 		Some("Error: no such file: missing.txt\n  at line 2, called from line 5")
@@ -293,7 +291,6 @@ fn a_run_can_move_between_threads() {
 	};
 	assert_send(run(
 		checked,
-		None,
 		Arc::new(catalog()),
 		Arc::new(Arc::new(Recorder::default())),
 	));
@@ -303,6 +300,6 @@ fn a_run_can_move_between_threads() {
 async fn a_cancelled_turn_stops_a_running_script() {
 	let recorder = Arc::new(Recorder::default());
 	recorder.cancelled.store(true, Ordering::SeqCst);
-	let run = run_with("let n = 0;\nwhile (true) { n += 1; }", Value::Null, recorder).await;
+	let run = run_with("let n = 0;\nwhile (true) { n += 1; }", recorder).await;
 	assert!(run.error.is_some());
 }

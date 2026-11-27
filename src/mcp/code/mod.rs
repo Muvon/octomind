@@ -94,11 +94,7 @@ pub fn get_code_function() -> McpFunction {
 			"properties": {
 				"script": {
 					"type": "string",
-					"description": "TypeScript to run."
-				},
-				"input": {
-					"type": "object",
-					"description": "`input` is the `input` argument of this call. Put long or multi-line text (file content, patches) there instead of quoting it in the script, and pass it on: `{content: input.content}`."
+					"description": "TypeScript to run. This is the tool's only parameter: long or multi-line text (file content, patches) is written in the script as a template literal, with a backtick and `${` escaped inside it."
 				}
 			},
 			"required": ["script"],
@@ -516,11 +512,23 @@ pub async fn execute(
 	cancellation: Option<watch::Receiver<bool>>,
 ) -> McpToolResult {
 	let refuse = |message: String| McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), message);
+	// The schema admits `script` alone. Any other field comes from an older
+	// call in the context (`input` was the second parameter until text went
+	// into the script as a literal) or is invented; dropped silently, the
+	// script would name what is not there.
+	if let Some(other) = call
+		.parameters
+		.as_object()
+		.and_then(|fields| fields.keys().find(|field| field.as_str() != "script"))
+	{
+		return refuse(format!(
+			"{other} is not a parameter of this tool; script is its only parameter"
+		));
+	}
 	let script = match call.parameters.get("script") {
 		Some(Value::String(script)) if !script.trim().is_empty() => script,
 		_ => return refuse("script: non-empty string required".to_string()),
 	};
-	let input = call.parameters.get("input").filter(|input| !input.is_null());
 	// The guardrails and plugin checks every tool call passes belong to a
 	// session; without one a script's calls would run unchecked.
 	let Some(session_id) = crate::session::context::current_session_id() else {
@@ -530,7 +538,7 @@ pub async fn execute(
 	if catalog.is_empty() {
 		return refuse("no tool is available to scripts in this session".to_string());
 	}
-	let checked = match check::check(script, &catalog.declarations(input)).await {
+	let checked = match check::check(script, &catalog.declarations()).await {
 		Ok(checked) => checked,
 		Err(problems) => return refuse(rejection(&catalog, &problems)),
 	};
@@ -547,13 +555,7 @@ pub async fn execute(
 		round_snapshot: crate::plugins::payload::round_snapshot(),
 		images: Mutex::new(Vec::new()),
 	});
-	let Run { output, error } = engine::run(
-		checked,
-		input,
-		Arc::new(catalog),
-		Arc::new(SessionHost(session.clone())),
-	)
-	.await;
+	let Run { output, error } = engine::run(checked, Arc::new(catalog), Arc::new(SessionHost(session.clone()))).await;
 
 	let failed = error.is_some();
 	let text = match error {

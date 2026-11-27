@@ -71,7 +71,7 @@ fn a_declared_output_schema_types_the_result() {
 		catalog.index(),
 		"s.catalog_test_stats() -> {lines: number} // Count lines.\ns.catalog_test_text()"
 	);
-	let declarations = catalog.declarations(None);
+	let declarations = catalog.declarations();
 	assert!(declarations.contains("catalog_test_stats(args?: Record<string, any>): Promise<{lines: number}>;"));
 	assert!(declarations.contains("catalog_test_text(args?: Record<string, any>): Promise<string>;"));
 	assert!(catalog
@@ -186,9 +186,8 @@ fn help_names_what_exists_when_the_target_does_not() {
 }
 
 #[test]
-fn declarations_type_every_tool_and_the_input() {
-	let text = catalog().declarations(Some(&json!({"path": "a"})));
-	assert!(text.contains("declare const input: {path: \"a\"};\n"), "{text}");
+fn declarations_type_every_tool() {
+	let text = catalog().declarations();
 	assert!(
 		text.contains("interface filesTools {\n\tread(args: {path: string, limit?: number}): Promise<string>;\n"),
 		"{text}"
@@ -198,9 +197,6 @@ fn declarations_type_every_tool_and_the_input() {
 		text.contains("\tfind_all(args: {query: string, mode?: \"code\"|\"docs\", page?: {size: number, after?: string|null}}): Promise<string>;\n"),
 		"{text}"
 	);
-	assert!(catalog()
-		.declarations(None)
-		.contains("declare const input: undefined;\n"));
 }
 
 #[test]

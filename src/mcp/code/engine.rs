@@ -156,14 +156,10 @@ impl State {
 	}
 }
 
-/// The globals of one run: `input`, the line map of the compiled script, and
-/// one object per server.
-fn run_globals(catalog: &Catalog, input: Option<&Value>, lines: &[usize]) -> String {
-	let mut source = format!(
-		"globalThis.input = {};\nglobalThis.__lines = {};\n",
-		input.map_or_else(|| "undefined".to_string(), Value::to_string),
-		json!(lines)
-	);
+/// The globals of one run: the line map of the compiled script, and one
+/// object per server.
+fn run_globals(catalog: &Catalog, lines: &[usize]) -> String {
+	let mut source = format!("globalThis.__lines = {};\n", json!(lines));
 	for server in &catalog.servers {
 		source.push_str(&format!(
 			"globalThis[{}] = __server({}, {});\n",
@@ -276,7 +272,7 @@ fn install(ctx: &Ctx<'_>, state: &Arc<State>, catalog: &Arc<Catalog>, host: &Arc
 }
 
 /// Run a script that passed the type check.
-pub async fn run(checked: Checked, input: Option<&Value>, catalog: Arc<Catalog>, host: Arc<dyn Host>) -> Run {
+pub async fn run(checked: Checked, catalog: Arc<Catalog>, host: Arc<dyn Host>) -> Run {
 	let state = Arc::new(State::default());
 	let failed = |error: String| Run {
 		output: String::new(),
@@ -311,7 +307,7 @@ pub async fn run(checked: Checked, input: Option<&Value>, catalog: Arc<Catalog>,
 	};
 
 	let source = checked.javascript;
-	let globals = run_globals(&catalog, input, &checked.lines);
+	let globals = run_globals(&catalog, &checked.lines);
 	let start_state = state.clone();
 	let started: Result<(), String> = context
 		.with(move |ctx| {

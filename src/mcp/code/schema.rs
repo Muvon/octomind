@@ -25,11 +25,6 @@ pub const FULL_DEPTH: usize = 3;
 /// reference cycle cannot loop.
 const MAX_REF_HOPS: usize = 8;
 
-/// Longest text of `input` kept as a literal type. Longer text (file
-/// contents, patches) is typed `string`: a literal that long would only slow
-/// the type checker down.
-const MAX_LITERAL_CHARS: usize = 80;
-
 /// How many schema nodes deep a call's arguments are checked. A schema may
 /// contain itself (a JSON value is an array of JSON values); a value nested
 /// deeper than this is accepted as it is.
@@ -249,26 +244,6 @@ pub fn parameter(schema: &Value) -> String {
 /// The type of what a tool with this output schema resolves to.
 pub fn result_type(schema: &Value) -> String {
 	type_of(schema, schema, FULL_DEPTH, &mut Vec::new())
-}
-
-/// The TypeScript type of a JSON value, as exact as the value: short text,
-/// numbers and booleans keep their literal type, so a value read from `input`
-/// still fits an argument that only accepts certain values.
-pub fn value_type(value: &Value) -> String {
-	match value {
-		Value::String(text) if text.chars().count() > MAX_LITERAL_CHARS || text.contains('\n') => "string".to_string(),
-		Value::Array(items) if items.is_empty() => "never[]".to_string(),
-		Value::Array(items) => format!("({})[]", union(items.iter().map(value_type).collect())),
-		Value::Object(members) => format!(
-			"{{{}}}",
-			members
-				.iter()
-				.map(|(name, member)| format!("{}: {}", property_name(name), value_type(member)))
-				.collect::<Vec<_>>()
-				.join(", ")
-		),
-		primitive => primitive.to_string(),
-	}
 }
 
 /// One line per argument with its type and description, nested arguments

@@ -24,7 +24,6 @@ use serde_json::Value;
 const RESERVED_GLOBALS: &[&str] = &[
 	"print",
 	"help",
-	"input",
 	"sleep",
 	"console",
 	"setTimeout",
@@ -307,14 +306,10 @@ impl Catalog {
 	}
 
 	/// What the type checker knows a script may use: the sandbox's functions,
-	/// `input` with the type of the value passed for it, and every tool as a
-	/// method that takes its arguments and resolves to its result.
-	pub fn declarations(&self, input: Option<&Value>) -> String {
+	/// and every tool as a method that takes its arguments and resolves to its
+	/// result.
+	pub fn declarations(&self) -> String {
 		let mut text = String::from(SANDBOX_DECLARATIONS);
-		text.push_str(&format!(
-			"declare const input: {};\n",
-			input.map_or_else(|| "undefined".to_string(), schema::value_type)
-		));
 		for server in &self.servers {
 			text.push_str(&format!("interface {} {{\n", server.type_name()));
 			for tool in &server.tools {

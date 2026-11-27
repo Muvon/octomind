@@ -603,7 +603,7 @@ answers what still does not fit. A call that names a server instead of a tool be
 server's tools. The first time a tool is called this way, the model is also given the tool's full description, and
 again after a compaction removed it.
 
-**Example.** Read two files in parallel, then replace a config file with multi-line text passed through `input`:
+**Example.** Read two files in parallel, then replace a config file with multi-line text written in the script:
 
 ```ts
 const [a, b] = await Promise.all([
@@ -611,14 +611,17 @@ const [a, b] = await Promise.all([
   files.read({ path: "src/b.rs" }),
 ]);
 print(`a: ${a.split("\n").length} lines, b: ${b.split("\n").length} lines`);
-await files.write({ path: "notes.txt", content: input });
+await files.write({ path: "notes.txt", content: `first line
+second line` });
 ```
 
-The `files` server and its tools stand for whatever your servers expose. The `input` argument of the `code` call holds
-the long text, so it does not need quoting inside the script.
+The `files` server and its tools stand for whatever your servers expose. The `code` call takes one parameter, `script`;
+it has no second parameter for text.
 
 **Script rules.**
 - TypeScript; plain JavaScript is valid. Top-level `await` and `return` work.
+- Everything the script needs is written in it. Long or multi-line text (file content, patches) is a template literal,
+  `` `...` ``, with a backtick and `${` escaped inside it, like any TypeScript literal.
 - `await server.tool({...})` resolves to the tool's text output. A tool that declares an MCP `outputSchema` resolves to
   its structured result instead, typed from that schema; the list shows the type after `->`. A failed tool throws an
   `Error`, and so does a tool that declares an output schema but returns no structured result.

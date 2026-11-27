@@ -38,9 +38,16 @@
 //! A tool call that a server answers with an MCP task (SEP-2663) is tracked the
 //! same way under `task_key(tool_id)`: there is no resource to read, the client
 //! polls the task itself (`mcp::client::background_task`) and delivers its result.
+//!
+//! Every entry carries its own safety window (`SAFETY_WINDOW`): a run waiting
+//! on it abandons the job once that window has run out without a completion
+//! signal, measured from the job's own registration — so a job launched while an
+//! older one was pending keeps its whole window. An abandoned job gets a terminal
+//! result of its own in place of the one that never came (`expire_overdue_for_session`).
 
 use rmcp::model::{CallToolResult, ContentBlock};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::SystemTime;
 
@@ -50,7 +57,12 @@ struct WatchedResource {
 	label: String,
 	sequence: Option<u64>,
 	delivering: bool,
+	/// Identity of this registration: what a delivery's claim names when it
+	/// delivers, so a result for a registration replaced under the same key is refused.
+	registration: u64,
 	started_at: SystemTime,
+	/// Monotonic end of the job's own safety window (see `SAFETY_WINDOW`).
+	expires_at: std::time::Instant,
 	/// An MCP task, not a resource: nothing to read, its poller delivers it.
 	task: bool,
 	/// Latest status message the task's poller saw.
@@ -90,13 +102,25 @@ static WATCHED: RwLock<Option<HashMap<String, HashMap<String, WatchedResource>>>
 // session id -> completions waiting for the evidence ledger's next owner.
 static COMPLETED: RwLock<Option<HashMap<String, Vec<CompletedJob>>>> = RwLock::new(None);
 
+// Source of each registration's identity.
+static REGISTRATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// How long a watched job may wait for its completion signal before a run
+/// waiting on it abandons the job: far longer than any real build, but finite,
+/// so a lost signal (server crash, a tool that linked a resource it never
+/// updates) can never hang a run forever. Measured from each job's own
+/// registration, never from when the session first had a job to wait for.
+pub(crate) const SAFETY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+
 /// Lifecycle events for watched resources. Subscription tasks (which hold a
 /// `subscriptions/listen` stream open) listen for these so they can end the
 /// stream when the update was already delivered another way — e.g. the
 /// legacy unsolicited push winning the race with stream establishment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchEvent {
-	/// The resource's update arrived and was delivered.
+	/// The resource's outcome was delivered: its update arrived, or the job's
+	/// safety window ran out and a run delivered a terminal result in its place
+	/// (see `expire_overdue_for_session`). Ends any subscription still open for it.
 	Completed { session_id: String, uri: String },
 	/// The session's watched set was wiped (session teardown).
 	Cleared { session_id: String },
@@ -218,7 +242,9 @@ fn register(
 				label: label.to_string(),
 				sequence: None,
 				delivering: false,
+				registration: REGISTRATIONS.fetch_add(1, Ordering::Relaxed),
 				started_at: SystemTime::now(),
+				expires_at: std::time::Instant::now() + SAFETY_WINDOW,
 				task: stop.is_some(),
 				status: None,
 				stop,
@@ -309,58 +335,105 @@ pub fn find_session_for_uri(uri: &str) -> Option<String> {
 		.map(|(session_id, _)| session_id.clone())
 }
 
-/// Atomically claim one watched resource for delivery while keeping it
-/// pending until its inbox message exists. Duplicate update paths therefore
-/// cannot race two reads, and graceful shutdown cannot observe a false idle.
-pub fn begin_delivery_for_session(session_id: &str, uri: &str) -> bool {
+/// A delivery's claim on one registration, presented when it delivers.
+#[derive(Clone, Copy)]
+pub(crate) struct Claim(u64);
+
+/// Claim a watched job for delivery, marking it so duplicate update paths cannot
+/// race two reads; `None` when nobody watches it or a delivery is in flight. The
+/// claim names the registration: a job replaced under the same key meanwhile —
+/// timed out and launched again — refuses the stale delivery.
+pub(crate) fn claim_delivery_for_session(session_id: &str, uri: &str) -> Option<Claim> {
 	let mut guard = WATCHED.write().unwrap();
-	let Some(resource) = guard
+	let resource = guard
 		.as_mut()
 		.and_then(|registry| registry.get_mut(session_id))
-		.and_then(|jobs| jobs.get_mut(uri))
-	else {
-		return false;
-	};
+		.and_then(|jobs| jobs.get_mut(uri))?;
 	if resource.delivering {
-		return false;
+		return None;
 	}
 	resource.delivering = true;
-	true
+	Some(Claim(resource.registration))
 }
 
-/// Bank a resource once its update has arrived. Returns true if it was watched.
+/// Claim one watched resource for delivery; `claim_delivery_for_session` also
+/// hands back the claim a delivery presents when it delivers.
+pub fn begin_delivery_for_session(session_id: &str, uri: &str) -> bool {
+	claim_delivery_for_session(session_id, uri).is_some()
+}
+
+/// Deliver a claimed job's result; false when the claim is stale — the job
+/// completed, timed out or was replaced — and nothing is queued.
+pub(crate) fn deliver_for_session(session_id: &str, uri: &str, body: &str, claim: Claim, open_tag: &str) -> bool {
+	finalize_for_session(
+		session_id,
+		uri,
+		|watched| watched.registration == claim.0,
+		body,
+		Some(open_tag),
+	)
+}
+
+/// Bank a resource once its update has arrived, without queueing a delivery.
+/// Returns true if it was watched.
 pub fn complete_for_session(session_id: &str, uri: &str, body: &str) -> bool {
+	finalize_for_session(session_id, uri, |_| true, body, None)
+}
+
+/// Finish one registration under the registry lock: `admit` revalidates that the
+/// entry is still the one this finalization acts for, the result is queued (when
+/// `open_tag` is given) before the entry is removed so a run never sees itself idle
+/// with a result on its way, then the completion is banked and `Completed`
+/// published — once, by whichever finalization is admitted. Lock order is registry,
+/// then inbox: the push only appends and notifies, and nothing on the inbox side
+/// takes the registry lock.
+fn finalize_for_session(
+	session_id: &str,
+	uri: &str,
+	admit: impl Fn(&WatchedResource) -> bool,
+	body: &str,
+	open_tag: Option<&str>,
+) -> bool {
 	let mut guard = WATCHED.write().unwrap();
-	if let Some(registry) = guard.as_mut() {
-		if let Some(jobs) = registry.get_mut(session_id) {
-			let watched = jobs.remove(uri);
-			if jobs.is_empty() {
-				registry.remove(session_id);
-			}
-			if let Some(watched) = watched {
-				COMPLETED
-					.write()
-					.unwrap()
-					.get_or_insert_with(HashMap::new)
-					.entry(session_id.to_string())
-					.or_default()
-					.push(CompletedJob {
-						sequence: watched.sequence,
-						label: watched.label,
-						body: body.to_string(),
-						uri: uri.to_string(),
-					});
-				drop(guard);
-				let _ = WATCH_EVENTS.send(WatchEvent::Completed {
-					session_id: session_id.to_string(),
-					uri: uri.to_string(),
-				});
-				return true;
-			}
-			return false;
+	let Some(jobs) = guard.as_mut().and_then(|registry| registry.get_mut(session_id)) else {
+		return false;
+	};
+	if !jobs.get(uri).is_some_and(admit) {
+		return false;
+	}
+	if let Some(open_tag) = open_tag {
+		crate::session::inbox::push_inbox_message_for_session(
+			session_id,
+			crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: uri.to_string() },
+				content: delivery_message(open_tag, body),
+			},
+		);
+	}
+	let watched = jobs.remove(uri).expect("admitted under the same lock");
+	if jobs.is_empty() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
 		}
 	}
-	false
+	COMPLETED
+		.write()
+		.unwrap()
+		.get_or_insert_with(HashMap::new)
+		.entry(session_id.to_string())
+		.or_default()
+		.push(CompletedJob {
+			sequence: watched.sequence,
+			label: watched.label,
+			body: body.to_string(),
+			uri: uri.to_string(),
+		});
+	drop(guard);
+	let _ = WATCH_EVENTS.send(WatchEvent::Completed {
+		session_id: session_id.to_string(),
+		uri: uri.to_string(),
+	});
+	true
 }
 
 pub(crate) fn take_completed_for_session(session_id: &str) -> Vec<CompletedJob> {
@@ -388,6 +461,85 @@ pub fn has_pending() -> bool {
 		Some(id) => has_pending_for_session(&id),
 		None => false,
 	}
+}
+
+/// Monotonic instant at which the current session's soonest-expiring job must
+/// be abandoned — the wake time of a run's safety backstop. `None` when the
+/// session has no job to wait for.
+pub(crate) fn earliest_expiry() -> Option<std::time::Instant> {
+	let session_id = crate::session::context::current_session_id()?;
+	earliest_expiry_for_session(&session_id)
+}
+
+/// [`earliest_expiry`] for a session named explicitly.
+pub(crate) fn earliest_expiry_for_session(session_id: &str) -> Option<std::time::Instant> {
+	let guard = WATCHED.read().unwrap();
+	let jobs = guard.as_ref().and_then(|registry| registry.get(session_id))?;
+	jobs.values().map(|resource| resource.expires_at).min()
+}
+
+/// Abandon the session's jobs whose safety window has run out — a completion
+/// signal that never arrives — each with a terminal result of its own. Only a job
+/// past its own window goes, delivery in flight or not (the read behind it has no
+/// deadline): younger jobs, other sessions and banked completions stay intact. The
+/// scan only names candidates; each is revalidated when finalized, so a job
+/// launched again under the same key keeps its fresh window. Returns `(label,
+/// uri)` per abandoned job for the caller to report.
+pub(crate) fn expire_overdue_for_session(session_id: &str) -> Vec<(String, String)> {
+	let now = std::time::Instant::now();
+	// (label, uri, is an MCP task): the tag names a task like its poller does.
+	let overdue: Vec<(String, String, bool)> = {
+		let guard = WATCHED.read().unwrap();
+		let Some(jobs) = guard.as_ref().and_then(|registry| registry.get(session_id)) else {
+			return Vec::new();
+		};
+		jobs.iter()
+			.filter(|(_, resource)| resource.expires_at <= now)
+			.map(|(uri, resource)| (resource.label.clone(), uri.clone(), resource.task))
+			.collect()
+	};
+	overdue
+		.into_iter()
+		.filter_map(|(label, uri, task)| time_out_for_session(session_id, &uri, task).then_some((label, uri)))
+		.collect()
+}
+
+/// Abandon one job whose window has run out — rechecked under the registry lock
+/// at finalization — with a terminal result: banked under the job's own label and
+/// sequence, queued as an error delivery, then `Completed`. Dropping the entry
+/// closes a task's stop signal, as teardown does.
+fn time_out_for_session(session_id: &str, uri: &str, task: bool) -> bool {
+	let kind = if task { "task" } else { "resource" };
+	let open_tag = format!("<background_job {kind}=\"{uri}\"{DELIVERY_ERROR_ATTR}>");
+	// Not the command's exit status, and said so: a waiter that reads a lost
+	// tracker signal as a failed build restarts a job that is fine.
+	let body = format!(
+		"octomind stopped tracking this job: no completion signal arrived within the {:?} safety \
+			 window. This is not the command's exit status — it may still be running, or may \
+			 have finished without signalling. Check its output before deciding whether to \
+			 restart it.",
+		SAFETY_WINDOW
+	);
+	finalize_for_session(
+		session_id,
+		uri,
+		|watched| watched.expires_at <= std::time::Instant::now(),
+		&body,
+		Some(&open_tag),
+	)
+}
+
+/// Test seam: the crate has no tokio `test-util` (paused clock), so a test marks
+/// a registered job's safety window as run out instead of waiting it out.
+#[cfg(test)]
+pub(crate) fn age_for_tests(session_id: &str, key: &str) {
+	let mut guard = WATCHED.write().unwrap();
+	let resource = guard
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+		.and_then(|jobs| jobs.get_mut(key))
+		.expect("registered job");
+	resource.expires_at = std::time::Instant::now();
 }
 
 /// Labels of the current session's outstanding jobs, `"label (uri)"` each, for

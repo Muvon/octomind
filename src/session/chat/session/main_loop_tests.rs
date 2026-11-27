@@ -263,6 +263,109 @@ async fn background_task_left_running_at_turn_end_is_not_checked_at_once() {
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
+/// The window belongs to each job, not to the session's wait as a whole: a job
+/// launched while an older one's window had run out keeps its whole window and
+/// its completion is still delivered, while the older one gets the backstop's
+/// terminal result. One session-wide deadline dropped every job the moment the
+/// oldest one's window ran out, so the new job's result never reached the model
+/// and the run exited without it.
+#[serial_test::serial]
+#[tokio::test]
+async fn background_job_launched_after_an_older_one_expired_is_still_delivered() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+	let session_id = "main-loop-chained-background-jobs";
+	let aged = "test-mcp://jobs/backstop-aged";
+	let young = "test-mcp://jobs/backstop-young";
+	// One answer per turn: the launch turn, the status check its end triggers
+	// for each pending job, the timeout turn and the completion turn. Extra turns
+	// fall back to the stub's exhausted answer, which ends them the same way.
+	let url = spawn_stub(vec![crate::session::chat::test_support::final_response("waiting"); 5]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = fake_provider_config();
+	let mut args = session_args();
+	args.name = Some(session_id.to_string());
+
+	// Two overlapping waiters, as a chained build leaves behind: the older one
+	// is already past its window, the younger one has just been launched.
+	crate::session::shell_jobs::clear_for_session(session_id);
+	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", aged, "shell: cargo build");
+	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", young, "shell: bin/train");
+	crate::session::shell_jobs::age_for_tests(session_id, aged);
+
+	let driver = async {
+		// The backstop abandons the aged job...
+		tokio::time::timeout(std::time::Duration::from_secs(30), async {
+			while crate::session::shell_jobs::is_watched_for_session(session_id, aged) {
+				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the aged job is abandoned");
+
+		// ...and the younger one must have survived it. Its completion is delivered
+		// the way the resource update delivers it — the shared finalization, which
+		// queues the result before the job stops being pending — and it is the run's
+		// last result: the run must answer it, not end with it still queued.
+		let claim = crate::session::shell_jobs::claim_delivery_for_session(session_id, young)
+			.expect("the younger job must still be watched once the older one expired");
+		assert!(crate::session::shell_jobs::deliver_for_session(
+			session_id,
+			young,
+			"status: exited with code 0",
+			claim,
+			&format!("<background_job resource=\"{young}\">"),
+		));
+	};
+
+	let (run, ()) = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+		tokio::join!(
+			run_interactive_session_with_input(&args, &config, "kick off the build"),
+			driver
+		)
+	})
+	.await
+	.expect("the run ends once the younger job completes");
+	run.expect("the run completes");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
+	// The completion's open tag, exactly: a status snapshot carries a state attribute.
+	assert!(
+		contents
+			.iter()
+			.any(|c| c.contains(&format!("<background_job resource=\"{young}\">"))
+				&& c.contains("status: exited with code 0")),
+		"the younger job's completion must reach the model: {contents:?}"
+	);
+	// Delivered once: the status checks never count, their tags carry a state.
+	assert_eq!(
+		contents
+			.iter()
+			.filter(|c| c.contains(&format!("<background_job resource=\"{young}\">")))
+			.count(),
+		1,
+		"the younger job's completion is delivered once: {contents:?}"
+	);
+	// The older job got the backstop's terminal result instead: an error delivery
+	// under its own URI saying octomind stopped tracking — never its completion.
+	assert!(
+		contents.iter().any(|c| c.contains(&format!(
+			"<background_job resource=\"{aged}\"{}>",
+			crate::session::shell_jobs::DELIVERY_ERROR_ATTR
+		)) && c.contains("stopped tracking")),
+		"the aged job's timeout must reach the model: {contents:?}"
+	);
+	assert!(
+		!contents
+			.iter()
+			.any(|c| c.contains(&format!("<background_job resource=\"{aged}\">"))),
+		"the aged job has no completion to deliver: {contents:?}"
+	);
+	crate::session::shell_jobs::clear_for_session(session_id);
+}
+
 /// A resource job is due at once (its completion push can be lost); a task
 /// only once it has run a full reconcile window, when its latest status can
 /// show it stuck.

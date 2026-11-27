@@ -1850,11 +1850,6 @@ pub async fn run_interactive_session_with_input(
 		// finishes, and a job it no longer needs would otherwise hold the run open for
 		// a whole reconcile window before the model could stop it.
 		let mut checked_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
-		// Deadline for the background-job safety backstop, anchored when jobs first
-		// appear. It must live outside the loop: a sleep built inside the select is
-		// recreated every pass, so the shorter reconcile branch firing on its own
-		// timer reset the longer one forever and the backstop could never elapse.
-		let mut background_job_deadline: Option<tokio::time::Instant> = None;
 		loop {
 			// Flush any due schedule entries into the inbox first.
 			crate::mcp::orchestration::flush_due_to_inbox(&current_config);
@@ -2012,6 +2007,12 @@ pub async fn run_interactive_session_with_input(
 			let has_tap_runs = crate::session::tap_runs::has_running_jobs();
 
 			if !daemon && !has_schedules && !has_monitors && active_jobs == 0 && !has_background_jobs && !has_tap_runs {
+				// Checked after every job check: a result is queued before its job stops
+				// being pending, so one that landed since the last drain is answered here
+				// rather than left for a run that ends.
+				if crate::session::inbox::has_inbox_messages() {
+					continue;
+				}
 				break;
 			}
 
@@ -2020,23 +2021,20 @@ pub async fn run_interactive_session_with_input(
 			// Safety backstop for a pending background job whose completion signal
 			// never arrives (server crash, or a tool that linked a resource it never
 			// updates): far longer than any real build, but finite, so a lost signal
-			// can never hang the run forever. Armed only while background jobs are
-			// what is keeping the loop alive.
-			const BACKGROUND_JOB_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+			// can never hang the run forever. The window is each job's own, measured
+			// from its registration (`shell_jobs::SAFETY_WINDOW`), and the wake time is
+			// the soonest-expiring job read fresh every pass: a job launched while an
+			// older one was pending keeps its whole window, where one session-wide
+			// deadline dropped it the moment the older job's window ran out. The
+			// deadline is an absolute instant, so rebuilding the sleep each pass does
+			// not push it out.
+			let bg_expiry = crate::session::shell_jobs::earliest_expiry();
 			// The completion push is the fast path, but it is only a notification: the
 			// resource itself is the authority. A caller working to a deadline shorter
 			// than the backstop (a CI step, a benchmark case) would otherwise be killed
 			// mid-wait with nothing to show, so re-read the authority periodically and
 			// hand the model what it says. The job is left pending — this unblocks the
 			// turn without stealing the real completion path.
-			// Arm on the first pass that has jobs, disarm when none are left, so the
-			// window measures how long jobs have actually been blocking the exit.
-			let bg_deadline = if has_background_jobs {
-				*background_job_deadline.get_or_insert_with(|| tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT)
-			} else {
-				background_job_deadline = None;
-				tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT
-			};
 			tokio::select! {
 				_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 				_ = async {
@@ -2049,15 +2047,25 @@ pub async fn run_interactive_session_with_input(
 				_ = tokio::time::sleep(reconcile_delay(&checked_jobs)), if has_background_jobs => {
 					reconcile_pending_background_jobs(&mut reported_job_statuses, &mut checked_jobs).await;
 				}
-				_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
-					if let Some(session_id) = crate::session::context::current_session_id() {
-						crate::session::shell_jobs::clear_for_session(&session_id);
+				_ = async {
+					match bg_expiry {
+						Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+						None => std::future::pending::<()>().await,
 					}
-					background_job_deadline = None;
-					log_debug!(
-						"A background job never signalled completion within the safety window; \
-						 abandoning it so the run can exit"
-					);
+				} => {
+					// Re-read at wake: the deadline was armed a pass earlier, and only a
+					// job still registered and past its own window is abandoned — with a
+					// terminal result of its own, so the waiter is not left without one.
+					if let Some(session_id) = crate::session::context::current_session_id() {
+						for (label, uri) in crate::session::shell_jobs::expire_overdue_for_session(&session_id) {
+							crate::log_error!(
+								"background job {} ({}) never signalled completion within \
+									 the safety window; abandoning it",
+								label,
+								uri
+							);
+						}
+					}
 				}
 			}
 		}

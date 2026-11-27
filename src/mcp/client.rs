@@ -378,10 +378,10 @@ async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, ur
 			return;
 		}
 	};
-	if !crate::session::shell_jobs::begin_delivery_for_session(&session_id, &uri) {
-		crate::log_debug!("resource {uri} update ignored: delivery already in flight");
+	let Some(claim) = crate::session::shell_jobs::claim_delivery_for_session(&session_id, &uri) else {
+		crate::log_debug!("resource {uri} update ignored: not watched, or delivery already in flight");
 		return;
-	}
+	};
 	tokio::spawn(async move {
 		let body = match peer
 			.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
@@ -400,16 +400,20 @@ async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, ur
 				format!("resource {uri} updated, but reading it failed: {error}")
 			}
 		};
-		let content =
-			crate::session::shell_jobs::delivery_message(&format!("<background_job resource=\"{uri}\">"), &body);
-		crate::session::inbox::push_inbox_message_for_session(
+		// Only the registration this read claimed gets the result, and it is queued
+		// before the job stops being pending: one timed out and launched again
+		// meanwhile keeps its own outcome.
+		if !crate::session::shell_jobs::deliver_for_session(
 			&session_id,
-			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob { id: uri.clone() },
-				content,
-			},
-		);
-		crate::session::shell_jobs::complete_for_session(&session_id, &uri, &body);
+			&uri,
+			&body,
+			claim,
+			&format!("<background_job resource=\"{uri}\">"),
+		) {
+			crate::log_debug!(
+				"resource {uri}: registration replaced before the read returned; dropping the late delivery"
+			);
+		}
 	});
 }
 
@@ -1400,20 +1404,18 @@ fn background_task(
 				}
 				Err(error) => (format!("{error:#}"), true),
 			};
-			// False once the session was torn down: nobody is left to deliver to.
-			if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
+			// `None` once the session was torn down: nobody is left to deliver to.
+			let Some(claim) = shell_jobs::claim_delivery_for_session(&session_id, &key) else {
 				return;
-			}
+			};
 			let error = if is_error { shell_jobs::DELIVERY_ERROR_ATTR } else { "" };
-			let content = shell_jobs::delivery_message(&format!("<background_job task=\"{key}\"{error}>"), &body);
-			crate::session::inbox::push_inbox_message_for_session(
+			shell_jobs::deliver_for_session(
 				&session_id,
-				crate::session::inbox::InboxMessage {
-					source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
-					content,
-				},
+				&key,
+				&body,
+				claim,
+				&format!("<background_job task=\"{key}\"{error}>"),
 			);
-			shell_jobs::complete_for_session(&session_id, &key, &body);
 		}),
 	));
 

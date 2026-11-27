@@ -75,7 +75,7 @@ fn git_fingerprint(root: &Path) -> Option<u64> {
 	let out = match std::process::Command::new("git")
 		.arg("-C")
 		.arg(root)
-		.args(["status", "--porcelain", "-uall"])
+		.args(["-c", "core.quotePath=false", "status", "--porcelain", "-uall"])
 		.output()
 	{
 		Ok(o) => o,

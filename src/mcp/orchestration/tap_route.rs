@@ -29,12 +29,12 @@ use crate::plugins::judgement;
 /// the margin below on 2,232 task briefs written for the 186 agents of the
 /// default tap (`octomind-tap/model/scripts/calibrate_cpus.py`): the pair
 /// that hands over the most briefs while a wrong specialist gets at most 2%
-/// of them and a brief from another field fires on at most 3%. At 0.65 with
+/// of them and a brief from another field fires on at most 3%. At 0.66 with
 /// margin 0.05 a brief ranked against its own domain reaches its specialist
-/// 46% of the time, a wrong one 1.1%, and a foreign brief fires 2.7%. The
+/// 44% of the time, a wrong one 1.0%, and a foreign brief fires 2.5%. The
 /// embedding graph scores the same on ARM and x86, so the pair holds on every
 /// machine.
-const ROUTE_THRESHOLD: f32 = 0.65;
+const ROUTE_THRESHOLD: f32 = 0.66;
 
 /// Required gap between the best and second-best specialist. Two near-tied
 /// specialists abstain: a wrong handoff is silent, a refusal costs one turn.

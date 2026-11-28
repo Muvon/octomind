@@ -53,11 +53,22 @@ embedding error contract:
 {"action":"create","name":"summary","description":"Summarize supplied notes","system":"Return three bullets grounded in the notes.","tools":[]}
 ```
 
+`create` returns a tag of the form `<namespace>:<name>`. A base tap role creates in its own namespace; a role from your local config creates in the `personal` namespace. Variants, copies and read-only runs cannot create roles.
+
 Run the returned tag with `{"action":"run","role":"RETURNED_TAG","prompt":"Summarize these notes: …"}`.
-The role is private to its creator session. Omitted tools mean no tools. Supply exact tool names only;
-session-only servers cannot be passed to the ACP child. The optional `model` overrides the model.
-To install the same manifest in the personal tap, use `{"action":"persist","role":"RETURNED_TAG"}`.
-Saving requires explicit user approval. Workdir and read-only mode belong to the run, not the definition.
+The role is private to its creator session. Omitted tools mean no tools. `tools` names tools the creator can call now; tools of the orchestration, runtime and local servers, and `code`, `search_tools`, `context`, cannot be granted. The optional `model` overrides the model. Creating the same name again in the session replaces the definition.
+
+The personal tap is a local folder Octomind owns at `<data dir>/personal-tap/`. It is not a Git clone and is never updated from Git. Saved roles live in it at `agents/<namespace>/<name>.toml`.
+
+To keep the role for later sessions, save it to the personal tap. No approval prompt is shown:
+`{"action":"persist","role":"RETURNED_TAG"}`.
+Later sessions find the saved role: `run` can match it and `role` can name it. Saving again overwrites the earlier save. It is refused when another tap provides that tag.
+
+A saved role keeps the fixed tool list it was created with. To change its prompt or tools, create it again with the same name, then persist again. A name already saved in the personal tap may be created again; the session copy is used until it is saved again.
+
+To delete a saved role, use `{"action":"unpersist","role":"RETURNED_TAG"}`. Only roles in your own namespace can be deleted.
+
+Workdir and read-only mode belong to the run, not the definition.
 
 ## See also
 

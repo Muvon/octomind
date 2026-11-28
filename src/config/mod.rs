@@ -401,8 +401,9 @@ pub struct Config {
 	pub tap_manifest: Option<std::sync::Arc<crate::agent::manifest::Manifest>>,
 	#[serde(skip)]
 	pub(crate) authored_grants: Option<crate::agent::manifest::Grants>,
+	/// The run is bound to its pinned tap role, so `/role` is refused.
 	#[serde(skip)]
-	pub(crate) bound_tap_run: bool,
+	pub bound_tap_run: bool,
 
 	// Internal role lookup map (populated during loading)
 	#[serde(skip)]
@@ -646,9 +647,6 @@ impl Config {
 	) -> Vec<McpServerConfig> {
 		// Use the updated RoleMcpConfig method that has runtime injection
 		role_mcp_config.get_enabled_servers(&self.mcp.servers, role_name)
-	}
-	pub fn bind_tap_run(&mut self) {
-		self.bound_tap_run = true;
 	}
 
 	/// Get the global log level (system-wide setting)

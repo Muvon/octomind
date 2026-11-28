@@ -162,7 +162,7 @@ Rules:
 - All failures return `Ok(McpToolResult::error(...))` — never `Err()`
 - Validate parameters explicitly; return a descriptive error for missing/wrong-type params
 - If a more specific tool exists for a use-case, append a hint (but only when that tool is actually enabled — see `src/mcp/hint_accumulator.rs`)
-- Dynamic tools use `register_dynamic_agent_tool()` / `register_dynamic_server_tools()` in `tool_map.rs`; tools registered by one session are rejected from another
+- Dynamic tools use `register_dynamic_server_tools()` in `tool_map.rs`; tools registered by one session are rejected from another
 
 ```rust
 // ✅ parameter extraction pattern

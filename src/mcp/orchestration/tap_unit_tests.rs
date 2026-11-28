@@ -785,10 +785,6 @@ async fn authored_role_is_private_but_its_run_resumes_the_selected_manifest() {
 			serde_json::from_str::<serde_json::Value>(&created.extract_content()).unwrap()["role"],
 			tag
 		);
-		let unauthorized = execute_tap_command(&tap_call(json!({"action":"persist","role":tag})), &config)
-			.await
-			.unwrap();
-		assert!(unauthorized.is_error());
 		assert!(!crate::agent::manifest::catalog(Some("other-session"), None)
 			.unwrap()
 			.contains_key(tag));
@@ -799,34 +795,50 @@ async fn authored_role_is_private_but_its_run_resumes_the_selected_manifest() {
 		let started: serde_json::Value = serde_json::from_str(&run.extract_content()).unwrap();
 		let id = started["id"].as_str().unwrap().to_owned();
 		wait_terminal_status(&id).await;
-		let mine = crate::agent::manifest::private_role(&session, tag).unwrap();
-		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-		crate::session::context::set_notification_sender_for_session(&session, tx);
-		crate::mcp::elicitation::set_answerer(&session, Some(crate::mcp::elicitation::Answerer::Client));
-		let approve = async {
-			let frame = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-				.await
-				.unwrap()
-				.unwrap();
-			let crate::websocket::ServerMessage::Elicitation(q) = frame else {
-				panic!("expected approval")
-			};
-			assert!(crate::mcp::elicitation::resolve(
-				&session,
-				&q.id,
-				rmcp::model::ElicitResult::new(rmcp::model::ElicitationAction::Accept)
-					.with_content(json!({"approve":true}))
-			));
-		};
 		let persist = tap_call(json!({"action":"persist","role":tag}));
-		let (saved, ()) = tokio::join!(execute_tap_command(&persist, &config), approve);
-		let saved = saved.unwrap();
+		let saved = execute_tap_command(&persist, &config).await.unwrap();
 		assert!(!saved.is_error(), "{}", saved.extract_content());
-		let path = crate::agent::taps::personal_tap().agent_manifest(tag).unwrap();
+		let mine = crate::agent::manifest::private_role(&session, tag).unwrap();
 		let public = crate::agent::manifest::catalog(Some("other-session"), None).unwrap();
 		assert_eq!(public[tag].raw, mine.raw);
-		assert!(mine.persist().is_err(), "cannot overwrite on a second promotion");
-		std::fs::write(path, "# changed after the run").unwrap();
+		// Creating the same name again replaces the session copy; saving again overwrites the file.
+		let recreated = execute_tap_command(
+			&tap_call(
+				json!({"action":"create","name":"review","system":"Second system","description":"Review an API"}),
+			),
+			&config,
+		)
+		.await
+		.unwrap();
+		assert!(!recreated.is_error(), "{}", recreated.extract_content());
+		let replaced = crate::agent::manifest::private_role(&session, tag).unwrap();
+		assert_ne!(replaced.raw, mine.raw);
+		let saved = execute_tap_command(&persist, &config).await.unwrap();
+		assert!(!saved.is_error(), "{}", saved.extract_content());
+		let public = crate::agent::manifest::catalog(Some("other-session"), None).unwrap();
+		assert_eq!(public[tag].raw, replaced.raw);
+		let unpersist = tap_call(json!({"action":"unpersist","role":tag}));
+		let removed = execute_tap_command(&unpersist, &config).await.unwrap();
+		assert!(!removed.is_error(), "{}", removed.extract_content());
+		assert!(!crate::agent::manifest::catalog(Some("other-session"), None)
+			.unwrap()
+			.contains_key(tag));
+		assert!(execute_tap_command(&unpersist, &config).await.unwrap().is_error());
+		assert!(crate::agent::manifest::private_role(&session, tag).is_ok());
+		// Only files `persist` wrote, and only in the caller's namespace, can be deleted.
+		let hand = crate::agent::taps::personal_tap()
+			.agent_manifest("personal:hand")
+			.unwrap();
+		std::fs::write(&hand, "[[roles]]\nsystem='mine'\nwelcome=''\n").unwrap();
+		let keep = execute_tap_command(&tap_call(json!({"action":"unpersist","role":"personal:hand"})), &config)
+			.await
+			.unwrap();
+		assert!(keep.is_error());
+		assert!(hand.is_file());
+		let foreign = execute_tap_command(&tap_call(json!({"action":"unpersist","role":"rust:review"})), &config)
+			.await
+			.unwrap();
+		assert!(foreign.extract_content().contains("namespace"));
 		crate::session::context::cleanup_session(&session);
 		id
 	})

@@ -18,6 +18,20 @@
 //! the library's `session::chat::test_support` for the few helpers the command
 //! tests need.
 
+/// Tap commands normally run after config loading installs the registry.
+pub(crate) fn tap_sandbox(tag: &str) -> std::path::PathBuf {
+	let config: octomind::Config =
+		toml::from_str(&crate::commands::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
+	octomind::agent::taps::set_built_in_tap(&config.registry);
+	let dir = std::env::temp_dir().join(format!("octomind-{tag}-{}", std::process::id()));
+	if dir.exists() {
+		std::fs::remove_dir_all(&dir).expect("clear stale sandbox data dir");
+	}
+	std::fs::create_dir_all(&dir).expect("create sandbox data dir");
+	dir
+}
+
 /// Snapshot environment variables and restore them on drop, so a failed assert
 /// cannot leak a sandboxed data dir or API URL into the next test.
 pub(crate) struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);

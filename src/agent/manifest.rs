@@ -23,6 +23,8 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 const AUTHORED_HEADER: &str = "# Created by octomind tap\n";
 pub(crate) type Grants = BTreeMap<String, String>;
+const SESSION_LOCAL_SERVERS: [&str; 3] = ["runtime", "orchestration", "local"];
+const SESSION_LOCAL_CORE_TOOLS: [&str; 3] = ["code", "search_tools", "context"];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest {
@@ -93,6 +95,7 @@ impl Manifest {
 					!tool.is_empty() && !server.is_empty() && !grant.contains('*'),
 					"invalid authored tool grant"
 				);
+				ensure_grantable(server, tool)?;
 				Ok((tool.to_owned(), server.to_owned()))
 			})
 			.collect::<Result<_>>()?;
@@ -115,15 +118,52 @@ impl Manifest {
 
 	pub(crate) fn persist(&self) -> Result<PathBuf> {
 		ensure!(self.authored(), "only a created role may be persisted");
-		let path = taps::personal_tap().agent_manifest(&self.tag)?;
 		ensure!(
-			!taps::has_agent(&self.tag)? && taps::resolve_alias_tag(&self.tag)? == self.tag,
-			"tap role '{}' already exists",
+			!provided_by_other_tap(&self.tag)? && taps::resolve_alias_tag(&self.tag)? == self.tag,
+			"tap role '{}' is provided by another tap or is an alias",
 			self.tag
 		);
-		publish_new(&path, self.raw.as_bytes())?;
+		let path = taps::personal_tap().agent_manifest(&self.tag)?;
+		// A file the user placed in the personal tap by hand is theirs: never overwrite it.
+		ensure!(
+			!path.exists() || std::fs::read_to_string(&path)?.starts_with(AUTHORED_HEADER),
+			"{} was not saved by tap persist; it is left as is",
+			path.display()
+		);
+		publish_replacing(&path, self.raw.as_bytes())?;
 		Ok(path)
 	}
+}
+
+/// Whether a tap other than the personal one has the role `tag`.
+pub(crate) fn provided_by_other_tap(tag: &str) -> Result<bool> {
+	for tap in taps::get_taps()?.iter().filter(|tap| tap.name != taps::PERSONAL) {
+		if tap.agent_manifest(tag)?.is_file() {
+			return Ok(true);
+		}
+	}
+	Ok(false)
+}
+
+/// One rule for every authored grant: a tool that manages, delegates or depends on session-local
+/// authority cannot be handed to a role.
+pub(crate) fn ensure_grantable(server: &str, tool: &str) -> Result<()> {
+	ensure!(
+		!(SESSION_LOCAL_SERVERS.contains(&server) || (server == "core" && SESSION_LOCAL_CORE_TOOLS.contains(&tool))),
+		"tool '{tool}' manages, delegates or depends on session-local authority; grant a concrete worker tool instead"
+	);
+	Ok(())
+}
+
+/// Removes the role saved in the personal tap; the session's private copy stays.
+pub(crate) fn unpersist(tag: &str) -> Result<PathBuf> {
+	let path = taps::personal_tap().agent_manifest(tag)?;
+	ensure!(
+		path.is_file() && std::fs::read_to_string(&path)?.starts_with(AUTHORED_HEADER),
+		"role '{tag}' was not saved in the personal tap by tap persist"
+	);
+	std::fs::remove_file(&path).with_context(|| format!("Cannot remove {}", path.display()))?;
+	Ok(path)
 }
 
 fn snapshot_path(run: &str) -> Result<PathBuf> {
@@ -134,6 +174,16 @@ fn snapshot_path(run: &str) -> Result<PathBuf> {
 	Ok(crate::directories::get_sessions_dir()?
 		.join("tap-manifests")
 		.join(format!("{run}.json")))
+}
+
+fn publish_replacing(path: &Path, bytes: &[u8]) -> Result<()> {
+	let parent = path.parent().context("manifest needs a parent directory")?;
+	std::fs::create_dir_all(parent)?;
+	let mut file = tempfile::NamedTempFile::new_in(parent)?;
+	file.write_all(bytes)?;
+	file.persist(path)
+		.with_context(|| format!("Cannot publish manifest at {}", path.display()))?;
+	Ok(())
 }
 
 fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -164,11 +214,6 @@ pub(crate) fn register(session: &str, manifest: Manifest) -> Result<()> {
 	let defs = sessions
 		.get_mut(session)
 		.context("tap authoring requires an active session")?;
-	ensure!(
-		!defs.contains_key(&manifest.tag),
-		"private role '{}' already exists",
-		manifest.tag
-	);
 	defs.insert(manifest.tag.clone(), Arc::new(manifest));
 	Ok(())
 }

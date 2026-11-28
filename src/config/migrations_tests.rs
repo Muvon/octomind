@@ -617,27 +617,24 @@ fn v36_custom_or_malformed_agent_in_any_source_aborts_before_publication() {
 }
 
 #[test]
-fn v36_preserves_external_agent_override_and_refuses_to_activate_a_hidden_external() {
+fn v36_external_agent_server_in_any_file_keeps_refs_and_the_entry() {
 	let builtin = "[[mcp.servers]]\nname='agent'\ntype='builtin'\n";
 	let external = "[[mcp.servers]]\nname='agent'\ntype='stdio'\ncommand='private-command'\n";
 	let role = "[[roles]]\nname='mine'\n[roles.mcp]\nserver_refs=['agent']\nallowed_tools=['agent:one']\n";
-	for (first, last, ok) in [(builtin, external, true), (external, builtin, false)] {
+	for (first, last) in [(builtin, external), (external, builtin)] {
 		let input = format!("version=35\n{first}{role}");
 		let (main, dir) = temp_config(&input);
 		let sibling = dir.path().join("mcp-override.toml");
 		fs::write(&sibling, last).unwrap();
-		let result = check_and_upgrade_config(&main);
-		if ok {
-			assert!(result.unwrap());
-			let v = parse(&fs::read_to_string(main).unwrap());
-			assert!(v["mcp"]["servers"].as_array().unwrap().is_empty());
-			assert_eq!(v["roles"][0]["mcp"]["server_refs"][0].as_str(), Some("agent"));
-			assert_eq!(v["roles"][0]["mcp"]["allowed_tools"][0].as_str(), Some("agent:one"));
-		} else {
-			assert!(format!("{:#}", result.unwrap_err()).contains("shadowed server"));
-			assert_eq!(fs::read_to_string(main).unwrap(), input);
-			assert!(bak_files(dir.path()).is_empty());
-		}
-		assert_eq!(fs::read_to_string(sibling).unwrap(), last);
+		assert!(check_and_upgrade_config(&main).unwrap());
+		let v = parse(&fs::read_to_string(main).unwrap());
+		assert_eq!(v["roles"][0]["mcp"]["server_refs"][0].as_str(), Some("agent"));
+		assert_eq!(v["roles"][0]["mcp"]["allowed_tools"][0].as_str(), Some("agent:one"));
+		let remaining: Vec<_> = [v, parse(&fs::read_to_string(sibling).unwrap())]
+			.iter()
+			.flat_map(|file| file["mcp"]["servers"].as_array().unwrap().clone())
+			.collect();
+		assert_eq!(remaining.len(), 1);
+		assert_eq!(remaining[0]["type"].as_str(), Some("stdio"));
 	}
 }

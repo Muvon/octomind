@@ -846,7 +846,9 @@ fn resolve_capabilities_dedupes_servers_by_name() {
 }
 
 #[test]
+#[serial]
 fn resolve_capabilities_rejects_unknown_tap_prefix() {
+	let _guard = DataDirGuard::new();
 	let err = resolve_capabilities(
 		"capabilities = [\"acme/thing\"]\n",
 		Path::new("/nonexistent"),

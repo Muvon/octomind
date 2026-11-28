@@ -495,7 +495,7 @@ octomind complete run
 
 `octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of `tap(action="run")` selects an installed or session-private tap role, never a local config role. A tag with `:` that no tap has is an error: it lists the agents the namespace has, or says that the tag is in no installed tap.
 
-To define a session-private specialist, call `tap(action="create")`, then run the returned role tag. The specialist has no tools unless explicitly granted. Saving it with `tap(action="persist")` requires explicit user approval; see the [delegation example](../use-cases/05-multi-agent-delegation.md).
+To define a session-private specialist, call `tap(action="create")`, then run the returned role tag. The specialist has no tools unless explicitly granted. `tap(action="persist")` saves it to the personal tap without an approval prompt, and `tap(action="unpersist")` deletes it; see the [delegation example](../use-cases/05-multi-agent-delegation.md).
 
 To start an agent in a read-only session (user-configured scripts such as guardrail hooks still run; `/run` and `/workflow` are refused), add `--readonly`; see [Read-Only Sessions](../usage/05-sessions.md#read-only-sessions).
 

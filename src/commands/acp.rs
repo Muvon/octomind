@@ -65,22 +65,7 @@ pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), an
 	// INPUT/ENV value, an unknown tag) is reported over ACP rather than by
 	// exiting: a parent agent would otherwise only see the pipe close.
 	let (resolved_config, role, startup_error) = match if args.bound_tap {
-		async {
-			let tag = args
-				.tag
-				.as_deref()
-				.ok_or_else(|| anyhow::anyhow!("tap role required"))?;
-			let id = args
-				.name
-				.as_deref()
-				.ok_or_else(|| anyhow::anyhow!("tap run id required"))?;
-			let manifest = octomind::agent::manifest::Manifest::read_run(id, tag)?;
-			let (mut resolved, role) = octomind::agent::resolver::resolve_manifest(manifest, config, None).await?;
-			resolved.bind_tap_run();
-			octomind::mcp::initialize_mcp_for_role(&role, &resolved).await?;
-			Ok((resolved, role))
-		}
-		.await
+		start_bound_tap(args, config).await
 	} else {
 		super::common::startup(args.tag.as_deref(), config, false).await
 	} {
@@ -103,4 +88,15 @@ pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), an
 		},
 	};
 	octomind::acp::run(resolved_config, role, options).await
+}
+
+/// Start a run pinned to the tap manifest written for it by its parent.
+async fn start_bound_tap(args: &AcpArgs, config: &octomind::Config) -> anyhow::Result<(octomind::Config, String)> {
+	let tag = args.tag.as_deref().expect("clap requires --tag with --bound-tap");
+	let id = args.name.as_deref().expect("clap requires --name with --bound-tap");
+	let manifest = octomind::agent::manifest::Manifest::read_run(id, tag)?;
+	let (mut resolved, role) = octomind::agent::resolver::resolve_manifest(manifest, config, None).await?;
+	resolved.bound_tap_run = true;
+	octomind::mcp::initialize_mcp_for_role(&role, &resolved).await?;
+	Ok((resolved, role))
 }

@@ -176,10 +176,13 @@ pub struct Tap {
 	pub local_path: Option<String>,
 }
 
+/// The personal tap's name, and the namespace of roles created by a non-tap role.
+pub(crate) const PERSONAL: &str = "personal";
+
 /// This user-owned tap is local data, not a clone, and never refreshes from Git.
 pub(crate) fn personal_tap() -> Tap {
 	Tap {
-		name: "personal".into(),
+		name: PERSONAL.into(),
 		local_path: None,
 	}
 }
@@ -201,7 +204,7 @@ impl Tap {
 	/// GitHub taps: `~/.local/share/octomind/taps/user/octomind-repo/` (git clone)
 	/// Local taps:  `~/.local/share/octomind/taps/user/octomind-repo/` (symlink → local path)
 	pub fn local_dir(&self) -> Result<PathBuf> {
-		if self.name == "personal" {
+		if self.name == PERSONAL {
 			return Ok(crate::directories::get_octomind_data_dir()?.join("personal-tap"));
 		}
 		let parts: Vec<&str> = self.name.split('/').collect();

@@ -24,12 +24,7 @@ use serial_test::serial;
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
-	let dir = std::env::temp_dir().join(format!("octomind-untap-{tag}-{}", std::process::id()));
-	if dir.exists() {
-		std::fs::remove_dir_all(&dir).expect("clear stale sandbox data dir");
-	}
-	std::fs::create_dir_all(&dir).expect("create sandbox data dir");
-	dir
+	crate::commands::test_support::tap_sandbox(&format!("untap-{tag}"))
 }
 
 #[derive(clap::Parser)]

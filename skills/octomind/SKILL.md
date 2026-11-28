@@ -58,7 +58,7 @@ The optional Besydr plugin checks completion before a turn may end, plans, conde
 listed in a new config and downloaded on first use; set `enabled = false` on its `[[plugins]]` entry (or remove the entry)
 to run a plain agent loop. Its settings live in Besydr's own config file; see https://besydr.com/docs.
 
-Inside a session, delegation uses the orchestration `tap` tool, not config-defined agents. Run an installed tap role, or use `create` with a variant slug, description, system prompt and optional exact tool names/model. Run the returned tag; `persist` requires user approval.
+Inside a session, delegation uses the orchestration `tap` tool, not config-defined agents. Run an installed tap role, or use `create` with a variant slug, description, system prompt and optional exact tool names/model. Run the returned tag. `persist` saves it to the personal tap without approval and overwrites an earlier save; `unpersist` deletes it.
 
 ## Iterative Work (Daemon + send)
 

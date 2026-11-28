@@ -71,8 +71,9 @@ Copies of yourself:
 - A copy cannot start copies: it does its part itself.
 
 Actions:
-- `create`     — create a private specialist with name (variant slug), description and system. Optional: model, tools (exact currently authorized tool names, none by default). Run the returned role with run; do not create a role for ordinary one-off delegation.
-- `persist`    — with user approval save a role created in this session into the personal tap. Required: role.
+- `create`     — define a private specialist for this session. Required: `name` (lowercase slug), `description` (one line), `system` (its system prompt). Optional: `model`, `tools` (see `tools`). Returns the role tag; start it with `run`. Creating the same name again replaces it. Do not create a role for ordinary one-off delegation.
+- `persist`    — save a role created in this session to the personal tap, so later sessions can run and match it. Saving again overwrites the earlier save. Required: `role` (the tag create returned).
+- `unpersist`  — delete a role you saved with persist from the personal tap; only roles in your own namespace. Required: `role`.
 - `run`        — match an agent to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `role` (start that agent without matching), `readonly` (true: the run may only use tools that cannot change state, and cannot delegate; default false), `session` (resume that run with its original role, workdir and readonly; `readonly: true` is refused for a run started writable), `workdir` (defaults to current cwd).
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running agent. Required: `session` (the id).
@@ -84,7 +85,7 @@ Actions:
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "send", "capability", "workflow", "create", "persist"],
+					"enum": ["run", "list", "stop", "send", "capability", "workflow", "create", "persist", "unpersist"],
 					"description": "Action to perform"
 				},
 				"prompt": {
@@ -93,7 +94,7 @@ Actions:
 				},
 				"role": {
 					"type": "string",
-					"description": "Agent to start for a new run, by the exact name this tool returned (e.g. 'developer'), or your own name to start a copy of yourself. Optional — omit it and the agent is matched from `prompt`. Ignored when resuming with `session` (the original role is kept)."
+					"description": "Agent to start for a new run, by the exact name this tool returned (e.g. 'developer'), or your own name to start a copy of yourself. Optional — omit it and the agent is matched from `prompt`. Ignored when resuming with `session` (the original role is kept). For persist and unpersist: the tag create returned."
 				},
 				"session": {
 					"type": "string",
@@ -109,12 +110,25 @@ Actions:
 				},
 				"name": {
 					"type": "string",
-					"description": "Variant slug for create. Tap workflow name for workflow (e.g. 'watch-page'). For workflow, only pass a name the user explicitly asked to run. Omit to list installed workflows; pass it without `input` to inspect the definition."
+					"description": "Lowercase slug for create; the role becomes `<namespace>:<name>`. Tap workflow name for workflow (e.g. 'watch-page'). For workflow, only pass a name the user explicitly asked to run. Omit to list installed workflows; pass it without `input` to inspect the definition."
 				},
-				"description": {"type":"string","description":"Single-line routing description for create."},
-				"system": {"type":"string","description":"System prompt for the created specialist."},
-				"model": {"type":"string","description":"Optional model override for create."},
-				"tools": {"type":"array","items":{"type":"string"},"description":"Exact configured tool names to delegate; omitted means no tools."},
+				"description": {
+					"type": "string",
+					"description": "Single-line routing description for create."
+				},
+				"system": {
+					"type": "string",
+					"description": "System prompt for the created specialist."
+				},
+				"model": {
+					"type": "string",
+					"description": "Optional model override for create."
+				},
+				"tools": {
+					"type": "array",
+					"items": {"type": "string"},
+					"description": "For create: names of tools you can call now, granted to the role. Omitted means no tools. Tools of the orchestration, runtime and local servers, and code, search_tools and context, cannot be granted."
+				},
 				"input": {
 					"type": "string",
 					"description": "Input text for workflow — everything the workflow needs (URL, question, tab list); it starts with ZERO other context."
@@ -143,7 +157,7 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 	match action.as_str() {
 		"list" => handle_list(call).await,
 		"run" => handle_run(call, config).await,
-		"create" | "persist" => super::tap_author::execute(call, config).await,
+		"create" | "persist" | "unpersist" => super::tap_author::execute(call, config).await,
 		"stop" => handle_stop(call).await,
 		"send" => handle_send(call),
 		"capability" => handle_capability(call, config).await,
@@ -151,7 +165,7 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, send, capability, workflow, create, or persist."),
+			format!("Unknown action '{other}'. Use run, list, stop, send, capability, workflow, create, persist, or unpersist."),
 		)),
 	}
 }

@@ -939,6 +939,45 @@ async fn external_tool_routes_through_tool_map_and_executes() {
 	clear_function_cache();
 }
 
+/// An authored role sees and calls only the tools it was granted; any other tool of the same
+/// server is hidden and refused.
+#[serial]
+#[tokio::test]
+async fn authored_role_calls_its_granted_tool_and_is_refused_any_other() {
+	clear_function_cache();
+	const NAME: &str = "mod-authored-http";
+	let (url, mut child) = spawn_fake_http_server("authored").await;
+	let mut config = config_with_servers(vec![McpServerConfig::http(NAME, &url, 10, vec![])]);
+	config.authored_grants = Some(std::collections::BTreeMap::from([(
+		"echo".to_string(),
+		NAME.to_string(),
+	)]));
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
+
+	// Code mode adds the transport for external calls, not another worker grant.
+	for (code_mode, expected) in [(false, vec!["echo"]), (true, vec!["code", "echo"])] {
+		config.mcp.code_mode = code_mode;
+		assert_eq!(names_of(&get_available_functions(&config).await), expected);
+	}
+	let (granted, _) = execute_tool_call(&tool_call("echo", json!({"text": "granted"})), &config, None)
+		.await
+		.expect("granted tool must execute");
+	assert!(!granted.is_error(), "{}", granted.extract_content());
+	assert!(granted.extract_content().contains("granted"));
+	let (refused, _) = execute_tool_call(&tool_call("extra_tool", json!({})), &config, None)
+		.await
+		.expect("a refusal is a tool result");
+	assert!(refused.is_error());
+	assert!(refused
+		.extract_content()
+		.contains("Tool not granted to this authored role"));
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	server::clear_function_cache_for_server(NAME);
+	clear_function_cache();
+}
+
 /// Dynamic-server tools execute inside the owning session and bump the
 /// capability LRU (last_used) on success.
 #[serial]

@@ -35,12 +35,40 @@ fn private_roles_are_session_owned_and_promotion_does_not_change_the_manifest() 
 	assert_eq!(role["roles"][0]["model"]["name"].as_str(), Some("my-model"));
 	assert_eq!(role["roles"][0]["mcp"]["allowed_tools"][0].as_str(), Some("files:view"));
 	register(a, m.clone()).unwrap();
-	assert!(register(a, m.clone()).is_err());
+	let replacement = Manifest::create(tag.into(), "Check API", "second definition", None, &grants).unwrap();
+	register(a, replacement.clone()).unwrap();
+	assert_eq!(private_role(a, tag).unwrap().raw, replacement.raw);
+	register(a, m.clone()).unwrap();
 	assert!(private_role(b, tag).is_err());
 	assert_eq!(private_role(a, tag).unwrap().raw, m.raw);
 	clear(a);
 	clear(b);
 	assert!(private_role(a, tag).is_err());
+}
+
+#[test]
+fn authored_grants_refuse_session_local_tools() {
+	let grants = |tool: &str| {
+		let m = Manifest::create(
+			"dev:review".into(),
+			"Check API",
+			"system",
+			None,
+			&BTreeMap::from([(tool.to_owned(), "x".to_owned())]),
+		)
+		.unwrap();
+		let role = crate::config::RoleMcpConfig {
+			server_refs: vec![],
+			allowed_tools: vec![format!(
+				"{}:{tool}",
+				if tool == "tap" { "orchestration" } else { "core" }
+			)],
+		};
+		m.grants(&role)
+	};
+	assert!(grants("tap").is_err());
+	assert!(grants("code").is_err());
+	assert!(ensure_grantable("files", "view").is_ok());
 }
 
 #[test]

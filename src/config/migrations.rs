@@ -278,23 +278,26 @@ fn check_v36_agents(value: &toml::Value) -> Result<()> {
 	Ok(())
 }
 
-/// Validate the source before deduplication can hide a custom definition.
-pub(super) fn strip_v36_agents(value: &mut toml::Value, source: &Path) -> Result<()> {
-	if value.get("agents").is_some() {
-		check_v36_agents(value).with_context(|| format!("{}: legacy agent configuration", source.display()))?;
-		value
-			.as_table_mut()
-			.expect("a root key belongs to a table")
-			.remove("agents");
-	}
-	Ok(())
-}
-
 fn remove_v36_agents(document: &mut toml_edit::DocumentMut) -> Result<()> {
 	if document.contains_key("agents") {
 		let parsed: toml::Value = toml::from_str(&document.to_string())?;
 		check_v36_agents(&parsed)?;
-		document.remove("agents");
+		if let Some(toml_edit::Item::ArrayOfTables(agents)) = document.remove("agents") {
+			// A standalone comment before [[agents]] belongs to its table decor in toml_edit.
+			let mut comments = String::new();
+			for table in agents.iter() {
+				if let Some(prefix) = table.decor().prefix().and_then(|raw| raw.as_str()) {
+					comments.push_str(prefix);
+				}
+			}
+			comments.push_str(
+				document
+					.trailing()
+					.as_str()
+					.expect("DocumentMut owns its trailing text"),
+			);
+			document.set_trailing(comments);
+		}
 	}
 	Ok(())
 }
@@ -1086,14 +1089,15 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 
 	let Some(upgrade) = upgrade(&original).with_context(|| format!("Upgrading {}", config_path.display()))? else {
 		if report_up_to_date {
-			preflight_v36(config_path, &original, None)?;
 			let version = plan().version_of(&original)?;
 			eprintln!("✅ Config is already at the latest version ({version})");
 		}
 		return Ok(false);
 	};
 	let mut migration = upgrade.migration;
-	let siblings = preflight_v36(config_path, &original, Some(&mut migration))?;
+	if migration.from_version < 36 {
+		migrate_v36_files(config_path, &original, &mut migration)?;
+	}
 
 	// stderr, never stdout: an outdated config is upgraded during startup, and
 	// ACP/MCP stdio modes carry JSON-RPC on stdout.
@@ -1116,10 +1120,8 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 		);
 	}
 
-	for (path, before, change) in siblings {
-		publish_checked(&path, &before, &change)?;
-	}
-	let backup_path = publish_checked(config_path, &original, &migration)?;
+	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)
+		.with_context(|| format!("Upgrading {}", config_path.display()))?;
 
 	eprintln!(
 		"✅ Config upgraded successfully! Backup saved to: {}",
@@ -1132,113 +1134,72 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 /// The version that rewrites the retired community agent tags (see `RETIRED_AGENT_TAGS`).
 const RETIRED_AGENT_TAGS_VERSION: u32 = 35;
 
-type FragmentChange = (PathBuf, String, Migration);
-
-fn publish_checked(path: &Path, before: &str, change: &Migration) -> Result<PathBuf> {
-	if fs::read_to_string(path)? != before {
-		anyhow::bail!("{} changed during migration; retry", path.display());
-	}
-	config_file::apply_migration(path, before.as_bytes(), change)
-		.with_context(|| format!("Upgrading {}", path.display()))
-}
-
-/// Inspect all originals first. Removing a winning builtin must never reveal a
-/// previously shadowed executable; a winning external override keeps its refs.
-fn preflight_v36(config_path: &Path, original: &str, primary: Option<&mut Migration>) -> Result<Vec<FragmentChange>> {
-	let mut files = super::loading::config_files(config_file::parent_directory(config_path)?)?;
-	if !files.iter().any(|p| p.file_name() == config_path.file_name()) {
-		files.insert(0, config_path.to_owned());
-	}
-	let mut sources = Vec::new();
-	let mut external = None;
-	let mut winner = None;
-	for path in files {
-		let main = path.file_name() == config_path.file_name();
-		let text = if main {
+/// v36 drops `[[agents]]` and the builtin `agent` server from every file in the config directory.
+/// Every source is checked before any write, so a custom agent leaves all files at their old
+/// version. The builtin server's role references stay when some file declares an external `agent`.
+fn migrate_v36_files(config_path: &Path, original: &str, migration: &mut Migration) -> Result<()> {
+	let dir = config_file::parent_directory(config_path)?;
+	let mut files = Vec::new();
+	let mut keep_refs = false;
+	for path in super::loading::config_files(dir)? {
+		let is_main = path.file_name() == config_path.file_name();
+		let text = if is_main {
 			original.to_owned()
 		} else {
 			fs::read_to_string(&path).with_context(|| format!("Reading {}", path.display()))?
 		};
-		let value: toml::Value = toml::from_str(&text).with_context(|| format!("Parsing {}", path.display()))?;
+		let Ok(value) = toml::from_str::<toml::Value>(&text) else {
+			continue;
+		};
 		check_v36_agents(&value).with_context(|| format!("{}: legacy agent configuration", path.display()))?;
-		let mut has_builtin = false;
-		if let Some(servers) = value
+		keep_refs |= value
 			.get("mcp")
-			.and_then(|m| m.get("servers"))
+			.and_then(|mcp| mcp.get("servers"))
 			.and_then(toml::Value::as_array)
-		{
-			for server in servers {
-				if server.get("name").and_then(toml::Value::as_str) == Some("agent") {
-					let builtin = server.get("type").and_then(toml::Value::as_str) == Some("builtin");
-					has_builtin |= builtin;
-					if !builtin {
-						external = Some(path.clone());
-					}
-					winner = Some((path.clone(), builtin));
-				}
-			}
-		}
-		sources.push((path, text, main, has_builtin));
-	}
-	let Some(primary) = primary else {
-		return Ok(Vec::new());
-	};
-	let retire_refs = matches!(&winner, Some((_, true)));
-	if let (Some(hidden), Some((active, true))) = (external, &winner) {
-		anyhow::bail!(
-			"{}: removing builtin 'agent' would activate a shadowed server from {}. \
-			 Rename the external server and review its references before retrying.",
-			active.display(),
-			hidden.display()
-		);
+			.is_some_and(|servers| {
+				servers.iter().any(|server| {
+					server.get("name").and_then(toml::Value::as_str) == Some("agent")
+						&& server.get("type").and_then(toml::Value::as_str) != Some("builtin")
+				})
+			});
+		files.push((path, text, is_main));
 	}
 
-	// Publish reference-only siblings before removing the declarations they reference.
-	sources.sort_by_key(|(_, _, _, has_builtin)| *has_builtin);
-	let mut changes = Vec::new();
-	for (path, text, main, _) in sources {
-		let input = if main { &primary.content } else { &text };
-		let mut document: toml_edit::DocumentMut = input.parse()?;
-		if !main {
-			if primary.from_version < RETIRED_AGENT_TAGS_VERSION {
+	for (path, text, is_main) in files {
+		let source = if is_main {
+			migration.content.as_str()
+		} else {
+			text.as_str()
+		};
+		let mut document: toml_edit::DocumentMut = source.parse()?;
+		if !is_main {
+			if migration.from_version < RETIRED_AGENT_TAGS_VERSION {
 				for notice in rewrite_v35_retired_agent_tags(&mut document)? {
 					eprintln!("{}: {notice}", path.display());
 				}
 			}
 			remove_v36_agents(&mut document)?;
 		}
-		retire_v36_server(&mut document, retire_refs);
+		retire_v36_server(&mut document, !keep_refs);
 		let content = document.to_string();
-		if content == *input {
-			continue;
-		}
-		let _: toml::Value =
-			toml::from_str(&content).with_context(|| format!("Invalid migrated TOML for {}", path.display()))?;
-		if main {
-			primary.content = content;
-		} else {
+		if is_main {
+			migration.content = content;
+		} else if content != text {
 			let change = Migration {
 				content,
-				from_version: primary.from_version,
-				to_version: primary.to_version,
+				from_version: migration.from_version,
+				to_version: migration.to_version,
 			};
-			changes.push((path, text, change));
+			// Atomic replacement requires directory access but bypasses the file's write permissions.
+			fs::OpenOptions::new()
+				.write(true)
+				.open(&path)
+				.with_context(|| format!("Opening {} for migration", path.display()))?;
+			config_file::apply_migration(&path, text.as_bytes(), &change)
+				.with_context(|| format!("Upgrading {}", path.display()))?;
 		}
 	}
-	for path in changes
-		.iter()
-		.map(|(p, _, _)| p.as_path())
-		.chain(std::iter::once(config_path))
-	{
-		let meta = fs::symlink_metadata(path)?;
-		if meta.is_symlink() || meta.permissions().readonly() {
-			anyhow::bail!(
-				"{}: not replacing a symlink or read-only config; migrate its writable source",
-				path.display()
-			);
-		}
-	}
-	Ok(changes)
+	Ok(())
 }
 
 /// Write the supervisor's tables where the plugin looks for them on its first run.

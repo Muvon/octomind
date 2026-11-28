@@ -229,21 +229,22 @@ An agent that declares the `orchestration` capability can also start copies of i
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
-| `action` | string, required | `run`, `create`, `persist`, `list`, `stop`, `send`, `capability`, `workflow` |
+| `action` | string, required | `run`, `create`, `persist`, `unpersist`, `list`, `stop`, `send`, `capability`, `workflow` |
 | `prompt` | string | Task for `run` (the runtime matches it to an agent), user message for `send`, or capability intent for `capability`. Required for those actions. |
-| `role` | string | Agent to start for a new `run` without matching: an agent name (`developer`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. |
+| `role` | string | Agent to start for a new `run` without matching: an agent name (`developer`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. For `persist` and `unpersist`: the tag `create` returned. |
 | `readonly` | boolean | With `run`, `true` starts the child in a read-only session: only tools whose MCP `readOnlyHint` annotation is true are offered and can run, so the child has no shell and cannot delegate. Optional, default `false`. A run keeps the mode it started with: `true` together with `session` on a run that was started writable is an error. |
 | `session` | string | Run id (e.g. `tap-developer-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
-| `name` | string | Variant slug for `create`; workflow name for `workflow`. |
-| `description`, `system` | strings | Required routing description and system prompt for `create`. |
-| `model`, `tools` | string, array of strings | Optional model and exact child-resolvable tool names for `create`; no tools by default. |
+| `name` | string | Lowercase slug naming the role for `create`; workflow name for `workflow`. |
+| `description`, `system` | strings | Required for `create`: a one-line description and the system prompt. |
+| `model`, `tools` | string, array of strings | Optional model and tool names for `create`. Omitted `tools` means no tools. Each name must be a tool the creator can call now; tools of the orchestration, runtime and local servers, and `code`, `search_tools`, `context`, cannot be granted. |
 | `input` | string | Input text for `workflow` (required with `name`). |
 
 | Action | Description |
 |--------|-------------|
-| `create` | Return the tag of a session-private tap role. A base tap creates a variant in its namespace; a local config role creates one in the personal namespace. Variants, copies, and read-only runs cannot author roles. |
-| `persist` | Promote a private role to the personal tap after user approval. Pass its returned tag as `role`. |
+| `create` | Define a private specialist for the current session and return its tag, `<namespace>:<name>`. A base tap role creates in its own namespace; a local config role creates in the `personal` namespace. Variants, copies, and read-only runs cannot create, save or delete roles. Creating the same name again in the session replaces the definition. |
+| `persist` | Save a role created in this session to the personal tap, with no approval prompt (same as `mcp persist`). Pass the tag `create` returned as `role`. Saving again overwrites the earlier save. Later sessions find the saved role: `run` can match it and `role` can name it. Refused when another tap provides that tag, when the tag is an alias, or when a file you placed in the personal tap by hand has that name. |
+| `unpersist` | Delete a role saved with `persist` from the personal tap. Pass its tag as `role`. Only roles in the caller's own namespace can be deleted; files placed there by hand are left alone. |
 | `run` | Match `prompt` to an agent and launch it in the background (or resume a run via `session`, which reuses the original role without matching). With `role`, start that agent without matching. Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no agent matches, it starts nothing and returns an error that lists the closest ones. See [Agent matching](#agent-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
 | `send` | Queue a user prompt for a running agent owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |

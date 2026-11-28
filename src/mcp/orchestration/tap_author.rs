@@ -18,7 +18,6 @@ use crate::config::Config;
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::context;
 use anyhow::{ensure, Context, Result};
-use rmcp::model::{ElicitRequestParams, ElicitationAction};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -55,20 +54,22 @@ async fn author(call: &McpToolCall, config: &Config) -> Result<Value> {
 		!owner.is_some_and(|m| m.tag.contains(':')),
 		"a tap variant cannot create or promote another specialist"
 	);
-	if call.parameters.get("action").and_then(Value::as_str).map(str::trim) == Some("persist") {
+	let namespace = owner.map_or(taps::PERSONAL, |m| m.tag.as_str());
+	let action = call.parameters.get("action").and_then(Value::as_str).map(str::trim);
+	if matches!(action, Some("persist" | "unpersist")) {
 		let tag = call
 			.parameters
 			.get("role")
 			.and_then(Value::as_str)
 			.context("role: the tag returned by create is required")?;
-		let m = manifest::private_role(&session, tag)?;
-		approve(&session, &call.tool_id, &m).await?;
-		// Never apply approval to a different incarnation of the same session/tag.
+		if action == Some("persist") {
+			return Ok(json!({"role": tag, "path": manifest::private_role(&session, tag)?.persist()?}));
+		}
 		ensure!(
-			std::sync::Arc::ptr_eq(&m, &manifest::private_role(&session, tag)?),
-			"Role changed while waiting for approval"
+			registry::namespace_of(tag) == namespace,
+			"role '{tag}' is outside the '{namespace}' namespace this role can manage"
 		);
-		return Ok(json!({"role": tag, "path": m.persist()?}));
+		return Ok(json!({"role": tag, "removed": manifest::unpersist(tag)?}));
 	}
 	let def: Create = serde_json::from_value(call.parameters.clone()).context("invalid tap create parameters")?;
 	ensure!(def.action.trim() == "create", "invalid authoring action");
@@ -81,10 +82,9 @@ async fn author(call: &McpToolCall, config: &Config) -> Result<Value> {
 		profile.model = model.clone();
 		profile.validate("tap create model")?;
 	}
-	let namespace = owner.map_or("personal", |m| m.tag.as_str());
 	let tag = format!("{namespace}:{}", def.name);
 	ensure!(
-		!taps::has_agent(&tag)? && taps::resolve_alias_tag(&tag)? == tag && !config.has_role(&tag),
+		!manifest::provided_by_other_tap(&tag)? && taps::resolve_alias_tag(&tag)? == tag && !config.has_role(&tag),
 		"role '{tag}' already exists"
 	);
 	let mut grants = manifest::Grants::new();
@@ -98,11 +98,7 @@ async fn author(call: &McpToolCall, config: &Config) -> Result<Value> {
 			);
 			let server = crate::mcp::tool_map::get_server_for_tool(tool)
 				.with_context(|| format!("tool '{tool}' has no server"))?;
-			ensure!(
-				!(server.connection_type() == crate::config::McpConnectionType::Builtin
-					&& (["runtime", "orchestration", "local"].contains(&server.name()) || ["code", "search_tools", "context"].contains(&tool.as_str()))),
-				"tool '{tool}' manages, delegates or depends on session-local authority; grant a concrete worker tool instead"
-			);
+			manifest::ensure_grantable(server.name(), tool)?;
 			let cap = crate::session::guardrails::resolve_capability(&session, config, Some(server.name()), tool);
 			ensure!(
 				!crate::session::guardrails::get_rules(&session).is_some_and(|rules| rules
@@ -119,9 +115,12 @@ async fn author(call: &McpToolCall, config: &Config) -> Result<Value> {
 				.with_context(|| format!("tool '{tool}' needs a server configured for child processes"))?;
 			let mut expected = persisted.clone();
 			*expected.tools_mut() = server.tools().to_vec();
-			ensure!(expected == server && crate::mcp::is_tool_allowed_by_patterns(tool,persisted.tools())
-				&& !crate::mcp::runtime::dynamic::is_dynamic(server.name()),
-				"tool '{tool}' requires the same configured server and permission in the child; session-only registrations cannot be delegated");
+			ensure!(
+				expected == server
+					&& crate::mcp::is_tool_allowed_by_patterns(tool, persisted.tools())
+					&& !crate::mcp::runtime::dynamic::is_dynamic(server.name()),
+				"tool '{tool}' requires the same configured server and permission in the child; session-only registrations cannot be delegated"
+			);
 			grants.insert(tool.clone(), server.name().to_owned());
 		}
 	}
@@ -136,28 +135,6 @@ async fn author(call: &McpToolCall, config: &Config) -> Result<Value> {
 		)?,
 	)?;
 	Ok(json!({"role":tag, "scope":"session"}))
-}
-
-async fn approve(session: &str, tool_id: &str, m: &manifest::Manifest) -> Result<()> {
-	let params = ElicitRequestParams::FormElicitationParams {
-		meta: None,
-		message: format!(
-			"Save {} into your personal tap for use by future sessions?\n{}",
-			m.tag,
-			m.raw.escape_debug()
-		),
-		requested_schema: serde_json::from_value(
-			json!({"type":"object","properties":{"approve":{"type":"boolean","title":"Save this role"}},"required":["approve"]}),
-		)
-		.expect("valid approval schema"),
-	};
-	let result = crate::mcp::elicitation::ask("orchestration", Some(session), Some(tool_id), params).await?;
-	ensure!(
-		result.action == ElicitationAction::Accept
-			&& result.content.and_then(|v| v.get("approve").and_then(Value::as_bool)) == Some(true),
-		"persist requires explicit user approval"
-	);
-	Ok(())
 }
 
 #[cfg(test)]

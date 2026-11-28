@@ -570,7 +570,7 @@ pub struct CostPayload {
 	pub supervisor_accounting: crate::session::accounting::report::SupervisorReport,
 	pub session_id: String,
 	/// The turn is over, but it left work that streams a follow-up turn to this
-	/// connection on its own — a delegated `tap` run, an async agent job, or a
+	/// connection on its own — a delegated `tap` run or a
 	/// result already queued (`session::has_pending_handback`). A client that
 	/// wants that result stays connected until a cost frame without it. Omitted
 	/// when false, so an idle turn's frame reads exactly as older agents' did.
@@ -694,10 +694,10 @@ pub struct EvolutionPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectedPayload {
 	/// Machine-readable source kind:
-	/// `schedule`, `background_agent`, `tap_run`, `skill`, `skill_validator`,
+	/// `schedule`, `background_job`, `tap_run`, `skill`, `skill_validator`,
 	/// `inject`, `webhook`.
 	pub source_kind: String,
-	/// Human-readable source label, e.g. `"schedule abc12345"`, `"agent reviewer"`.
+	/// Human-readable source label, e.g. `"schedule abc12345"`, `"tap-run t1 (reviewer)"`.
 	pub source_label: String,
 	/// The content that's about to be added to the conversation as a user turn.
 	pub content: String,

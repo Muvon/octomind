@@ -122,12 +122,11 @@ in the default template:
 
 ```toml
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "agent"]
+server_refs = ["core", "orchestration", "runtime"]
 allowed_tools = [
   "core:*",              # recall, when attention or governance is enabled
   "orchestration:*",     # tap, schedule, monitor
   "runtime:mcp",         # only mcp from runtime (schedule belongs to orchestration)
-  "agent:*",             # All agent_<name> sub-agent tools on the agent server
 ]
 ```
 
@@ -144,14 +143,13 @@ choosing a filter:
 
 **Pattern syntax:**
 
-- `"server:*"` — all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent`
-  server)
+- `"server:*"` — all tools from a server
 - `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:sh*` matches `shell`)
 - `"server:tool_name"` — one specific tool
 - `"tool_name"` (no colon) — backward-compat form: matches that tool name across **all** referenced servers
 - Empty array `[]` — no role-level filter; each registered server's `tools` filter still applies
 
-Bare prefixes such as `agent_*` also work; `agent:*` makes the intended server explicit. A nonempty role allowlist with
+A nonempty role allowlist with
 no matching pattern drops an explicitly referenced server. A role filter replaces that server's `tools` filter, so
 `server:*` exposes all its tools even if the registry entry had a narrower filter.
 
@@ -232,8 +230,8 @@ Git status: {{GIT_STATUS}}
 welcome = "Developer role ready in {{CWD}}"
 
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*"]
 ```
 
 ### Analyst with a View Grant

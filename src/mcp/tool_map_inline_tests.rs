@@ -132,14 +132,15 @@ async fn reinit_with_unchanged_config_keeps_dynamically_registered_tools() {
 	reset_tool_map();
 	let config = empty_map_config();
 	initialize_tool_map(&config).await.expect("initial init");
-	register_dynamic_agent_tool("reviewer");
-	assert!(get_server_for_tool("agent_reviewer").is_some());
+	let probe = McpServerConfig::builtin("probe", 30, vec![]);
+	register_dynamic_server_tools("probe", &probe, &["review".to_string()]);
+	assert!(get_server_for_tool("review").is_some());
 
 	// Same config hash → short-circuit; the map must not be rebuilt.
 	initialize_tool_map(&config).await.expect("re-init");
 	assert_eq!(
-		get_server_for_tool("agent_reviewer").map(|s| s.name().to_string()),
-		Some("agent".to_string()),
+		get_server_for_tool("review").map(|s| s.name().to_string()),
+		Some("probe".to_string()),
 		"unchanged config must not wipe dynamically registered tools"
 	);
 
@@ -153,8 +154,9 @@ async fn reinit_with_changed_config_rebuilds_and_drops_dynamic_tools() {
 	initialize_tool_map(&core_server_config())
 		.await
 		.expect("init with core config");
-	register_dynamic_agent_tool("reviewer");
-	assert!(get_server_for_tool("agent_reviewer").is_some());
+	let probe = McpServerConfig::builtin("probe", 30, vec![]);
+	register_dynamic_server_tools("probe", &probe, &["review".to_string()]);
+	assert!(get_server_for_tool("review").is_some());
 
 	initialize_tool_map(&empty_map_config())
 		.await
@@ -162,48 +164,11 @@ async fn reinit_with_changed_config_rebuilds_and_drops_dynamic_tools() {
 
 	assert!(is_initialized());
 	assert_eq!(
-		get_server_for_tool("agent_reviewer"),
+		get_server_for_tool("review"),
 		None,
 		"rebuild must drop tools registered outside the config"
 	);
 	assert!(!get_all_tool_names().contains(&"recall".to_string()));
-
-	reset_tool_map();
-}
-
-#[serial]
-#[tokio::test]
-async fn register_dynamic_agent_tool_maps_agent_prefixed_name() {
-	reset_tool_map();
-	initialize_tool_map(&empty_map_config()).await.expect("init");
-
-	register_dynamic_agent_tool("reviewer");
-
-	let server = get_server_for_tool("agent_reviewer").expect("agent tool must resolve");
-	assert_eq!(server.name(), "agent");
-	assert_eq!(server.tools().to_vec(), vec!["agent_reviewer".to_string()]);
-	assert_eq!(server.connection_type(), McpConnectionType::Builtin);
-	assert_eq!(get_tool_server_name("agent_reviewer").as_deref(), Some("agent"));
-	assert_eq!(get_tools_for_server("agent"), vec!["agent_reviewer".to_string()]);
-	assert!(get_all_server_names().contains("agent"));
-	// Other agent names never resolve.
-	assert_eq!(get_server_for_tool("agent_unknown"), None);
-
-	reset_tool_map();
-}
-
-#[serial]
-#[tokio::test]
-async fn unregister_dynamic_agent_tool_removes_mapping() {
-	reset_tool_map();
-	initialize_tool_map(&empty_map_config()).await.expect("init");
-	register_dynamic_agent_tool("reviewer");
-	assert!(get_server_for_tool("agent_reviewer").is_some());
-
-	unregister_dynamic_agent_tool("reviewer");
-
-	assert_eq!(get_server_for_tool("agent_reviewer"), None);
-	assert!(get_tools_for_server("agent").is_empty());
 
 	reset_tool_map();
 }
@@ -239,13 +204,14 @@ async fn unregister_dynamic_server_tools_removes_only_listed_tools() {
 	initialize_tool_map(&empty_map_config()).await.expect("init");
 	let server = McpServerConfig::builtin("dyn-local", 30, vec![]);
 	register_dynamic_server_tools("dyn-local", &server, &["alpha".to_string(), "beta".to_string()]);
-	register_dynamic_agent_tool("reviewer");
+	let probe = McpServerConfig::builtin("probe", 30, vec![]);
+	register_dynamic_server_tools("probe", &probe, &["review".to_string()]);
 
 	unregister_dynamic_server_tools("dyn-local", &["alpha".to_string()]);
 
 	assert_eq!(get_server_for_tool("alpha"), None);
 	assert!(get_server_for_tool("beta").is_some());
-	assert!(get_server_for_tool("agent_reviewer").is_some());
+	assert!(get_server_for_tool("review").is_some());
 
 	reset_tool_map();
 }

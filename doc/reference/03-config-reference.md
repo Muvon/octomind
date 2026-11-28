@@ -67,7 +67,7 @@ octomind config --validate
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `version` | u32 | `35` | Config version. Do not modify. Used for automatic upgrades. |
+| `version` | u32 | `36` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant"` | Default agent for bare `run`, `acp`, and `server`. See note below. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
@@ -77,7 +77,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant"` is a **tap agent** shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. It is the global assistant. A name resolves against your local `[[roles]]` first, so a local role with the same name as a tap agent takes priority; otherwise it starts the tap agent of that name. The value is a tag: `<namespace>` for the base agent of a namespace, or `<namespace>:<variant>` for a variant from a private tap; `<namespace>:default` is the base agent.
 
 ```toml
-version = 35
+version = 36
 log_level = "info"
 default = "assistant"
 sandbox = false
@@ -252,7 +252,7 @@ entries declares a model override. `system` and `welcome` are required strings, 
 
 | Name | Default system purpose / welcome | Default `server_refs` | Default `allowed_tools` |
 |---|---|---|---|
-| `assistant` | Helpful assistant with working directory; `Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})` | `["core", "orchestration", "runtime", "filesystem", "agent"]` | `["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]` |
+| `assistant` | Helpful assistant with working directory; `Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})` | `["core", "orchestration", "runtime", "filesystem"]` | `["core:*", "orchestration:*", "runtime:*", "filesystem:*"]` |
 | `task_refiner` | Refine the real user request; `""` welcome. | `[]` | `[]` |
 | `task_researcher` | Gather focused context; `""` welcome. | `["filesystem"]` | `["view"]` |
 | `reduce` | Retain architectural history; `""` welcome. | `[]` | `[]` |
@@ -286,8 +286,8 @@ name = "openai:gpt-5.6-sol"
 reasoning_effort = "high"
 
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*"]
 ```
 
 ## `[mcp]`
@@ -310,8 +310,7 @@ process):
 |--------|-------|-------------|
 | `core` | `recall` (when attention or governance is enabled) | Session-memory retrieval; governance defaults on |
 | `orchestration` | `tap`, `schedule`, `monitor` | Delegation, scheduled messages, and event-stream monitoring |
-| `runtime` | `mcp`, `agent`, `skill`, `capability` | Harness and tool-surface reconfiguration |
-| `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
+| `runtime` | `mcp`, `skill`, `capability` | Harness and tool-surface reconfiguration |
 
 > **`filesystem` is not declared here.** It is an external `stdio` server backed by octofs and provided through tap capabilities. Tool availability comes from the installed external server. `/mcp full` shows the installed server's authoritative schemas.
 
@@ -343,7 +342,7 @@ process):
 | `env` | string map | no; `{}` | Child environment entries; values support `{{ENV:KEY}}` placeholders |
 | `cwd` | string | no; absent | Child working directory; omitted inherits Octomind's working directory (plugins may set their root) |
 
-The template declares `core`, `runtime`, `agent`, and `orchestration`, each with `type = "builtin"`, `timeout_seconds =
+The template declares `core`, `runtime`, and `orchestration`, each with `type = "builtin"`, `timeout_seconds =
 30`, and `tools = []`. HTTP/stdio entries are commented examples, not active defaults. Timeouts must be 1–3600 seconds.
 Auto-bound servers also gain `server_refs` and, when restricted, a `server:*` allowance in the merged role. Executables
 in `.agents/tools/` form an additional dynamically registered local tool surface; they are not another template server
@@ -447,28 +446,11 @@ The template ships only the `reduce` command shown above. Run it inside an exist
 
 > `input_mode`, `output_mode`, and `output_role` have **no default** — config loading fails if any is omitted. Only `workdir` is optional.
 
-## `[[agents]]`
+## Migrating legacy agents
 
-Specialized AI agents using ACP protocol. Each becomes an MCP tool (`agent_<name>`).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | required | Agent identifier. Tool becomes `agent_<name>`. |
-| `description` | string | required | MCP tool description shown to the AI |
-| `command` | string | required | Shell command starting an ACP server over stdio |
-| `workdir` | string | `"."` | Working directory for subprocess |
-
-```toml
-[[agents]]
-name = "context_gatherer"
-description = "Gather detailed context from files and codebase."
-command = "octomind acp task_researcher"
-workdir = "."
-```
-
-The template’s one agent is named `context_gatherer`, with `workdir = "."` and command `octomind acp context_gatherer`.
-It does not define a matching `context_gatherer` role. The example above points the same tool at the shipped
-`task_researcher` role; that role still needs an available `filesystem` server.
+Version 36 removes the stock `[[agents]]` example. Custom ACP commands and synchronous tool returns have
+no automatic equivalent: preserve their command and workdir, migrate their callers, then remove the entries.
+No tap permission is added automatically. For role-based delegation see [tap roles](../use-cases/05-multi-agent-delegation.md).
 
 ## `[[prompts]]`
 

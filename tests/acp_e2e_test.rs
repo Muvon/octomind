@@ -567,98 +567,6 @@ async fn test_acp_tool_round_updates() {
 	}
 }
 
-/// An in-process `agent_*` sub-agent that runs its own tool round under ACP.
-/// That round used to pick its output mode by probing stdin, which blocks on
-/// Windows while ACP's stdin read is pending, and then printed tool headers to
-/// stdout — the JSON-RPC stream, where `request()` rejects any non-JSON line.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_acp_sub_agent_tool_round() {
-	const SUB_AGENT_MARKER: &str = "ACP-SUB-AGENT-DONE";
-	let (stub_url, _) = spawn_openai_stub(Some(vec![
-		(
-			None,
-			tool_call_message(
-				"call_add",
-				"agent",
-				serde_json::json!({
-					"action": "add",
-					"name": "probe",
-					"description": "Probe agent",
-					"system": "You list schedules.",
-					"server_refs": ["orchestration"]
-				}),
-			),
-		),
-		(
-			None,
-			tool_call_message(
-				"call_enable",
-				"agent",
-				serde_json::json!({"action": "enable", "name": "probe"}),
-			),
-		),
-		(
-			None,
-			tool_call_message(
-				"call_probe",
-				"agent_probe",
-				serde_json::json!({"task": "list my schedules"}),
-			),
-		),
-		// The sub-agent's own tool round — the code path under test.
-		(
-			None,
-			tool_call_message("call_sub_schedule", "schedule", serde_json::json!({"action": "list"})),
-		),
-		(None, text_message(SUB_AGENT_MARKER)),
-		(None, text_message(&format!("{MARKER}: sub-agent done"))),
-	]))
-	.await;
-
-	let home = tempfile::tempdir().expect("temp home");
-	write_sandbox_config(home.path());
-
-	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
-	client
-		.request(
-			"initialize",
-			serde_json::json!({"protocolVersion": 1, "clientCapabilities": {}}),
-		)
-		.await;
-	let cwd = home.path().to_string_lossy().to_string();
-	let (new_session, _) = client
-		.request("session/new", serde_json::json!({"cwd": cwd, "mcpServers": []}))
-		.await;
-	let session_id = new_session["sessionId"].as_str().expect("id").to_string();
-
-	let (result, notifications) = client
-		.request(
-			"session/prompt",
-			serde_json::json!({
-				"sessionId": session_id,
-				"prompt": [{"type": "text", "text": "delegate listing my schedules to a sub-agent"}]
-			}),
-		)
-		.await;
-	assert_eq!(result["stopReason"].as_str(), Some("end_turn"));
-	let updates = serde_json::to_string(&notifications).expect("serialize");
-	assert!(
-		updates.contains(SUB_AGENT_MARKER),
-		"sub-agent result missing: {updates}"
-	);
-	assert!(updates.contains(MARKER), "final answer missing: {updates}");
-
-	let AcpClient { mut child, stdin, .. } = client;
-	drop(stdin);
-	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
-		Ok(status) => assert!(status.expect("wait").success()),
-		Err(_) => {
-			let _ = child.kill().await;
-			panic!("acp agent did not exit after stdin EOF");
-		}
-	}
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tap_child_searches_the_parent_through_the_real_acp_launch() {
 	use serde_json::json;
@@ -784,6 +692,96 @@ async fn tap_child_searches_the_parent_through_the_real_acp_launch() {
 		}
 	}
 
+	let AcpClient { mut child, stdin, .. } = client;
+	drop(stdin);
+	assert!(tokio::time::timeout(Duration::from_secs(10), child.wait())
+		.await
+		.unwrap()
+		.unwrap()
+		.success());
+}
+
+/// The parent defines a role in memory. Its ACP child sees the pinned prompt,
+/// not the local role installed under its name between create and run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn private_tap_runs_its_own_prompt_without_publishing_agent_tools() {
+	use serde_json::json;
+	const TAG: &str = "personal:review";
+	const SYSTEM: &str = "Use only the supplied notes (PRIVATE_ROLE_MARKER).";
+	const BRIEF: &str = "PRIVATE_CHILD_BRIEF";
+	let (url, captured) = spawn_openai_stub(Some(vec![
+		(
+			Some("DEFINE_REVIEW"),
+			tool_call_message(
+				"create",
+				"tap",
+				json!({"action":"create","name":"review","system":SYSTEM,"description":"Review supplied notes"}),
+			),
+		),
+		(Some("DEFINE_REVIEW"), text_message("Role created")),
+		(
+			Some("LAUNCH_REVIEW"),
+			tool_call_message("run", "tap", json!({"action":"run","role":TAG,"prompt":BRIEF})),
+		),
+		(Some(BRIEF), text_message("Notes reviewed")),
+		(Some("LAUNCH_REVIEW"), text_message("Launched")),
+		(None, text_message("Review received")),
+	]))
+	.await;
+	let home = tempfile::tempdir().unwrap();
+	write_sandbox_config(home.path());
+	let data = home.path().join(".local/share/octomind");
+	std::fs::create_dir_all(data.join("taps/muvon/octomind-tap/agents")).unwrap();
+	let mut client = AcpClient::spawn(home.path(), &url).await;
+	client
+		.request("initialize", json!({"protocolVersion":1,"clientCapabilities":{}}))
+		.await;
+	let (session, _) = client
+		.request("session/new", json!({"cwd":home.path(),"mcpServers":[]}))
+		.await;
+	for task in ["DEFINE_REVIEW", "LAUNCH_REVIEW"] {
+		if task == "LAUNCH_REVIEW" {
+			std::fs::write(
+				data.join("config/shadow.toml"),
+				"[[roles]]\nname='personal:review'\nsystem='WRONG_LOCAL_ROLE'\nwelcome=''\n",
+			)
+			.unwrap();
+		}
+		let (response, _) = client
+			.request(
+				"session/prompt",
+				json!({"sessionId":session["sessionId"],"prompt":[{"type":"text","text":task}]}),
+			)
+			.await;
+		assert_eq!(response["stopReason"], "end_turn");
+	}
+	tokio::time::timeout(Duration::from_secs(30), async {
+		loop {
+			{
+				let requests = captured.lock().unwrap();
+				let parent = requests.first().unwrap()["tools"].as_array().unwrap();
+				assert_eq!(parent.iter().filter(|t| t["function"]["name"] == "tap").count(), 1);
+				assert!(!parent
+					.iter()
+					.any(|t| t["function"]["name"].as_str().unwrap().starts_with("agent_")));
+				if let Some(child) = requests.iter().find(|r| {
+					r["messages"]
+						.as_array()
+						.unwrap()
+						.iter()
+						.any(|m| m["role"] == "system" && m.to_string().contains(SYSTEM))
+				}) {
+					assert!(child.to_string().contains(BRIEF));
+					assert!(!child.to_string().contains("WRONG_LOCAL_ROLE"));
+					assert!(child["tools"].as_array().is_none_or(Vec::is_empty));
+					break;
+				}
+			}
+			tokio::time::sleep(Duration::from_millis(20)).await;
+		}
+	})
+	.await
+	.unwrap_or_else(|_| panic!("private role never reached the provider: {}", client.stderr_dump()));
 	let AcpClient { mut child, stdin, .. } = client;
 	drop(stdin);
 	assert!(tokio::time::timeout(Duration::from_secs(10), child.wait())

@@ -220,12 +220,11 @@ removed.
 |-------|-------------|
 | `/status` | Concise active-only view across agents, MCP background jobs, and command monitors |
 | `/status agents` | Full agent view: running work plus saved completed, failed, cancelled, and unattached tap runs; preserves model, token, cache, and cost data when available |
-| `/status agents <id>` | Detailed card for one tap or async `agent_*` run |
+| `/status agents <id>` | Detailed card for one tap run |
 | `/status monitors` | Full configuration and elapsed time for active command monitors |
 | `/status jobs` | Full live status and bounded output for active MCP resource-backed jobs |
 
-`agents` merges tap agent runs with asynchronous `agent_*` calls. Tap runs carry live or persisted usage accounting;
-async `agent_*` cost is explicitly shown as not tracked rather than guessed. `jobs` is generic across MCP servers: a
+Tap runs carry live or persisted usage accounting. `jobs` is generic across MCP servers: a
 tool must return a standard `ResourceLink` from a server that advertises the standard `resources.subscribe`
 capability, because only such a server can signal that a job ended. Links from other servers are plain references and
 are not tracked. Octomind retains the originating server and treats the URI as opaque. The full jobs view performs one

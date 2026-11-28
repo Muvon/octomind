@@ -42,7 +42,7 @@ const ENV_PLACEHOLDER_SUFFIX: &str = "}}";
 // Non-interactive scope
 //
 // When set, `prompt_user` fails fast instead of blocking on stdin. Used by
-// `tap run` (and any other in-process subagent) so a missing INPUT/ENV value
+// `tap run` so a missing INPUT/ENV value
 // surfaces as a structured error in the parent agent's tool result rather
 // than deadlocking on a prompt the user can't answer.
 // ---------------------------------------------------------------------------

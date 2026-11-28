@@ -125,7 +125,7 @@ async fn delegated_run_section_only_when_process_is_delegated() {
 	crate::agent::inputs::set_process_delegated();
 	let after = build_system_prompt(&current_dir, &config, "assistant").await;
 	crate::agent::inputs::reset_process_delegated();
-	assert!(after.contains(crate::mcp::agent::functions::DELEGATED_RUN_INSTRUCTION));
+	assert!(after.contains(crate::acp::driver::DELEGATED_RUN_INSTRUCTION));
 }
 
 /// Clients re-bind a live session ahead of every turn; only the first setup

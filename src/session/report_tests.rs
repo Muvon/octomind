@@ -294,7 +294,7 @@ fn generate_from_log_collects_turns_from_agent_activity_only() {
 			serde_json::json!({"role":"assistant","content":"on it","timestamp":110}),
 			serde_json::json!({
 				"role":"tool","timestamp":120,
-				"content":"...\n-3:ab..4:cd (2 lines)\n+3:qa let a = 1;\n+4:qb let b = 2;\n+5:qc let c = 3;"
+				"content":"...\n-3:ab..4:cd (2 lines)\n+3:cT let a = 1;\n+4:Fd let b = 2;\n+5:HX let c = 3;"
 			}),
 			serde_json::json!({"role":"assistant","content":"done, three lines","timestamp":130}),
 			serde_json::json!({"type":"COMMAND","command":"/info","timestamp":200}),

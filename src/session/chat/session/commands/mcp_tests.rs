@@ -161,7 +161,7 @@ async fn test_info_reports_builtin_servers_as_running() {
 		.iter()
 		.filter_map(|s| s.get("name").and_then(|v| v.as_str()))
 		.collect();
-	for expected in ["core", "runtime", "agent", "orchestration"] {
+	for expected in ["core", "runtime", "orchestration"] {
 		assert!(names.contains(&expected), "missing server {expected}: {data}");
 	}
 	for server in servers {

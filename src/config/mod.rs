@@ -26,7 +26,6 @@ pub fn get_env_tracker() -> &'static Mutex<env_source::EnvTracker> {
 	ENV_TRACKER.get_or_init(|| Mutex::new(env_source::EnvTracker::new()))
 }
 // Re-export all modules
-pub mod agents;
 pub mod env_source;
 
 pub mod guardrails;
@@ -76,7 +75,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 35;
+pub const CURRENT_CONFIG_VERSION: u32 = 36;
 
 /// Accepted only for old configs and tap manifests; remove in a later release.
 pub(crate) const DEPRECATED_SAMPLING_KEYS: [&str; 3] = ["temperature", "top_p", "top_k"];
@@ -390,16 +389,20 @@ pub struct Config {
 	/// detector hints stay advisory either way.
 	pub max_identical_rounds: usize,
 
-	// Agent configurations - simplified ACP-based definitions
-	#[serde(default)]
-	pub agents: Vec<crate::config::agents::AgentConfig>,
-
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 
 	// Role configurations - array format like layers. Optional: roles come from taps too, so a
 	// config without any `[[roles]]` is valid (the template ships none).
 	#[serde(default)]
 	pub roles: Vec<crate::config::roles::Role>,
+
+	/// The exact tap manifest behind this role. Never read from global config.
+	#[serde(skip)]
+	pub tap_manifest: Option<std::sync::Arc<crate::agent::manifest::Manifest>>,
+	#[serde(skip)]
+	pub(crate) authored_grants: Option<crate::agent::manifest::Grants>,
+	#[serde(skip)]
+	pub(crate) bound_tap_run: bool,
 
 	// Internal role lookup map (populated during loading)
 	#[serde(skip)]
@@ -644,6 +647,10 @@ impl Config {
 		// Use the updated RoleMcpConfig method that has runtime injection
 		role_mcp_config.get_enabled_servers(&self.mcp.servers, role_name)
 	}
+	pub fn bind_tap_run(&mut self) {
+		self.bound_tap_run = true;
+	}
+
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
 		self.log_level.clone()

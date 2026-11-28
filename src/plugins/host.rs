@@ -515,28 +515,6 @@ impl Host {
 			.collect()
 	}
 
-	/// Move what the plugins of `from` spent and nobody booked yet to the plugin
-	/// of the same name in `to`. A plugin that `to` does not have loses it.
-	pub fn pass_usage(&self, from: &str, to: &str) {
-		let mut sessions = self.sessions.lock();
-		let Some(source) = sessions.get_mut(from) else {
-			return;
-		};
-		let passed: Vec<(String, Vec<Usage>)> = source
-			.slots
-			.iter_mut()
-			.map(|slot| (slot.name.clone(), std::mem::take(&mut slot.usage)))
-			.collect();
-		let Some(target) = sessions.get_mut(to) else {
-			return;
-		};
-		for (name, usage) in passed {
-			if let Some(slot) = target.slots.iter_mut().find(|slot| slot.name == name) {
-				slot.usage.extend(usage);
-			}
-		}
-	}
-
 	/// The latest report of each plugin that sent one since the last call.
 	pub fn take_reports(&self, session_id: &str) -> Vec<(String, protocol::Report)> {
 		let mut sessions = self.sessions.lock();

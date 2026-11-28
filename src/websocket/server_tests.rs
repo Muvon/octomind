@@ -1208,21 +1208,25 @@ fn two_role_config() -> Config {
 	config
 }
 
-/// Registers and enables an in-memory agent owned by `session_id` alone.
-async fn register_session_agent(session_id: &str, name: &str) {
+/// Install a dynamic server tool in the same session registry and routing map used by runtime MCP.
+async fn register_session_tool(session_id: &str, name: &str) {
 	crate::session::context::with_session_id(session_id.to_string(), async {
-		crate::mcp::runtime::dynamic_agents::register_agent(crate::mcp::runtime::dynamic_agents::DynamicAgentConfig {
+		let server = crate::config::McpServerConfig::builtin("session-probe", 30, vec![]);
+		let tool = crate::mcp::McpFunction {
 			name: name.to_string(),
+			freeform: None,
+			annotations: None,
 			description: "session-owned probe".to_string(),
-			system: "probe".to_string(),
-			welcome: String::new(),
-			model: None,
-			server_refs: Vec::new(),
-			allowed_tools: Vec::new(),
-			workdir: ".".to_string(),
-		})
-		.expect("register agent");
-		crate::mcp::runtime::dynamic_agents::enable_agent(name).expect("enable agent");
+			parameters: serde_json::json!({"type": "object"}),
+		};
+		let sid = session_id.to_string();
+		crate::session::context::register_dynamic_server_for_session(&sid, server.clone());
+		assert!(crate::session::context::enable_dynamic_server_for_session(
+			&sid,
+			server.name(),
+			vec![tool]
+		));
+		crate::mcp::tool_map::register_dynamic_server_tools(server.name(), &server, &[name.to_string()]);
 	})
 	.await;
 }
@@ -1257,8 +1261,8 @@ async fn role_switch_binds_each_session_to_its_own_tools() {
 		("schedule", serde_json::json!({"command": "list"})),
 		("mcp", serde_json::json!({"action": "list"})),
 		("schedule", serde_json::json!({"command": "list"})),
-		("agent_outbound_probe", serde_json::json!({"task": "x"})),
-		("agent_default_probe", serde_json::json!({"task": "x"})),
+		("outbound_probe", serde_json::json!({"task": "x"})),
+		("default_probe", serde_json::json!({"task": "x"})),
 	];
 	let script = calls
 		.into_iter()
@@ -1302,10 +1306,10 @@ async fn role_switch_binds_each_session_to_its_own_tools() {
 	assert_refused(&tool_turn(&mut ws, &switched, "schedule").await);
 
 	// Tools one session registered at runtime stay invisible to the other.
-	register_session_agent(&switched, "outbound_probe").await;
-	register_session_agent(&default, "default_probe").await;
-	assert_refused(&tool_turn(&mut ws, &default, "agent_outbound_probe").await);
-	assert_refused(&tool_turn(&mut ws, &switched, "agent_default_probe").await);
+	register_session_tool(&switched, "outbound_probe").await;
+	register_session_tool(&default, "default_probe").await;
+	assert_refused(&tool_turn(&mut ws, &default, "outbound_probe").await);
+	assert_refused(&tool_turn(&mut ws, &switched, "default_probe").await);
 
 	crate::session::context::cleanup_session(&switched);
 	crate::session::context::cleanup_session(&default);
@@ -5112,7 +5116,7 @@ async fn run_events_reach_every_bound_client_between_turns() {
 	let run_id = "tap-developer-cto-abcdef";
 	crate::session::context::with_session_id(parent.clone(), async {
 		register_streaming_tap(run_id);
-		crate::mcp::agent::functions::route_child_update(&child_text("idle child"), Some(run_id), true);
+		crate::acp::driver::route_child_update(&child_text("idle child"), Some(run_id), true);
 	})
 	.await;
 	for client in [&mut first, &mut second] {
@@ -5188,9 +5192,9 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 	assert_eq!(read_json(&mut client).await["seq"], 1);
 	with_session_id(parent.to_string(), async {
 		for text in ["first", "second"] {
-			crate::mcp::agent::functions::route_child_update(&child_text(text), Some(run_id), true);
+			crate::acp::driver::route_child_update(&child_text(text), Some(run_id), true);
 		}
-		crate::mcp::agent::functions::route_child_update(
+		crate::acp::driver::route_child_update(
 			&serde_json::json!({"params":{"update":{
 				"sessionUpdate":"tool_call","toolCallId":"call-1","title":"read","rawInput":{"path":"file.rs"}
 			}}}),
@@ -5226,7 +5230,7 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 	assert_eq!(log["events"].as_array().unwrap().len(), 3);
 	assert_eq!(log["events"][1]["content"], "firstsecond");
 	with_session_id(parent.to_string(), async {
-		crate::mcp::agent::functions::route_child_update(&child_text("after snapshot"), Some(run_id), true);
+		crate::acp::driver::route_child_update(&child_text("after snapshot"), Some(run_id), true);
 	})
 	.await;
 	let next = read_json(&mut client).await;
@@ -5266,7 +5270,7 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		assert_eq!(running["seq"], 1);
 
-		crate::mcp::agent::functions::route_child_update(
+		crate::acp::driver::route_child_update(
 			&serde_json::json!({"params":{"update":{
 				"sessionUpdate":"tool_call","title":"read","rawInput":{"path":"file.rs"}
 			}}}),
@@ -5281,7 +5285,7 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 		assert_eq!(job.status, tap_runs::TapJobStatus::Running);
 		assert_eq!(job.live.last_action.as_deref(), Some("read file.rs"));
 
-		crate::mcp::agent::functions::route_child_update(&child_text("still working"), Some(run_id), true);
+		crate::acp::driver::route_child_update(&child_text("still working"), Some(run_id), true);
 		let next: serde_json::Value =
 			serde_json::from_str(receiver.try_recv().unwrap().frame.to_text().unwrap()).unwrap();
 		assert_eq!(
@@ -5310,11 +5314,7 @@ async fn tap_child_forwarding_outside_websocket_is_unchanged() {
 		assert!(crate::session::tap_runs::with_run_events(|_, _| Ok(()))
 			.unwrap()
 			.is_none());
-		crate::mcp::agent::functions::route_child_update(
-			&child_text("legacy output"),
-			Some("tap-developer-cto-abcdef"),
-			false,
-		);
+		crate::acp::driver::route_child_update(&child_text("legacy output"), Some("tap-developer-cto-abcdef"), false);
 	})
 	.await;
 	match receiver.try_recv().unwrap() {
@@ -5341,7 +5341,7 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 		register_streaming_tap(run_id);
 		rx.try_recv().unwrap();
 		drop(rx);
-		crate::mcp::agent::functions::route_child_update(&child_text("no client"), Some(run_id), true);
+		crate::acp::driver::route_child_update(&child_text("no client"), Some(run_id), true);
 		assert!(notify_rx.try_recv().is_err());
 		let request = super::super::protocol::RunLogMessage {
 			session_id: parent.clone(),

@@ -65,7 +65,6 @@ const MAX_KEYS: usize = 64;
 /// send verbatim; everything else is an MCP tool named by user config and is
 /// reduced to a static category by [`bucket_tool`].
 const BUILTIN_TOOLS: &[&str] = &[
-	"agent",
 	"batch_edit",
 	"capability",
 	"core",

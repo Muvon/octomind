@@ -42,6 +42,8 @@ fn schema_advertises_all_actions() {
 	assert!(names.contains(&"list"));
 	assert!(names.contains(&"stop"));
 	assert!(names.contains(&"send"));
+	assert!(names.contains(&"create"));
+	assert!(names.contains(&"persist"));
 	assert!(!names.contains(&"discover"));
 	assert!(names.contains(&"capability"));
 }

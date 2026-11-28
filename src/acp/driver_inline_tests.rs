@@ -62,7 +62,7 @@ async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Re
 #[tokio::test]
 async fn tap_send_uses_sequential_user_prompts_and_keeps_background_input_open() {
 	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState, TapRunInput};
-	use std::sync::RwLock;
+	use std::sync::{Arc, RwLock};
 	for background in [false, true] {
 		let parent = format!("tap-send-acp-{background}");
 		crate::session::context::with_session_id(parent.clone(), async {
@@ -547,7 +547,7 @@ async fn handback_banks_the_childs_verified_verdict() {
 		)
 		.await
 		.expect("verified run succeeds");
-		assert_eq!(crate::mcp::agent::handback::take_handback(), (1, 1));
+		assert_eq!(crate::acp::handback::take_handback(), (1, 1));
 
 		let script = format!(
 			"{HANDSHAKE}echo '{}'\ncat >/dev/null",
@@ -564,10 +564,10 @@ async fn handback_banks_the_childs_verified_verdict() {
 		)
 		.await
 		.expect("unverified run succeeds");
-		assert_eq!(crate::mcp::agent::handback::take_handback(), (1, 0));
+		assert_eq!(crate::acp::handback::take_handback(), (1, 0));
 		drop(cancel_tx);
 
-		crate::mcp::agent::handback::clear_handback_for_session(&sid);
+		crate::acp::handback::clear_handback_for_session(&sid);
 	})
 	.await;
 }

@@ -107,7 +107,7 @@ const COLD_START_PINGS: u32 = 2;
 pub enum WaitKind {
 	/// Waiting for the next user / client message.
 	Reply,
-	/// Waiting with work in flight (tap runs, detached shell or agent jobs,
+	/// Waiting with work in flight (tap runs, detached shell jobs,
 	/// running scheduled tools): a result is certain to come back. Chosen by
 	/// [`KeepaliveHandle::spawn`] for a `Reply` wait while the session is busy.
 	Background,

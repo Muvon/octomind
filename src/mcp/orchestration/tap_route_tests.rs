@@ -283,16 +283,13 @@ fn a_base_agent_matches_among_its_variants_and_a_variant_starts_a_copy_of_itself
 }
 
 #[test]
-fn a_caller_that_is_not_a_tap_agent_matches_among_all_agents_or_copies_itself_by_name() {
+fn a_caller_that_is_not_a_tap_agent_matches_among_all_agents_but_cannot_copy_itself() {
 	let agents = [agent("beta"), agent("gamma")];
 	assert_eq!(
 		match_tags(reach("local-role", false, &agents, None, false)),
 		["beta", "gamma"]
 	);
-	assert!(matches!(
-		reach("local-role", false, &agents, Some("local-role"), false),
-		Ok(Reach::Copy)
-	));
+	assert!(reach("local-role", false, &agents, Some("local-role"), false).is_err());
 }
 
 #[test]

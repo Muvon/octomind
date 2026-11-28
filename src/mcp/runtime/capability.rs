@@ -898,6 +898,9 @@ pub enum EnvCapabilityProgress {
 /// capabilities are no-ops. Use this from CLI / CI / non-interactive runs
 /// that need a deterministic tool surface (e.g., `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`).
 pub async fn load_env_capabilities(config: &Config, progress: Option<&(dyn Fn(EnvCapabilityProgress) + Send + Sync)>) {
+	if config.authored_grants.is_some() {
+		return;
+	}
 	let env_val = match std::env::var("OCTOMIND_CAPABILITIES") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
@@ -995,6 +998,9 @@ pub async fn auto_activate_capabilities(session: &mut crate::session::chat::sess
 /// This is the same scoring path as fresh user-message activation, exposed for
 /// runtime prompts that ask the session to load missing tools.
 pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config) -> Vec<String> {
+	if config.authored_grants.is_some() {
+		return Vec::new();
+	}
 	// Control-plane text (supervisor steers/recalls, skill replays, continuation
 	// wrappers) is not a user intent — mirrors the same gate in
 	// `skill_auto::run_activation`.
@@ -1317,6 +1323,10 @@ pub(crate) fn check_env_readiness(required: &[String]) -> Result<(), Vec<String>
 
 /// or surface. Idempotent: returns `Ok(empty)` when already active.
 async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<String>> {
+	anyhow::ensure!(
+		config.authored_grants.is_none(),
+		"An authored role has a fixed set of tools"
+	);
 	if is_active(crate::agent::registry::capability_bare_name(name)) {
 		return Ok(Vec::new());
 	}

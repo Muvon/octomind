@@ -48,15 +48,16 @@ async fn lookup_is_case_sensitive_and_rejects_lookalikes() {
 	reset_tool_map();
 	initialize_tool_map(&empty_map_config()).await.expect("init");
 
-	register_dynamic_agent_tool("reviewer");
-	assert!(get_server_for_tool("agent_reviewer").is_some());
+	let probe = McpServerConfig::builtin("probe", 30, vec![]);
+	register_dynamic_server_tools("probe", &probe, &["review".to_string()]);
+	assert!(get_server_for_tool("review").is_some());
 
 	// Case variants, suffix lookalikes and the empty name never resolve.
-	assert_eq!(get_server_for_tool("Agent_Reviewer"), None);
-	assert_eq!(get_server_for_tool("AGENT_REVIEWER"), None);
-	assert_eq!(get_server_for_tool("agent_reviewer2"), None);
+	assert_eq!(get_server_for_tool("Review"), None);
+	assert_eq!(get_server_for_tool("REVIEW"), None);
+	assert_eq!(get_server_for_tool("review2"), None);
 	assert_eq!(get_server_for_tool(""), None);
-	assert_eq!(get_tool_server_name("Agent_Reviewer"), None);
+	assert_eq!(get_tool_server_name("Review"), None);
 
 	reset_tool_map();
 }
@@ -66,14 +67,6 @@ async fn lookup_is_case_sensitive_and_rejects_lookalikes() {
 async fn duplicate_dynamic_registration_keeps_single_entry() {
 	reset_tool_map();
 	initialize_tool_map(&empty_map_config()).await.expect("init");
-
-	register_dynamic_agent_tool("reviewer");
-	register_dynamic_agent_tool("reviewer");
-	assert_eq!(
-		get_tools_for_server("agent"),
-		vec!["agent_reviewer".to_string()],
-		"registering the same agent twice must not duplicate the mapping"
-	);
 
 	let server = McpServerConfig::builtin("dyn-local", 30, vec![]);
 	register_dynamic_server_tools("dyn-local", &server, &["alpha".to_string(), "alpha".to_string()]);
@@ -92,12 +85,13 @@ async fn registration_while_uninitialized_is_invisible() {
 	reset_tool_map();
 	// TOOL_MAP exists but initialized == false: dynamic registration may write
 	// state, yet every lookup must refuse to serve until initialization.
-	register_dynamic_agent_tool("reviewer");
+	let probe = McpServerConfig::builtin("probe", 30, vec![]);
+	register_dynamic_server_tools("probe", &probe, &["review".to_string()]);
 	assert!(!is_initialized());
-	assert_eq!(get_server_for_tool("agent_reviewer"), None);
+	assert_eq!(get_server_for_tool("review"), None);
 	assert!(get_all_tool_names().is_empty());
 	assert!(get_all_server_names().is_empty());
-	assert!(get_tools_for_server("agent").is_empty());
+	assert!(get_tools_for_server("probe").is_empty());
 
 	reset_tool_map();
 }
@@ -108,7 +102,6 @@ async fn unregister_unknown_tools_is_a_noop() {
 	reset_tool_map();
 	initialize_tool_map(&empty_map_config()).await.expect("init");
 
-	unregister_dynamic_agent_tool("ghost");
 	unregister_dynamic_server_tools("ghost-server", &["never_existed".to_string()]);
 
 	assert!(is_initialized(), "unregistering unknown tools must not deinitialize");

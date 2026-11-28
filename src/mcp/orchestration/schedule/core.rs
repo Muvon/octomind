@@ -75,21 +75,11 @@ pub fn flush_due_to_inbox(config: &crate::config::Config) {
 	}
 }
 
-/// True when the session has no in-flight work: no running tap-runs, no
-/// pending detached shell jobs, and no running background agent jobs. The
-/// main response loop having returned to the input-waiting state is implicit
-/// at the only call site.
+/// True when no tap, scheduled tool call or detached shell job is running.
 pub fn is_session_idle() -> bool {
-	if crate::session::tap_runs::has_running_jobs() || super::execution::has_running() {
-		return false;
-	}
-	if crate::session::shell_jobs::has_pending() {
-		return false;
-	}
-	let active_jobs = crate::mcp::agent::functions::get_job_manager()
-		.map(|m| m.active_count())
-		.unwrap_or(0);
-	active_jobs == 0
+	!crate::session::tap_runs::has_running_jobs()
+		&& !super::execution::has_running()
+		&& !crate::session::shell_jobs::has_pending()
 }
 
 /// Flush all idle-mode entries into the session inbox iff the session is

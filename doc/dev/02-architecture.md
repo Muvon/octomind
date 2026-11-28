@@ -93,8 +93,7 @@ The default config declares four builtin servers:
 |--------|--------------|
 | `core` | `code`; `recall` when attention or attention governance is enabled; planning is done by a plugin, not a tool |
 | `orchestration` | `tap`, `schedule`, `monitor` |
-| `runtime` | `mcp`, `agent`, `skill`, `capability` management |
-| `agent` | generated `agent_<name>` execution tools |
+| `runtime` | `mcp`, `skill`, `capability` management |
 
 `initialize_servers_for_role_with_callback` starts configured stdio and HTTP servers and reports progress.
 `tool_map::initialize_tool_map` then maps each visible tool name to its server configuration. A call flows through
@@ -107,13 +106,13 @@ and `code`, which comes with every session that has an external tool; the extern
 (`src/mcp/code/`). A script's tool calls go back through `execute_tool_call`, so guardrails and the `tool.before` check
 apply to each of them.
 
-Dynamic MCP servers and dynamic agents update the tool map at runtime. Their registries are session-keyed when a session
+Dynamic MCP servers update the tool map at runtime. Their registries are session-keyed when a session
 context is active, and execution checks reject a dynamic tool owned by another session. Project-local executable tools
 under `<workdir>/.agents/tools/` use the synthetic `local` server and are revalidated against the current workdir.
 
 ## Session Context and Asynchronous Input
 
-`src/session/context.rs` keys the inbox, job manager, tap-run state, skills, schedules, dynamic agents, dynamic MCP
+`src/session/context.rs` keys the inbox, tap-run state, skills, schedules, private tap roles, dynamic MCP
 servers, and other runtime services by session ID. This keeps concurrent ACP and WebSocket sessions from sharing their
 logical queues even though some underlying process registries and the global tool map are process-wide.
 
@@ -181,7 +180,7 @@ start, each prompt, before and after tool calls, the end of a turn) and whose an
 `src/plugins/` and the config entry is `src/config/plugins.rs`. A new config lists one plugin, Besydr. The pieces octomind
 kept from the old built-in supervisor are `src/session/accounting/`, `src/session/self_report.rs`,
 `src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`,
-`src/mcp/agent/handback.rs`, and `src/plugins/workdir.rs`. See [Besydr plugin](../usage/14-supervisor.md) and
+`src/acp/handback.rs`, and `src/plugins/workdir.rs`. See [Besydr plugin](../usage/14-supervisor.md) and
 [Learning](../usage/13-learning.md) for the user-facing side.
 
 `src/session/accounting/` holds what plugins and background folds spent on a session's behalf, shown in `/info`. Persisted
@@ -232,8 +231,7 @@ src/
     server.rs                     stdio and HTTP MCP clients
     core/                         recall, plan state, local project tools
     orchestration/                tap, schedule, monitor
-    runtime/                      mcp, agent, skill, capability management
-    agent/                        generated agent_<name> execution tools
+    runtime/                      mcp, skill, capability management
     oauth/                        OAuth discovery, PKCE, callback, token storage
   session/
     context.rs                    session-keyed service registries

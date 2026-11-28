@@ -846,9 +846,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// Ctrl+C pressed during input
 							log_debug!("Input cancelled by user - cleaning up");
 
-							// Kill any running async jobs
-							crate::mcp::agent::functions::kill_all_jobs();
-
 							// Ensure session is saved
 							if let Err(e) = chat_session.save() {
 								log_debug!("Warning: Failed to save session after cancellation: {}", e);
@@ -863,8 +860,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 							// `--format` run is different: there the model is mid-task
 							// waiting for a job it launched, so that loop does wait.)
 							// Ctrl+D pressed - graceful exit handled in input.rs
-							// Kill any running async jobs
-							crate::mcp::agent::functions::kill_all_jobs();
 							// Ensure session is saved
 							if let Err(e) = chat_session.save() {
 								log_debug!("Warning: Failed to save session: {}", e);
@@ -875,8 +870,6 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 
 					// Check if the input is an exit command
 					if input == "/exit" || input == "/quit" {
-						// Kill any running async jobs before exiting
-						crate::mcp::agent::functions::kill_all_jobs();
 						// Show resume command with session ID
 						let resume_cmd =
 							format!("octomind run --resume {}", chat_session.session.info.name).bright_cyan();
@@ -1467,11 +1460,9 @@ fn print_turn_summary(elapsed: std::time::Duration) {
 
 	let monitors = crate::session::context::current_session_id()
 		.map_or(0, |id| crate::mcp::orchestration::monitor::running_monitor_count(&id));
-	let agents = crate::session::context::get_job_manager_for_session().map_or(0, |manager| manager.active_count());
 	let running: Vec<String> = [
 		(crate::session::shell_jobs::pending_labels().len(), "shell"),
 		(crate::session::tap_runs::pending_labels().len(), "tap run"),
-		(agents, "agent"),
 		(monitors, "monitor"),
 	]
 	.into_iter()
@@ -1807,9 +1798,6 @@ pub async fn run_interactive_session_with_input(
 					keepalive = KeepaliveHandle::spawn(&chat_session, &current_config, WaitKind::Reply);
 				}
 				Err(e) => {
-					// Kill any running async jobs on error/cancellation
-					crate::mcp::agent::functions::kill_all_jobs();
-
 					let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 						OutputMode::Jsonl
 					} else {
@@ -2000,9 +1988,6 @@ pub async fn run_interactive_session_with_input(
 
 			// Check if there's anything left to wait for.
 			let has_schedules = crate::mcp::orchestration::has_pending_schedules();
-			let active_jobs = crate::mcp::agent::functions::get_job_manager()
-				.map(|m| m.active_count())
-				.unwrap_or(0);
 			let has_monitors = crate::mcp::orchestration::has_running_monitors();
 			// A detached shell job (a build, a test suite) is still running: its
 			// completion arrives as an inbox message that wakes the model with the
@@ -2014,7 +1999,7 @@ pub async fn run_interactive_session_with_input(
 			// subprocess and drop the reply the turn is waiting for.
 			let has_tap_runs = crate::session::tap_runs::has_running_jobs();
 
-			if !daemon && !has_schedules && !has_monitors && active_jobs == 0 && !has_background_jobs && !has_tap_runs {
+			if !daemon && !has_schedules && !has_monitors && !has_background_jobs && !has_tap_runs {
 				// Checked after every job check: a result is queued before its job stops
 				// being pending, so one that landed since the last drain is answered here
 				// rather than left for a run that ends.

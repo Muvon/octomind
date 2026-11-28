@@ -176,41 +176,6 @@ async fn what_the_plugin_answers_to_session_end_is_booked_and_saved_with_the_ses
 }
 
 #[tokio::test]
-async fn usage_a_child_plugin_reports_when_it_ends_reaches_the_parents_books() {
-	let parent = unique("life-usage-parent");
-	let child = unique("life-usage-child");
-	let dir = tempfile::tempdir().unwrap();
-	let stub =
-		StubPlugin::new(&[event::SUBAGENT_START, event::SESSION_START, event::SESSION_END]).respond(|method, _| {
-			Ok(if method == event::SESSION_END {
-				json!({"usage": [{"label": "learn", "calls": 1, "input_tokens": 5, "output_tokens": 1, "cost": 0.5}]})
-			} else {
-				json!({})
-			})
-		});
-	connect_stub(&parent, ROLE, dir.path(), &stub).await;
-	let config = config_for(&stub);
-
-	crate::session::context::with_session_id(parent.clone(), async {
-		crate::mcp::set_session_working_directory(dir.path().to_path_buf());
-		let running = start_in_process_child(&parent, &child, "find it", "You search.", &config)
-			.await
-			.expect("a plugin is on for the parent");
-		end_in_process_child(running).await;
-	})
-	.await;
-
-	let usage = crate::plugins::take_usage(&parent);
-	assert_eq!(usage.len(), 1);
-	assert_eq!(
-		(usage[0].0.as_str(), usage[0].1.label.as_str(), usage[0].1.cost),
-		(stub.name(), "learn", 0.5)
-	);
-	assert!(crate::plugins::take_usage(&child).is_empty());
-	crate::plugins::end_session(&parent);
-}
-
-#[tokio::test]
 async fn a_subagent_is_announced_before_its_session_starts_and_inherits_the_answer() {
 	let parent = unique("life-parent");
 	let child = unique("life-child");
@@ -229,18 +194,15 @@ async fn a_subagent_is_announced_before_its_session_starts_and_inherits_the_answ
 		})
 	});
 	connect_stub(&parent, ROLE, dir.path(), &stub).await;
-	let config = config_for(&stub);
-
-	crate::session::context::with_session_id(parent.clone(), async {
-		crate::mcp::set_session_working_directory(dir.path().to_path_buf());
-		let running = start_in_process_child(&parent, &child, "find it", "You search.", &config)
-			.await
-			.expect("a plugin is on for the parent");
-		assert!(crate::plugins::active(&child));
-		assert_eq!(parent_session_id(&child).as_deref(), Some(parent.as_str()));
-		end_in_process_child(running).await;
-	})
-	.await;
+	let inherited = subagent_starting(&parent, None, "find it", None).await;
+	set_parentage(&child, &parent, inherited);
+	connect_stub(&child, ROLE, dir.path(), &stub).await;
+	let mut child_chat = chat(&child);
+	session_started(&mut child_chat, &config_for(&stub), "startup")
+		.await
+		.unwrap();
+	session_ended(&mut child_chat, REASON_EXIT).await;
+	subagent_ended(&parent, Some(&child)).await;
 
 	let order: Vec<String> = methods(&stub)
 		.into_iter()
@@ -258,15 +220,15 @@ async fn a_subagent_is_announced_before_its_session_starts_and_inherits_the_answ
 
 	let announced = &stub.sent(event::SUBAGENT_START)[0];
 	assert_eq!(announced["session_id"], parent.as_str());
-	assert_eq!(announced["child_session_id"], child.as_str());
+	assert!(announced["child_session_id"].is_null());
 	assert_eq!(announced["prompt"], "find it");
-	assert_eq!(announced["system_prompt"], "You search.");
+	assert!(announced["system_prompt"].is_null());
 
 	let started = &stub.sent(event::SESSION_START)[0];
 	assert_eq!(started["session_id"], child.as_str());
 	assert_eq!(started["parent_session_id"], parent.as_str());
 	assert_eq!(started["inherited"], json!({"lesson": 1}));
-	assert_eq!(started["system_prompt"], "You search.");
+	assert_eq!(started["system_prompt"], "You are the agent.");
 
 	assert_eq!(stub.sent(event::SESSION_END)[0]["session_id"], child.as_str());
 	assert_eq!(stub.sent(event::SUBAGENT_END)[0]["child_session_id"], child.as_str());
@@ -279,11 +241,8 @@ async fn a_subagent_is_announced_before_its_session_starts_and_inherits_the_answ
 async fn no_subagent_event_is_sent_when_no_plugin_is_on_for_the_parent() {
 	let parent = unique("life-quiet-parent");
 	let stub = StubPlugin::new(&[event::SUBAGENT_START]);
-	let config = config_for(&stub);
-
-	let running = start_in_process_child(&parent, "child", "task", "system", &config).await;
-
-	assert!(running.is_none());
+	let inherited = subagent_starting(&parent, None, "task", None).await;
+	assert!(inherited.is_empty());
 	assert!(stub.sent(event::SUBAGENT_START).is_empty());
 }
 

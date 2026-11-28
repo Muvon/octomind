@@ -399,7 +399,8 @@ fn merged_config_for_default_template_roles() {
 	let config = base_config();
 	let merged = config.get_merged_config_for_role("assistant");
 	let names: Vec<String> = merged.mcp.servers.iter().map(|s| s.name().to_string()).collect();
-	for expected in ["core", "orchestration", "runtime", "agent"] {
+	assert!(!names.iter().any(|name| name == "agent"));
+	for expected in ["core", "orchestration", "runtime"] {
 		assert!(names.contains(&expected.to_string()), "assistant must see {expected}");
 	}
 	// "filesystem" is referenced by the role but absent from the template

@@ -279,23 +279,9 @@ For editor launch configurations, see [Editor Integration](../usage/12-editor-in
 
 ### Agent Delegation
 
-Configured agents (`[[agents]]`) spawn ACP subprocesses to handle tasks:
+For a tap run, Octomind acts as the **ACP client**:
 
-```toml
-[[agents]]
-name = "context_gatherer"
-description = "Gather codebase context"
-command = "octomind acp context_gatherer"
-workdir = "."
-```
-
-For an `agent_context_gatherer` tool call with these arguments, Octomind acts as the **ACP client**:
-
-```json
-{"task":"Summarize src/main.rs and its command dispatch"}
-```
-
-1. Spawns `octomind acp context_gatherer` as a subprocess.
+1. Pins the selected manifest to the new run ID and spawns an ACP child with that binding. A local config role cannot replace the selected manifest.
 2. Sends `initialize` (with `protocolVersion: 1`) — it does **not** call `authenticate`.
 3. Sends `session/new` with an empty `mcpServers` list.
 4. Sends `session/prompt` carrying the task as a single text block.
@@ -535,7 +521,7 @@ whenever the model loses tool results it was served. Field details and the rules
   flags](../../src/commands/acp.rs).
 
 - [Shared command handlers](../../src/session/chat/session/commands/mod.rs) and [ACP subprocess
-  client](../../src/mcp/agent/functions.rs).
+  client](../../src/acp/driver.rs).
 
 - [WebSocket Server](01-websocket-server.md) — JSON frame transport and shared event shapes.
 - [Daemon Mode and Webhook Hooks](03-daemon-and-hooks.md) — external injection with `run`.

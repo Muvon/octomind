@@ -22,7 +22,7 @@ See [Configuration reference](../reference/03-config-reference.md) for config lo
 ## Extension Types
 
 - **Commands** — ACP-backed steps triggered interactively with `/run <name>` (`[[commands]]`).
-- **Agents** — specialized AI instances exposed as MCP tools (`[[agents]]`, plus runtime dynamic agents).
+- **Agents** — installed or session-private tap roles delegated to through `orchestration:tap`.
 - **Prompts** — reusable prompt templates queued with `/prompt <name>` (`[[prompts]]`).
 
 All of these are user-defined (or provided by a tap). The default config ships one command (`reduce`) and one agent
@@ -118,88 +118,7 @@ task. Session and request spending checks can decline execution before the child
 
 ## Agents
 
-Agents are specialized AI instances that run as separate processes via ACP (Agent Client Protocol). Each agent becomes
-an MCP tool.
-
-### Configuration
-
-```toml
-[[agents]]
-name = "context_gatherer"
-description = "Analyze supplied code or requirements."
-command = "octomind acp analysis"
-workdir = "."
-```
-
-This custom example uses the `analysis` role defined above. The shipped `context_gatherer` agent instead invokes
-`octomind acp context_gatherer`, but the shipped local `[[roles]]` list has no role with that name. Define that role or
-change the agent command before relying on the shipped entry.
-
-Enable the `agent` server for the parent role. For example, a minimal parent role is:
-
-```toml
-[[roles]]
-name = "delegator"
-system = "Delegate analysis tasks to agent_context_gatherer and explain its findings."
-welcome = "Ready to delegate."
-
-[roles.mcp]
-server_refs = ["agent"]
-allowed_tools = ["agent:*"]
-```
-
-```bash
-octomind run delegator
-```
-
-### How Agents Work
-
-1. Define agent in `[[agents]]` with `name`, `description`, and `command`
-2. Agent becomes MCP tool `agent_<name>` (e.g., `agent_context_gatherer`)
-3. When called, Octomind spawns the command as a child process
-4. Communication happens via JSON-RPC over stdio (ACP protocol)
-5. Agent's final response is returned as the tool result
-
-### Agent Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Unique ID. Tool becomes `agent_<name>`. |
-| `description` | string | yes | MCP tool description shown to AI |
-| `command` | string | yes | Whitespace-split executable and arguments starting an ACP server over stdio |
-| `workdir` | string | no | Working directory (default: `"."`) |
-
-### Agent Tool Parameters
-
-| Parameter | Type | Meaning |
-|-----------|------|---------|
-| `task` | string, required | Task description |
-| `async` | boolean, default `false` | Return immediately and inject the result later |
-
-Call `agent_context_gatherer` with supplied text (the sample `analysis` role has no file tools):
-
-```json
-{"task": "Analyze this requirement: retries must stop after three failed attempts.", "async": true}
-```
-
-### Async Agents
-
-`async: true` returns immediately. The result is injected into the conversation as a user message when complete,
-prefixed `[Async agent '<name>' completed]` (or `[Async agent '<name>' failed]` on error).
-
-Use async when:
-
-- Task takes 30+ seconds
-- You can continue other work
-- You don't need the result immediately
-
-Max concurrent async jobs is fixed at the machine's CPU core count (fallback `4` if it can't be detected); it is not
-configurable. Starting a job past that limit does not queue — the call returns an immediate error such as `Async job limit reached (4/4 active). Wait for existing jobs to complete.` All jobs are cancelled on session exit.
-
-### Dynamic Agents
-
-Use the runtime `agent` tool for temporary agents that execute in-process. See [Dynamic agent setup and
-invocation](07-mcp-tools.md#agent-tool-dynamic-agent-management) for the complete example and parameter reference.
+See [Delegate work to tap roles](../use-cases/05-multi-agent-delegation.md) for creating, running and saving a specialist.
 
 ## Prompt Templates
 
@@ -245,8 +164,7 @@ prompt = """Please help create comprehensive tests:
 **Why is my command missing from `/run`?** Put it in `[[commands]]` and reload by starting a new session. `/run` lists
 the loaded command names.
 
-**Why does a command fail to start?** Confirm its `command` uses an installed executable and a resolvable role. An
-`[[agents]]` or `[[commands]]` name does not define a matching `[[roles]]` entry automatically.
+**Why does a command fail to start?** Confirm its executable is installed and its role resolves. Defining a command does not define a role.
 
 ```bash
 octomind acp analysis --help
@@ -268,7 +186,7 @@ conversation.
 - [Shipped definitions](../../config-templates/default.toml)
 - [Command fields and input preparation](../../src/session/layers/layer_trait.rs)
 - [Command output modes](../../src/session/chat/command_executor.rs)
-- [Agent execution](../../src/mcp/agent/functions.rs)
+- [Agent execution](../../src/acp/driver.rs)
 - [Prompt queueing](../../src/session/chat/session/commands/prompt.rs)
 
 ## See also

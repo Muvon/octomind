@@ -100,46 +100,76 @@ pub async fn resolve_config_and_role(
 	let (raw_toml, tap_root) = registry::fetch_manifest(tag, &config.registry)
 		.await
 		.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
-	// Resolve capabilities before input/env/dep resolution
-	let (resolved_toml, dep_entries) = registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
-		.context("Failed to resolve agent capabilities")?;
-	// INPUT first (persistent credential store), then ENV (environment / .env
-	// fallback), under one escape scope so `{{{{ENV:KEY}}}}` stays literal.
-	let resolved_toml = inputs::resolve_manifest_placeholders(&resolved_toml).await?;
-	// Run dep scripts before MCP init — idempotent, exit 0 if already installed.
-	// Grouped by owning tap: a capability reached through the `octomind/`
-	// prefix keeps its dep scripts in the baseline tap, not the agent's.
-	// Groups keep declaration order (agent's own deps first) so installs
-	// run deterministically.
-	let mut deps_by_root: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
-	for (entry, root) in dep_entries {
-		match deps_by_root.iter_mut().find(|(r, _)| *r == root) {
-			Some((_, entries)) => entries.push(entry),
-			None => deps_by_root.push((root, vec![entry])),
+	let manifest = super::manifest::Manifest {
+		tag: name.to_owned(),
+		root: tap_root,
+		raw: raw_toml,
+	};
+	resolve_manifest(manifest, config, status_cb).await
+}
+
+/// Load the manifest selected by the parent, without repeating a name lookup in child config.
+pub async fn resolve_manifest(
+	manifest: super::manifest::Manifest,
+	config: &Config,
+	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
+) -> Result<(Config, String)> {
+	let name = manifest.tag.as_str();
+	let resolved_toml = if manifest.authored() {
+		// Text authored by a model is literal; never expand credential placeholders in its prompt.
+		manifest.raw.clone()
+	} else {
+		let raw_toml = &manifest.raw;
+		let tap_root = &manifest.root;
+		// Resolve capabilities before input/env/dep resolution
+		let (resolved_toml, dep_entries) = registry::resolve_capabilities(raw_toml, tap_root, &config.capabilities)
+			.context("Failed to resolve agent capabilities")?;
+		// INPUT first (persistent credential store), then ENV (environment / .env
+		// fallback), under one escape scope so `{{{{ENV:KEY}}}}` stays literal.
+		let resolved_toml = inputs::resolve_manifest_placeholders(&resolved_toml).await?;
+		// Run dep scripts before MCP init — idempotent, exit 0 if already installed.
+		// Grouped by owning tap: a capability reached through the `octomind/`
+		// prefix keeps its dep scripts in the baseline tap, not the agent's.
+		// Groups keep declaration order (agent's own deps first) so installs
+		// run deterministically.
+		let mut deps_by_root: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
+		for (entry, root) in dep_entries {
+			match deps_by_root.iter_mut().find(|(r, _)| *r == root) {
+				Some((_, entries)) => entries.push(entry),
+				None => deps_by_root.push((root, vec![entry])),
+			}
 		}
-	}
-	for (root, entries) in deps_by_root {
-		deps::run_dep_entries(&entries, &root, status_cb).await?;
-	}
-	// A bad `# Uses:` header fails the load, not the agent's first delegation.
-	let agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents")?;
+		for (root, entries) in deps_by_root {
+			deps::run_dep_entries(&entries, &root, status_cb).await?;
+		}
+		// A bad `# Uses:` header fails the load, not the agent's first delegation.
+		resolved_toml
+	};
+	let mut agents = crate::agent::taps::list_agent_headers().context("Failed to list tap agents")?;
+	agents.retain(|a| a.tag != name);
+	agents.push(manifest.header());
 	reachable_agents(name, true, &agents)?;
 	// Always inject the agent name as the role name — manifests never need to declare it. A
 	// `@version` pinned the manifest fetched above; it is not part of the name that skills,
 	// capabilities and `# Uses:` reach bind to.
 	let tagged_toml = prepare_role_manifest(&resolved_toml, name).context("Failed to prepare agent manifest")?;
-	let mut merged = merge_agent_toml(config, &tagged_toml).context("Failed to merge agent manifest into config")?;
-
-	// First role in merged config that isn't in the base config
-	let base_names: std::collections::HashSet<&str> = config.roles.iter().map(|r| r.name.as_str()).collect();
+	let mut base = config.clone();
+	base.roles.retain(|role| role.name != name);
+	let mut merged = merge_agent_toml(&base, &tagged_toml).context("Failed to merge agent manifest into config")?;
 	let role = merged
-		.roles
-		.iter()
-		.find(|r| !base_names.contains(r.name.as_str()))
-		.map(|r| r.name.clone())
-		.context(format!(
-			"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
-		))?;
+		.role_map
+		.get(name)
+		.with_context(|| format!("Agent manifest for '{name}' must define at least one new [[roles]] entry"))?;
+	merged.authored_grants = manifest.grants(&role.mcp)?;
+	if merged.authored_grants.is_some() {
+		for server in &role.mcp.server_refs {
+			anyhow::ensure!(
+				config.mcp.servers.iter().any(|s| s.name() == server),
+				"Required server '{server}' for authored role '{name}' is unavailable"
+			);
+		}
+	}
+	let role = role.name.clone();
 
 	// Apply tap model override if configured: the exact tag first, then an alias of it (a key
 	// written under the name the agent had before a rename), then its namespace
@@ -151,30 +181,11 @@ pub async fn resolve_config_and_role(
 		.or_else(|| config.taps.get(namespace_of(name)))
 	{
 		merged.model_profile.model = tap_model.clone();
-		crate::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
+		crate::log_debug!("Applied tap model override: {} -> {}", name, tap_model);
 	}
 
-	tap_agent_roles()
-		.write()
-		.expect("tap agent roles lock poisoned")
-		.insert(role.clone());
+	merged.tap_manifest = Some(std::sync::Arc::new(manifest));
 	Ok((merged, role))
-}
-
-fn tap_agent_roles() -> &'static std::sync::RwLock<std::collections::HashSet<String>> {
-	static ROLES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashSet<String>>> =
-		std::sync::OnceLock::new();
-	ROLES.get_or_init(Default::default)
-}
-
-/// Whether this process resolved `role` from a tap agent. A role defined in the local config
-/// wins over a tap agent of the same name and is never recorded, so a `true` answer means the
-/// running role is the tap agent, not a local role that happens to share its name.
-pub fn resolved_from_tap(role: &str) -> bool {
-	tap_agent_roles()
-		.read()
-		.expect("tap agent roles lock poisoned")
-		.contains(role)
 }
 
 /// Prepare the role entry of a tap manifest: inject the tag (e.g. `"tap"`)

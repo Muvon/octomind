@@ -762,3 +762,95 @@ async fn read_only_cannot_be_asked_of_a_run_that_started_writable() {
 	// Refused before the run was claimed.
 	assert_eq!(still_done, Some(TapJobStatus::Done));
 }
+
+#[tokio::test]
+#[serial]
+async fn authored_role_is_private_but_its_run_resumes_the_selected_manifest() {
+	let data = TempDataDir::new();
+	install_rust_agent(data.path());
+	let config = unit_config();
+	let session = "tap-author-owner".to_owned();
+	let tag = "personal:review";
+	let original = "Audit the API. {{ENV:OCTOMIND_TEST_MUST_NOT_BE_EXPANDED}}";
+	let run_id = crate::session::context::with_session_id(session.clone(), async {
+		crate::session::context::init_session_services("local", SessionMode::default());
+		let created = execute_tap_command(
+			&tap_call(json!({"action":"create","name":"review","system":original,"description":"Review an API"})),
+			&config,
+		)
+		.await
+		.unwrap();
+		assert!(!created.is_error(), "{}", created.extract_content());
+		assert_eq!(
+			serde_json::from_str::<serde_json::Value>(&created.extract_content()).unwrap()["role"],
+			tag
+		);
+		let unauthorized = execute_tap_command(&tap_call(json!({"action":"persist","role":tag})), &config)
+			.await
+			.unwrap();
+		assert!(unauthorized.is_error());
+		assert!(!crate::agent::manifest::catalog(Some("other-session"), None)
+			.unwrap()
+			.contains_key(tag));
+		let run = execute_tap_command(&tap_call(json!({"action":"run","role":tag,"prompt":"check"})), &config)
+			.await
+			.unwrap();
+		assert!(!run.is_error(), "{}", run.extract_content());
+		let started: serde_json::Value = serde_json::from_str(&run.extract_content()).unwrap();
+		let id = started["id"].as_str().unwrap().to_owned();
+		wait_terminal_status(&id).await;
+		let mine = crate::agent::manifest::private_role(&session, tag).unwrap();
+		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+		crate::session::context::set_notification_sender_for_session(&session, tx);
+		crate::mcp::elicitation::set_answerer(&session, Some(crate::mcp::elicitation::Answerer::Client));
+		let approve = async {
+			let frame = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+				.await
+				.unwrap()
+				.unwrap();
+			let crate::websocket::ServerMessage::Elicitation(q) = frame else {
+				panic!("expected approval")
+			};
+			assert!(crate::mcp::elicitation::resolve(
+				&session,
+				&q.id,
+				rmcp::model::ElicitResult::new(rmcp::model::ElicitationAction::Accept)
+					.with_content(json!({"approve":true}))
+			));
+		};
+		let persist = tap_call(json!({"action":"persist","role":tag}));
+		let (saved, ()) = tokio::join!(execute_tap_command(&persist, &config), approve);
+		let saved = saved.unwrap();
+		assert!(!saved.is_error(), "{}", saved.extract_content());
+		let path = crate::agent::taps::personal_tap().agent_manifest(tag).unwrap();
+		let public = crate::agent::manifest::catalog(Some("other-session"), None).unwrap();
+		assert_eq!(public[tag].raw, mine.raw);
+		assert!(mine.persist().is_err(), "cannot overwrite on a second promotion");
+		std::fs::write(path, "# changed after the run").unwrap();
+		crate::session::context::cleanup_session(&session);
+		id
+	})
+	.await;
+	assert!(crate::agent::manifest::private_role(&session, tag).is_err());
+	let pinned = crate::agent::manifest::Manifest::read_run(&run_id, tag).unwrap();
+	let mut shadow = config.clone();
+	shadow
+		.roles
+		.push(toml::from_str("name='personal:review'\nsystem='wrong role'\nwelcome=''").unwrap());
+	shadow.build_role_map();
+	let (resolved, role) = crate::agent::resolver::resolve_manifest(pinned, &shadow, None)
+		.await
+		.unwrap();
+	assert_eq!(role, tag);
+	assert_eq!(resolved.role_map[tag].config.system, original);
+	let merged = resolved
+		.get_merged_config_for_interactive_role(tag)
+		.get_merged_config_for_role(tag);
+	assert!(merged.mcp.servers.is_empty());
+	assert!(crate::mcp::get_available_functions(&merged).await.is_empty());
+	let guessed = crate::mcp::execute_tool_call(&tap_call(json!({"action":"workflow"})), &merged, None)
+		.await
+		.unwrap()
+		.0;
+	assert!(guessed.is_error());
+}

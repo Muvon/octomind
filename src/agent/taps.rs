@@ -36,7 +36,7 @@
 //! the user follow their default branch.
 
 use crate::agent::registry::{
-	canonical_tag, is_valid_agent_name, manifest_parts, namespace_of, parse_agent_header, AgentHeader, DEFAULT_VARIANT,
+	canonical_tag, is_valid_agent_name, manifest_parts, namespace_of, AgentHeader, DEFAULT_VARIANT,
 };
 use crate::config::registry::RegistryConfig;
 use anyhow::{Context, Result};
@@ -176,6 +176,14 @@ pub struct Tap {
 	pub local_path: Option<String>,
 }
 
+/// This user-owned tap is local data, not a clone, and never refreshes from Git.
+pub(crate) fn personal_tap() -> Tap {
+	Tap {
+		name: "personal".into(),
+		local_path: None,
+	}
+}
+
 impl Tap {
 	/// Returns the GitHub URL for this tap.
 	pub fn github_url(&self) -> String {
@@ -193,6 +201,9 @@ impl Tap {
 	/// GitHub taps: `~/.local/share/octomind/taps/user/octomind-repo/` (git clone)
 	/// Local taps:  `~/.local/share/octomind/taps/user/octomind-repo/` (symlink → local path)
 	pub fn local_dir(&self) -> Result<PathBuf> {
+		if self.name == "personal" {
+			return Ok(crate::directories::get_octomind_data_dir()?.join("personal-tap"));
+		}
 		let parts: Vec<&str> = self.name.split('/').collect();
 		if parts.len() == 2 {
 			let tap_dir = crate::directories::get_octomind_data_dir()?
@@ -412,6 +423,9 @@ fn parse_tap_arg(arg: &str) -> Result<Tap> {
 pub fn get_taps() -> Result<Vec<Tap>> {
 	let mut file = read_taps_file()?;
 	file.taps.push(built_in_tap()?);
+	if personal_tap().local_dir()?.is_dir() {
+		file.taps.push(personal_tap());
+	}
 	Ok(file.taps)
 }
 
@@ -437,6 +451,9 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 
 	// Built-in tap is always last
 	file.taps.push(built_in_tap()?);
+	if personal_tap().local_dir()?.is_dir() {
+		file.taps.push(personal_tap());
+	}
 	Ok(file.taps)
 }
 
@@ -480,6 +497,7 @@ pub fn list_taps() -> Result<Vec<Tap>> {
 
 /// A manifest file found in a tap, not read yet.
 struct AgentManifestFile {
+	root: PathBuf,
 	tag: String,
 	path: PathBuf,
 }
@@ -497,7 +515,11 @@ fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 	for tap in &taps {
 		for (tag, path) in tap.agent_manifests().unwrap_or_default() {
 			if seen.insert(tag.clone()) {
-				manifests.push(AgentManifestFile { tag, path });
+				manifests.push(AgentManifestFile {
+					tag,
+					path,
+					root: tap.local_dir()?,
+				});
 			}
 		}
 	}
@@ -563,14 +585,19 @@ pub struct TapAgentHeader {
 /// Same rules as [`list_agent_tags`]: local data only, first tap wins on a
 /// duplicate tag, sorted by tag. An unreadable manifest is an error.
 pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
+	Ok(installed_manifests()?.iter().map(|m| m.header()).collect())
+}
+
+pub(crate) fn installed_manifests() -> Result<Vec<super::manifest::Manifest>> {
 	walk_agent_manifests()?
 		.into_iter()
 		.map(|manifest| {
 			let raw = fs::read_to_string(&manifest.path)
 				.with_context(|| format!("Failed to read agent manifest {}", manifest.path.display()))?;
-			Ok(TapAgentHeader {
+			Ok(super::manifest::Manifest {
 				tag: manifest.tag,
-				header: parse_agent_header(&raw),
+				root: manifest.root,
+				raw,
 			})
 		})
 		.collect()

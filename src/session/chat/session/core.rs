@@ -295,7 +295,7 @@ pub struct ChatSession {
 	/// re-entry still verifies the original user turn.
 	pub completion_gate_eligible: bool,
 	/// Set when an eligible turn ends with session-owned work still in flight
-	/// (a detached shell job, a tap run, a background agent). The inbox delivery
+	/// (a detached shell job or a tap run). The inbox delivery
 	/// that resumes the agent continues the same task, so it inherits
 	/// eligibility instead of being treated as a control-plane event.
 	pub gate_deferred: bool,

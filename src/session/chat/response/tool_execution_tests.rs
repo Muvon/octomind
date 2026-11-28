@@ -146,7 +146,7 @@ fn template_config() -> Config {
 	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default config template")
 }
 #[test]
-fn test_context_accessors_main_session_and_layer() {
+fn test_context_accessors_main_session_and_schedule() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut processor = ToolProcessor::new();
 	let mut context = ToolExecutionContext::MainSession {
@@ -158,17 +158,15 @@ fn test_context_accessors_main_session_and_layer() {
 
 	assert_eq!(context.session_name(), "test");
 	assert!(context.execution_context().is_none());
-	assert!(context.is_tool_allowed("anything"));
 	assert!(context.error_tracker().is_some());
 
-	let mut layer = ToolExecutionContext::Layer {
-		session_name: "layer-sess".to_string(),
-		layer_name: "reviewer".to_string(),
+	let mut scheduled = ToolExecutionContext::Scheduled {
+		session_name: "schedule-sess".to_string(),
+		tap_run: None,
 	};
-	assert_eq!(layer.session_name(), "layer-sess");
-	assert_eq!(layer.execution_context().as_deref(), Some("reviewer"));
-	assert!(layer.is_tool_allowed("anything"));
-	assert!(layer.error_tracker().is_none());
+	assert_eq!(scheduled.session_name(), "schedule-sess");
+	assert_eq!(scheduled.execution_context().as_deref(), Some("schedule"));
+	assert!(scheduled.error_tracker().is_none());
 }
 
 #[test]
@@ -191,20 +189,20 @@ fn test_increment_tool_calls_counts_main_session_only() {
 		panic!("expected MainSession context");
 	}
 
-	// Layer context has no session — the call is a telemetry-only no-op
-	let mut layer = ToolExecutionContext::Layer {
+	// Scheduled context has no session — the call is a telemetry-only no-op
+	let mut scheduled = ToolExecutionContext::Scheduled {
 		session_name: "s".to_string(),
-		layer_name: "l".to_string(),
+		tap_run: None,
 	};
-	layer.increment_tool_calls("view");
+	scheduled.increment_tool_calls("view");
 }
 
 #[tokio::test]
 async fn test_execute_tools_in_context_empty_batch_returns_empty() {
 	let config = template_config();
-	let mut context = ToolExecutionContext::Layer {
-		session_name: "layer-sess".to_string(),
-		layer_name: "reviewer".to_string(),
+	let mut context = ToolExecutionContext::Scheduled {
+		session_name: "schedule-sess".to_string(),
+		tap_run: None,
 	};
 
 	let (results, total_ms) = execute_tools_in_context(Vec::new(), &mut context, &config, None, OutputMode::Jsonl)
@@ -215,11 +213,11 @@ async fn test_execute_tools_in_context_empty_batch_returns_empty() {
 }
 
 #[tokio::test]
-async fn test_execute_tools_in_context_unknown_tool_layer_error_result() {
+async fn test_execute_tools_in_context_unknown_tool_scheduled_error_result() {
 	let config = template_config();
-	let mut context = ToolExecutionContext::Layer {
-		session_name: "layer-sess".to_string(),
-		layer_name: "reviewer".to_string(),
+	let mut context = ToolExecutionContext::Scheduled {
+		session_name: "schedule-sess".to_string(),
+		tap_run: None,
 	};
 
 	let calls = vec![
@@ -834,33 +832,6 @@ async fn test_cancellation_does_not_start_later_calls() {
 		crate::session::context::cleanup_session(&sid);
 	})
 	.await;
-}
-
-#[tokio::test]
-async fn test_execute_layer_tool_calls_parallel_unknown_tool_error_result() {
-	let config = template_config();
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-
-	let (results, _total_ms) = execute_layer_tool_calls_parallel(
-		&config,
-		LayerToolExecutionParams {
-			tool_calls: vec![crate::mcp::McpToolCall {
-				tool_name: "layer_missing_tool".to_string(),
-				parameters: serde_json::json!({}),
-				tool_id: "l1".to_string(),
-			}],
-			session_name: "layer-sess".to_string(),
-			layer_name: "reviewer".to_string(),
-			operation_cancelled: Some(rx),
-			mode: OutputMode::Jsonl,
-		},
-	)
-	.await
-	.expect("layer execution");
-
-	assert_eq!(results.len(), 1);
-	assert!(results[0].is_error());
-	assert!(results[0].extract_content().contains("not found"));
 }
 
 #[tokio::test]

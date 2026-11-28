@@ -63,6 +63,12 @@ pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params:
 		})));
 	}
 
+	if config.bound_tap_run || config.authored_grants.is_some() {
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: "This run is bound to its tap role".into(),
+			context: None,
+		})));
+	}
 	// Snapshot for revert on failure
 	let old_role = session.role.clone();
 	let old_profile = session.model_profile(config);

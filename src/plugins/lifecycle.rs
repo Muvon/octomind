@@ -29,7 +29,6 @@ use std::sync::OnceLock;
 /// After a resume the pins and status fields come back from the session file
 /// and the plugins get the full message list again.
 const SOURCE_RESUME: &str = "resume";
-const SOURCE_STARTUP: &str = "startup";
 /// The session ends because the user leaves, or its subagent run is over.
 pub const REASON_EXIT: &str = "exit";
 /// The session ends because the user starts another one.
@@ -214,76 +213,6 @@ pub async fn judge_detached(session_id: &str, payload: Judge) -> Option<super::J
 	let parent = parent_session_id(session_id);
 	let parts = detached_parts(session_id, parent.as_deref(), &parent_role(session_id));
 	super::judge(&parts.detached_context(None), payload).await
-}
-
-/// A subagent that runs inside this process and has plugin sessions of its own.
-pub struct InProcessChild {
-	parent_session_id: String,
-	child_session_id: String,
-}
-
-/// Start the plugin side of an in-process subagent: `subagent.start` for the
-/// parent, then the child's connection and `session.start` with what the
-/// parent's plugins handed down. `None` when no plugin is on for the parent.
-pub async fn start_in_process_child(
-	parent_session_id: &str,
-	child_session_id: &str,
-	task: &str,
-	system_prompt: &str,
-	config: &Config,
-) -> Option<InProcessChild> {
-	if !super::active(parent_session_id) {
-		return None;
-	}
-	let inherited = subagent_starting(parent_session_id, Some(child_session_id), task, Some(system_prompt)).await;
-	let role = parent_role(parent_session_id);
-	let parts = detached_parts(child_session_id, Some(parent_session_id), &role);
-	connect(child_session_id, &role, &parts.workdir, config).await;
-	set_parentage(child_session_id, parent_session_id, Vec::new());
-	let tools = if super::subscribed(child_session_id, event::SESSION_START) {
-		Some(payload::tool_infos(config).await)
-	} else {
-		None
-	};
-	let start = SessionStart {
-		source: SOURCE_STARTUP.to_string(),
-		system_prompt: system_prompt.to_string(),
-		interactive: false,
-		can_read_saved_output: spill_reader_available(),
-		inherited: None,
-		capabilities: capability_names(&role, config),
-		context_files: Vec::new(),
-	};
-	super::session_start(&parts.detached_context(tools), start, &inherited).await;
-	super::apply::settle(child_session_id, None);
-	Some(InProcessChild {
-		parent_session_id: parent_session_id.to_string(),
-		child_session_id: child_session_id.to_string(),
-	})
-}
-
-/// The in-process subagent finished: `session.end` for it, then `subagent.end`
-/// for the parent. The usage its plugins left unbooked moves to the parent's.
-pub async fn end_in_process_child(child: InProcessChild) {
-	if super::subscribed(&child.child_session_id, event::SESSION_END) {
-		let parts = detached_parts(
-			&child.child_session_id,
-			Some(&child.parent_session_id),
-			&parent_role(&child.parent_session_id),
-		);
-		let payload = SessionEnd {
-			reason: REASON_EXIT.to_string(),
-		};
-		super::session_end(&parts.detached_context(None), payload).await;
-		super::apply::settle(&child.child_session_id, None);
-	}
-	// The child has no session to book into, so what its plugins spent and the
-	// parent's books have not seen goes to the parent's plugins: the parent's
-	// next settle books it.
-	super::pass_usage(&child.child_session_id, &child.parent_session_id);
-	parentage().lock().remove(&child.child_session_id);
-	super::end_session(&child.child_session_id);
-	subagent_ended(&child.parent_session_id, Some(&child.child_session_id)).await;
 }
 
 fn take_inherited(session_id: &str) -> Vec<(String, Value)> {

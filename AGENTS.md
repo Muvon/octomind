@@ -17,7 +17,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 ## Where to look
 | Task | Start here |
 |------|------------|
-| Add an MCP tool | schema in that server's `get_all_functions()` — `src/mcp/core/functions.rs`, `src/mcp/orchestration/mod.rs`, `src/mcp/runtime/mod.rs`, `src/mcp/agent/functions.rs` → implement in same module → match arm in `src/mcp/mod.rs` `route_builtin_tool()` → register in `src/mcp/tool_map.rs` |
+| Add an MCP tool | schema in that server's `get_all_functions()` — `src/mcp/core/functions.rs`, `src/mcp/orchestration/mod.rs`, `src/mcp/runtime/mod.rs` → implement in same module → match arm in `src/mcp/mod.rs` `route_builtin_tool()` → register in `src/mcp/tool_map.rs` |
 | Add a session command (`/foo`) | `src/session/chat/session/commands/<name>.rs` returning `CommandResult` → `mod` + routing arm in `commands/mod.rs` `process_command()` → new `CommandOutput` variant if the result shape is new → constant + row in the fixed-size `BUILTIN_COMMANDS` array in `src/session/chat/commands.rs` (bump the length; `Reach::CliOnly` hides it from WebSocket clients) |
 | Change a config field/default | `config-templates/default.toml` FIRST, then the matching type in `src/config/` |
 | Config load / merge / role resolution | `src/config/loading.rs` (`load()`), `src/config/merge.rs` (`get_merged_config_for_role()`) |
@@ -29,7 +29,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 | Compression | `src/session/chat/conversation_compression/` (`decision.rs`, `apply.rs`, `schema.rs`, `attention/`) |
 | Code mode (`code` tool: scripts that call external MCP tools) | `src/mcp/code/` (`mod.rs` split + execute, `catalog.rs` signatures, `check.rs` + `checker.js` type check, `engine.rs` sandbox) → definitions sent to the model: `get_model_functions` in `src/mcp/mod.rs` → compiler bundle: `assets/typescript/vendor.sh` |
 | Plugin host (events, protocol, transports, install, workdir) | `src/plugins/` (`host.rs`, `protocol.rs`, `events.rs`, `install.rs`, `state.rs`, `workdir.rs`) + config `src/config/plugins.rs` |
-| Session pieces that outlived the built-in supervisor | `src/session/accounting/`, `src/session/self_report.rs`, `src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`, `src/mcp/agent/handback.rs` |
+| Session pieces that outlived the built-in supervisor | `src/session/accounting/`, `src/session/self_report.rs`, `src/session/recite.rs`, `src/session/notice.rs`, `src/session/repeat_guard.rs`, `src/mcp/tool_shape.rs`, `src/acp/handback.rs` |
 | Workflows | `src/workflow/` (`schema.rs`, `run.rs`, `validate.rs`) + templates `config-templates/workflow*.toml` |
 | Taps (shareable project agents) | `src/agent/` (registry, taps, resolver, deps) |
 | Layers / guardrails / pipes | `src/session/layers/`, `src/session/guardrails.rs`, `src/session/pipe.rs` |
@@ -68,7 +68,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 - All config defaults in `config-templates/default.toml` — never hardcode values
 - Conventional Commits `type(scope): subject` (`!` = breaking); scopes = top-level modules (`mcp`, `session`, `plugins`, `config`, `workflow`, `acp`, …); CHANGELOG is generated from subjects at release
 - Misuse hints guide, never block: append a 💡 hint only when the better tool is actually enabled — gate on `crate::mcp::tool_map::get_server_for_tool("tool").is_some()` (see `src/mcp/hint_accumulator.rs`)
-- Dynamic tools: `register_dynamic_agent_tool()` / `register_dynamic_server_tools()` in `tool_map.rs`; local project tools: executable scripts in `<workdir>/.agents/tools/` (auto-discovered by `src/mcp/core/local_tool.rs`)
+- Dynamic tools: `register_dynamic_server_tools()` in `tool_map.rs`; local project tools: executable scripts in `<workdir>/.agents/tools/` (auto-discovered by `src/mcp/core/local_tool.rs`)
 
 ### Copyright header (every `.rs` file)
 ```rust
@@ -120,7 +120,7 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 - In TOML config files, scalar keys must come BEFORE nested table headers in a section — a scalar placed after `[x.y]` is parsed as a field of that table and silently ignored
 - The compression decision/summary model is `[compression.model]`, separate from `model` (the legacy `[compression.decision]` spelling is migrated away)
 - Log macros live in `src/config/mod.rs`; `src/lib.rs` only shadows the print macros
-- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (`code`, incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
+- Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (`code`, incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `skill`, `capability`), `local` (`.agents/tools/` scripts)
 - `get_available_functions` is every callable tool; `get_model_functions` is what the model is sent — pick by purpose (routing/display vs request size)
 - Dynamic tools are session-owned — a tool registered in one session is rejected when called from another (intentional isolation)
 

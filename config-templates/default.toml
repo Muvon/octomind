@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 35
+version = 36
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -61,7 +61,7 @@ mcp_response_tokens_threshold = 20000
 max_session_tokens_threshold = 300000
 
 # Keep the prompt cache warm with periodic pings while the session waits: for
-# your reply, for background work (tap runs, shell or agent jobs) or for a long
+# your reply, for background work (tap runs or shell jobs) or for a long
 # tool run. Each ping is a cache pre-warm (max_tokens = 0: cache read only, no
 # output), sent at 0.9 x the TTL of the newest cache marker (270s for the 5m
 # conversation cache). How many pings a wait gets is priced, never capped by
@@ -230,8 +230,8 @@ ref = "feature/flat-agents"
 # welcome = "Hello! Working in {{CWD}} (Role: {{ROLE}})"
 #
 # [roles.mcp]
-# server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-# allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+# server_refs = ["core", "orchestration", "runtime", "filesystem"]
+# allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*"]
 
 # Task refiner role - lightweight query refinement
 [[roles]]
@@ -423,12 +423,6 @@ timeout_seconds = 30
 tools = []
 
 [[mcp.servers]]
-name = "agent"
-type = "builtin"
-timeout_seconds = 30
-tools = []
-
-[[mcp.servers]]
 name = "orchestration"
 type = "builtin"
 timeout_seconds = 30
@@ -508,42 +502,6 @@ output_role = "assistant"
 # Global system prompt override (uncomment to set a global default)
 # system = "You are Octomind, an intelligent AI assistant."
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# AGENT CONFIGURATIONS
-# Define AI agents using the same layer configuration as commands
-# Each agent becomes a separate MCP tool (e.g., agent_code_reviewer, agent_debugger)
-# NOTE: 'description' field is now REQUIRED for all agents (used as function description in MCP)
-# The output_mode controls what the agent tool returns:
-#   - "none": Returns only the final layer output (cleanest for tool use)
-#   - "append": Returns layer output + session messages (for debugging)
-# ═══════════════════════════════════════════════════════════════════════════════
-# AGENTS
-# Configure specialized AI agents for task delegation
-# Each agent becomes a separate MCP tool (e.g., agent_context_gatherer)
-# Agents now use ACP protocol directly - just specify the role to use
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Context Gatherer Agent - Gathers detailed context from files and codebase
-# Uses the context_gatherer role defined in [[roles]] section
-[[agents]]
-name = "context_gatherer"
-description = "Gather detailed context from files and codebase. Reads files, searches code patterns, and provides comprehensive information about specific areas of the codebase for development tasks."
-command = "octomind acp context_gatherer"
-workdir = "."  # Working directory for agent execution (default: current directory)
-
-# Example: Architect Agent - Design system architecture
-# [[agents]]
-# name = "architect"
-# description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
-# command = "octomind acp architect"
-# workdir = "."
-
-# Example: Code Reviewer Agent - Review code for quality and best practices
-# [[agents]]
-# name = "code_reviewer"
-# description = "Review code for quality, best practices, security issues, and performance problems."
-# command = "octomind acp code_reviewer"
-# workdir = "."
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROMPT TEMPLATES
 # Define reusable prompt templates for quick access via /prompt command

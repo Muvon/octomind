@@ -43,8 +43,6 @@ pub enum InboxSource {
 	Schedule { id: String },
 	/// A rate-limited batch from a long-running `monitor` script.
 	Monitor { id: String, description: String },
-	/// A background agent job that completed (success or failure).
-	BackgroundAgent { name: String },
 	/// A detached octofs shell job (a build, a test suite) that finished; its
 	/// output is delivered so the model can act on the result.
 	BackgroundJob { id: String },
@@ -84,7 +82,6 @@ impl InboxSource {
 			InboxSource::Monitor { id, description } => {
 				format!("monitor {id} ({description})")
 			}
-			InboxSource::BackgroundAgent { name } => format!("agent {name}"),
 			InboxSource::BackgroundJob { id } | InboxSource::BackgroundJobStatus { id } => format!("job {id}"),
 			InboxSource::TapRun { id, role } => format!("tap-run {id} ({role})"),
 			InboxSource::Skill { name } => format!("skill {name}"),
@@ -102,7 +99,6 @@ impl InboxSource {
 		match self {
 			InboxSource::Schedule { .. } => "schedule",
 			InboxSource::Monitor { .. } => "monitor",
-			InboxSource::BackgroundAgent { .. } => "background_agent",
 			InboxSource::BackgroundJob { .. } | InboxSource::BackgroundJobStatus { .. } => "background_job",
 			InboxSource::TapRun { .. } => "tap_run",
 			InboxSource::Skill { .. } => "skill",
@@ -119,7 +115,6 @@ impl InboxSource {
 		match self {
 			InboxSource::Schedule { .. } => "⏰",
 			InboxSource::Monitor { .. } => "📡",
-			InboxSource::BackgroundAgent { .. } => "🤖",
 			InboxSource::BackgroundJob { .. } | InboxSource::BackgroundJobStatus { .. } => "🏗️",
 			InboxSource::TapRun { .. } => "🚰",
 			InboxSource::Skill { .. } => "🧩",
@@ -136,7 +131,6 @@ impl InboxSource {
 			self,
 			InboxSource::Schedule { .. }
 				| InboxSource::Monitor { .. }
-				| InboxSource::BackgroundAgent { .. }
 				| InboxSource::BackgroundJob { .. }
 				| InboxSource::BackgroundJobStatus { .. }
 				| InboxSource::TapRun { .. }
@@ -459,9 +453,6 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		InboxSource::Schedule { .. } => "scheduled message",
 		InboxSource::Monitor { id, description } => {
 			return Some(format!("monitor {id} ({description})"));
-		}
-		InboxSource::BackgroundAgent { name } => {
-			return Some(format!("background agent '{name}'"));
 		}
 		InboxSource::BackgroundJob { id } | InboxSource::BackgroundJobStatus { id } => {
 			return Some(format!("background job {id}"));

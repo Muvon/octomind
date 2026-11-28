@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Tool execution module - handles ordered tool execution, display, and error handling
-// Unified interface for both main sessions and layers
+// Unified interface for main-session and scheduled tool calls
 
 use crate::config::Config;
 use crate::log_info;
@@ -71,7 +71,7 @@ pub enum RoundStop {
 	Plugin(String),
 }
 
-/// Context for tool execution - can be either main session or layer context
+/// Context for main-session and scheduled tool calls.
 pub enum ToolExecutionContext<'a> {
 	/// Main session context with full session access
 	MainSession {
@@ -84,8 +84,6 @@ pub enum ToolExecutionContext<'a> {
 		/// Set by the round when the plugin path ends the turn after it.
 		round_stop: Option<RoundStop>,
 	},
-	/// Layer/agent context — tool access controlled by the ACP session's role config
-	Layer { session_name: String, layer_name: String },
 	/// Deferred tool execution retains its launched tap identity before output is capped.
 	Scheduled {
 		session_name: String,
@@ -98,32 +96,23 @@ impl ToolExecutionContext<'_> {
 	pub fn session_name(&self) -> &str {
 		match self {
 			ToolExecutionContext::MainSession { chat_session, .. } => &chat_session.session.info.name,
-			ToolExecutionContext::Layer { session_name, .. } | ToolExecutionContext::Scheduled { session_name, .. } => {
-				session_name
-			}
+			ToolExecutionContext::Scheduled { session_name, .. } => session_name,
 		}
 	}
 
-	/// Get execution context for display (None for main session, Some(context) for layers/agents)
+	/// Display suffix for calls made outside the main session.
 	pub fn execution_context(&self) -> Option<String> {
 		match self {
 			ToolExecutionContext::MainSession { .. } => None, // No suffix for main session
-			ToolExecutionContext::Layer { layer_name, .. } => Some(layer_name.clone()),
 			ToolExecutionContext::Scheduled { .. } => Some("schedule".to_string()),
 		}
-	}
-
-	/// Check if tool is allowed in this context.
-	/// Tool access for layers/agents is controlled by the ACP session's role config.
-	pub fn is_tool_allowed(&self, _tool_name: &str) -> bool {
-		true
 	}
 
 	/// Get error tracker (if available)
 	pub fn error_tracker(&mut self) -> Option<&mut crate::session::chat::tool_error_tracker::ToolErrorTracker> {
 		match self {
 			ToolExecutionContext::MainSession { tool_processor, .. } => Some(&mut tool_processor.error_tracker),
-			ToolExecutionContext::Layer { .. } | ToolExecutionContext::Scheduled { .. } => None,
+			ToolExecutionContext::Scheduled { .. } => None,
 		}
 	}
 
@@ -161,34 +150,14 @@ pub async fn execute_tools_in_context(
 	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
-	// Filter tools based on context permissions
-	let allowed_tool_calls: Vec<_> = current_tool_calls
-		.into_iter()
-		.filter(|tool_call| {
-			if context.is_tool_allowed(&tool_call.tool_name) {
-				true
-			} else {
-				if !mode.should_suppress_cli_output() {
-					println!(
-						"{} {} {}",
-						"Tool".red(),
-						tool_call.tool_name,
-						"not allowed in this context".red()
-					);
-				}
-				false
-			}
-		})
-		.collect();
-
-	if allowed_tool_calls.is_empty() {
+	if current_tool_calls.is_empty() {
 		return Ok((Vec::new(), 0));
 	}
 
-	execute_tools_with_context(allowed_tool_calls, context, config, operation_cancelled, mode).await
+	execute_tools_with_context(current_tool_calls, context, config, operation_cancelled, mode).await
 }
 
-// Legacy main-session interface; execution order follows the same barriers as layers.
+// Main-session interface; execution order follows the same barriers as scheduled calls.
 pub async fn execute_tools_parallel(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	tool_round_intent: &str,
@@ -198,7 +167,10 @@ pub async fn execute_tools_parallel(
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64, Option<RoundStop>)> {
-	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
+	if config.authored_grants.is_none()
+		&& current_tool_calls.len() == 1
+		&& is_tap_capability_call(&current_tool_calls[0])
+	{
 		if *operation_cancelled.borrow() {
 			return Ok((Vec::new(), 0, None));
 		}
@@ -407,8 +379,7 @@ struct PluginToolVerdict {
 
 /// Who made the calls a batch admits.
 pub(crate) enum CallOrigin<'a> {
-	/// The model, in a round that has the chat session or (an in-process
-	/// subagent, a layer) none.
+	/// The main round has a chat session; a scheduled call does not.
 	Model(Option<&'a mut ChatSession>),
 	/// The script of the `code` call `code_call_id`. Its round holds the chat
 	/// session; `snapshot` is the session as the round found it.
@@ -501,8 +472,7 @@ async fn plugin_tool_verdict(
 	}
 }
 
-/// The common fields of an event for a session that has no chat session at
-/// hand: an in-process subagent, known only by its synthetic id.
+/// Event context when the call has no chat session at hand.
 fn detached_context_parts(session_id: &String) -> ContextParts {
 	let workdir = crate::mcp::get_thread_working_directory();
 	ContextParts {
@@ -529,7 +499,7 @@ async fn execute_tools_with_context(
 	let mut tool_tasks = Vec::new();
 	// A tool the `code` tool lists may be called as a tool of its own; such a
 	// call becomes the `code` script it means before anything else looks at it.
-	// Layers and scheduled runs reach this without the main loop's rewrite.
+	// Scheduled runs reach this without the main loop's rewrite.
 	let current_tool_calls = crate::mcp::code::script_direct_calls(config, current_tool_calls).await;
 
 	// Guardrails run sequentially over the ordered batch before any tool is
@@ -643,7 +613,6 @@ async fn execute_tools_with_context(
 		} else {
 			previous_write = Some(finished);
 		}
-		let layer = !matches!(context, ToolExecutionContext::MainSession { .. });
 		let workdir_override = crate::mcp::workdir::working_directory_override();
 		let snapshot = round_snapshot.clone();
 		let delegation = (tool_name == "tap").then(|| delegation.clone()).flatten();
@@ -662,14 +631,10 @@ async fn execute_tools_with_context(
 			let execution = crate::session::context::with_session_id(session_id, async move {
 				let mut call_with_id = tool_call_clone;
 				call_with_id.tool_id = tool_id_for_task;
-				if layer {
-					crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
-				} else {
-					let execution = crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task);
-					crate::session::delegation_context::DISPATCH
-						.scope(delegation, payload::with_round_snapshot(snapshot, execution))
-						.await
-				}
+				let execution = crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task);
+				crate::session::delegation_context::DISPATCH
+					.scope(delegation, payload::with_round_snapshot(snapshot, execution))
+					.await
 			});
 			if let Some(workdir) = workdir_override {
 				crate::mcp::workdir::with_working_directory(workdir, execution).await
@@ -1238,7 +1203,7 @@ async fn plugin_round(
 
 	let mut plugin_stop = None;
 	if crate::plugins::subscribed(&session_id, event::TOOL_AFTER) {
-		let (finished, verified) = crate::mcp::agent::handback::take_handback();
+		let (finished, verified) = crate::acp::handback::take_handback();
 		let fingerprint_text =
 			|fingerprint: Option<u64>| fingerprint.map(|value| value.to_string()).unwrap_or_default();
 		let payload = ToolAfter {
@@ -1511,35 +1476,6 @@ async fn display_tool_error(
 		tool_name.bright_red(),
 		summary,
 	);
-}
-
-/// Parameters for layer tool execution using the unified parallel logic.
-pub struct LayerToolExecutionParams {
-	pub tool_calls: Vec<crate::mcp::McpToolCall>,
-	pub session_name: String,
-	pub layer_name: String,
-	pub operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
-	pub mode: OutputMode,
-}
-
-/// Execute tool calls for layers using the unified parallel execution logic
-pub async fn execute_layer_tool_calls_parallel(
-	config: &Config,
-	params: LayerToolExecutionParams,
-) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
-	let mut context = ToolExecutionContext::Layer {
-		session_name: params.session_name,
-		layer_name: params.layer_name,
-	};
-
-	execute_tools_in_context(
-		params.tool_calls,
-		&mut context,
-		config,
-		params.operation_cancelled,
-		params.mode,
-	)
-	.await
 }
 
 #[cfg(test)]

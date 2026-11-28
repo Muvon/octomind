@@ -21,9 +21,6 @@ fn all_sources() -> Vec<InboxSource> {
 			id: "m1".into(),
 			description: "build".into(),
 		},
-		InboxSource::BackgroundAgent {
-			name: "reviewer".into(),
-		},
 		InboxSource::TapRun {
 			id: "t1".into(),
 			role: "developer".into(),

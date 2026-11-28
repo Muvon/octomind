@@ -35,7 +35,6 @@ pub mod output; // Output abstraction for streaming messages
 mod project_context;
 pub mod video; // Video processing and attachment utilities // Project context collection and management
 			   // Provider abstraction layer moved to src/providers
-pub mod background_jobs;
 pub(crate) mod delegation_context;
 pub mod guardrails; // Project-local deny rules evaluated before each tool call
 pub mod hooks; // Post-result hooks → inbox injection
@@ -58,7 +57,6 @@ pub mod webhook_listener; // HTTP webhook listener for hook-to-inbox injection
 
 // Provider system exports
 pub use crate::providers::{AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage};
-pub use background_jobs::{AsyncAgentJobInfo, BackgroundJobManager, CompletedJob};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerResult};
@@ -82,14 +80,12 @@ pub fn has_pending_async_work() -> bool {
 }
 
 /// Work that comes back into the current session by itself, as a follow-up
-/// turn: a delegated `tap` run or async agent job still going, or a result
+/// turn: a delegated `tap` run still going, or a result
 /// already queued. Finite by construction — schedules, monitors and watched
 /// shell jobs can stay pending indefinitely, so a client told to wait on them
 /// (websocket `CostPayload::pending_work`) would wait out its whole cap.
 pub fn has_pending_handback() -> bool {
-	tap_runs::has_running_jobs()
-		|| context::get_job_manager_for_session().is_some_and(|manager| manager.active_count() > 0)
-		|| inbox::has_inbox_messages()
+	tap_runs::has_running_jobs() || inbox::has_inbox_messages()
 }
 
 // Re-export constants

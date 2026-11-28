@@ -238,7 +238,6 @@ notification support.
 
 - **Schedule** — scheduled messages from the `schedule` tool
 - **Monitor** — bounded output batches from the `monitor` tool
-- **BackgroundAgent** — completed async agent jobs
 - **BackgroundJob** — completed detached shell jobs
 - **TapRun** — completed tap run jobs
 - **Skill** — skill activations requiring content injection
@@ -254,16 +253,6 @@ At turn boundaries, the queue drains from the front. Consecutive system-managed 
 human-shaped injections (`send` and webhooks) each own a separate turn. During an active turn, the runtime can consume a
 system result from later in the queue while leaving new user tasks pending. Repeated pending output from the same
 monitor is coalesced and bounded, so this is not a strict one-event/one-turn FIFO contract.
-
-### Background agent completions
-
-Async configured-agent jobs (`agent_*` tools) inject their result through the **BackgroundAgent** source when they
-finish, with a wrapper prefix the AI sees on its next turn:
-
-- Success: `[Async agent '<name>' completed]` followed by the agent output.
-- Failure: `[Async agent '<name>' failed]` followed by the error.
-
-These are tracked by a background job manager with a concurrency cap; attempts to launch beyond the limit are rejected.
 
 ## Common questions
 

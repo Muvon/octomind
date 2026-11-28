@@ -616,7 +616,7 @@ async fn local_config_role_wins_over_a_tap_agent_of_the_same_name() {
 
 	assert_eq!(role, local_role);
 	assert_eq!(merged.roles.len(), config.roles.len(), "no tap manifest merged");
-	assert!(!resolved_from_tap(&local_role), "a local role is not a tap agent");
+	assert!(merged.tap_manifest.is_none(), "a local role is not a tap agent");
 }
 
 #[tokio::test]
@@ -631,7 +631,7 @@ async fn a_versioned_tag_names_the_role_without_the_version() {
 
 	assert_eq!(role, "zver");
 	assert!(merged.roles.iter().any(|r| r.name == "zver"));
-	assert!(resolved_from_tap("zver"));
+	assert!(merged.tap_manifest.as_ref().unwrap().tag == "zver");
 }
 
 #[tokio::test]

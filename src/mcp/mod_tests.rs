@@ -214,7 +214,7 @@ async fn available_functions_cover_each_builtin_server_arm() {
 
 	let runtime_cfg = config_with_servers(vec![McpServerConfig::builtin("runtime", 30, vec![])]);
 	let names = names_of(&get_available_functions(&runtime_cfg).await);
-	for expected in ["mcp", "agent", "skill", "capability"] {
+	for expected in ["mcp", "skill", "capability"] {
 		assert!(names.contains(&expected.to_string()), "runtime: {names:?}");
 	}
 
@@ -224,16 +224,6 @@ async fn available_functions_cover_each_builtin_server_arm() {
 		assert!(names.contains(&expected.to_string()), "orchestration: {names:?}");
 	}
 
-	let mut agent_cfg = config_with_servers(vec![McpServerConfig::builtin("agent", 30, vec![])]);
-	agent_cfg.agents.push(crate::config::agents::AgentConfig {
-		name: "probe_agent".to_string(),
-		description: "probe agent".to_string(),
-		command: "echo".to_string(),
-		workdir: ".".to_string(),
-	});
-	let names = names_of(&get_available_functions(&agent_cfg).await);
-	assert!(names.contains(&"agent_probe_agent".to_string()), "agent: {names:?}");
-
 	clear_function_cache();
 }
 
@@ -242,21 +232,11 @@ async fn available_functions_cover_each_builtin_server_arm() {
 async fn builtin_annotations_drive_mutation_classification() {
 	clear_function_cache();
 	let is_mutation = crate::mcp::tool_shape::is_mutation_call;
-	let mut agent_cfg = config_with_servers(vec![
-		McpServerConfig::builtin("orchestration", 30, vec![]),
-		McpServerConfig::builtin("agent", 30, vec![]),
-	]);
-	agent_cfg.agents.push(crate::config::agents::AgentConfig {
-		name: "annotated_agent".to_string(),
-		description: "probe agent".to_string(),
-		command: "echo".to_string(),
-		workdir: ".".to_string(),
-	});
-	get_available_functions(&agent_cfg).await;
+	let config = config_with_servers(vec![McpServerConfig::builtin("orchestration", 30, vec![])]);
+	get_available_functions(&config).await;
 	get_available_functions(&core_server_config()).await;
 	// A delegate may write whatever its action word says.
 	assert!(is_mutation("tap", &json!({"action": "run"})));
-	assert!(is_mutation("agent_annotated_agent", &json!({"task": "summarize"})));
 	// "update" would read as a mutation without recall's read-only annotation.
 	assert!(!is_mutation("recall", &json!({"action": "update"})));
 	// Multi-action control tools stay unannotated: the action decides.
@@ -399,31 +379,6 @@ async fn session_ownership_rejects_tools_from_foreign_servers() {
 
 #[serial]
 #[tokio::test]
-async fn session_ownership_rejects_foreign_dynamic_agent_tools() {
-	clear_function_cache();
-	let config = core_server_config();
-	tool_map::initialize_tool_map(&config).await.expect("init tool map");
-	tool_map::register_dynamic_agent_tool("foreign_probe_agent");
-
-	writable_session(format!("ownership-agent-{}", uuid::Uuid::new_v4()), async {
-		let (result, _) = execute_tool_call(
-			&tool_call("agent_foreign_probe_agent", json!({"task": "x"})),
-			&config, // config defines no such agent
-			None,
-		)
-		.await
-		.expect("ownership rejection is a soft error");
-		assert!(result.is_error());
-		assert!(result.extract_content().contains("belongs to another session"));
-	})
-	.await;
-
-	tool_map::unregister_dynamic_agent_tool("foreign_probe_agent");
-	clear_function_cache();
-}
-
-#[serial]
-#[tokio::test]
 async fn execute_tool_calls_collects_results_in_order() {
 	clear_function_cache();
 	let config = core_server_config();
@@ -434,14 +389,6 @@ async fn execute_tool_calls_collects_results_in_order() {
 	assert!(results[0].is_ok());
 	assert!(results[1].is_err());
 	clear_function_cache();
-}
-
-#[tokio::test]
-async fn layer_tool_call_delegates_to_execute_tool_call() {
-	let config = config_with_servers(vec![]);
-	assert!(execute_layer_tool_call(&tool_call("x", json!({})), &config, None)
-		.await
-		.is_err());
 }
 
 // ------------------------------------------------------------------
@@ -511,29 +458,6 @@ async fn route_runtime_unknown_tool_is_soft_error() {
 	assert!(result.is_error());
 	assert!(result.extract_content().contains("not implemented in runtime server"));
 	assert_eq!(result.tool_id, "id-nope");
-}
-
-#[tokio::test]
-async fn route_agent_rejects_non_agent_prefixed_names() {
-	let err = super::route_builtin_tool(&tool_call("tap", json!({})), "agent", &route_config(), None)
-		.await
-		.unwrap_err();
-	assert!(err.to_string().contains("not implemented in agent server"), "{err}");
-}
-
-#[tokio::test]
-async fn route_agent_unconfigured_agent_is_soft_error() {
-	let result = super::route_builtin_tool(
-		&tool_call("agent_ghost", json!({"task": "do something"})),
-		"agent",
-		&route_config(),
-		None,
-	)
-	.await
-	.expect("unconfigured agent is a soft error");
-	assert!(result.is_error());
-	assert!(result.extract_content().contains("not configured or not enabled"));
-	assert_eq!(result.tool_id, "id-agent_ghost");
 }
 
 #[tokio::test]

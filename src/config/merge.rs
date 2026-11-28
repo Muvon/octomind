@@ -76,7 +76,24 @@ impl Config {
 		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code
 		// Use the new runtime injection method to ensure core servers are ALWAYS available
 		// Also includes servers that auto-bind to this role.
-		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config, Some(mode));
+		let mut enabled_servers = self.get_enabled_servers_for_role(role_mcp_config, Some(mode));
+		if let Some(grants) = &self.authored_grants {
+			// Re-merging, auto-bind and overlay grants must never broaden an authored role.
+			enabled_servers.retain_mut(|server| {
+				let tools: Vec<_> = grants
+					.iter()
+					.filter(|(tool, owner)| {
+						owner.as_str() == server.name() && crate::mcp::is_tool_allowed_by_patterns(tool, server.tools())
+					})
+					.map(|(tool, _)| tool.clone())
+					.collect();
+				if tools.is_empty() {
+					return false;
+				}
+				*server.tools_mut() = tools;
+				true
+			});
+		}
 
 		crate::log_debug!("TRACE: Role '{}' server_refs: {:?}", mode, role_mcp_config.server_refs);
 		crate::log_debug!("TRACE: Found {} enabled servers for role", enabled_servers.len());
@@ -146,6 +163,9 @@ impl Config {
 		const TOOLS: [&str; 2] = ["schedule", "monitor"];
 
 		let mut merged = self.get_merged_config_for_role(role);
+		if merged.authored_grants.is_some() {
+			return merged;
+		}
 		// Builtins need no external configuration — if the registry lacks the
 		// orchestration entry (e.g. a minimal user config), synthesize it so
 		// interactive sessions always get schedule/monitor.

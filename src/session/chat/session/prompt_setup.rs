@@ -39,7 +39,7 @@ pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role:
 	}
 	if crate::agent::inputs::is_delegated() {
 		system_prompt.push_str("\n\n");
-		system_prompt.push_str(crate::mcp::agent::functions::DELEGATED_RUN_INSTRUCTION);
+		system_prompt.push_str(crate::acp::driver::DELEGATED_RUN_INSTRUCTION);
 	}
 	push_mcp_server_instructions(&mut system_prompt, config_for_role);
 	system_prompt.push_str("\n\n");

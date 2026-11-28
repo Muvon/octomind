@@ -395,12 +395,12 @@ fn test_mcp_providers_replace_servers_with_dedup() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_providers = Some("core, core, runtime, agent, orchestration".to_string());
+	a.mcp_providers = Some("core, core, runtime, orchestration".to_string());
 	execute(&a, template_config()).expect("set mcp providers saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
 	let names: Vec<&str> = reloaded.mcp.servers.iter().map(|s| s.name()).collect();
-	assert_eq!(names, vec!["core", "runtime", "agent", "orchestration"]);
+	assert_eq!(names, vec!["core", "runtime", "orchestration"]);
 	assert!(reloaded
 		.mcp
 		.servers

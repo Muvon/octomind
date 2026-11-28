@@ -1126,7 +1126,7 @@ impl OctomindAgent {
 		if args
 			.client_info
 			.as_ref()
-			.is_some_and(|client| client.name == crate::mcp::agent::functions::AGENT_CLIENT_NAME)
+			.is_some_and(|client| client.name == crate::acp::driver::AGENT_CLIENT_NAME)
 		{
 			crate::agent::inputs::set_process_delegated();
 		}
@@ -1207,6 +1207,10 @@ impl OctomindAgent {
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
+		if self.config.borrow().authored_grants.is_some() && !args.mcp_servers.is_empty() {
+			return Err(agent_client_protocol::Error::invalid_params()
+				.data("Authored roles cannot accept injected MCP servers"));
+		}
 		let config_snapshot = build_config_with_injected_servers(&self.config.borrow(), &self.role, &args.mcp_servers);
 
 		// Start any newly injected servers and register their tools in the tool map.
@@ -1994,6 +1998,10 @@ impl OctomindAgent {
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
+		if self.config.borrow().authored_grants.is_some() && !args.mcp_servers.is_empty() {
+			return Err(agent_client_protocol::Error::invalid_params()
+				.data("Authored roles cannot accept injected MCP servers"));
+		}
 		let config_snapshot = build_config_with_injected_servers(&self.config.borrow(), &self.role, &args.mcp_servers);
 		crate::mcp::initialize_mcp_for_role(&self.role, &config_snapshot)
 			.await

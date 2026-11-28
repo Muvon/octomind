@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Spend by models that run outside the main agent loop — subagents (`agent_*`,
-//! `tap run`, tap workflows), layers, and the supervisor's own cheap-model calls.
+//! Spend by models that run outside the main agent loop — subagents
+//! (`tap run`, tap workflows), layers, and the supervisor's own cheap-model calls.
 //!
 //! None of them hold a `&mut Session` at the moment they spend, so the cost is
 //! banked here and drained into `SessionInfo::total_cost` by
@@ -25,7 +25,7 @@
 //! Banked per session, by the recording task's session context: `octomind
 //! server` runs every session in one process, and a single accumulator handed
 //! one session's delegated spend to whichever session folded next. Detached runs
-//! re-enter their session's context (`tap`, `agent_*`). Spend recorded outside
+//! re-enter their session's context (`tap`). Spend recorded outside
 //! any session has no owner to wait for, so the
 //! next fold takes it, as before.
 

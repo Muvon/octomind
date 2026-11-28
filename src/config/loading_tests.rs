@@ -653,3 +653,21 @@ model = "ollama:dup"
 	);
 	assert_eq!(merged.roles.len(), roles, "a same-named role is not duplicated");
 }
+
+#[test]
+fn v36_current_config_reports_custom_agent_at_source_before_deduplication() {
+	let dir = tempfile::tempdir().unwrap();
+	write_file(dir.path(), "config.toml", &template_toml());
+	let custom = "agents = [{name='mine', command='custom-acp', workdir='private'}]\n";
+	write_file(dir.path(), "early.toml", custom);
+	write_file(dir.path(), "mcp-last.toml", "agents = [{name='mine'}]\n");
+	let file = dir.path().join("early.toml");
+	for path in [dir.path(), file.as_path()] {
+		let err = format!("{:#}", Config::load_from_path(path).unwrap_err());
+		assert!(
+			err.contains("early.toml") && err.contains("mine") && err.contains("tap role"),
+			"{err}"
+		);
+	}
+	assert_eq!(std::fs::read_to_string(file).unwrap(), custom);
+}

@@ -108,7 +108,6 @@ async fn test_is_session_idle_walks_every_busy_source() {
 	crate::session::context::with_session_id("sched-idle-probe".to_string(), async {
 		crate::session::inbox::init_inbox_for_session();
 		crate::session::tap_runs::init_for_session();
-		crate::session::context::init_job_manager_for_session(&"sched-idle-probe".to_string());
 
 		assert!(is_session_idle(), "fresh session must be idle");
 
@@ -129,18 +128,6 @@ async fn test_is_session_idle_walks_every_busy_source() {
 		crate::session::shell_jobs::clear_for_session("sched-idle-probe");
 		assert!(is_session_idle(), "clearing watched jobs restores idle");
 
-		// Active background agent job keeps the session busy.
-		let manager =
-			crate::session::context::get_job_manager_for_session().expect("job manager initialized for session");
-		manager.try_acquire().expect("first slot must be acquirable");
-		assert!(!is_session_idle());
-		manager.release(crate::session::background_jobs::CompletedJob {
-			agent_name: "sched-idle-agent".to_string(),
-			output: "done".to_string(),
-		});
-		assert!(is_session_idle(), "released job restores idle");
-
-		crate::session::context::clear_job_manager_for_session(&"sched-idle-probe".to_string());
 		crate::session::inbox::clear_inbox_for_session(&"sched-idle-probe".to_string());
 		crate::session::context::clear_schedule_storage(&"sched-idle-probe".to_string());
 	})

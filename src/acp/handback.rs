@@ -14,8 +14,7 @@
 
 //! Delegation handback — verification outcomes reported by finished subagents.
 //!
-//! `tap run` and `agent_*` launch a CONTEXT-ISOLATED child: it sees only the
-//! prompt string the parent wrote. The child itself is the ground truth for
+//! A tap child reports its own outcome. The child is the ground truth for
 //! whether the handoff worked — it reports its own end-of-turn verdict back
 //! over the ACP `_meta` channel, and the parent reads that verdict here.
 

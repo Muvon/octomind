@@ -27,10 +27,7 @@
 //! - `capability` — send a short intent through the same skill/capability
 //!   auto-activation path used for user messages.
 //!
-//! Tap-runs are tracked in `crate::session::tap_runs` — a registry that is
-//! intentionally separate from `BackgroundJobManager` (which tracks
-//! `agent_*`). The two subsystems share only generic primitives (tokio
-//! tasks, `watch::Sender` cancellation, the embedding matcher).
+//! Tap runs are tracked in `crate::session::tap_runs`.
 
 use anyhow::Result;
 use serde_json::json;
@@ -38,8 +35,8 @@ use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 use tokio::sync::watch;
 
+use crate::acp::driver::run_acp_command;
 use crate::config::Config;
-use crate::mcp::agent::functions::run_acp_command;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use crate::session::context::SessionMode;
 use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus, TapLiveState};
@@ -54,7 +51,7 @@ pub fn get_tap_function() -> McpFunction {
 		freeform: None,
 		// The tapped agent may change anything its own tools can.
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
-		description: r#"Delegate work to agent roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. Send the task, and the agent that fits it is matched and started for you; you name a role only after this tool has shown you its name. Use this tool to hand off a focused task, check its status, or stop it.
+		description: r#"Delegate work to installed or session-private tap roles. A role is a pre-built agent persona — its own system prompt, model, and tool kit. Send the task, and the agent that fits it is matched and started for you; you name a role only after this tool has shown you its name. Use this tool to hand off a focused task, check its status, or stop it.
 
 When to use:
 - The current task fits an agent better than your generalist context (legal review, docker debugging, financial analysis, …).
@@ -66,14 +63,16 @@ Important: Every `run` call WITHOUT a `session` id starts a completely fresh age
 Matching:
 - `run` without `role` reads only `prompt` to match an agent, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
 - When no agent is matched, `run` returns an error, starts nothing, and lists the closest agents by name. If one of them covers the task, call `run` again with the same prompt and `role` set to that name. If none does, do the task with your own tools or report it. Do not rephrase the same task to force a match.
-- Pass `role` only with a name this tool returned: in that list, or as the role of an earlier run. Never guess a name. No action lists every installed agent.
+- Pass `role` only with a name this tool returned: from create, in that list, or as the role of an earlier run. Never guess a name. No action lists every installed agent.
 
 Copies of yourself:
-- `role` set to your own name starts a fresh session of you: your prompt and tools, no memory of this conversation. Start several at once, each with a self-contained `prompt`.
+- For a tap role, `role` set to your own name starts a fresh session of you: your prompt and tools, no memory of this conversation. Start several at once, each with a self-contained `prompt`.
 - Without `role`, an agent that reaches no other agent gets a copy of itself; one that reaches others matches among them, never itself.
 - A copy cannot start copies: it does its part itself.
 
 Actions:
+- `create`     — create a private specialist with name (variant slug), description and system. Optional: model, tools (exact currently authorized tool names, none by default). Run the returned role with run; do not create a role for ordinary one-off delegation.
+- `persist`    — with user approval save a role created in this session into the personal tap. Required: role.
 - `run`        — match an agent to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `role` (start that agent without matching), `readonly` (true: the run may only use tools that cannot change state, and cannot delegate; default false), `session` (resume that run with its original role, workdir and readonly; `readonly: true` is refused for a run started writable), `workdir` (defaults to current cwd).
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running agent. Required: `session` (the id).
@@ -85,12 +84,12 @@ Actions:
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "send", "capability", "workflow"],
+					"enum": ["run", "list", "stop", "send", "capability", "workflow", "create", "persist"],
 					"description": "Action to perform"
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run or send, or capability-need phrase for capability. This text is the delegation brief and the only input used to match an agent. Same-workspace tap runs can search authorized ancestor context for omitted details. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the agent cannot see ('as discussed', 'the item we found')."
+					"description": "Prompt for run or send, or capability-need phrase for capability. This text is the delegation brief and the only input used to match an agent. Installed roles run in the same workspace can search authorized ancestor context for omitted details. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the agent cannot see ('as discussed', 'the item we found')."
 				},
 				"role": {
 					"type": "string",
@@ -110,8 +109,12 @@ Actions:
 				},
 				"name": {
 					"type": "string",
-					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Only pass a name the user explicitly asked to run. Omit to list installed workflows; pass it without `input` to inspect the definition."
+					"description": "Variant slug for create. Tap workflow name for workflow (e.g. 'watch-page'). For workflow, only pass a name the user explicitly asked to run. Omit to list installed workflows; pass it without `input` to inspect the definition."
 				},
+				"description": {"type":"string","description":"Single-line routing description for create."},
+				"system": {"type":"string","description":"System prompt for the created specialist."},
+				"model": {"type":"string","description":"Optional model override for create."},
+				"tools": {"type":"array","items":{"type":"string"},"description":"Exact configured tool names to delegate; omitted means no tools."},
 				"input": {
 					"type": "string",
 					"description": "Input text for workflow — everything the workflow needs (URL, question, tab list); it starts with ZERO other context."
@@ -139,7 +142,8 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 	};
 	match action.as_str() {
 		"list" => handle_list(call).await,
-		"run" => handle_run(call).await,
+		"run" => handle_run(call, config).await,
+		"create" | "persist" => super::tap_author::execute(call, config).await,
 		"stop" => handle_stop(call).await,
 		"send" => handle_send(call),
 		"capability" => handle_capability(call, config).await,
@@ -147,7 +151,7 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, send, capability, or workflow."),
+			format!("Unknown action '{other}'. Use run, list, stop, send, capability, workflow, create, or persist."),
 		)),
 	}
 }
@@ -406,7 +410,7 @@ fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
 	))
 }
 
-async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
+async fn handle_run(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	use crate::session::delegation_context as delegation;
 	let mut prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
 		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
@@ -489,7 +493,7 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 			claim.mode,
 		)
 	} else {
-		let agent = match super::tap_route::route_task(&prompt, role_param.as_deref()).await {
+		let agent = match super::tap_route::route_task(&prompt, role_param.as_deref(), config).await {
 			Ok(agent) => agent,
 			Err(error) => {
 				return Ok(McpToolResult::error(
@@ -503,9 +507,16 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 			readonly,
 			copy: agent.copy,
 		};
-		let role = agent.tag;
+		let role = agent.manifest.tag.clone();
 		let workdir = workdir_param.unwrap_or(cwd_default);
 		let id = tap_runs::generate_id(&role);
+		if let Err(error) = agent.manifest.pin(&id) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Cannot pin tap manifest: {error:#}"),
+			));
+		}
 		let status = Arc::new(RwLock::new(TapJobStatus::Running));
 		let (cancel_tx, cancel_rx) = watch::channel(false);
 		tap_runs::register_job(TapJob {
@@ -522,7 +533,11 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 		if let Err(error) = tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role)) {
 			crate::log_error!("Tap run {}: failed to start event stream: {}", id, error);
 		}
-		let launch = delegation::DISPATCH.try_with(Clone::clone).ok().flatten();
+		let launch = if agent.manifest.authored() {
+			None // No implicit parent-context tool or log grant for an authored role.
+		} else {
+			delegation::DISPATCH.try_with(Clone::clone).ok().flatten()
+		};
 		(id, role, agent.title, workdir, status, cancel_rx, Some(launch), mode)
 	};
 
@@ -587,7 +602,13 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	// `--name <id>` creates a fresh session if `<id>.jsonl` doesn't exist
 	// and resumes it if it does — works for both the first call and
 	// every subsequent turn against the same tap-run id.
-	let mut acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
+	let mut acp_args: Vec<String> = vec![
+		"acp".to_string(),
+		role.clone(),
+		"--name".to_string(),
+		id.clone(),
+		"--bound-tap".into(),
+	];
 	if mode.readonly {
 		acp_args.push("--readonly".to_string());
 	}

@@ -3455,9 +3455,7 @@ fn display_agent_status(data: &serde_json::Value) {
 		let id = get_str("id").unwrap_or("agent");
 		let status = get_str("status").unwrap_or("unknown");
 		block_open("/status agents", Some(id));
-		let kw = key_width([
-			"source", "role", "status", "workdir", "model", "tokens", "cost", "pricing", "last",
-		]);
+		let kw = key_width(["source", "role", "status", "workdir", "model", "tokens", "cost", "last"]);
 		if let Some(source) = get_str("source") {
 			block_row("source", &source.dimmed().to_string(), kw);
 		}
@@ -3496,8 +3494,6 @@ fn display_agent_status(data: &serde_json::Value) {
 		}
 		if let Some(cost) = d.get("cost").and_then(|v| v.as_f64()) {
 			block_row("cost", &format!("${:.4}", cost).bright_green().to_string(), kw);
-		} else if let Some(pricing) = get_str("pricing_status") {
-			block_row("pricing", &pricing.dimmed().to_string(), kw);
 		}
 		match get_str("last_action") {
 			Some(la) => block_row("last", &la.bright_yellow().to_string(), kw),
@@ -3546,11 +3542,6 @@ fn display_agent_status(data: &serde_json::Value) {
 					"out".dimmed(),
 					cost_str.bright_yellow(),
 				));
-			}
-			if cost.is_none() {
-				if let Some(pricing) = a.get("pricing_status").and_then(|v| v.as_str()) {
-					block_row_text(&format!("  {}", pricing.dimmed()));
-				}
 			}
 			if let Some(la) = a.get("last_action").and_then(|v| v.as_str()) {
 				block_row_text(&format!("  ↳ {}", la.bright_yellow()));

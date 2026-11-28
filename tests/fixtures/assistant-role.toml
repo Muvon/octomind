@@ -10,5 +10,5 @@ Working directory: {{CWD}}
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*"]

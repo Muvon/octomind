@@ -312,49 +312,6 @@ pub(crate) fn role_servers() -> Vec<McpServerConfig> {
 	}
 }
 
-/// Register a dynamic agent tool in the tool map
-///
-/// Call this when an agent is enabled to make its tool available.
-pub fn register_dynamic_agent_tool(agent_name: &str) {
-	let tool_map_state = match active_tool_map() {
-		Some(state) => state,
-		None => {
-			crate::log_debug!("Tool map not initialized, cannot register dynamic agent");
-			return;
-		}
-	};
-
-	let tool_name = format!("agent_{}", agent_name);
-	let agent_server = McpServerConfig::Builtin {
-		name: "agent".to_string(),
-		timeout_seconds: 300,
-		tools: vec![tool_name.clone()],
-		auto_bind: None,
-	};
-
-	let mut state = tool_map_state.write().unwrap();
-	state.tool_to_server.insert(tool_name.clone(), agent_server);
-	crate::log_debug!("Registered dynamic agent tool: {}", tool_name);
-}
-
-/// Unregister a dynamic agent tool from the tool map
-///
-/// Call this when an agent is disabled or removed.
-pub fn unregister_dynamic_agent_tool(agent_name: &str) {
-	let tool_map_state = match active_tool_map() {
-		Some(state) => state,
-		None => {
-			crate::log_debug!("Tool map not initialized, cannot unregister dynamic agent");
-			return;
-		}
-	};
-
-	let tool_name = format!("agent_{}", agent_name);
-	let mut state = tool_map_state.write().unwrap();
-	state.tool_to_server.remove(&tool_name);
-	crate::log_debug!("Unregistered dynamic agent tool: {}", tool_name);
-}
-
 /// Register all tools from a dynamic MCP server in the tool map
 ///
 /// Call this when a server is enabled to make its tools available.
@@ -452,7 +409,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 			McpConnectionType::Builtin => {
 				match server.name() {
 					"core" => {
-						// Uncached (like `agent`): the core list depends on config.
+						// Uncached: the core list depends on config.
 						let server_functions = crate::mcp::core::get_all_functions(config);
 						crate::mcp::filter_tools_by_patterns(server_functions, server.tools())
 					}
@@ -466,13 +423,6 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 						server.tools(),
 						crate::mcp::orchestration::get_all_functions,
 					),
-					"agent" => {
-						// For agent server, get all agent functions based on config
-						// Don't cache agent functions since they depend on config
-						let server_functions = crate::mcp::agent::get_all_functions(config);
-						crate::mcp::filter_tools_by_patterns(server_functions, server.tools())
-					}
-
 					_ => {
 						crate::log_debug!("Unknown builtin server: {}", server.name());
 						Vec::new()
@@ -510,18 +460,6 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 				tool_map.entry(function.name).or_insert_with(|| server.clone());
 			}
 		}
-	}
-
-	// Also include dynamically added agents
-	for agent_config in crate::mcp::runtime::dynamic_agents::get_all_configs() {
-		let tool_name = format!("agent_{}", agent_config.name);
-		let agent_server = McpServerConfig::Builtin {
-			name: "agent".to_string(),
-			timeout_seconds: 300,
-			tools: vec![tool_name.clone()],
-			auto_bind: None,
-		};
-		tool_map.entry(tool_name).or_insert_with(|| agent_server);
 	}
 
 	// Project-local tools — `<workdir>/.agents/tools/<name>` shebang scripts.

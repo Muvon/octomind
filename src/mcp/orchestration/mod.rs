@@ -27,6 +27,7 @@ use crate::mcp::McpFunction;
 pub mod monitor;
 pub mod schedule;
 pub mod tap;
+mod tap_author;
 mod tap_route;
 
 pub use monitor::{execute_monitor_tool, has_running_monitors};

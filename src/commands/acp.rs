@@ -54,6 +54,9 @@ pub struct AcpArgs {
 	/// further copies of itself.
 	#[arg(long, hide = true)]
 	pub copy: bool,
+	/// Load the exact manifest pinned to this tap-run id before initializing any servers.
+	#[arg(long, hide = true, requires_all = ["name","tag"])]
+	pub bound_tap: bool,
 }
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
@@ -61,8 +64,26 @@ pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), an
 	// stdout is the protocol stream, so a role that cannot start (a missing
 	// INPUT/ENV value, an unknown tag) is reported over ACP rather than by
 	// exiting: a parent agent would otherwise only see the pipe close.
-	let (resolved_config, role, startup_error) = match super::common::startup(args.tag.as_deref(), config, false).await
-	{
+	let (resolved_config, role, startup_error) = match if args.bound_tap {
+		async {
+			let tag = args
+				.tag
+				.as_deref()
+				.ok_or_else(|| anyhow::anyhow!("tap role required"))?;
+			let id = args
+				.name
+				.as_deref()
+				.ok_or_else(|| anyhow::anyhow!("tap run id required"))?;
+			let manifest = octomind::agent::manifest::Manifest::read_run(id, tag)?;
+			let (mut resolved, role) = octomind::agent::resolver::resolve_manifest(manifest, config, None).await?;
+			resolved.bind_tap_run();
+			octomind::mcp::initialize_mcp_for_role(&role, &resolved).await?;
+			Ok((resolved, role))
+		}
+		.await
+	} else {
+		super::common::startup(args.tag.as_deref(), config, false).await
+	} {
 		Ok((resolved_config, role)) => (resolved_config, role, None),
 		Err(e) => {
 			let tag = args.tag.clone().unwrap_or_else(|| config.default.clone());

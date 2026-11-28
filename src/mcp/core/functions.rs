@@ -20,7 +20,7 @@ use super::recall::get_recall_function;
 // Core builtin tool surface. Planning is owned by the plugins and is
 // deliberately absent here: the agent sees injected execution state but
 // cannot spend model rounds mutating it. Delegation (`tap`) and session control (`schedule`) are the
-// `orchestration` builtin server; tool-surface controls (`mcp`, `agent`,
+// `orchestration` builtin server; tool-surface controls (`mcp`,
 // `skill`, `capability`) are the `runtime` builtin server.
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	// `code` is not listed here: code mode attaches it to every session that

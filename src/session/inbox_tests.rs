@@ -168,7 +168,10 @@ async fn pre_user_batches_skip_monitors_without_changing_other_batch_boundaries(
 				id: "second".into(),
 				description: "second monitor".into(),
 			},
-			InboxSource::BackgroundAgent { name: "agent".into() },
+			InboxSource::TapRun {
+				id: "tap".into(),
+				role: "developer".into(),
+			},
 			InboxSource::BackgroundJob { id: "job".into() },
 			InboxSource::Inject,
 			InboxSource::Monitor {

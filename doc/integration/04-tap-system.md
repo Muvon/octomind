@@ -173,7 +173,7 @@ as authoritative. Manifests can include any config sections: roles, commands, MC
 
 `octomind run <tag>` starts that agent. `octomind run developer` starts `agents/developer/default.toml`, and `octomind run acme:reviewer` starts `agents/acme/reviewer.toml` of a private tap. An unknown variant is an error that lists the agents the namespace has. A specialty of an agent is a skill, and a variant is the exception; see [Skill or Variant](#skill-or-variant).
 
-If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
+If the role needs tools to manage its configuration (`mcp` / `skill` / `capability`), include `"runtime"` in
 `server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is done by a plugin, not a tool, and
 `core` is only needed for conditional `recall` when compression attention or governance is enabled.
 
@@ -493,7 +493,9 @@ This uses the starter agent created above. Discover tags installed on your machi
 octomind complete run
 ```
 
-`octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below reaches only tap agents, so a config role never wins there. A tag with `:` that no tap has is an error: it lists the agents the namespace has, or says that the tag is in no installed tap.
+`octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of `tap(action="run")` selects an installed or session-private tap role, never a local config role. A tag with `:` that no tap has is an error: it lists the agents the namespace has, or says that the tag is in no installed tap.
+
+To define a session-private specialist, call `tap(action="create")`, then run the returned role tag. The specialist has no tools unless explicitly granted. Saving it with `tap(action="persist")` requires explicit user approval; see the [delegation example](../use-cases/05-multi-agent-delegation.md).
 
 To start an agent in a read-only session (user-configured scripts such as guardrail hooks still run; `/run` and `/workflow` are refused), add `--readonly`; see [Read-Only Sessions](../usage/05-sessions.md#read-only-sessions).
 

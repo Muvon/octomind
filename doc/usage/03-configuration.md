@@ -146,8 +146,7 @@ The default registry declares four built-in MCP servers:
 |--------|------------|
 | `core` | `recall` when compression attention or its governance is enabled |
 | `orchestration` | Tap, schedule, and monitor tools |
-| `runtime` | MCP, agent, skill, and capability management |
-| `agent` | Tools generated from configured `[[agents]]` entries |
+| `runtime` | MCP, skill, and capability management |
 
 External servers use `http` or `stdio`. For stdio, set `PROJECT_MCP_COMMAND` to the absolute path of your installed MCP
 server executable; this example assumes it speaks MCP on stdio without arguments. Add its required arguments to `args`

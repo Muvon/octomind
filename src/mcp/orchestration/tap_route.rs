@@ -62,23 +62,12 @@ pub const COPY_OF_COPY: &str =
 
 /// Who a `run` starts.
 pub struct Routed {
-	pub tag: String,
+	pub manifest: std::sync::Arc<crate::agent::manifest::Manifest>,
 	pub title: Option<String>,
 	/// The run is a copy of the caller.
 	pub copy: bool,
 }
 
-impl From<&TapAgentHeader> for Routed {
-	fn from(agent: &TapAgentHeader) -> Self {
-		Self {
-			tag: agent.tag.clone(),
-			title: agent.header.title.clone(),
-			copy: false,
-		}
-	}
-}
-
-/// What a `run` of `role` from `caller` may start.
 #[derive(Debug)]
 enum Reach<'a> {
 	/// A new session of the caller itself.
@@ -92,8 +81,7 @@ enum Reach<'a> {
 /// Decide who a `run` reaches. `in_copy` is whether the caller is itself a
 /// copy: it may not start another one.
 ///
-/// - `role` equal to the caller's tag starts a copy of the caller, whether the
-///   caller is a tap agent or a role of the local config.
+/// - `role` equal to the caller's tag starts a copy of the caller only when it is itself a tap agent.
 /// - Without `role`, a tap agent that reaches no other agent (no `# Uses:`
 ///   header) starts a copy of itself, without matching.
 /// - Otherwise the task goes to the agents the caller reaches; the caller is
@@ -107,7 +95,7 @@ fn reach<'a>(
 ) -> Result<Reach<'a>, String> {
 	let reachable = crate::agent::resolver::reachable_agents(caller, caller_is_tap_agent, agents)
 		.map_err(|error| format!("{error:#}"))?;
-	let names_itself = role == Some(caller);
+	let names_itself = caller_is_tap_agent && role == Some(caller);
 	let reaches_nobody_else = role.is_none() && reachable.is_empty() && caller_is_tap_agent;
 	if names_itself || reaches_nobody_else {
 		return if in_copy {
@@ -143,32 +131,37 @@ fn unreachable_role(role: &str, reachable: &[&TapAgentHeader]) -> String {
 
 /// Choose who gets `task`, or the tool error to return. A `role` the caller
 /// may reach gets the task without matching: it names that agent.
-pub async fn route_task(task: &str, role: Option<&str>) -> Result<Routed, String> {
-	let agents = crate::agent::taps::list_agent_headers()
-		.map_err(|error| format!("Failed to enumerate tap agents: {error:#}"))?;
-	let caller = crate::session::context::current_session_id()
-		.and_then(|session_id| crate::session::context::get_session_role(&session_id))
+pub async fn route_task(task: &str, role: Option<&str>, config: &crate::config::Config) -> Result<Routed, String> {
+	let sid = crate::session::context::current_session_id();
+	let caller = sid
+		.as_ref()
+		.and_then(crate::session::context::get_session_role)
 		.unwrap_or_default();
+	let source = config.tap_manifest.as_ref().filter(|m| m.tag == caller);
+	let catalog = crate::agent::manifest::catalog(sid.as_deref(), source)
+		.map_err(|e| format!("Failed to enumerate tap agents: {e:#}"))?;
+	let agents: Vec<_> = catalog.values().map(|m| m.header()).collect();
+	let routed = |agent: &TapAgentHeader, copy| Routed {
+		manifest: catalog[&agent.tag].clone(),
+		title: agent.header.title.clone(),
+		copy,
+	};
 	let in_copy = crate::session::context::current_session_mode().copy;
 	// `<ns>:default` names the base agent `<ns>`.
 	let role = role.map(crate::agent::registry::canonical_tag);
-	let caller_is_tap_agent = crate::agent::resolver::resolved_from_tap(&caller);
+	let caller_is_tap_agent = source.is_some();
 	let reachable = match reach(&caller, caller_is_tap_agent, &agents, role, in_copy)? {
 		Reach::Copy => {
 			crate::log_debug!("tap route: caller={:?} starts a copy of itself", caller);
-			let title = agents
+			let header = agents
 				.iter()
-				.find(|agent| agent.tag == caller)
-				.and_then(|agent| agent.header.title.clone());
-			return Ok(Routed {
-				tag: caller,
-				title,
-				copy: true,
-			});
+				.find(|a| a.tag == caller)
+				.expect("tap caller is in its catalog");
+			return Ok(routed(header, true));
 		}
 		Reach::Named(agent) => {
 			crate::log_debug!("tap route: caller={:?} named '{}'", caller, agent.tag);
-			return Ok(agent.into());
+			return Ok(routed(agent, false));
 		}
 		Reach::Match(reachable) => reachable,
 	};
@@ -194,7 +187,7 @@ pub async fn route_task(task: &str, role: Option<&str>) -> Result<Routed, String
 	match evaluate_pick(task, cosine, &ranked).await {
 		Some((score, agent)) => {
 			crate::log_debug!("tap route: picked '{}' (score {:.2})", agent.tag, score);
-			Ok(agent.into())
+			Ok(routed(agent, false))
 		}
 		None => Err(closest_agents("No agent was matched to this task.", &ranked)),
 	}

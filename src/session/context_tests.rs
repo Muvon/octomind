@@ -18,7 +18,6 @@
 //! never observe each other's state.
 
 use super::*;
-use crate::mcp::runtime::dynamic_agents::DynamicAgentConfig;
 
 fn unique(label: &str) -> SessionId {
 	format!("ctx-reg-test-{label}")
@@ -115,43 +114,6 @@ fn test_task_start_index() {
 	assert_eq!(get_task_start_index(&sid), Some(7));
 	clear_task_start_index(&sid);
 	assert!(get_task_start_index(&sid).is_none());
-}
-
-#[test]
-fn test_dynamic_agents_lifecycle() {
-	let sid = unique("dyn-agent");
-	let agent = DynamicAgentConfig {
-		name: "helper".to_string(),
-		description: "test agent".to_string(),
-		system: "you help".to_string(),
-		welcome: String::new(),
-		model: None,
-		server_refs: Vec::new(),
-		allowed_tools: Vec::new(),
-		workdir: ".".to_string(),
-	};
-
-	register_dynamic_agent_for_session(&sid, agent);
-	assert!(has_dynamic_agent(&sid, "helper"));
-	// Registered agents start disabled
-	assert!(!is_dynamic_agent_enabled(&sid, "helper"));
-
-	assert!(enable_dynamic_agent_for_session(&sid, "helper"));
-	assert!(is_dynamic_agent_enabled(&sid, "helper"));
-	assert!(disable_dynamic_agent_for_session(&sid, "helper"));
-	assert!(!is_dynamic_agent_enabled(&sid, "helper"));
-
-	// Unknown agent operations report failure, not panic
-	assert!(!enable_dynamic_agent_for_session(&sid, "ghost"));
-
-	let agents = get_dynamic_agents_for_session(&sid);
-	assert_eq!(agents.len(), 1);
-
-	let removed = remove_dynamic_agent_for_session(&sid, "helper");
-	assert!(removed.is_some());
-	assert!(!has_dynamic_agent(&sid, "helper"));
-
-	clear_dynamic_agents_for_session(&sid);
 }
 
 #[test]
@@ -386,23 +348,6 @@ fn env_skills_lifecycle_is_session_scoped_and_idempotent() {
 
 	clear_env_skills(&sid);
 	assert!(get_env_skills(&sid).is_empty());
-}
-
-// ---- job manager ----
-
-#[tokio::test]
-async fn job_manager_initializes_resolves_and_clears_per_session() {
-	let sid = unique("jobs");
-	// No task-local session id on this bare test task.
-	assert!(get_job_manager_for_session().is_none());
-
-	init_job_manager_for_session(&sid);
-	let inside = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
-	assert!(inside.is_some(), "manager must resolve inside the session scope");
-
-	clear_job_manager_for_session(&sid);
-	let after = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
-	assert!(after.is_none(), "clear must remove the manager");
 }
 
 // ---- schedule notify ----

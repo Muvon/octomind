@@ -14,11 +14,6 @@
 
 //! Tap-run job registry — tracks agents launched via the `tap` core tool.
 //!
-//! This is intentionally **separate** from `BackgroundJobManager` (which
-//! tracks `agent_*` runs). Tap-runs and `agent_*` are two different runtime
-//! concepts that happen to share the same underlying tokio + watch-channel
-//! cancellation primitives. The registries are not unified.
-//!
 //! Lifecycle:
 //! - `init_for_session()` — called once per session by `init_session_services`.
 //! - `register_job(...)` — called when `tap run` spawns or starts a turn.

@@ -2024,27 +2024,6 @@ async fn an_event_that_is_dropped_still_stops_the_clock() {
 }
 
 #[tokio::test]
-async fn usage_passes_to_the_same_plugin_of_another_session_and_the_rest_is_dropped() {
-	let answer = json!({"usage": [{"label": "judge", "calls": 1, "input_tokens": 1, "output_tokens": 1, "cost": 0.5}]});
-	let rig = rig(vec![
-		plugin("a", FakePlugin::new(&[event::REQUEST_BEFORE]).answer(answer.clone())),
-		plugin("b", FakePlugin::new(&[event::REQUEST_BEFORE]).answer(answer)),
-	])
-	.await;
-	rig.host
-		.start_session("parent", ROLE, rig.dir.path(), &[config("a")])
-		.await;
-	rig.host.request_before(&rig.ctx(&[]), request_before()).await;
-
-	rig.host.pass_usage(SESSION, "parent");
-
-	assert!(rig.host.take_usage(SESSION).is_empty());
-	let passed = rig.host.take_usage("parent");
-	assert_eq!(passed.len(), 1);
-	assert_eq!((passed[0].0.as_str(), passed[0].1.cost), ("a", 0.5));
-}
-
-#[tokio::test]
 async fn session_end_waits_five_seconds_at_most_whatever_the_plugin_declares() {
 	let fake = FakePlugin::new(&[event::SESSION_END, event::TURN_END])
 		.init_field("timeouts", json!({"session.end": 3600, "turn.end": 120}));

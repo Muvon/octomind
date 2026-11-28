@@ -145,8 +145,8 @@ welcome = ""
 name = "openrouter:anthropic/claude-sonnet-4-6"
 
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*"]
 ```
 
 | Legacy setting | Current action |
@@ -190,14 +190,13 @@ Each server has its own type, timeout, and tool list. Select static servers thro
 
 ### Runtime Namespace Move
 
-The current builtin surface is split across four servers:
+The current builtin surface is split across three servers:
 
 | Server | Current tools |
 |---|---|
 | `core` | `recall`, advertised when compression attention or its governance is enabled |
-| `runtime` | `mcp`, `agent`, `skill`, `capability` |
+| `runtime` | `mcp`, `skill`, `capability` |
 | `orchestration` | `tap`, `schedule`, `monitor` |
-| `agent` | Generated `agent_<name>` execution tools |
 
 There is no `plan` MCP tool. A plugin sets the plan, and `/plan` displays it.
 Add missing server blocks to a hand-written config; these are already in the template:
@@ -214,17 +213,11 @@ name = "orchestration"
 type = "builtin"
 timeout_seconds = 30
 tools = []
-
-[[mcp.servers]]
-name = "agent"
-type = "builtin"
-timeout_seconds = 30
-tools = []
 ```
 
 The local-role example above grants these servers. Remove references and grants for servers you do not need.
-The `runtime` server's `agent` management tool and the separate `agent` execution server serve different purposes;
-include both when managing and calling agents. Confirm the tools in a new session:
+To delegate, grant `orchestration:tap` explicitly. Config v36 removes the stock ACP wrapper;
+custom `[[agents]]` entries require manual migration to tap roles. Inspect the tools in a new session:
 
 ```text
 /mcp list

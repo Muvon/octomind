@@ -186,11 +186,6 @@ pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> St
 		return name;
 	}
 
-	// Then check dynamic agents - they use "agent" namespace
-	if crate::mcp::runtime::dynamic_agents::is_dynamic_by_tool(tool_name) {
-		return "agent".to_string();
-	}
-
 	"unknown".to_string()
 }
 

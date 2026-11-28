@@ -54,7 +54,6 @@ lazy_static::lazy_static! {
 // OAuth 2.1 + PKCE authentication
 pub mod oauth;
 
-pub mod agent;
 pub mod client;
 pub mod code;
 pub mod core;
@@ -436,6 +435,16 @@ pub async fn initialize_mcp_for_role_with_callback(
 		// Continue anyway - will fall back to building tool map on each use
 	}
 
+	if let Some(grants) = &config_for_role.authored_grants {
+		let available = get_available_functions(&config_for_role).await;
+		for (tool, owner) in grants {
+			anyhow::ensure!(
+				available.iter().any(|f| &f.name == tool)
+					&& tool_map::get_tool_server_name(tool).as_ref() == Some(owner),
+				"Authored role '{role}' requires unavailable tool '{owner}:{tool}'"
+			);
+		}
+	}
 	// Step 3: Refuse a tool surface the provider would reject
 	ensure_unique_tool_names(&config_for_role).await
 }
@@ -518,7 +527,7 @@ async fn server_functions_for(
 	let allowed = allowed_tools_for(server);
 	match server.connection_type() {
 		McpConnectionType::Builtin => match server.name() {
-			// Uncached (like `agent`): the core list depends on config — the
+			// Uncached: the core list depends on config — the
 			// process-wide INTERNAL_FUNCTION_CACHE keys only on server+filter
 			// and would serve a stale list across differing configs.
 			"core" => {
@@ -528,10 +537,6 @@ async fn server_functions_for(
 			"runtime" => get_filtered_server_functions("runtime", &allowed, runtime::get_all_functions),
 			"orchestration" => {
 				get_filtered_server_functions("orchestration", &allowed, orchestration::get_all_functions)
-			}
-			"agent" => {
-				let fns = agent::get_all_functions(config);
-				filter_tools_by_patterns(fns, &allowed)
 			}
 			other => {
 				crate::log_debug!("Unknown builtin server: {}", other);
@@ -587,7 +592,7 @@ pub(crate) fn has_session_tools(config: &crate::config::Config) -> bool {
 }
 
 /// Every tool the session can call, each with the external (stdio/http)
-/// server it comes from; `None` for builtin, agent and project-local tools.
+/// server it comes from; `None` for builtin and project-local tools.
 pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Option<String>, McpFunction)> {
 	let context = crate::session::delegation_context::current_grant().is_some();
 	if config.mcp.servers.is_empty() && !context {
@@ -596,7 +601,7 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 	}
 
 	let mut functions = Vec::new();
-	if context {
+	if context && config.authored_grants.is_none() {
 		let definition = core::context::definition();
 		register_read_only_hints("core", std::slice::from_ref(&definition));
 		functions.push((None, definition));
@@ -615,32 +620,34 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 			McpConnectionType::Builtin => None,
 			McpConnectionType::Http | McpConnectionType::Stdin => Some(server.name().to_string()),
 		};
-		let found = server_functions_for(server, config).await;
+		let mut found = server_functions_for(server, config).await;
+		if let Some(grants) = &config.authored_grants {
+			found.retain(|f| grants.get(&f.name).is_some_and(|owner| owner == server.name()));
+		}
 		register_read_only_hints(server.name(), &found);
 		functions.extend(found.into_iter().map(|function| (source.clone(), function)));
 	}
 
-	// Include functions from dynamically added servers and agents.
+	// Include functions from dynamically added servers.
 	// Dynamic-side capability activation is responsible for not re-registering
 	// servers that are already in the role's static config (see
 	// `handle_enable` / `activate_capability_inline` in `runtime::capability`),
 	// so this extend doesn't double-count tools.
-	for function in crate::mcp::runtime::dynamic::get_all_functions() {
-		let server = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&function.name);
-		if let Some(server) = &server {
-			register_read_only_hints(server, std::slice::from_ref(&function));
+	if config.authored_grants.is_none() {
+		for function in crate::mcp::runtime::dynamic::get_all_functions() {
+			let server = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&function.name);
+			if let Some(server) = &server {
+				register_read_only_hints(server, std::slice::from_ref(&function));
+			}
+			functions.push((server, function));
 		}
-		functions.push((server, function));
-	}
-	let agents = crate::mcp::runtime::dynamic_agents::get_all_functions();
-	register_read_only_hints("agent", &agents);
-	functions.extend(agents.into_iter().map(|function| (None, function)));
 
-	// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
-	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
-	let local = crate::mcp::core::local_tool::get_all_functions();
-	register_read_only_hints(core::local_tool::SERVER_NAME, &local);
-	functions.extend(local.into_iter().map(|function| (None, function)));
+		// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
+		// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
+		let local = crate::mcp::core::local_tool::get_all_functions();
+		register_read_only_hints(core::local_tool::SERVER_NAME, &local);
+		functions.extend(local.into_iter().map(|function| (None, function)));
+	}
 
 	if crate::session::context::current_session_mode().readonly {
 		retain_read_only(&mut functions);
@@ -794,7 +801,7 @@ pub async fn execute_tool_call(
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(McpToolResult, u64)> {
 	// Only execute if MCP has any servers configured
-	if config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
+	if config.authored_grants.is_none() && config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
 	}
 
@@ -858,7 +865,7 @@ async fn try_execute_tool_call(
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
 	// Only execute if MCP has any servers configured
-	if config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
+	if config.authored_grants.is_none() && config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
 	}
 
@@ -970,17 +977,6 @@ async fn route_builtin_tool(
 				Err(msg) => Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), msg)),
 			}
 		}
-		"agent" => {
-			if !call.tool_name.starts_with("agent_") {
-				return Err(anyhow::anyhow!(
-					"Tool '{}' not implemented in agent server",
-					call.tool_name
-				));
-			}
-			let mut result = agent::execute_agent_command(call, config, cancellation_token).await?;
-			result.tool_id = call.tool_id.clone();
-			Ok(result)
-		}
 		"local" => {
 			let result = match core::local_tool::execute(call).await {
 				Ok(mut r) => {
@@ -1005,21 +1001,31 @@ async fn execute_tool_without_cancellation(
 	config: &crate::config::Config,
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	if let Some(target_server) = tool_map::get_server_for_tool(&call.tool_name) {
+	let destination = tool_map::get_server_for_tool(&call.tool_name);
+	if let Some(grants) = &config.authored_grants {
+		let allowed = destination.as_ref().is_some_and(|s| {
+			(grants.get(&call.tool_name).is_some_and(|owner| owner == s.name())
+				&& config.mcp.servers.iter().any(|configured| configured == s))
+				|| (config.mcp.code_mode
+					&& s.name() == "core"
+					&& [code::TOOL_NAME, code::SEARCH_TOOL_NAME].contains(&call.tool_name.as_str())
+					&& config.mcp.servers.iter().any(|configured| {
+						configured.connection_type() != McpConnectionType::Builtin
+							&& grants.values().any(|owner| owner == configured.name())
+					}))
+		});
+		if !allowed {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Tool not granted to this authored role".into(),
+			));
+		}
+	}
+	if let Some(target_server) = destination {
 		// Session-ownership check: the global tool map may contain tools registered
 		// by other sessions. In a session context, verify dynamic tools belong to us.
 		if crate::session::context::current_session_id().is_some() {
-			// Dynamic agent tools (agent_* prefix): allow if config-defined or owned by this session
-			if let Some(agent_name) = call.tool_name.strip_prefix("agent_") {
-				let is_config_agent = config.agents.iter().any(|a| a.name == agent_name);
-				if !is_config_agent && !runtime::dynamic_agents::is_dynamic_by_tool(&call.tool_name) {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						format!("Tool '{}' not found (belongs to another session)", call.tool_name),
-					));
-				}
-			}
 			// Dynamic server tools: allow if from a config-defined server or owned by this session.
 			// Project-local tools live under the synthetic "local" server and are workdir-scoped,
 			// so they bypass this check (no session-ownership concept applies). So does the
@@ -1085,16 +1091,6 @@ async fn execute_tool_without_cancellation(
 			available_tools.join(", ")
 		}
 	))
-}
-
-// Execute a tool call for a layer/agent context.
-// Tool access is controlled by the ACP session's role config, not by per-layer restrictions.
-pub async fn execute_layer_tool_call(
-	call: &McpToolCall,
-	config: &crate::config::Config,
-	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
-) -> Result<(McpToolResult, u64)> {
-	execute_tool_call(call, config, cancellation_token).await
 }
 
 // Execute multiple tool calls

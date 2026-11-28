@@ -162,15 +162,14 @@ fn is_mcp_extension_file(path: &Path) -> bool {
 		.unwrap_or(false)
 }
 
-fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
-	let mut merged: Option<toml::Value> = None;
-
-	// Read directory and collect TOML files
-	let mut files: Vec<_> = fs::read_dir(dir)?
-		.filter_map(|entry| entry.ok())
-		.map(|e| e.path())
-		.filter(|p| p.is_file() && p.extension().map(|e| e == "toml").unwrap_or(false))
-		.collect();
+pub(super) fn config_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+	let mut files = Vec::new();
+	for entry in fs::read_dir(dir)? {
+		let path = entry?.path();
+		if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
+			files.push(path);
+		}
+	}
 
 	// Load order (documented contract, doc/usage/03-configuration.md): `config.toml`
 	// first as the base, then other regular files alphabetically, then `mcp-*.toml`
@@ -187,12 +186,19 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 		}
 	}
 	files.sort_by(|a, b| load_rank(a).cmp(&load_rank(b)).then_with(|| a.cmp(b)));
+	Ok(files)
+}
+
+fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
+	let mut merged: Option<toml::Value> = None;
+	let files = config_files(dir)?;
 
 	for file in &files {
 		let content = fs::read_to_string(file).context(format!("Failed to read TOML file: {}", file.display()))?;
 
 		let mut value: toml::Value =
 			toml::from_str(&content).context(format!("Failed to parse TOML file: {}", file.display()))?;
+		super::migrations::strip_v36_agents(&mut value, file)?;
 		normalize_model_profile_syntax(&mut value);
 
 		merged = Some(if let Some(base) = merged {
@@ -458,6 +464,7 @@ impl Config {
 			let config_str =
 				fs::read_to_string(path).context(format!("Failed to read config from {}", path.display()))?;
 			let mut value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			super::migrations::strip_v36_agents(&mut value, path)?;
 			normalize_model_profile_syntax(&mut value);
 			let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value)?;
 			config.ignored_keys = ignored_keys;
@@ -552,7 +559,8 @@ impl Config {
 		let mut disk_config = if config_path.exists() {
 			let config_str = fs::read_to_string(&config_path)
 				.context(format!("Failed to read config from {}", config_path.display()))?;
-			let value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			let mut value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			super::migrations::strip_v36_agents(&mut value, &config_path)?;
 			let mut config: Config = value.try_into().context("Failed to parse TOML configuration")?;
 			config.config_path = Some(config_path.clone());
 			// SIMPLIFIED: Don't initialize internal servers
@@ -597,6 +605,7 @@ impl Config {
 /// stack on top of the user's base config. All other keys use override semantics.
 pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	let mut agent_value: toml::Value = toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
+	super::migrations::strip_v36_agents(&mut agent_value, Path::new("agent manifest"))?;
 	normalize_model_profile_syntax(&mut agent_value);
 
 	// Serialize base config to toml::Value so we can manipulate it

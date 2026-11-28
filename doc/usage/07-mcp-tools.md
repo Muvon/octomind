@@ -21,15 +21,14 @@ tool, not slash commands; where several objects are shown, make one tool call pe
 
 ## Architecture
 
-Octomind ships four builtin MCP servers (`core`, `orchestration`, `runtime`, `agent`), plus an auto-discovered `local`
+Octomind ships three builtin MCP servers (`core`, `orchestration`, `runtime`), plus an auto-discovered `local`
 server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
 | `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled, `context` in authorized tap children) and `code` (scripts that call external tools; see [below](#calling-external-tools-from-scripts-code-tool)) |
 | `orchestration` | builtin | Delegation (`tap`), scheduled messages/tool calls (`schedule`), and event streams (`monitor`) |
-| `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
-| `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
+| `runtime` | builtin | Harness reconfiguration: register MCP servers, load skills, capability |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
 
 Filesystem tools come from external servers such as `octofs`; they are not implemented by Octomind. Use your installed
@@ -230,17 +229,21 @@ An agent that declares the `orchestration` capability can also start copies of i
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
-| `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"capability"`, `"workflow"` |
+| `action` | string, required | `run`, `create`, `persist`, `list`, `stop`, `send`, `capability`, `workflow` |
 | `prompt` | string | Task for `run` (the runtime matches it to an agent), user message for `send`, or capability intent for `capability`. Required for those actions. |
 | `role` | string | Agent to start for a new `run` without matching: an agent name (`developer`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. |
 | `readonly` | boolean | With `run`, `true` starts the child in a read-only session: only tools whose MCP `readOnlyHint` annotation is true are offered and can run, so the child has no shell and cannot delegate. Optional, default `false`. A run keeps the mode it started with: `true` together with `session` on a run that was started writable is an error. |
 | `session` | string | Run id (e.g. `tap-developer-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
-| `name` | string | Tap workflow name for `workflow`; omit to list installed workflows. |
+| `name` | string | Variant slug for `create`; workflow name for `workflow`. |
+| `description`, `system` | strings | Required routing description and system prompt for `create`. |
+| `model`, `tools` | string, array of strings | Optional model and exact child-resolvable tool names for `create`; no tools by default. |
 | `input` | string | Input text for `workflow` (required with `name`). |
 
 | Action | Description |
 |--------|-------------|
+| `create` | Return the tag of a session-private tap role. A base tap creates a variant in its namespace; a local config role creates one in the personal namespace. Variants, copies, and read-only runs cannot author roles. |
+| `persist` | Promote a private role to the personal tap after user approval. Pass its returned tag as `role`. |
 | `run` | Match `prompt` to an agent and launch it in the background (or resume a run via `session`, which reuses the original role without matching). With `role`, start that agent without matching. Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no agent matches, it starts nothing and returns an error that lists the closest ones. See [Agent matching](#agent-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
 | `send` | Queue a user prompt for a running agent owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
@@ -324,7 +327,7 @@ session — at a specific time or the next idle. The user-facing
 | `edit` | `id` | Update `when`, `description`, or `every`; supplying `message` or `tool_call` replaces the whole payload (never merges arguments). Supply at most one payload. Cannot switch an entry between idle and time modes; remove and add to change modes. |
 
 One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing.
-Idle entries fire only when the response loop is idle AND no tap-runs, detached shell jobs, or background-agent jobs are
+Idle entries fire only when the response loop is idle AND no tap-runs or detached shell jobs are
 running, so messages cannot interrupt in-flight work. Schedules are saved in the session log and restored when that
 session resumes; they do not fire while the process is stopped.
 
@@ -387,7 +390,7 @@ Use the returned ID to stop it:
 
 ## Runtime Server Tools
 
-Use these tools to add servers, prototype dynamic agents, or activate skills and capabilities during a session.
+Use these tools to add servers, or activate skills and capabilities during a session.
 
 ### `mcp` — Dynamic MCP Server Management
 
@@ -430,43 +433,6 @@ For a local HTTP MCP server already listening at this endpoint, call `mcp` in se
 {"action": "disable", "name": "local_api"}
 {"action": "unpersist", "name": "local_api"}
 {"action": "remove", "name": "local_api"}
-```
-
-### `agent` tool: Dynamic Agent Management
-
-Manage in-process AI agents at runtime. Each registered agent becomes a tool prefixed with `agent_`. Distinct from the
-`agent` server (which exposes config-defined ACP sub-agents) and from `tap run` (which launches tap-distributed roles).
-
-**Parameters:**
-
-| Parameter | Type / requirement | Meaning |
-|-----------|--------------------|---------|
-| `action` | string, required | `"list"`, `"add"`, `"enable"`, `"disable"`, `"remove"` |
-
-**Add parameters:**
-
-| Parameter | Type / requirement | Meaning |
-|-----------|--------------------|---------|
-| `name` | string, required | Tool becomes `agent_<name>` after enable |
-| `system` | string, required | System prompt |
-| `description` | string, optional | Tool description; defaults to empty |
-| `welcome` | string, optional | Welcome message |
-| `model` | string, optional | Model-name override |
-| `server_refs` | array, optional | Validated server names; when empty, inferred from `allowed_tools` |
-| `allowed_tools` | array, optional | Tool-name or wildcard filters |
-| `workdir` | string, optional | Working directory; defaults to `"."` |
-
-Register and enable a tool-free summarizer with `agent`:
-
-```jsonl
-{"action": "add", "name": "summarizer", "description": "Summarize supplied text", "system": "Summarize the supplied text accurately in one sentence.", "server_refs": [], "allowed_tools": []}
-{"action": "enable", "name": "summarizer"}
-```
-
-Then call `agent_summarizer`:
-
-```json
-{"task": "Summarize: The deployment succeeded. Two follow-up checks remain."}
 ```
 
 ### `skill` — Skill Management from Taps
@@ -689,30 +655,6 @@ Octomind loads external tool schemas at connection time. This repository does no
 
 `/status jobs` also shows detached shell jobs discovered through MCP resource links. See [Local
 Tools](17-local-tools.md) if you want to expose your own project scripts.
-
-## Agent Server Tools
-
-Each agent configured in `[[agents]]` becomes a separate tool: `agent_<name>`.
-
-**Parameters:**
-
-| Parameter | Type / requirement | Meaning |
-|-----------|--------------------|---------|
-| `task` | string, required | Task description for the agent |
-| `async` | boolean, default: false | Run asynchronously |
-
-**Sync (default):** Blocks until complete. Use when you need the result immediately.
-
-**Async:** Returns immediately. Result appears as a user message when done. Use for tasks taking 30+ seconds when you
-can continue other work.
-
-```jsonl
-{"task": "Analyze the authentication system architecture"}
-{"task": "Review this function for performance", "async": true}
-```
-
-Max concurrent async jobs equals the detected CPU count, with a fallback of 4 when detection fails. Jobs are cancelled
-on session exit.
 
 ## Health Monitoring
 

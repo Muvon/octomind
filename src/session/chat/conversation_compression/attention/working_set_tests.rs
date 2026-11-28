@@ -67,7 +67,7 @@ fn script_call(tool: &str, arguments: Value, output: &str) -> crate::mcp::Script
 /// rest of what the script printed stays; a read it did not print is none.
 #[test]
 fn a_file_a_script_printed_is_a_region_of_its_result() {
-	let shown = "1:qa fn a() {}\n2:qb fn b() {}";
+	let shown = "1:cM fn a() {}\n2:GI fn b() {}";
 	let mut messages = interaction(
 		"code",
 		serde_json::json!({"script": "print('checked'); return await octofs.view({path: 'src/a.rs'})"}),
@@ -76,7 +76,7 @@ fn a_file_a_script_printed_is_a_region_of_its_result() {
 	);
 	messages[1].script_calls = vec![
 		script_call("view", serde_json::json!({"path": "src/a.rs"}), shown),
-		script_call("view", serde_json::json!({"path": "src/b.rs"}), "1:qc fn hidden() {}"),
+		script_call("view", serde_json::json!({"path": "src/b.rs"}), "1:Ns fn hidden() {}"),
 	];
 	let canonical = canonical_result(&messages[1], &messages);
 	assert!(canonical.starts_with("checked\n"), "{canonical}");
@@ -104,7 +104,7 @@ fn an_edit_inside_a_script_invalidates_only_its_file() {
 	edit[1].script_calls = vec![script_call(
 		"text_edit",
 		serde_json::json!({"path": "src/a.rs", "new_text": "changed"}),
-		"-1:ab..2:ab (2 lines)\n+1:qd changed",
+		"-1:ab..2:ab (2 lines)\n+1:on changed",
 	)];
 	messages.extend(edit);
 	let packets = build_packets("working-set-test", &messages, "test");
@@ -143,7 +143,7 @@ fn keeps_current_regions_and_post_edit_text_with_shifted_coordinates() {
 	messages.extend(interaction(
 		"text_edit",
 		serde_json::json!({"path":"artifact","old_text":"old","new_text":"new\nadded"}),
-		"-2:ab (1 line)\n+2:qe new\n+3:qf added\nshift: lines after 2:ab +1",
+		"-2:ab (1 line)\n+2:im new\n+3:cn added\nshift: lines after 2:ab +1",
 		"edit",
 	));
 	let (packets, frontier) = selected(&messages, 2000);
@@ -265,7 +265,7 @@ fn mutation_later_in_same_packet_does_not_resurrect_old_observation() {
 	let edit = interaction(
 		"replace",
 		serde_json::json!({"path":"artifact","old_text":"before","new_text":"after"}),
-		"-1:ab (1 line)\n+1:qg after\nshift: lines after 1:ab +0",
+		"-1:ab (1 line)\n+1:fD after\nshift: lines after 1:ab +0",
 		"edit",
 	);
 	let edit_call = edit[0].tool_calls.as_ref().unwrap()[0].clone();
@@ -290,7 +290,7 @@ fn background_mutation_invalidates_before_fold_commits() {
 	let tail = interaction(
 		"replace",
 		serde_json::json!({"path":"artifact","old_text":"stale","new_text":"fresh"}),
-		"-1:ab (1 line)\n+1:qh fresh\nshift: lines after 1:ab +0",
+		"-1:ab (1 line)\n+1:Ji fresh\nshift: lines after 1:ab +0",
 		"edit",
 	);
 	revalidate(&mut packets, &source, &tail);
@@ -327,9 +327,9 @@ fn overwritten_output_is_not_current_even_when_execution_is_a_check() {
 #[test]
 fn acknowledged_replacement_inherits_batch_path_and_respects_observed_text() {
 	let args = serde_json::json!({"path":"artifact","edits":[{"old_text":"old","new_text":"one\ntwo\nthree\nfour"}]});
-	let regions = observations("+1:qi one\n+2:cd..3:ef (2 lines as sent)\n+4:qj four", &args);
+	let regions = observations("+1:LQ one\n+2:cd..3:ef (2 lines as sent)\n+4:jG four", &args);
 	assert_eq!(regions[0].lines, vec!["one", "two", "three", "four"]);
-	let regions = observations("+1:qi one\n+2:qk observed instead\n+4:qj four", &args);
+	let regions = observations("+1:LQ one\n+2:mz observed instead\n+4:jG four", &args);
 	assert_eq!(regions[0].lines, vec!["one", "observed instead"]);
 	assert!(!regions.iter().any(|r| r.lines.iter().any(|s| s == "three")));
 }
@@ -339,7 +339,7 @@ fn multi_file_search_output_is_never_attributed_to_the_argument_path() {
 	let mut messages = interaction(
 		"view",
 		serde_json::json!({"path":"src","content":"needle"}),
-		"src/a.rs:\n12:dc needle | one\nsrc/b.rs:\n12:ql needle | two",
+		"src/a.rs:\n12:Az needle | one\nsrc/b.rs:\n12:oS needle | two",
 		"search",
 	);
 	messages.push(message("assistant", "Both files match."));
@@ -353,7 +353,7 @@ fn single_file_search_hits_keep_their_own_line_numbers() {
 	let messages = interaction(
 		"view",
 		serde_json::json!({"path":"src/a.rs","content":"needle"}),
-		"12:qm needle one\n40:qn needle two",
+		"12:Ds needle one\n40:sn needle two",
 		"search",
 	);
 	let (packets, _) = selected(&messages, 2000);
@@ -368,7 +368,7 @@ fn several_file_view_keeps_each_section_under_its_own_file() {
 	let messages = interaction(
 		"view",
 		serde_json::json!({"path":"src/a.rs|src/b.rs"}),
-		"src/a.rs:\n1:qo alpha\n\nsrc/b.rs:\n1:qp beta",
+		"src/a.rs:\n1:ta alpha\n\nsrc/b.rs:\n1:JH beta",
 		"pair",
 	);
 	let (packets, _) = selected(&messages, 2000);

@@ -17,7 +17,7 @@
 //! Read-only view of the agents this session offloaded via the `tap` core tool
 //! (the same registry in `crate::session::tap_runs`). `tap` is the MCP tool the
 //! *model* drives; `/status` is the user's window into what those runs are
-//! doing right now. Async `agent_*` jobs are merged into the same read model.
+//! doing right now.
 //!
 //! - `/status agents` — list running runs (with live last-action) on top, then
 //!   recently finished/failed/cancelled below.
@@ -113,16 +113,6 @@ pub fn build_agents_status(params: &[&str], history: &[TapJobInfo]) -> Result<se
 			}));
 		}
 
-		if let Some(job) = async_agent_jobs().into_iter().find(|job| job.id == id) {
-			return Ok(json!({
-				"view": "agents",
-				"running": [],
-				"finished": [],
-				"detail": async_agent_json(&job),
-				"total": 1,
-			}));
-		}
-
 		return Ok(json!({
 			"view": "error",
 			"message": format!("No agent with id '{id}' in this session."),
@@ -131,8 +121,6 @@ pub fn build_agents_status(params: &[&str], history: &[TapJobInfo]) -> Result<se
 
 	// List mode: running on top (with live last-action), finished below.
 	let jobs = session_jobs(history);
-	let async_jobs = async_agent_jobs();
-	let total = jobs.len() + async_jobs.len();
 	let mut running = Vec::new();
 	let mut finished = Vec::new();
 	for j in &jobs {
@@ -174,18 +162,13 @@ pub fn build_agents_status(params: &[&str], history: &[TapJobInfo]) -> Result<se
 			}));
 		}
 	}
-	for job in &async_jobs {
-		running.push(async_agent_json(job));
-	}
-	running
-		.sort_by_key(|item| std::cmp::Reverse(item.get("started_unix").and_then(|value| value.as_u64()).unwrap_or(0)));
 
 	Ok(json!({
 		"view": "agents",
 		"running": running,
 		"finished": finished,
 		"detail": null,
-		"total": total,
+		"total": jobs.len(),
 	}))
 }
 
@@ -207,37 +190,9 @@ pub fn active_agents_status() -> Vec<serde_json::Value> {
 			"cost": job.live.usage.map(|usage| usage.cost).or_else(|| snap.info.as_ref().map(|info| info.total_cost)),
 		}));
 	}
-	for job in async_agent_jobs() {
-		active.push(async_agent_json(&job));
-	}
 	active
 		.sort_by_key(|item| std::cmp::Reverse(item.get("started_unix").and_then(|value| value.as_u64()).unwrap_or(0)));
 	active
-}
-
-fn async_agent_jobs() -> Vec<crate::session::AsyncAgentJobInfo> {
-	crate::mcp::agent::functions::get_job_manager()
-		.map(|manager| manager.active_jobs())
-		.unwrap_or_default()
-}
-
-fn async_agent_json(job: &crate::session::AsyncAgentJobInfo) -> serde_json::Value {
-	json!({
-		"id": job.id,
-		"source": job.source,
-		"role": job.agent_name,
-		"status": "running",
-		"workdir": job.workdir,
-		"elapsed_secs": elapsed_secs(job.started_at),
-		"started_unix": system_time_secs(job.started_at),
-		"last_action": job.task,
-		"model": null,
-		"tokens_input": null,
-		"tokens_output": null,
-		"tokens_cached": null,
-		"cost": null,
-		"pricing_status": "not tracked for async agent jobs",
-	})
 }
 
 /// Seconds since `started`, saturating at 0.

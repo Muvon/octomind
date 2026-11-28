@@ -19,6 +19,8 @@
 
 mod agent;
 pub mod commands;
+pub(crate) mod driver;
+pub(crate) mod handback;
 
 use anyhow::{Context, Result};
 use std::cell::RefCell;

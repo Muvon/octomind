@@ -49,7 +49,7 @@ pub fn executed_command<'a>(tool: &str, parameters: &'a serde_json::Value) -> Op
 		return None;
 	}
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
-		Some(server) if matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent") => None,
+		Some(server) if matches!(server.as_str(), "core" | "runtime" | "orchestration") => None,
 		// Unregistered command tool: retain the output as possible evidence.
 		_ => Some(cmd),
 	}

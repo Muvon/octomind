@@ -402,7 +402,7 @@ impl ChatSession {
 		// reported after the parent's last tool round). It vouches for the PREVIOUS
 		// task's tree, so letting it reach this turn's first round fold could clear
 		// a change it never saw.
-		let _ = crate::mcp::agent::handback::take_handback();
+		let _ = crate::acp::handback::take_handback();
 
 		Ok(())
 	}

@@ -23,15 +23,14 @@ script, see [Local Tools](../usage/17-local-tools.md).
 
 ## Built-in Servers
 
-Four built-in servers are shipped as `[[mcp.servers]]` entries in `config-templates/default.toml` (`core`,
-`orchestration`, `runtime`, `agent`):
+Three built-in servers are shipped as `[[mcp.servers]]` entries in `config-templates/default.toml` (`core`,
+`orchestration`, `runtime`):
 
 | Server | Location | Tools |
 |--------|----------|-------|
 | `core` | `src/mcp/core/` | `recall` when attention or attention governance is enabled |
 | `orchestration` | `src/mcp/orchestration/` | `tap`, `schedule`, `monitor` |
-| `runtime` | `src/mcp/runtime/` | `mcp`, `agent`, `skill`, `capability` |
-| `agent` | `src/mcp/agent/` | one `agent_<name>` tool per configured agent (built from `config.agents`) |
+| `runtime` | `src/mcp/runtime/` | `mcp`, `skill`, `capability` |
 
 `filesystem` is referenced by shipped roles but is not declared in the default server array. External tool surfaces come
 from the resolved tap/capability or your configuration; inspect their discovered schemas instead of assuming a fixed
@@ -276,8 +275,8 @@ All tools must follow the MCP protocol:
 - Return `McpToolResult::error(...)` instead of panicking.
 - Validate all parameters with clear error messages.
 - Handle missing/empty/wrong-type parameters gracefully.
-- Long-running tools may accept `cancellation_token: Option<tokio::sync::watch::Receiver<bool>>` (as the `agent` server
-  does). Otherwise cancellation is enforced centrally by `try_execute_tool_call`, which races your future against the
+- Long-running tools may accept a cancellation token. Otherwise cancellation is enforced centrally by
+  `try_execute_tool_call`, which races your future against the
   cancel signal via `tokio::select!`. `execute_recall` and `execute_tap_command` take no token.
 - `McpToolResult` is an internal wrapper with `tool_name`, `tool_id`, and a nested rmcp `CallToolResult`.
   Return the success/error helpers; the nested protocol result carries content blocks and an optional `isError`.
@@ -382,22 +381,13 @@ Use the session diagnostics before changing routing:
 
 ### Config-Dependent Functions
 
-When a server's function list depends on config, implement `get_all_functions(config: &Config)` directly — there is no
-separate wrapper. The `agent` server is the canonical example: it maps over `config.agents` to produce one
-`agent_<name>` tool each (`src/mcp/agent/functions.rs`), and is wired in `server_functions_for` as:
-
-```rust
-"agent" => {
-    let fns = agent::get_all_functions(config);
-    filter_tools_by_patterns(fns, server.tools())
-}
-```
+See `core::get_all_functions(config)` for a tool list that depends on configuration.
 
 ### Function Caching
 
 Stateless built-in function lists are memoized through `get_filtered_server_functions(...)`, which caches per
 `server_type` + allowed-tools key in `INTERNAL_FUNCTION_CACHE` (`src/mcp/mod.rs`). The current `runtime` and
-`orchestration` lists use this cache. Config-dependent servers (`core` and `agent`) skip it and call
+`orchestration` lists use this cache. Config-dependent servers (such as `core`) skip it and call
 `get_all_functions(config)` each time. `clear_function_cache()` empties the cache for tests or configuration changes.
 
 ### Timeouts and Cancellation
@@ -435,7 +425,7 @@ pub async fn execute_with_timeout(
 
 ### Session-Ownership Checks for Dynamic Tools
 
-If you add dynamic or runtime-registered tools (e.g. `agent_*` tools or dynamic servers), be aware that
+If you add dynamic or runtime-registered tools (e.g. tools from dynamic servers), be aware that
 `execute_tool_without_cancellation` (`src/mcp/mod.rs`) enforces session ownership: the global tool map can contain tools
 registered by other sessions, so in a session context it verifies that a dynamic tool either is config-defined or
 belongs to the current session, returning a "belongs to another session" error otherwise. Static built-in tools

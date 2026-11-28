@@ -192,3 +192,21 @@ fn test_interactive_role_extends_restricted_grants() {
 	// The original grant survives
 	assert!(merged.mcp.allowed_tools.contains(&"testsrv:alpha".to_string()));
 }
+
+#[test]
+fn authored_grants_cap_auto_bind_and_interactive_overlays_on_every_merge() {
+	let mut config = test_config();
+	config.authored_grants = Some([("alpha".into(), "testsrv".into())].into());
+	let first = config.get_merged_config_for_interactive_role("binder");
+	let second = first.get_merged_config_for_role("binder");
+	for view in [&first, &second] {
+		assert_eq!(server_names(view), ["testsrv"]);
+		assert_eq!(view.mcp.servers[0].tools(), ["alpha"]);
+	}
+	config.authored_grants.as_mut().unwrap().clear();
+	assert!(config
+		.get_merged_config_for_interactive_role("binder")
+		.mcp
+		.servers
+		.is_empty());
+}

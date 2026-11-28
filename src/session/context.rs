@@ -679,118 +679,6 @@ pub fn clear_shown_tool_help(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
-// Session-keyed dynamic agent manager
-// ---------------------------------------------------------------------------
-
-/// Registry for dynamic agents, keyed by session ID.
-/// Each session has its own set of registered/enabled agents.
-use crate::mcp::runtime::dynamic_agents::DynamicAgentConfig;
-
-/// Type alias for a session's dynamic agent state (agents map, enabled map).
-type DynamicAgentState = (HashMap<String, DynamicAgentConfig>, HashMap<String, bool>);
-
-static DYNAMIC_AGENT_REGISTRIES: RwLock<Option<HashMap<SessionId, DynamicAgentState>>> = RwLock::new(None);
-
-pub fn register_dynamic_agent_for_session(session_id: &SessionId, agent: DynamicAgentConfig) {
-	let agent_name = agent.name.clone();
-	let mut guard = DYNAMIC_AGENT_REGISTRIES.write().unwrap();
-	let registry = guard.get_or_insert_with(HashMap::new);
-	let (agents, enabled) = registry
-		.entry(session_id.clone())
-		.or_insert_with(|| (HashMap::new(), HashMap::new()));
-	agents.insert(agent_name.clone(), agent);
-	enabled.insert(agent_name, false);
-}
-
-/// Enable a dynamic agent for a session.
-pub fn enable_dynamic_agent_for_session(session_id: &SessionId, agent_name: &str) -> bool {
-	let mut guard = DYNAMIC_AGENT_REGISTRIES.write().unwrap();
-	if let Some(registry) = guard.as_mut() {
-		if let Some((agents, enabled)) = registry.get_mut(session_id) {
-			if agents.contains_key(agent_name) {
-				enabled.insert(agent_name.to_string(), true);
-				return true;
-			}
-		}
-	}
-	false
-}
-
-/// Disable a dynamic agent for a session.
-pub fn disable_dynamic_agent_for_session(session_id: &SessionId, agent_name: &str) -> bool {
-	let mut guard = DYNAMIC_AGENT_REGISTRIES.write().unwrap();
-	if let Some(registry) = guard.as_mut() {
-		if let Some((_, enabled)) = registry.get_mut(session_id) {
-			if enabled.contains_key(agent_name) {
-				enabled.insert(agent_name.to_string(), false);
-				return true;
-			}
-		}
-	}
-	false
-}
-
-/// Remove a dynamic agent for a session.
-pub fn remove_dynamic_agent_for_session(session_id: &SessionId, agent_name: &str) -> Option<DynamicAgentConfig> {
-	let mut guard = DYNAMIC_AGENT_REGISTRIES.write().unwrap();
-	if let Some(registry) = guard.as_mut() {
-		if let Some((agents, enabled)) = registry.get_mut(session_id) {
-			enabled.remove(agent_name);
-			return agents.remove(agent_name);
-		}
-	}
-	None
-}
-
-/// Get all dynamic agents for a session.
-pub fn get_dynamic_agents_for_session(session_id: &SessionId) -> Vec<(String, DynamicAgentConfig, bool)> {
-	let guard = DYNAMIC_AGENT_REGISTRIES.read().unwrap();
-	if let Some(registry) = guard.as_ref() {
-		if let Some((agents, enabled)) = registry.get(session_id) {
-			return agents
-				.iter()
-				.map(|(name, config)| {
-					let is_enabled = *enabled.get(name).unwrap_or(&false);
-					(name.clone(), config.clone(), is_enabled)
-				})
-				.collect();
-		}
-	}
-	Vec::new()
-}
-
-/// Check if a dynamic agent exists for a session.
-pub fn has_dynamic_agent(session_id: &SessionId, agent_name: &str) -> bool {
-	let guard = DYNAMIC_AGENT_REGISTRIES.read().unwrap();
-	if let Some(registry) = guard.as_ref() {
-		if let Some((agents, _)) = registry.get(session_id) {
-			return agents.contains_key(agent_name);
-		}
-	}
-	false
-}
-
-/// Check if a dynamic agent is enabled for a session.
-pub fn is_dynamic_agent_enabled(session_id: &SessionId, agent_name: &str) -> bool {
-	let guard = DYNAMIC_AGENT_REGISTRIES.read().unwrap();
-	if let Some(registry) = guard.as_ref() {
-		if let Some((_, enabled)) = registry.get(session_id) {
-			return *enabled.get(agent_name).unwrap_or(&false);
-		}
-	}
-	false
-}
-
-/// Clear all dynamic agents for a session.
-pub fn clear_dynamic_agents_for_session(session_id: &SessionId) {
-	if let Ok(mut guard) = DYNAMIC_AGENT_REGISTRIES.write() {
-		if let Some(registry) = guard.as_mut() {
-			registry.remove(session_id);
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Session-keyed dynamic MCP server manager
 // ---------------------------------------------------------------------------
 
@@ -991,49 +879,6 @@ pub fn clear_dynamic_servers_for_session(session_id: &SessionId) {
 			registry.remove(session_id);
 		}
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Session-keyed background job manager
-// ---------------------------------------------------------------------------
-
-use crate::session::background_jobs::BackgroundJobManager;
-
-/// Registry for session background job managers.
-/// Each session has its own job manager for async agent jobs.
-static JOB_MANAGERS: RwLock<Option<HashMap<SessionId, Arc<BackgroundJobManager>>>> = RwLock::new(None);
-
-/// Initialize a job manager for a session.
-pub fn init_job_manager_for_session(session_id: &SessionId) {
-	let max_concurrent = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
-	let manager = BackgroundJobManager::new(max_concurrent);
-	let mut guard = JOB_MANAGERS.write().unwrap();
-	let registry = guard.get_or_insert_with(HashMap::new);
-	registry.insert(session_id.clone(), Arc::new(manager));
-}
-
-/// Get the job manager for the current session.
-pub fn get_job_manager_for_session() -> Option<Arc<BackgroundJobManager>> {
-	let session_id = current_session_id()?;
-	let guard = JOB_MANAGERS.read().ok()?;
-	let registry = guard.as_ref()?;
-	registry.get(&session_id).cloned()
-}
-
-/// Kill all jobs for a session (called on session exit).
-pub fn kill_all_jobs_for_session(session_id: &SessionId) {
-	if let Ok(mut guard) = JOB_MANAGERS.write() {
-		if let Some(registry) = guard.as_mut() {
-			if let Some(manager) = registry.remove(session_id) {
-				manager.kill_all();
-			}
-		}
-	}
-}
-
-/// Clear job manager for a session (called during cleanup).
-pub fn clear_job_manager_for_session(session_id: &SessionId) {
-	kill_all_jobs_for_session(session_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,10 +1114,8 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_schedule_storage(session_id);
 	clear_hints_for_session(session_id);
 	clear_shown_tool_help(session_id);
-	clear_dynamic_agents_for_session(session_id);
 	clear_dynamic_servers_for_session(session_id);
 	crate::mcp::runtime::capability::clear_session_capabilities(session_id);
-	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
 	clear_remote_skill_manifests(session_id);
 	crate::mcp::runtime::skill_auto::clear_pool_for_session(session_id);
@@ -1282,9 +1125,10 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::inbox::clear_inbox_for_session(session_id);
 	crate::session::shell_jobs::clear_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
+	crate::agent::manifest::clear(session_id);
 	crate::session::delegation_context::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
-	crate::mcp::agent::handback::clear_handback_for_session(session_id);
+	crate::acp::handback::clear_handback_for_session(session_id);
 	// A session that ended without `session.end` (a failed bind, a close with no
 	// chat session at hand) still frees its plugin state.
 	crate::plugins::end_session(session_id);
@@ -1306,8 +1150,8 @@ pub fn init_session_services(role: &str, mode: SessionMode) {
 	crate::mcp::orchestration::schedule::execution::init_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();
 	crate::session::tap_runs::init_for_session();
+	crate::agent::manifest::init(&session_id);
 	crate::session::guardrails::init_for_session();
-	crate::mcp::agent::functions::init_job_manager();
 	// The session's domain is the namespace of its role; `init_pool` takes it from the tag.
 	crate::mcp::runtime::skill_auto::init_pool(role);
 }

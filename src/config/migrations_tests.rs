@@ -537,3 +537,107 @@ fn check_and_upgrade_writes_no_carry_file_when_the_config_had_no_supervisor_tabl
 	assert!(!dir.path().join(CARRY_DIR_NAME).exists());
 	assert_eq!(bak_files(dir.path()).len(), 1);
 }
+
+#[test]
+fn v36_removes_stock_backs_up_both_originals_and_does_not_broaden_grants() {
+	let main_text = format!("version = 35\n# retained\n[[agents]]\n{V35_STOCK_AGENT}");
+	let (main, dir) = temp_config(&main_text);
+	let sibling = dir.path().join("roles.toml");
+	let fragment = r#"agents = []
+[[roles]]
+name = "mine"
+[roles.mcp]
+server_refs = ["agent", "core"]
+allowed_tools = ["agent:agent_one"]
+[mcp]
+servers = [{name="agent", type="builtin"}]
+"#;
+	fs::write(&sibling, fragment).unwrap();
+	assert!(check_and_upgrade_config(&main).unwrap());
+	let main_after = fs::read_to_string(&main).unwrap();
+	assert!(main_after.contains("# retained"));
+	let value = parse(&main_after);
+	assert_eq!(value["version"].as_integer(), Some(36));
+	assert!(value.get("agents").is_none());
+	let value = parse(&fs::read_to_string(&sibling).unwrap());
+	assert!(value.get("agents").is_none());
+	assert!(value["mcp"]["servers"].as_array().unwrap().is_empty());
+	let mcp = &value["roles"][0]["mcp"];
+	assert_eq!(mcp["server_refs"].as_array().unwrap().len(), 1);
+	assert_eq!(mcp["server_refs"][0].as_str(), Some("core"));
+	assert_eq!(mcp["allowed_tools"].as_array().unwrap().len(), 1);
+	assert_eq!(mcp["allowed_tools"][0].as_str(), Some("agent:agent_one"));
+	let backups: Vec<_> = bak_files(dir.path())
+		.into_iter()
+		.map(|p| fs::read_to_string(p).unwrap())
+		.collect();
+	assert_eq!(backups.len(), 2);
+	assert!(backups.contains(&main_text));
+	assert!(backups.iter().any(|s| s == fragment));
+	assert!(!check_and_upgrade_config(&main).unwrap());
+}
+
+#[test]
+fn v36_custom_or_malformed_agent_in_any_source_aborts_before_publication() {
+	for (file, body) in [
+		(
+			"config.toml",
+			format!(
+				"[[agents]]\n{}",
+				V35_STOCK_AGENT.replace("workdir = \".\"", "workdir = \"private\"")
+			),
+		),
+		("custom.toml", format!("[[agents]]\n{V35_STOCK_AGENT}extra = true\n")),
+		(
+			"mcp-custom.toml",
+			"agents = [{name='context_gatherer',command='other'}]\n".into(),
+		),
+		("bad.toml", "agents = 'not an array'\n".into()),
+	] {
+		let input = "version = 35\n";
+		let (main, dir) = temp_config(input);
+		let path = dir.path().join(file);
+		let bad = if path == main { format!("{input}{body}") } else { body };
+		fs::write(&path, &bad).unwrap();
+		let stock = dir.path().join("z-stock.toml");
+		let stock_input = format!("[[agents]]\n{V35_STOCK_AGENT}");
+		fs::write(&stock, &stock_input).unwrap();
+		let err = format!("{:#}", check_and_upgrade_config(&main).unwrap_err());
+		assert!(
+			err.contains(file) && err.contains("[[agents]]") && err.contains("workdir"),
+			"{err}"
+		);
+		assert_eq!(fs::read_to_string(&path).unwrap(), bad);
+		assert_eq!(fs::read_to_string(&stock).unwrap(), stock_input);
+		if main != path {
+			assert_eq!(fs::read_to_string(main).unwrap(), input);
+		}
+		assert!(bak_files(dir.path()).is_empty());
+	}
+}
+
+#[test]
+fn v36_preserves_external_agent_override_and_refuses_to_activate_a_hidden_external() {
+	let builtin = "[[mcp.servers]]\nname='agent'\ntype='builtin'\n";
+	let external = "[[mcp.servers]]\nname='agent'\ntype='stdio'\ncommand='private-command'\n";
+	let role = "[[roles]]\nname='mine'\n[roles.mcp]\nserver_refs=['agent']\nallowed_tools=['agent:one']\n";
+	for (first, last, ok) in [(builtin, external, true), (external, builtin, false)] {
+		let input = format!("version=35\n{first}{role}");
+		let (main, dir) = temp_config(&input);
+		let sibling = dir.path().join("mcp-override.toml");
+		fs::write(&sibling, last).unwrap();
+		let result = check_and_upgrade_config(&main);
+		if ok {
+			assert!(result.unwrap());
+			let v = parse(&fs::read_to_string(main).unwrap());
+			assert!(v["mcp"]["servers"].as_array().unwrap().is_empty());
+			assert_eq!(v["roles"][0]["mcp"]["server_refs"][0].as_str(), Some("agent"));
+			assert_eq!(v["roles"][0]["mcp"]["allowed_tools"][0].as_str(), Some("agent:one"));
+		} else {
+			assert!(format!("{:#}", result.unwrap_err()).contains("shadowed server"));
+			assert_eq!(fs::read_to_string(main).unwrap(), input);
+			assert!(bak_files(dir.path()).is_empty());
+		}
+		assert_eq!(fs::read_to_string(sibling).unwrap(), last);
+	}
+}

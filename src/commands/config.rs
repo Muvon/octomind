@@ -459,13 +459,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		for server in &config.mcp.servers {
 			let name = server.name();
 			let effective_type = match name {
-				"core" | "agent" => McpConnectionType::Builtin,
+				"core" => McpConnectionType::Builtin,
 				_ => server.connection_type(),
 			};
 			let detail = match effective_type {
 				McpConnectionType::Builtin => match name {
 					"core" => "built-in core tools".dimmed().to_string(),
-					"agent" => "built-in agent tool".dimmed().to_string(),
 					_ => "built-in tools".dimmed().to_string(),
 				},
 				McpConnectionType::Http | McpConnectionType::Stdin => {
@@ -731,13 +730,12 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		for server in &config.mcp.servers {
 			let name = server.name();
 			let effective_type = match name {
-				"core" | "agent" => McpConnectionType::Builtin,
+				"core" => McpConnectionType::Builtin,
 				_ => server.connection_type(),
 			};
 			let detail = match effective_type {
 				McpConnectionType::Builtin => match name {
 					"core" => "built-in core tools".dimmed().to_string(),
-					"agent" => "built-in agent tool".dimmed().to_string(),
 					_ => "built-in tools".dimmed().to_string(),
 				},
 				McpConnectionType::Http | McpConnectionType::Stdin => {

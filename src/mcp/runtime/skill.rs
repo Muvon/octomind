@@ -783,11 +783,23 @@ pub fn find_skill_by_name_pub(name: &str) -> Option<(SkillMeta, PathBuf, String)
 	find_skill_by_name(name)
 }
 
+/// How a tap skill relates to the session's agent, best first.
+#[derive(PartialEq, PartialOrd)]
+enum SkillClaim {
+	/// The agent's namespace owns it.
+	Owned,
+	/// Shared, and its `domains:` name the agent's namespace.
+	Admitted,
+	/// Shared with no `domains:`.
+	ManualOnly,
+	/// Owned by another namespace, or shared for other namespaces.
+	Other,
+}
+
 /// The tap skill called `name` that the session's agent gets, when several share the name.
-/// Order: the skill owned by the agent's namespace, then a shared skill whose `domains:` admit
-/// the agent (or that has none, so is manual-only), then any other: only a manual `use` or a
-/// preload gets that far, as auto-activation names a skill the pool admitted for the agent.
-/// Within one tier the first tap wins.
+/// The best [`SkillClaim`] wins, and within one claim the first tap. Auto-activation names a
+/// skill the pool holds for the agent, which is owned or admitted; a manual `use` or a preload
+/// can reach the other two.
 pub(crate) fn find_tap_skill(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,
@@ -798,7 +810,7 @@ pub(crate) fn find_tap_skill(name: &str) -> Option<(SkillMeta, PathBuf, String)>
 	};
 	let namespace = crate::session::context::current_session_domain();
 
-	let mut best: Option<(u8, (SkillMeta, PathBuf, String))> = None;
+	let mut best: Option<(SkillClaim, (SkillMeta, PathBuf, String))> = None;
 	for tap in &taps {
 		for TapSkillDir { owner, dir: skill_dir } in tap.skill_dirs().unwrap_or_default() {
 			if skill_dir.file_name().and_then(|n| n.to_str()) != Some(name) {
@@ -814,20 +826,19 @@ pub(crate) fn find_tap_skill(name: &str) -> Option<(SkillMeta, PathBuf, String)>
 			if meta.name != name {
 				continue;
 			}
-			let tier = match (&owner, &namespace) {
-				(Some(owner), Some(namespace)) if owner == namespace => 0,
-				(None, Some(namespace))
-					if meta.domains.is_empty() || meta.domains.iter().any(|d| d == namespace || d == "*") =>
-				{
-					1
+			let claim = match (&owner, &namespace) {
+				(Some(owner), Some(namespace)) if owner == namespace => SkillClaim::Owned,
+				(None, Some(namespace)) if meta.domains.iter().any(|d| d == namespace || d == "*") => {
+					SkillClaim::Admitted
 				}
-				_ => 2,
+				(None, _) if meta.domains.is_empty() => SkillClaim::ManualOnly,
+				_ => SkillClaim::Other,
 			};
-			if tier == 0 {
+			if claim == SkillClaim::Owned {
 				return Some((meta, skill_dir, content));
 			}
-			if best.as_ref().is_none_or(|(best_tier, _)| tier < *best_tier) {
-				best = Some((tier, (meta, skill_dir, content)));
+			if best.as_ref().is_none_or(|(best_claim, _)| claim < *best_claim) {
+				best = Some((claim, (meta, skill_dir, content)));
 			}
 		}
 	}

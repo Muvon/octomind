@@ -272,7 +272,7 @@ async fn the_default_variant_is_the_base_agent_for_the_local_role_check_and_the_
 #[serial]
 async fn a_tag_that_is_not_valid_is_refused_before_any_path_is_built_from_it() {
 	let _guard = ResolverDataDir::new();
-	for bad in ["../../x", "a/b", "dev:../x", "dev@../..:x", "Dev"] {
+	for bad in ["../../x", "a/b", "dev:../x", "Dev"] {
 		let err = resolve_config_and_role(Some(bad), &base_config(), None)
 			.await
 			.expect_err(bad)

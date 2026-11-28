@@ -906,6 +906,24 @@ fn an_owned_skill_enters_the_pool_only_for_its_owner() {
 
 #[test]
 #[serial]
+fn the_pool_takes_the_rules_of_the_owned_skill_over_a_shared_one_of_the_same_name() {
+	let _guard = DataDirGuard::new();
+	install_tap_skill("dup-rules", "doctor developer", &["content(shared)"]);
+	install_owned_skill("doctor", "dup-rules", &["content(owned)", "content(second)"]);
+
+	for (domain, rule_lines) in [("doctor", 2), ("developer", 1)] {
+		clear_pool();
+		init_pool(domain);
+		let pools = get_pool().read().expect("pool lock");
+		let entries = &pools.get("__default__").expect("pool").entries;
+		assert_eq!(entries.len(), 1, "{domain}: one entry per name");
+		assert_eq!(entries[0].rules.len(), rule_lines, "{domain}");
+	}
+	clear_pool();
+}
+
+#[test]
+#[serial]
 fn an_owned_skill_binds_to_the_namespace_so_a_variant_session_gets_it() {
 	let _guard = DataDirGuard::new();
 	install_owned_skill("writer", "owned-skill", &["content(draft)"]);

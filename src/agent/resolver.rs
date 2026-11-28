@@ -54,8 +54,9 @@ fn tap_has_agent(name: &str) -> Result<bool> {
 /// - a role in `config.roles` → plain role, config unchanged
 /// - an agent of a tap (`<ns>`, `<ns>:<variant>`, `<ns>:default` as `<ns>`) → fetch tap
 ///   manifest, merge into config
+/// - a tag that is not valid (see `registry::parse_tag`) → error, before any path is built
 /// - a name with `:` that no tap has → error naming the namespace's agents, if it has any
-/// - anything else → plain role name, config unchanged
+/// - any other valid name → plain role name, config unchanged
 ///
 /// `[taps]` model overrides apply per tag, falling back to the namespace.
 ///
@@ -74,11 +75,11 @@ pub async fn resolve_config_and_role(
 		return Ok((config.clone(), tag.to_string()));
 	}
 	// Canonicalise once: the local-role check, the tap lookup and the `[taps]` keys all use the
-	// canonical tag, and no path is built from a tag that is not valid. A `@version` suffix
-	// belongs to the fetch below. An alias (an old name its tap keeps as a symlink) is the agent
-	// it points to.
+	// canonical tag, and no path is built from a tag that is not valid. A `@version` suffix asks
+	// for a tap agent, so it skips the local roles and belongs to the fetch below. An alias (an
+	// old name its tap keeps as a symlink) is the agent it points to.
 	let (bare, version) = crate::agent::registry::parse_tag(tag)?;
-	if config.roles.iter().any(|r| r.name == bare) {
+	if version.is_none() && config.roles.iter().any(|r| r.name == bare) {
 		return Ok((config.clone(), bare));
 	}
 	let resolved = crate::agent::taps::resolve_alias_tag(&bare)?;

@@ -510,8 +510,8 @@ fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 /// flat `<ns>.toml` file, or a namespace that has other agents but not this one. Returns `Ok`
 /// when nothing in the taps explains it, so the caller reports the plain not-found.
 pub fn explain_missing_agent(tag: &str) -> Result<()> {
-	let tag = canonical_tag(tag);
-	let namespace = namespace_of(tag);
+	let (tag, _) = crate::agent::registry::parse_tag(tag)?;
+	let namespace = namespace_of(&tag);
 	let taps = get_taps()?;
 	for tap in &taps {
 		let flat = tap.flat_agent_manifest(namespace)?;

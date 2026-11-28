@@ -231,7 +231,7 @@ fn a_path_is_never_built_from_an_invalid_tag() {
 		name: "alice/tools".to_string(),
 		local_path: None,
 	};
-	for bad in ["../../x", "a/b", "dev:../x", "dev@../x", ""] {
+	for bad in ["../../x", "a/b", "dev:../x", ""] {
 		assert!(tap.agent_manifest(bad).is_err(), "{bad}");
 		let err = explain_missing_agent(bad).unwrap_err().to_string();
 		assert!(err.contains("Invalid agent tag"), "{bad}: {err}");

@@ -296,6 +296,9 @@ pub fn init_pool(domain: &str) {
 
 	let mut entries = Vec::new();
 	let mut seen_names = std::collections::HashSet::new();
+	// Where the entry of each shared tap skill sits, so that a skill the namespace owns can
+	// take the place of a shared one with the same name: the order `find_tap_skill` loads by.
+	let mut shared_slots = std::collections::HashMap::new();
 
 	// 1. Tap skills (highest priority)
 	for tap in &taps {
@@ -317,13 +320,21 @@ pub fn init_pool(domain: &str) {
 				continue;
 			}
 
-			if seen_names.insert(meta.name.clone()) {
-				entries.push(PoolEntry {
-					name: meta.name,
-					description: meta.description,
-					rules: meta.rules,
-					evolution: None,
-				});
+			let entry = PoolEntry {
+				name: meta.name,
+				description: meta.description,
+				rules: meta.rules,
+				evolution: None,
+			};
+			if seen_names.insert(entry.name.clone()) {
+				if owner.is_none() {
+					shared_slots.insert(entry.name.clone(), entries.len());
+				}
+				entries.push(entry);
+			} else if owner.is_some() {
+				if let Some(slot) = shared_slots.remove(&entry.name) {
+					entries[slot] = entry;
+				}
 			}
 		}
 	}

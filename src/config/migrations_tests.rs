@@ -472,7 +472,11 @@ fn a_failed_sibling_rewrite_leaves_the_config_at_its_old_version_so_the_upgrade_
 	let old_config = "version = 34\ndefault = \"content:editor\"\n";
 	let (path, dir) = temp_config(old_config);
 	let sibling = dir.path().join("mcp-extra.toml");
-	fs::write(&sibling, "auto_bind = [\"content:editor\"]\n").unwrap();
+	fs::write(
+		&sibling,
+		"[[mcp.servers]]\nname = \"extra\"\nauto_bind = [\"content:editor\"]\n",
+	)
+	.unwrap();
 	fs::set_permissions(&sibling, fs::Permissions::from_mode(0o444)).unwrap();
 	if fs::OpenOptions::new().write(true).open(&sibling).is_ok() {
 		return; // running as root: the file cannot be made unwritable

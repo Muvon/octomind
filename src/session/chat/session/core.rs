@@ -510,11 +510,15 @@ impl ChatSession {
 					plan,
 					schedule,
 				}) => {
-					let role = runtime_state
-						.role
-						.as_deref()
-						.filter(|_| !params.role_explicit)
-						.unwrap_or(params.role);
+					// A saved role renamed since (an alias its tap keeps as a symlink) resumes as the
+					// agent the alias points to, which the config was resolved for. A saved role the
+					// config has is kept.
+					let restored_role = match runtime_state.role.as_deref().filter(|_| !params.role_explicit) {
+						Some(role) if params.config.has_role(role) => Some(role.to_string()),
+						Some(role) => Some(crate::agent::taps::resolve_alias_tag(role)?),
+						None => None,
+					};
+					let role = restored_role.as_deref().unwrap_or(params.role);
 					if !params.config.has_role(role) {
 						anyhow::bail!("Cannot resume session '{}': role '{}' not found", session_name, role);
 					}

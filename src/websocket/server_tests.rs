@@ -1426,6 +1426,39 @@ async fn restarted_server_resumes_a_switched_session_under_its_own_role() {
 	crate::session::context::cleanup_session(&session);
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn session_saved_under_an_alias_of_the_server_role_resumes_on_the_server_role() {
+	let _data = TestDataDirGuard::new();
+	// The tap renamed `ztest:chief` to the base agent `ztest` and kept the old name as a symlink.
+	let namespace_dir = crate::agent::taps::built_in_tap()
+		.expect("built-in tap")
+		.agents_dir()
+		.expect("agents dir")
+		.join("ztest");
+	std::fs::create_dir_all(&namespace_dir).expect("create namespace dir");
+	std::fs::write(namespace_dir.join("default.toml"), "").expect("write manifest");
+	std::os::unix::fs::symlink("default.toml", namespace_dir.join("chief.toml")).expect("create alias");
+
+	// A session logged before the rename records the old name.
+	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
+	write_session_log_entry(
+		&sessions_dir.join("aliased.jsonl.zst"),
+		r#"{"type":"SUMMARY","session_info":{"role":"ztest:chief","name":"aliased"}}"#,
+	);
+	let server = ServerState::new(Arc::new(ws_fake_config()), "ztest".to_string(), Vec::new());
+
+	let (config, role) = resume_role_config("aliased", &server)
+		.await
+		.expect("an alias of the server role restores");
+
+	assert_eq!(role, "ztest");
+	assert!(Arc::ptr_eq(&config, &server.config), "the server config is reused");
+	assert!(server.role_configs.lock().await.is_empty(), "nothing is pinned");
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn user_message_resumes_a_disk_session_without_a_session_handshake() {

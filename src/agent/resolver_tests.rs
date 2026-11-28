@@ -369,6 +369,40 @@ async fn the_taps_model_override_of_a_variant_falls_back_to_its_namespace() {
 	assert_eq!(go.model_profile.model, "ollama:go-model", "an exact tag wins");
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn an_alias_tag_resolves_to_its_target_and_keeps_its_own_model_key() {
+	let guard = ResolverDataDir::new();
+	install_default_tap_manifest(guard.path(), "ztest", MANIFEST_HEADER);
+	// The tap renamed `ztest:chief` to the base agent `ztest` and kept the old name as a symlink.
+	let namespace_dir = guard
+		.path()
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("agents")
+		.join("ztest");
+	std::os::unix::fs::symlink("default.toml", namespace_dir.join("chief.toml")).expect("create alias");
+	let mut config = base_config();
+	config
+		.taps
+		.insert("ztest:chief".to_string(), "ollama:alias-model".to_string());
+
+	let (merged, role) = resolve_config_and_role(Some("ztest:chief"), &config, None)
+		.await
+		.expect("alias resolves");
+
+	assert_eq!(role, "ztest");
+	assert!(merged.roles.iter().any(|r| r.name == "ztest"));
+	assert!(!merged.roles.iter().any(|r| r.name == "ztest:chief"));
+	assert_eq!(
+		merged.model_profile.model, "ollama:alias-model",
+		"a key under the old name applies"
+	);
+}
+
 /// Set an environment variable for the duration of a test, restoring the previous value on drop.
 struct EnvVarGuard {
 	name: &'static str,

@@ -1878,12 +1878,18 @@ async fn resume_role_config(session_id: &str, server: &ServerState) -> Result<(A
 /// runs under that role's tools. Shared by a bind that names a role and by a
 /// disk resume that restores one.
 ///
-/// The server role itself is not pinned: its config is already loaded.
+/// The server role itself is not pinned: its config is already loaded. Neither is an alias of it
+/// (an old name its tap keeps as a symlink), which a session saved before a rename records.
 async fn pin_role_config(session_id: &str, role: &str, server: &ServerState) -> Result<(Arc<Config>, String)> {
+	let role = if server.config.has_role(role) {
+		role.to_string()
+	} else {
+		crate::agent::taps::resolve_alias_tag(role)?
+	};
 	if role == server.role {
-		return Ok((Arc::clone(&server.config), role.to_string()));
+		return Ok((Arc::clone(&server.config), role));
 	}
-	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(role), &server.config, None).await?;
+	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(&role), &server.config, None).await?;
 	crate::session::context::with_session_id(
 		session_id.to_string(),
 		crate::mcp::initialize_mcp_for_role(&role, &config),

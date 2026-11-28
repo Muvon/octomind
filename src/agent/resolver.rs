@@ -73,8 +73,15 @@ pub async fn resolve_config_and_role(
 	if config.roles.iter().any(|r| r.name == tag) {
 		return Ok((config.clone(), tag.to_string()));
 	}
-	// The tap lookup is by canonical tag; a `@version` suffix belongs to the fetch below.
-	let name = canonical_tag(tag.split_once('@').map_or(tag, |(name, _)| name));
+	// The tap lookup is by canonical tag; a `@version` suffix belongs to the fetch below. An
+	// alias (an old name its tap keeps as a symlink) is the agent it points to.
+	let (bare, version) = tag
+		.split_once('@')
+		.map_or((tag, None), |(name, version)| (name, Some(version)));
+	let resolved = crate::agent::taps::resolve_alias_tag(bare)?;
+	let name = resolved.as_str();
+	let versioned = version.map_or_else(|| resolved.clone(), |version| format!("{resolved}@{version}"));
+	let tag = versioned.as_str();
 	if !tap_has_agent(name)? {
 		if name.contains(':') {
 			anyhow::bail!("Agent '{name}' is not in any installed tap");
@@ -130,8 +137,15 @@ pub async fn resolve_config_and_role(
 			"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
 		))?;
 
-	// Apply tap model override if configured: the exact tag first, then its namespace
-	if let Some(tap_model) = config.taps.get(name).or_else(|| config.taps.get(namespace_of(name))) {
+	// Apply tap model override if configured: the exact tag first, then an alias of it (a key
+	// written under the name the agent had before a rename), then its namespace
+	let aliases = crate::agent::taps::alias_tags_of(name)?;
+	if let Some(tap_model) = config
+		.taps
+		.get(name)
+		.or_else(|| aliases.iter().find_map(|alias| config.taps.get(alias)))
+		.or_else(|| config.taps.get(namespace_of(name)))
+	{
 		merged.model_profile.model = tap_model.clone();
 		crate::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
 	}

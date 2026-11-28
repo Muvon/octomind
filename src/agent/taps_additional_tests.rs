@@ -144,6 +144,61 @@ fn agent_manifests_list_each_namespace_as_its_base_and_its_variants() {
 	assert_eq!(tags, ["acme:reviewer", "dev", "dev:go", "dev:rust"]);
 }
 
+// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+#[cfg(unix)]
+#[serial]
+#[test]
+fn an_alias_tag_resolves_to_the_agent_its_symlink_points_to() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	let namespace_dir = tap.local_dir().expect("local dir").join("agents/app");
+	fs::create_dir_all(&namespace_dir).unwrap();
+	fs::write(namespace_dir.join("default.toml"), "").unwrap();
+	fs::write(namespace_dir.join("editor.toml"), "").unwrap();
+	std::os::unix::fs::symlink("default.toml", namespace_dir.join("chief.toml")).unwrap();
+	std::os::unix::fs::symlink("editor.toml", namespace_dir.join("writer.toml")).unwrap();
+	write_taps(vec![tap.clone()]);
+
+	assert_eq!(resolve_alias_tag("app:chief").unwrap(), "app");
+	assert_eq!(resolve_alias_tag("app:writer").unwrap(), "app:editor");
+	assert_eq!(alias_tags_of("app").unwrap(), ["app:chief"]);
+	assert_eq!(alias_tags_of("app:editor").unwrap(), ["app:writer"]);
+	// Not an alias: an agent itself, a tag no tap has, a plain name.
+	for tag in ["app", "app:editor", "app:missing", "plain"] {
+		assert_eq!(resolve_alias_tag(tag).unwrap(), tag);
+	}
+	let listed: Vec<String> = tap.agent_manifests().unwrap().into_iter().map(|(tag, _)| tag).collect();
+	assert_eq!(listed, ["app", "app:editor"], "an alias is never listed");
+}
+
+#[cfg(unix)]
+#[serial]
+#[test]
+fn a_real_manifest_in_an_earlier_tap_is_not_redirected_by_a_later_alias() {
+	let _data = DataDirGuard::new();
+	let own = Tap {
+		name: "alice/own".to_string(),
+		local_path: None,
+	};
+	let own_dir = own.local_dir().expect("local dir").join("agents/app");
+	fs::create_dir_all(&own_dir).unwrap();
+	fs::write(own_dir.join("chief.toml"), "").unwrap();
+	let renamed = Tap {
+		name: "bob/renamed".to_string(),
+		local_path: None,
+	};
+	let renamed_dir = renamed.local_dir().expect("local dir").join("agents/app");
+	fs::create_dir_all(&renamed_dir).unwrap();
+	fs::write(renamed_dir.join("default.toml"), "").unwrap();
+	std::os::unix::fs::symlink("default.toml", renamed_dir.join("chief.toml")).unwrap();
+	write_taps(vec![own, renamed]);
+
+	assert_eq!(resolve_alias_tag("app:chief").unwrap(), "app:chief");
+}
+
 #[serial]
 #[test]
 fn skill_dirs_lists_shared_skills_first_then_each_agent_by_name() {

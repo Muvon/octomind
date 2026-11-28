@@ -255,11 +255,7 @@ impl Tap {
 				let Some(variant) = path.file_stem().and_then(|stem| stem.to_str()) else {
 					continue;
 				};
-				let tag = if variant == DEFAULT_VARIANT {
-					namespace.clone()
-				} else {
-					format!("{namespace}:{variant}")
-				};
+				let tag = variant_tag(&namespace, variant);
 				manifests.push((tag, path));
 			}
 		}
@@ -575,6 +571,75 @@ pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
 /// Whether an active tap has the agent `name`. Local tap data only, no network.
 pub fn has_agent(name: &str) -> Result<bool> {
 	Ok(walk_agent_manifests()?.iter().any(|manifest| manifest.tag == name))
+}
+
+/// The tag of `variant` in `namespace`: the namespace itself for its base agent.
+fn variant_tag(namespace: &str, variant: &str) -> String {
+	if variant == DEFAULT_VARIANT {
+		namespace.to_string()
+	} else {
+		format!("{namespace}:{variant}")
+	}
+}
+
+/// Variant an alias manifest points to: `default` for `chief.toml -> default.toml`.
+///
+/// `None` for a real file, a missing one, or a link that leaves its namespace directory.
+fn alias_target_variant(manifest: &Path) -> Option<String> {
+	let target = fs::read_link(manifest).ok()?;
+	if target.parent() != Some(Path::new("")) || target.extension()? != "toml" {
+		return None;
+	}
+	Some(target.file_stem()?.to_str()?.to_string())
+}
+
+/// Map an alias tag to the tag of the agent it points to; any other tag comes back unchanged.
+///
+/// A tap renames an agent by leaving a symlink under the old name: `chief.toml -> default.toml`
+/// keeps `<ns>:chief` working as `<ns>`. Agent listings skip the link, so the old name is never
+/// offered. The first tap that has the name decides, as in `fetch_manifest`: a real manifest
+/// there is an agent of its own and is never redirected. Local tap data only, no network. Logs
+/// one notice per mapping.
+pub fn resolve_alias_tag(tag: &str) -> Result<String> {
+	let tag = canonical_tag(tag);
+	let (namespace, _) = manifest_parts(tag);
+	for tap in get_taps()? {
+		let manifest = tap.agent_manifest(tag)?;
+		if manifest.symlink_metadata().is_err() {
+			continue;
+		}
+		let Some(target_variant) = alias_target_variant(&manifest) else {
+			return Ok(tag.to_string());
+		};
+		let target_tag = variant_tag(namespace, &target_variant);
+		crate::log_info!("`{}` is an alias of `{}`; using `{}`", tag, target_tag, target_tag);
+		return Ok(target_tag);
+	}
+	Ok(tag.to_string())
+}
+
+/// Tags that are aliases of `tag`: the symlinks in its namespace that point to its manifest.
+/// Sorted, each once. Local tap data only, no network.
+pub fn alias_tags_of(tag: &str) -> Result<Vec<String>> {
+	let (namespace, variant) = manifest_parts(canonical_tag(tag));
+	let mut aliases: Vec<String> = Vec::new();
+	for tap in get_taps()? {
+		let Ok(entries) = fs::read_dir(tap.agents_dir()?.join(namespace)) else {
+			continue;
+		};
+		for entry in entries.flatten() {
+			let path = entry.path();
+			if alias_target_variant(&path).as_deref() != Some(variant) {
+				continue;
+			}
+			if let Some(alias) = path.file_stem().and_then(|stem| stem.to_str()) {
+				aliases.push(variant_tag(namespace, alias));
+			}
+		}
+	}
+	aliases.sort();
+	aliases.dedup();
+	Ok(aliases)
 }
 
 /// Fetch a public workflow definition by name from taps.

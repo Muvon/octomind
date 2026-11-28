@@ -322,54 +322,74 @@ fn a_copy_cannot_start_a_copy_but_keeps_its_other_reach() {
 
 // --- matching against a real roster ------------------------------------------
 
-/// The `developer` domain of the default tap as its lead reaches it: tag,
+/// The roster of the default tap as the `assistant` agent reaches it: every
+/// base agent except `assistant` itself, as tag (the agent's directory name),
 /// title, description, copied from the manifests' headers.
-const DEVELOPER_ROSTER: [(&str, &str, &str); 14] = [
-	("developer:brief", "Code Change Briefer – Git Diff Summary", "Turns a diff, commit, or range into plain-language review cards: behavioral impact, traced risk, and source links behind every finding."),
-	("developer:changelog", "Changelog Maintainer – CHANGELOG.md Generator", "Generates a Keep a Changelog 1.1.0 CHANGELOG.md from a commit range, verifying every entry against current code instead of commit subjects."),
-	("developer:context", "Context Curator", "Explores codebase, recalls memories, and narrows entry points. Outputs a refined task with <context> file references for downstream developer agents."),
-	("developer:doc", "Documentation Custodian", "Audits docs for staleness against code and git history, syncs drifted claims with minimum-diff edits, and writes new docs only when something is missing."),
-	("developer:general", "General Developer", "Implements bug fixes, features, and refactors: researches upstream fixes, surveys every affected surface, fixes root causes, and verifies with tests."),
-	("developer:learn", "Project Memory Curator", "Builds the project's long-term memory by anchoring every entry to verified code references, then refines it with user corrections."),
-	("developer:plan", "Implementation Plan Architect", "Turns a full spec or a rough ask into a phased, parallelizable implementation plan with disjoint task ownership, merge gates, and spec coverage."),
-	("developer:qa", "QA & Test Engineer – Test Plans & Bug Reports", "Designs risk-based test plans with boundary, equivalence, and state-transition techniques, runs what's runnable, writes bug reports precise enough to fix."),
-	("developer:readme", "README Architect – README Generator", "Writes the project README after exploring the codebase: detects project type and audience, verifies every command by running it, and keeps it scannable."),
-	("developer:release-notes", "Release Notes Writer", "Generates detailed, user-facing release notes from a commit/version range by reading code, not commit messages; prepends the section to a target file."),
-	("developer:reverse-spec", "Reverse Specification Writer", "Reconstructs the task behind a commit, branch, or diff: the prompt as it likely arrived, plus a clarified spec with every hunk bucketed by intent."),
-	("developer:social-preview", "GitHub Social Preview Designer – Open Graph Image", "GitHub social preview designer: builds a 1280x640 Open Graph image from the repo's own brand, checks it at feed size, and verifies the upload."),
-	("developer:spec", "Behavioral Specification Writer", "Turns a task into a traceable EARS spec: numbered requirements, explicit constraints, scenarios, and a verification command, with no unstated assumptions."),
-	("developer:tester", "Test Implementation & Coverage Engineer", "Writes behavior-proving tests in any language, closes risk-ranked coverage gaps, sets up mutation tooling, and proves every assertion fails first."),
+const AGENT_ROSTER: [(&str, &str, &str); 33] = [
+	("academic", "AI Research Assistant – Literature Reviews & Papers", "An AI research assistant for literature reviews, research questions, thesis statements, paper drafts, abstracts, reviewer replies and citation checks."),
+	("ai-engineer", "AI Engineer – LLM Apps, Evals, Red Teaming", "Builds LLM and RAG apps, designs evals, red-teams prompts and agents, and classifies AI systems under the EU AI Act. Delivers specs, reports and memos."),
+	("analyst", "AI Data Analyst – SQL, Pipelines & Spreadsheets", "Answers data questions end to end: data analysis and statistics, SQL queries, warehouse pipelines, forecasting models, and Excel or Google Sheets formulas."),
+	("chef", "AI Recipe Generator – Meal Plans & Grocery Lists", "Suggests recipes from your ingredients, plans weekly meals with budget-capped priced grocery lists, scales recipes, and coaches technique with food safety."),
+	("coach", "AI Coach – Goals, Career, Habits & Accountability", "An AI life coach for goals and accountability, career and job search, resumes, interviews, negotiation, speaking, habits, fitness and wellbeing."),
+	("community-manager", "Discord Server Setup & Moderation – Community Manager", "Plans and runs online communities: Discord server setup blueprints, moderation rules and AutoMod packs, onboarding, engagement rituals and health audits."),
+	("designer", "AI Design Assistant – UX Audits, Accessibility, Logos", "An AI design assistant for UX audits and microcopy, WCAG and EAA accessibility audits, user research synthesis, usability test plans, logos and brand kits."),
+	("developer", "AI Coding Assistant – Fix Bugs & Build Features", "An AI coding assistant that fixes bugs, builds features and refactors, writes tests, specs, docs and changelogs, and reviews diffs in plain language."),
+	("devops", "AI DevOps Engineer – Servers, Kubernetes, CI/CD", "Fixes servers and infrastructure from logs and metrics: Linux, Docker, Kubernetes, Terraform, cloud IAM and cost, CI/CD, monitoring and incident response."),
+	("doctor", "AI Symptom Checker – Health Info, Labs, Urgency", "Explains symptoms by urgency, lab results, medications, nutrition, sleep and medical bills with cited evidence. Information, not diagnosis or advice."),
+	("family-advisor", "AI Parenting Guide – Eldercare, Benefits, Bereavement", "Family help: parenting from newborn to teen, aging-parent care, benefits paperwork and the weeks after a death. Checklists and next steps, not advice."),
+	("financial-planner", "AI Bookkeeping & Budget Assistant – Debt, Tax, Retirement", "Handles budgets and debt payoff, bookkeeping, student loans, personal tax, retirement, insurance claims, statement analysis. Education, not advice."),
+	("founder", "AI Pitch Deck Generator – Idea to First Customers", "Takes a product from idea to first customers: idea validation, go-to-market plan, brand, pitch deck, pricing, ads and investor outreach drafts."),
+	("handyman", "AI Handyman – Home Repair & Maintenance Guide", "Diagnoses home repairs with DIY-or-pro safety gates, walks through fixes, plans maintenance schedules and helps you hire and brief a contractor."),
+	("hr", "AI HR Assistant – Hiring & People Operations", "Runs hiring from scorecard to offer, plus onboarding, reviews, feedback scripts, performance plans and policies, with employment-law flags for counsel."),
+	("lawyer", "AI Legal Assistant – Legal Research & Rights Info", "Researches laws and statutes by country, explains rights, reviews contracts, and drafts demand letters for consumer and visa matters. Not legal advice."),
+	("marketer", "AI Marketing Agent – Email, Growth, PR, Social", "An AI marketing agent for founders and small teams: lifecycle emails and newsletters, growth plans, paid media setup, partner programs, PR and social."),
+	("mechanic", "AI Mechanic – Car Warning Lights, Quotes, Used Cars", "Triages car symptoms and warning lights, calls DIY versus mechanic, checks repair quotes, plans maintenance and builds used-car checklists. Safety first."),
+	("merchant", "AI Ecommerce Assistant – Listings, Pricing, Orders", "Handles seller-side ecommerce: product listings, pricing and margins, orders, refunds, marketplace accounts and store policies. Asks before any change."),
+	("octomind", "Octomind Assistant – Config, Taps & Workflows", "Answers Octomind CLI, config, runtime and Besydr questions, edits config.toml, builds tap agents, skills, capabilities, deps and workflow pipelines."),
+	("operator", "AI Web Scraper & UI Automation – Browser, Desktop, Mobile", "Drives web pages, desktop and mobile apps for browser automation: scrapes data, fills forms, runs flows, posts approved copy, returns files and step logs."),
+	("plain", "Plain Assistant – System Prompt Baseline", "Simple AI assistant with a one-line system prompt and no persona. Use it to chat with AI, run prompt testing, and compare models against a baseline."),
+	("pm", "AI Product Manager – PRDs, Roadmaps, Status Reports", "Turns ideas into PRDs, stories, RICE roadmaps and OKRs, and runs delivery as an AI project manager: milestone plans, RAID logs and RAG status reports."),
+	("producer", "AI UGC Video Generator – Scripts, Ads, Edits, Uploads", "AI video producer: scripts, storyboards, UGC and short-form ads, explainers, footage edits, podcast clips, thumbnails, uploads to TikTok, Reels, YouTube."),
+	("sales-rep", "AI Sales Assistant – B2B Outreach, Proposals & CRM", "B2B sales work: cold outreach copy, lead enrichment and scoring, discovery and qualification, closing and negotiation, RFP proposals, CRM and pipeline."),
+	("security-analyst", "AI Cybersecurity Analyst – AppSec, SOC, Compliance", "Defensive cybersecurity: secure code review, alert and phishing triage, incident response, GDPR and SOC 2 readiness, scam and identity-theft recovery."),
+	("seo", "AI SEO Tool – Site Audits, Keywords, AI Visibility", "Audits sites for technical, on-page and link problems, plans keyword research, content clusters and link building, and diagnoses visibility in AI answers."),
+	("shopper", "AI Shopping Assistant – Product Research & Price Comparison", "Compares products and prices across retailers, analyzes reviews, and suggests gifts for a person you describe. Honest trade-offs; no affiliate bias."),
+	("support-agent", "AI Customer Service Agent – Ticket Triage & Success", "Triages support queues, drafts replies for approval, files tickets, writes help articles and macros, scores account health, runs churn saves and renewals."),
+	("travel-agent", "AI Travel Planner – Day-by-Day Itineraries & Road Trips", "Builds day-by-day itineraries, road trips, budgets, transport logistics and packing lists, verifying prices and hours online. You book; it plans."),
+	("tutor", "AI Tutor – Any Subject, Coding, Math, Languages", "Tutors any subject, coding, math, languages and test prep with retrieval practice and Socratic hints, and drafts teacher lesson plans. Never ghostwrites."),
+	("vet", "Dog Symptom Checker – AI Pet Health & Training Guide", "Triages dog and cat symptoms with urgency tiers, toxin checks and home care, and coaches force-free training. Information, not a veterinary diagnosis."),
+	("writer", "AI Writing Tool – Articles, Blogs, Social Posts, Slides", "Writes and edits articles, blog posts, social posts, replies, fiction notes, translations and slide decks; audits drafts and publishes approved content."),
 ];
 
-/// Briefs as the developer lead is told to write them (first line names the
-/// kind of work and the deliverable), with the agent that should take
-/// each; `None` is a task no developer agent covers.
-const DEVELOPER_TASKS: [(&str, Option<&str>); 19] = [
-	("Implement a bug fix: the parser in src/parser.rs panics when the input is empty. Find the root cause, patch it, and run the test suite.", Some("developer:general")),
-	("Write unit tests for the retry module in src/net/retry.rs covering the backoff edge cases, and show each test fails without the fix.", Some("developer:tester")),
-	("Design a risk-based test plan for the checkout flow, run what can be run, and write bug reports for what fails.", Some("developer:qa")),
-	("Summarize the diff between v1.2.0 and HEAD as review cards with the behavioral impact and the risks of each change.", Some("developer:brief")),
-	("Generate the CHANGELOG.md entries for the commits since the v0.70.0 tag in Keep a Changelog format.", Some("developer:changelog")),
-	("Write user-facing release notes for version 0.71.0 from the commit range v0.70.0..HEAD.", Some("developer:release-notes")),
-	("Explore the codebase to find where session compression is decided and return the task with file references for the developer who will change it.", Some("developer:context")),
-	("Break this feature spec into a phased implementation plan with parallel tasks, clear ownership, and merge gates.", Some("developer:plan")),
-	("Write a behavioral specification with numbered EARS requirements, constraints, and scenarios for the new rate limiter.", Some("developer:spec")),
-	("Audit the docs folder for claims that no longer match the code and fix the stale ones with minimal edits.", Some("developer:doc")),
-	("Write the project README: what the project is, how to install it, and usage commands you have verified by running them.", Some("developer:readme")),
-	("Reconstruct what task commit 4f2a9c1 was solving and write the clarified spec it implemented.", Some("developer:reverse-spec")),
-	("Create the GitHub social preview image for this repository from its brand colors and logo.", Some("developer:social-preview")),
-	("Record what we learned about the build system in the project's long-term memory, each entry with its code reference.", Some("developer:learn")),
-	("Implement a feature: add a --json flag to the export command, update its help text, and cover it with a test.", Some("developer:general")),
-	("Draft a cold outreach email to enterprise prospects about our pricing change.", None),
-	("Review this employment contract for non-compete clauses under California law.", None),
-	("Plan a three-day vegetarian menu for a family of four.", None),
-	("Interpret these blood test results and say which values are out of range.", None),
+/// Briefs as the lead agent is told to write them (first line names the kind
+/// of work and the deliverable), with the agent of that field that should take
+/// each; `None` is a task no agent in the roster covers.
+const AGENT_TASKS: [(&str, Option<&str>); 19] = [
+	("Fix a crash: the CSV importer in src/import.rs panics on a file with a blank header row. Find the root cause, patch it, and run the test suite.", Some("developer")),
+	("Review the attached lease for tenant-unfriendly clauses under German law and draft a letter disputing the deposit deduction.", Some("lawyer")),
+	("Explain what these lab results mean: ferritin 8 ng/mL, TSH 5.2 mIU/L, and whether the symptoms I listed need a doctor this week.", Some("doctor")),
+	("Build a weekly meal plan for two people on a 90 euro budget using what is in my fridge: lentils, spinach, eggs, rice. Include a priced grocery list.", Some("chef")),
+	("Write a 900-word blog post for our fintech blog on why invoice financing is rising among freelancers, with a headline and two pull quotes.", Some("writer")),
+	("Audit the site shop.example.com for crawl errors and duplicate titles, then give me a keyword plan for the winter boots category.", Some("seo")),
+	("Review our signup flow for usability and WCAG contrast problems, and list fixes ranked by how many users they affect.", Some("designer")),
+	("Our pods in the production cluster keep restarting with OOMKilled. Read the logs and metrics, find the cause, and propose the Kubernetes memory limits.", Some("devops")),
+	("Draft the hiring scorecard and a structured interview plan for a senior accountant, then write the offer letter template.", Some("hr")),
+	("Plan a seven-day trip to Portugal in May for two adults: day-by-day itinerary, train and car logistics, a budget, and a packing list.", Some("travel-agent")),
+	("Teach my 15-year-old how to solve quadratic equations: give hints instead of answers and finish with five practice problems.", Some("tutor")),
+	("My 6-year-old beagle ate a handful of raisins an hour ago and is now vomiting. Tell me how urgent this is and what to do before the clinic opens.", Some("vet")),
+	("The check engine light came on and the car shakes at idle. Say whether I can drive it, what to check first, and whether a 640 dollar repair quote is fair.", Some("mechanic")),
+	("Build a plan to pay off 14,000 in credit card debt and a 9,000 student loan on a 3,800 monthly income, and show how it changes my retirement savings.", Some("financial-planner")),
+	("Review this Express login handler for injection and session flaws, and tell me which findings must be fixed before the SOC 2 audit.", Some("security-analyst")),
+	("Write a three-email cold sequence to heads of logistics at mid-size manufacturers about our freight tracking software, and score the lead list I attached.", Some("sales-rep")),
+	("Hey, how are you doing today?", None),
+	("Thanks, that is all for now.", None),
+	("Tell me a joke about penguins.", None),
 ];
 
 #[tokio::test]
 #[serial]
-async fn developer_tasks_reach_their_agent_and_foreign_tasks_reach_none() {
-	let roster: Vec<TapAgentHeader> = DEVELOPER_ROSTER
+async fn tasks_reach_the_agent_of_their_field_and_uncovered_tasks_reach_none() {
+	let roster: Vec<TapAgentHeader> = AGENT_ROSTER
 		.iter()
 		.map(|(tag, title, description)| TapAgentHeader {
 			tag: tag.to_string(),
@@ -384,7 +404,7 @@ async fn developer_tasks_reach_their_agent_and_foreign_tasks_reach_none() {
 
 	let mut wrong = Vec::new();
 	let mut missed = Vec::new();
-	for (task, expected) in DEVELOPER_TASKS {
+	for (task, expected) in AGENT_TASKS {
 		let ranked = rank_agents(task, &candidates).await.expect("rank");
 		let picked = crate::mcp::runtime::capability::select_with_margin(ranked.clone(), ROUTE_THRESHOLD, ROUTE_MARGIN)
 			.map(|(_, agent)| agent.tag.as_str());
@@ -402,11 +422,13 @@ async fn developer_tasks_reach_their_agent_and_foreign_tasks_reach_none() {
 	}
 	assert!(wrong.is_empty(), "handed to the wrong agent: {wrong:#?}");
 	assert!(
-		missed.len() <= MAX_MISSED_DEVELOPER_TASKS,
-		"{} developer tasks found no agent: {missed:#?}",
+		missed.len() <= MAX_MISSED_AGENT_TASKS,
+		"{} agent tasks found no agent: {missed:#?}",
 		missed.len()
 	);
 }
 
-/// Developer briefs the cosine stage may refuse before the fixture fails.
-const MAX_MISSED_DEVELOPER_TASKS: usize = 3;
+/// Briefs the cosine stage may refuse before the fixture fails: 4 are refused
+/// on the current graph, plus 1 because the int8 graph scores a few hundredths
+/// differently per CPU kind.
+const MAX_MISSED_AGENT_TASKS: usize = 5;

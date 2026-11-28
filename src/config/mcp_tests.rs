@@ -128,11 +128,26 @@ fn auto_bind_is_skipped_in_serialization_when_absent() {
 }
 
 #[test]
-fn auto_bind_matches_exactly_not_by_prefix() {
+fn auto_bind_entry_with_a_variant_binds_that_one_agent() {
 	let server = bound(McpServerConfig::builtin("dev-only", 30, vec![]), &["developer:general"]);
 	assert!(!server.auto_binds_to("developer"));
 	assert!(server.auto_binds_to("developer:general"));
+	assert!(!server.auto_binds_to("developer:rust"));
 	assert!(!server.auto_binds_to("general"));
+}
+
+#[test]
+fn auto_bind_entry_naming_a_namespace_binds_the_base_agent_and_every_variant() {
+	let server = bound(McpServerConfig::builtin("dev-only", 30, vec![]), &["developer"]);
+	assert!(server.auto_binds_to("developer"));
+	assert!(server.auto_binds_to("developer:rust"));
+	assert!(server.auto_binds_to("developer:default"));
+	assert!(!server.auto_binds_to("developer-lite"));
+	assert!(!server.auto_binds_to("developer-lite:rust"));
+	let none = McpServerConfig::builtin("free", 30, vec![]);
+	assert!(!none.auto_binds_to("developer"), "no auto_bind binds nothing");
+	let empty = bound(McpServerConfig::builtin("empty", 30, vec![]), &[]);
+	assert!(!empty.auto_binds_to("developer"), "an empty list binds nothing");
 }
 
 #[test]

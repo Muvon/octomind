@@ -100,7 +100,7 @@ fn file_ref(path: &str, args: &serde_json::Value) -> String {
 	}
 }
 
-/// Line number of a `start`/`end` value: an integer or a line id (`12:a3`).
+/// Line number of a `start`/`end` value: an integer or a line id (`12:xx`).
 /// A negative integer counts from the file end, so it names no fixed line.
 fn line_number(value: &serde_json::Value) -> Option<u64> {
 	match value {

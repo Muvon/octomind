@@ -1023,16 +1023,18 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 		);
 	}
 
+	// Before the main file too: a failure here leaves the config at its old version, so the whole
+	// upgrade runs again on the next start.
+	if migration.from_version < RETIRED_AGENT_TAGS_VERSION {
+		rewrite_retired_agent_tags_in_sibling_files(config_path)?;
+	}
+
 	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
 
 	eprintln!(
 		"✅ Config upgraded successfully! Backup saved to: {}",
 		backup_path.display()
 	);
-
-	if migration.from_version < RETIRED_AGENT_TAGS_VERSION {
-		rewrite_retired_agent_tags_in_sibling_files(config_path)?;
-	}
 
 	Ok(true)
 }

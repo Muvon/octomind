@@ -1037,6 +1037,33 @@ async fn run_validators_end_to_end_reports_failures_and_skips_bad_skills() {
 
 #[tokio::test]
 #[serial]
+async fn the_validator_of_a_shared_name_is_the_one_the_agent_loaded() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	// A shared `dup-lint` for developers and one owned by `doctor`, with different validators.
+	let shared = tap.join("skills").join("dup-lint");
+	write_file(&shared.join("SKILL.md"), &skill_md("dup-lint", "developer", &[]));
+	write_validate_script(&shared, "#!/bin/sh\necho shared >&2\nexit 1\n");
+	let owned = install_owned_skill("doctor", "dup-lint", &[]);
+	write_validate_script(&owned, "#!/bin/sh\necho owned >&2\nexit 1\n");
+
+	for (role, expected) in [("doctor:blood", "owned\n"), ("developer", "shared\n")] {
+		let sid = format!("__skillauto_dup_{}", role.replace(':', "_"));
+		crate::session::context::set_session_role(&sid, role);
+		with_session_id(sid.clone(), async {
+			add_active_skill(&sid, "dup-lint");
+			let failures = run_validators("assistant output", &std::env::temp_dir()).await;
+			assert_eq!(failures, vec![("dup-lint".to_string(), expected.to_string())], "{role}");
+		})
+		.await;
+		cleanup_session(&sid);
+		get_retry_tracker().write().expect("retry lock").clear();
+	}
+}
+
+#[tokio::test]
+#[serial]
 async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _guard = DataDirGuard::new();

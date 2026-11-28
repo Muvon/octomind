@@ -286,7 +286,7 @@ When an agent calls `tap(action="run", prompt=…)`, the runtime picks the targe
 # Uses: *
 ```
 
-In the community tap only `assistant` carries the header. An agent that reaches no other agent can still start copies of itself with `tap` (see [From within a session](#from-within-a-session--the-tap-orchestration-tool)).
+In the community tap two agents carry the header: `assistant` (`# Uses: *`) and `writer` (`# Uses: seo`). An agent that reaches no other agent can still start copies of itself with `tap` (see [From within a session](#from-within-a-session--the-tap-orchestration-tool)).
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 

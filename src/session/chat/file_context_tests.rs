@@ -63,7 +63,7 @@ fn test_extract_file_refs_from_args() {
 	assert!(out.is_empty());
 
 	// view with both line ends → ranged ref; a line id counts by its number
-	extract_file_refs_from_args("view", &json!({"path": "a.rs", "start": 10, "end": "20:a3"}), &mut out);
+	extract_file_refs_from_args("view", &json!({"path": "a.rs", "start": 10, "end": "20:ab"}), &mut out);
 	assert_eq!(out, vec!["a.rs:10:20"]);
 
 	// view without both ends, or with an end counted from the file end → whole file
@@ -76,7 +76,7 @@ fn test_extract_file_refs_from_args() {
 	out.clear();
 	extract_file_refs_from_args(
 		"view",
-		&json!({"path": "x.rs", "ranges": [{"start": 1, "end": 4}, {"start": "80:3f", "end": 95}]}),
+		&json!({"path": "x.rs", "ranges": [{"start": 1, "end": 4}, {"start": "80:cd", "end": 95}]}),
 		&mut out,
 	);
 	assert_eq!(out, vec!["x.rs:1:4", "x.rs:80:95"]);
@@ -92,7 +92,7 @@ fn test_extract_file_refs_from_args() {
 		"batch_edit",
 		&json!({"path": "e.rs", "operations": [
 			{"operation": "view", "path": "s.rs", "start": 1, "end": 4},
-			{"operation": "insert", "start": "7:0c", "content": "x"}
+			{"operation": "insert", "start": "7:ef", "content": "x"}
 		]}),
 		&mut out,
 	);
@@ -132,9 +132,10 @@ fn test_generate_file_context_content() {
 
 	let content = generate_file_context_content(&[(path.clone(), 1, 2)]);
 	assert!(content.contains("<content path="));
-	assert!(content.contains("1:8b line 1"));
-	assert!(content.contains("2:c8 line 2"));
-	assert!(!content.contains("3:5f line 3"));
+	use octolib::utils::line_hash::format_line;
+	assert!(content.contains(&format_line(1, "line 1")));
+	assert!(content.contains(&format_line(2, "line 2")));
+	assert!(!content.contains(&format_line(3, "line 3")));
 
 	// Invalid range (start 0) is skipped entirely
 	assert_eq!(

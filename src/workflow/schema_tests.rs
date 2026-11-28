@@ -407,6 +407,25 @@ fn a_non_boolean_readonly_is_an_error_naming_the_step() {
 }
 
 #[test]
+fn readonly_on_a_block_step_is_an_error_naming_the_step_and_the_sub_steps() {
+	for flag in ["parallel", "loop", "conditional"] {
+		let extra = if flag == "conditional" {
+			"condition = { contains = \"x\" }\n"
+		} else {
+			""
+		};
+		let text = format!(
+			"name = \"wf\"\n\n[[steps]]\nname = \"block\"\n{flag} = true\nreadonly = true\n{extra}\n  [[steps.run]]\n  name = \"sub\"\n  role = \"developer\"\n  prompt = \"p\"\n"
+		);
+		let err = toml::from_str::<WorkflowDef>(&text).unwrap_err().to_string();
+		assert!(
+			err.contains("step 'block'") && err.contains("each of its sub-steps"),
+			"{flag}: {err}"
+		);
+	}
+}
+
+#[test]
 fn readonly_applies_to_the_sub_steps_of_every_block_kind() {
 	for flag in ["parallel", "loop", "conditional"] {
 		let extra = if flag == "conditional" {

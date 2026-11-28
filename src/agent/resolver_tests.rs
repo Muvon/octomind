@@ -244,6 +244,46 @@ async fn flat_name_resolves_to_its_tap_agent() {
 
 #[tokio::test]
 #[serial]
+async fn the_default_variant_is_the_base_agent_for_the_local_role_check_and_the_taps_key() {
+	let guard = ResolverDataDir::new();
+	install_default_tap_manifest(guard.path(), "ztest", MANIFEST_HEADER);
+
+	// A local role named like the base agent wins over the tap agent, however it is spelled.
+	let mut config = base_config();
+	config.roles.push(config.roles[0].clone());
+	config.roles.last_mut().unwrap().name = "ztest".to_string();
+	let (_, role) = resolve_config_and_role(Some("ztest:default"), &config, None)
+		.await
+		.expect("local role resolves");
+	assert_eq!(role, "ztest");
+	assert_eq!(config.roles.iter().filter(|r| r.name == "ztest").count(), 1);
+
+	// A `[taps]` key under the base name applies to `<ns>:default`.
+	let mut config = base_config();
+	config.taps.insert("ztest".to_string(), "ollama:base-model".to_string());
+	let (merged, role) = resolve_config_and_role(Some("ztest:default"), &config, None)
+		.await
+		.expect("agent resolves");
+	assert_eq!(role, "ztest");
+	assert_eq!(merged.model_profile.model, "ollama:base-model");
+}
+
+#[tokio::test]
+#[serial]
+async fn a_tag_that_is_not_valid_is_refused_before_any_path_is_built_from_it() {
+	let _guard = ResolverDataDir::new();
+	for bad in ["../../x", "a/b", "dev:../x", "dev@../..:x", "Dev"] {
+		let err = resolve_config_and_role(Some(bad), &base_config(), None)
+			.await
+			.expect_err(bad)
+			.to_string();
+		assert!(err.contains("Invalid agent tag"), "{bad}: {err}");
+		assert!(!err.contains("agents/"), "{bad} leaked a path: {err}");
+	}
+}
+
+#[tokio::test]
+#[serial]
 async fn a_variant_tag_resolves_to_its_own_manifest_and_role() {
 	let guard = ResolverDataDir::new();
 	install_default_tap_manifest(guard.path(), "ztest", MANIFEST_HEADER);

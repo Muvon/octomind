@@ -237,6 +237,12 @@ impl<'de> Deserialize<'de> for Step {
 		let conditional = table.remove("conditional").and_then(|v| v.as_bool()).unwrap_or(false);
 
 		let flags = [parallel, loop_, conditional].iter().filter(|b| **b).count();
+		if flags > 0 && table.contains_key("readonly") {
+			return Err(serde::de::Error::custom(format!(
+				"step '{}': readonly has no effect on a parallel, loop or conditional step; set `readonly` on each of its sub-steps",
+				table.get("name").and_then(toml::Value::as_str).unwrap_or("<unnamed>")
+			)));
+		}
 		if flags > 1 {
 			return Err(serde::de::Error::custom(
 				"step may set at most one of: parallel, loop, conditional",

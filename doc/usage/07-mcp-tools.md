@@ -262,7 +262,7 @@ Replace the sample session IDs with IDs returned by `run` or `list`.
 #### Agent matching
 
 The candidates are the agents the caller may reach. A base agent with the `orchestration` capability reaches the variants of its own namespace. Its `# Uses:` header adds agents: a comma-separated list of `<namespace>`, `<namespace>:<variant>` or `*` for every other
-agent, variants included. The header is read only on a base agent; a variant reaches only copies of itself. An agent with the header declares the `orchestration` capability; in the community tap only `assistant` carries it.  A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
+agent, variants included. The header is read only on a base agent; a variant reaches only copies of itself. An agent with the header declares the `orchestration` capability; in the community tap `assistant` and `writer` carry it.  A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
 

@@ -139,10 +139,15 @@ impl McpServerConfig {
 		}
 	}
 
-	/// Check if this server auto-binds to a specific role
+	/// Check if this server auto-binds to a role. An entry naming a namespace binds the base agent and
+	/// every variant; an entry with `:` binds that one agent (the rule of the guardrail role filters).
 	pub fn auto_binds_to(&self, role_name: &str) -> bool {
 		self.auto_bind_roles()
-			.map(|roles| roles.iter().any(|r| r == role_name))
+			.map(|roles| {
+				roles
+					.iter()
+					.any(|entry| crate::config::guardrails::role_matches(std::slice::from_ref(entry), role_name))
+			})
 			.unwrap_or(false)
 	}
 

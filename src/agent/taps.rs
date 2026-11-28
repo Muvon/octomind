@@ -36,7 +36,7 @@
 //! the user follow their default branch.
 
 use crate::agent::registry::{
-	canonical_tag, manifest_parts, namespace_of, parse_agent_header, AgentHeader, DEFAULT_VARIANT,
+	canonical_tag, is_valid_agent_name, manifest_parts, namespace_of, parse_agent_header, AgentHeader, DEFAULT_VARIANT,
 };
 use crate::config::registry::RegistryConfig;
 use anyhow::{Context, Result};
@@ -213,13 +213,15 @@ impl Tap {
 	/// Where the manifest of the agent `tag` lives: `agents/<ns>/default.toml` for `<ns>`,
 	/// `agents/<ns>/<variant>.toml` for `<ns>:<variant>`.
 	pub fn agent_manifest(&self, tag: &str) -> Result<PathBuf> {
-		let (namespace, variant) = manifest_parts(canonical_tag(tag));
+		let (tag, _) = crate::agent::registry::parse_tag(tag)?;
+		let (namespace, variant) = manifest_parts(&tag);
 		Ok(self.agents_dir()?.join(namespace).join(format!("{variant}.toml")))
 	}
 
 	/// The old flat manifest file, `<ns>.toml` directly in `agents/`. It is no longer read; it
 	/// is only looked up to tell a user whose tap still has it where the file must move to.
 	fn flat_agent_manifest(&self, namespace: &str) -> Result<PathBuf> {
+		crate::agent::registry::parse_tag(namespace)?;
 		Ok(self.agents_dir()?.join(namespace).with_extension("toml"))
 	}
 
@@ -255,6 +257,10 @@ impl Tap {
 				let Some(variant) = path.file_stem().and_then(|stem| stem.to_str()) else {
 					continue;
 				};
+				// A name `octomind run` would reject is not offered to routing or completion.
+				if !is_valid_agent_name(&namespace) || !is_valid_agent_name(variant) {
+					continue;
+				}
 				let tag = variant_tag(&namespace, variant);
 				manifests.push((tag, path));
 			}
@@ -272,11 +278,13 @@ impl Tap {
 			.into_iter()
 			.map(|dir| TapSkillDir { owner: None, dir })
 			.collect();
+		// Sorted by tag, `ab:x` can fall behind `ab-c`, so a namespace must be sorted to dedup.
 		let mut namespaces: Vec<String> = self
 			.agent_manifests()?
 			.iter()
 			.map(|(tag, _)| namespace_of(tag).to_string())
 			.collect();
+		namespaces.sort();
 		namespaces.dedup();
 		for namespace in namespaces {
 			let owned = sorted_subdirs(&self.agents_dir()?.join(&namespace).join(SKILLS_DIR));

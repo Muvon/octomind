@@ -156,7 +156,7 @@ fn the_first_input_is_bounded_by_when_the_session_opened() {
 
 #[test]
 fn diff_lines_counts_only_rows_of_the_agents_own_edits() {
-	let edit = "...\n-10:87 (1 line)\n-12:ab..14:cd (3 lines)\n+10:af version = 20\n11:c5 \n";
+	let edit = "...\n-10:xy (1 line)\n-12:ab..14:cd (3 lines)\n+10:af version = 20\n11:cd \n";
 	assert_eq!(diff_lines(edit), 3);
 	// A `git diff` the agent ran to read existing changes is not its writing.
 	let unified = "--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n+12:30 standup\n context";

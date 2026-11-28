@@ -14,6 +14,7 @@
 
 use super::*;
 use crate::utils::file_parser::{FileContent, LineRange};
+use octolib::utils::line_hash::line_id;
 use std::collections::HashMap;
 
 fn create_test_file_content(
@@ -90,17 +91,16 @@ fn test_expand_context_blocks() {
 	);
 
 	// Check for line content with more flexible matching (handle different line endings)
-	let has_line1 = result.contains("1:8b line 1") || result.contains("1:8b line 1\r");
-	let has_line2 = result.contains("2:c8 line 2") || result.contains("2:c8 line 2\r");
-	let has_line3 = result.contains("3:5f line 3") || result.contains("3:5f line 3\r");
+	let line1 = format_line(1, "line 1");
+	let line2 = format_line(2, "line 2");
+	let line3 = format_line(3, "line 3");
+	let has_line1 = result.contains(&line1);
+	let has_line2 = result.contains(&line2);
+	let has_line3 = result.contains(&line3);
 
-	assert!(has_line1, "Result should contain '1:8b line 1'. Result: {}", result);
-	assert!(has_line2, "Result should contain '2:c8 line 2'. Result: {}", result);
-	assert!(
-		!has_line3,
-		"Result should not contain '3:5f line 3'. Result: {}",
-		result
-	);
+	assert!(has_line1, "Result should contain '{line1}'. Result: {}", result);
+	assert!(has_line2, "Result should contain '{line2}'. Result: {}", result);
+	assert!(!has_line3, "Result should not contain '{line3}'. Result: {}", result);
 
 	// Original context tags should be replaced
 	assert!(
@@ -126,29 +126,30 @@ fn test_expand_context_blocks() {
 	assert!(result_multi.contains("Text3"));
 
 	// Check for line content with flexible matching
-	let multi_has_line1 = result_multi.contains("1:8b line 1") || result_multi.contains("1:8b line 1\r");
-	let multi_has_line2 = result_multi.contains("2:c8 line 2") || result_multi.contains("2:c8 line 2\r");
-	let multi_has_line3 = result_multi.contains("3:5f line 3") || result_multi.contains("3:5f line 3\r");
-	let multi_has_line4 = result_multi.contains("4:7d line 4") || result_multi.contains("4:7d line 4\r");
+	let line4 = format_line(4, "line 4");
+	let multi_has_line1 = result_multi.contains(&line1);
+	let multi_has_line2 = result_multi.contains(&line2);
+	let multi_has_line3 = result_multi.contains(&line3);
+	let multi_has_line4 = result_multi.contains(&line4);
 
 	assert!(
 		multi_has_line1,
-		"Multi result should contain '1:8b line 1'. Result: {}",
+		"Multi result should contain '{line1}'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line3,
-		"Multi result should contain '3:5f line 3'. Result: {}",
+		"Multi result should contain '{line3}'. Result: {}",
 		result_multi
 	);
 	assert!(
 		multi_has_line4,
-		"Multi result should contain '4:7d line 4'. Result: {}",
+		"Multi result should contain '{line4}'. Result: {}",
 		result_multi
 	);
 	assert!(
 		!multi_has_line2,
-		"Multi result should not contain '2:c8 line 2'. Result: {}",
+		"Multi result should not contain '{line2}'. Result: {}",
 		result_multi
 	);
 
@@ -188,8 +189,8 @@ fn test_expand_at_file_refs() {
 	assert!(result.starts_with(&input));
 	assert!(result.contains("FILE CONTEXT:"));
 	assert!(result.contains(&format!("<content path=\"{}\" lines=\"1:2\">", temp_path)));
-	assert!(result.contains("1:8b line 1"));
-	assert!(result.contains("2:c8 line 2"));
+	assert!(result.contains(&format_line(1, "line 1")));
+	assert!(result.contains(&format_line(2, "line 2")));
 
 	// Nonexistent path and bare @ are left untouched
 	let untouched = "see @nonexistent/file.rs and a lone @ here";
@@ -370,16 +371,29 @@ fn numbered_file_injections_share_physical_hashes_before_xml_escaping() {
 		let at_file = expand_at_file_refs(&at_input);
 		let context = expand_context_blocks(&format!("<context>{path}:2:4</context>"));
 		let compressed = crate::session::chat::file_context::generate_file_context_content(&[(path.to_string(), 2, 4)]);
-		let expected = "2:0c \t  let value = &quot;&lt;Δ&amp;&gt;&quot;;\n3:c5 \n4:2f \tkeep();\n";
+		let value_line = "\t  let value = \"<Δ&>\";";
+		let heading = format_line(1, "# Memory");
+		let expected = format!(
+			"{} \t  let value = &quot;&lt;Δ&amp;&gt;&quot;;\n{}\n{} \tkeep();\n",
+			line_id(2, "\t  let value = \"<Δ&>\";"),
+			format_line(3, ""),
+			line_id(4, "\tkeep();")
+		);
 		for rendered in [&at_file, &context, &compressed] {
-			assert!(rendered.contains(expected), "{rendered}");
+			assert!(rendered.contains(&expected), "{rendered}");
 			assert!(!rendered.contains("2: \t  let value"));
 		}
 		assert!(at_file.starts_with(&at_input));
-		assert!(at_file.contains("1:90 # Memory"));
-		assert!(!context.contains("1:90 # Memory"));
+		assert!(at_file.contains(&heading));
+		assert!(!context.contains(&heading));
 		let file = crate::utils::file_parser::read_file_lines(path, &LineRange::new(2, 4).unwrap());
 		let text = render_files_as_text(&HashMap::from([(path.to_string(), vec![file])]));
-		assert!(text.contains("2:0c \t  let value = \"<Δ&>\";\n3:c5 \n4:2f \tkeep();"));
+		let rows = [
+			format_line(2, value_line),
+			format_line(3, ""),
+			format_line(4, "\tkeep();"),
+		]
+		.join("\n");
+		assert!(text.contains(&rows));
 	}
 }

@@ -23,7 +23,7 @@
 //! references and calibration: doc/usage/05-sessions.md ("Human Time and Energy").
 
 use crate::config::TimingConfig;
-use octolib::utils::line_hash::parse_line;
+use octolib::utils::line_hash::{parse_line, parse_line_id};
 use serde::{Deserialize, Serialize};
 
 /// Prose reading speed, words/min (Brysbaert 2019, non-fiction silent reading).
@@ -304,7 +304,7 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 }
 
 /// Lines the agent wrote, from the rows a line-id editor returns for its edit:
-/// `+12:ab …` for a written line, `-12:ab (3 lines)` for a removed range.
+/// `+12:xx …` for a written line, `-12:xx (3 lines)` for a removed range.
 /// Unified diffs in tool output (`git diff` in a shell) are the agent reading
 /// existing changes, not writing them, so they count 0 — as do `- item` bullets.
 pub fn diff_lines(content: &str) -> usize {
@@ -316,16 +316,14 @@ fn is_line_id_row(line: &str) -> bool {
 	if let Some(written) = line.strip_prefix('+') {
 		return parse_line(written).is_some();
 	}
-	let Some((number, rest)) = line.strip_prefix('-').and_then(|rest| rest.split_once(':')) else {
+	let Some(removed) = line.strip_prefix('-') else {
 		return false;
 	};
-	let (Some(hash), Some(tail)) = (rest.get(..2), rest.get(2..)) else {
+	let Some(id_end) = removed.find([' ', '.']) else {
 		return false;
 	};
-	(tail.starts_with(" (") || tail.starts_with(".."))
-		&& !number.is_empty()
-		&& number.bytes().all(|b| b.is_ascii_digit())
-		&& hash.bytes().all(|b| b.is_ascii_hexdigit())
+	let (id, tail) = removed.split_at(id_end);
+	(tail.starts_with(" (") || tail.starts_with("..")) && parse_line_id(id).is_some()
 }
 
 #[cfg(test)]

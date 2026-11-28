@@ -143,9 +143,9 @@ fn test_read_file_lines() {
 
 	assert!(content.error.is_none());
 	assert_eq!(content.lines.len(), 3);
-	assert_eq!(content.lines[0], "2:8d line2");
-	assert_eq!(content.lines[1], "3:ff line3");
-	assert_eq!(content.lines[2], "4:15 line4");
+	assert_eq!(content.lines[0], format_line(2, "line2"));
+	assert_eq!(content.lines[1], format_line(3, "line3"));
+	assert_eq!(content.lines[2], format_line(4, "line4"));
 }
 
 #[test]
@@ -324,8 +324,8 @@ fn test_read_file_lines_range_beyond_eof() {
 	// Reading past EOF just stops at the last line — not an error
 	assert!(content.error.is_none());
 	assert_eq!(content.lines.len(), 2);
-	assert_eq!(content.lines[0], "2:8d line2");
-	assert_eq!(content.lines[1], "3:ff line3");
+	assert_eq!(content.lines[0], format_line(2, "line2"));
+	assert_eq!(content.lines[1], format_line(3, "line3"));
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn test_read_file_lines_single_line_range() {
 	let content = read_file_lines(&file_path, &LineRange::new(2, 2).unwrap());
 
 	assert!(content.error.is_none());
-	assert_eq!(content.lines, vec!["2:8d line2".to_string()]);
+	assert_eq!(content.lines, vec![format_line(2, "line2")]);
 }
 
 #[test]
@@ -357,11 +357,11 @@ fn test_read_multiple_files_missing_file_and_multiple_ranges() {
 	assert_eq!(results[&existing].len(), 2);
 	assert_eq!(
 		results[&existing][0].lines,
-		vec!["1:26 line1".to_string(), "2:8d line2".to_string()]
+		vec![format_line(1, "line1"), format_line(2, "line2")]
 	);
 	assert_eq!(
 		results[&existing][1].lines,
-		vec!["3:ff line3".to_string(), "4:15 line4".to_string()]
+		vec![format_line(3, "line3"), format_line(4, "line4")]
 	);
 
 	let missing = &results["does_not_exist.txt"];
@@ -385,7 +385,11 @@ fn read_file_lines_preserves_physical_ids_across_line_endings() {
 		assert!(content.error.is_none());
 		assert_eq!(
 			content.lines,
-			["2:0c \t  let value = \"<Δ&>\";", "3:c5 ", "4:2f \tkeep();"]
+			[
+				format_line(2, "\t  let value = \"<Δ&>\";"),
+				format_line(3, ""),
+				format_line(4, "\tkeep();")
+			]
 		);
 	}
 }

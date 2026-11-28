@@ -465,6 +465,31 @@ fn a_v31_config_without_the_supervisor_tables_carries_nothing() {
 	assert!(upgraded.carried_supervisor_settings.is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_failed_sibling_rewrite_leaves_the_config_at_its_old_version_so_the_upgrade_runs_again() {
+	use std::os::unix::fs::PermissionsExt;
+	let old_config = "version = 34\ndefault = \"content:editor\"\n";
+	let (path, dir) = temp_config(old_config);
+	let sibling = dir.path().join("mcp-extra.toml");
+	fs::write(&sibling, "auto_bind = [\"content:editor\"]\n").unwrap();
+	fs::set_permissions(&sibling, fs::Permissions::from_mode(0o444)).unwrap();
+	if fs::OpenOptions::new().write(true).open(&sibling).is_ok() {
+		return; // running as root: the file cannot be made unwritable
+	}
+
+	assert!(check_and_upgrade_config(&path).is_err());
+	assert_eq!(fs::read_to_string(&path).unwrap(), old_config, "main file untouched");
+
+	fs::set_permissions(&sibling, fs::Permissions::from_mode(0o644)).unwrap();
+	assert!(check_and_upgrade_config(&path).unwrap());
+	assert_eq!(
+		parse(&fs::read_to_string(&path).unwrap())["default"].as_str(),
+		Some("writer")
+	);
+	assert!(fs::read_to_string(&sibling).unwrap().contains("writer"));
+}
+
 #[test]
 fn a_config_already_at_the_current_version_gives_no_upgrade_and_no_carried_settings() {
 	let stamped = format!("version = {CURRENT_CONFIG_VERSION}\n\n[supervisor]\nenabled = true\n");

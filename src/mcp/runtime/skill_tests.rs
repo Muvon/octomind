@@ -836,6 +836,64 @@ mod tests {
 
 	#[test]
 	#[serial_test::serial]
+	fn test_a_name_shared_by_skills_resolves_by_owner_then_domains_then_any() {
+		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		let dir = tempfile::tempdir().unwrap();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+
+		let tap = dir.path().join("taps").join("muvon").join("octomind-tap");
+		let skill = |path: std::path::PathBuf, domains: &str, body: &str| {
+			fs::create_dir_all(&path).unwrap();
+			fs::write(
+				path.join("SKILL.md"),
+				format!("---\nname: skilltest-dup\ndescription: Dup\ndomains: {domains}\n---\n\n{body}\n"),
+			)
+			.unwrap();
+		};
+		skill(tap.join("skills").join("skilltest-dup"), "lawyer", "SHARED-LAWYER");
+		for owner in ["alpha", "doctor"] {
+			fs::create_dir_all(tap.join("agents").join(owner)).unwrap();
+			fs::write(tap.join("agents").join(owner).join("default.toml"), "").unwrap();
+		}
+		skill(
+			tap.join("agents").join("alpha").join("skills").join("skilltest-dup"),
+			"",
+			"OWNED-ALPHA",
+		);
+		skill(
+			tap.join("agents").join("doctor").join("skills").join("skilltest-dup"),
+			"",
+			"OWNED-DOCTOR",
+		);
+
+		let resolve = |role: Option<&str>| {
+			let sid = "__skilltest_dup".to_string();
+			if let Some(role) = role {
+				crate::session::context::set_session_role(&sid, role);
+			}
+			let found = crate::session::context::with_session_id_sync(sid.clone(), || {
+				crate::mcp::runtime::skill::find_skill_by_name_pub("skilltest-dup")
+					.expect("resolves")
+					.2
+			});
+			crate::session::context::cleanup_session(&sid);
+			found
+		};
+		assert!(
+			resolve(Some("doctor:blood")).contains("OWNED-DOCTOR"),
+			"the owner namespace first"
+		);
+		assert!(
+			resolve(Some("lawyer")).contains("SHARED-LAWYER"),
+			"then a shared skill that admits it"
+		);
+		// A manual use by an agent that neither owns nor is admitted still finds one: the first.
+		assert!(resolve(Some("writer")).contains("SHARED-LAWYER"));
+		assert!(resolve(None).contains("SHARED-LAWYER"));
+	}
+
+	#[test]
+	#[serial_test::serial]
 	fn test_tap_skills_are_listed_shared_first_then_agents_by_name() {
 		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
 		let dir = tempfile::tempdir().unwrap();

@@ -867,12 +867,6 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 	};
 	let max_retries = skills_config.max_retries;
 
-	// Find validate scripts for active skills
-	let taps = match crate::agent::taps::get_taps() {
-		Ok(t) => t,
-		Err(_) => return Vec::new(),
-	};
-
 	let mut tasks = Vec::new();
 	let retry_tracker = get_retry_tracker();
 	// Names of skills whose validators we actually scheduled — used for the
@@ -895,35 +889,24 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 			}
 		}
 
-		// Find the skill's validate script across taps
-		for tap in &taps {
-			let Some(skill) = tap
-				.skill_dirs()
-				.unwrap_or_default()
-				.into_iter()
-				.find(|skill| skill.dir.file_name().and_then(|n| n.to_str()) == Some(skill_name.as_str()))
-			else {
-				continue;
-			};
-			let skill_dir = skill.dir;
-
-			let validate_script = skill_dir.join("validate");
-			if !validate_script.exists() {
-				break; // skill found but no validate script
-			}
-
-			let content = content.to_string();
-			let workdir = workdir.to_path_buf();
-			let name = skill_name.clone();
-			scheduled_names.push(skill_name.clone());
-
-			tasks.push(tokio::spawn(async move {
-				let result = run_validate_script(&validate_script, &content, &workdir, timeout).await;
-				(name, result)
-			}));
-
-			break; // found the skill, stop searching taps
+		// The validate script of the skill that was loaded: the same pick as the loader makes
+		let Some((_, skill_dir, _)) = super::skill::find_tap_skill(skill_name) else {
+			continue;
+		};
+		let validate_script = skill_dir.join("validate");
+		if !validate_script.exists() {
+			continue; // skill found but no validate script
 		}
+
+		let content = content.to_string();
+		let workdir = workdir.to_path_buf();
+		let name = skill_name.clone();
+		scheduled_names.push(skill_name.clone());
+
+		tasks.push(tokio::spawn(async move {
+			let result = run_validate_script(&validate_script, &content, &workdir, timeout).await;
+			(name, result)
+		}));
 	}
 
 	// Nothing to run — skip the phase overhead entirely.

@@ -783,7 +783,12 @@ pub fn find_skill_by_name_pub(name: &str) -> Option<(SkillMeta, PathBuf, String)
 	find_skill_by_name(name)
 }
 
-fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
+/// The tap skill called `name` that the session's agent gets, when several share the name.
+/// Order: the skill owned by the agent's namespace, then a shared skill whose `domains:` admit
+/// the agent (or that has none, so is manual-only), then any other: only a manual `use` or a
+/// preload gets that far, as auto-activation names a skill the pool admitted for the agent.
+/// Within one tier the first tap wins.
+pub(crate) fn find_tap_skill(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,
 		Err(e) => {
@@ -791,25 +796,48 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 			return None;
 		}
 	};
+	let namespace = crate::session::context::current_session_domain();
 
-	// 1. Tap skills (highest priority): an owned skill and a shared one are both addressed by name
+	let mut best: Option<(u8, (SkillMeta, PathBuf, String))> = None;
 	for tap in &taps {
 		for TapSkillDir { owner, dir: skill_dir } in tap.skill_dirs().unwrap_or_default() {
 			if skill_dir.file_name().and_then(|n| n.to_str()) != Some(name) {
 				continue;
 			}
 			let skill_md = skill_dir.join("SKILL.md");
-			let content = match std::fs::read_to_string(&skill_md) {
-				Ok(c) => c,
-				Err(_) => continue,
+			let Ok(content) = std::fs::read_to_string(&skill_md) else {
+				continue;
 			};
-
-			if let Some(meta) = parse_tap_skill_meta(&content, owner.as_deref()) {
-				if meta.name == name {
-					return Some((meta, skill_dir, content));
+			let Some(meta) = parse_tap_skill_meta(&content, owner.as_deref()) else {
+				continue;
+			};
+			if meta.name != name {
+				continue;
+			}
+			let tier = match (&owner, &namespace) {
+				(Some(owner), Some(namespace)) if owner == namespace => 0,
+				(None, Some(namespace))
+					if meta.domains.is_empty() || meta.domains.iter().any(|d| d == namespace || d == "*") =>
+				{
+					1
 				}
+				_ => 2,
+			};
+			if tier == 0 {
+				return Some((meta, skill_dir, content));
+			}
+			if best.as_ref().is_none_or(|(best_tier, _)| tier < *best_tier) {
+				best = Some((tier, (meta, skill_dir, content)));
 			}
 		}
+	}
+	best.map(|(_, skill)| skill)
+}
+
+fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
+	// 1. Tap skills (highest priority): an owned skill and a shared one are both addressed by name
+	if let Some(skill) = find_tap_skill(name) {
+		return Some(skill);
 	}
 
 	// 2. Shared agent skill directories, project before global

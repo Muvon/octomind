@@ -201,6 +201,78 @@ fn a_real_manifest_in_an_earlier_tap_is_not_redirected_by_a_later_alias() {
 
 #[serial]
 #[test]
+fn agent_manifests_leave_out_names_a_run_would_reject() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	let root = tap.local_dir().expect("local dir");
+	for file in [
+		"agents/dev/default.toml",
+		"agents/dev/my_agent.toml",
+		"agents/dev/Rust.toml",
+		"agents/dev/ok-1.toml",
+		"agents/Foo/default.toml",
+		"agents/1st/default.toml",
+	] {
+		fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+		fs::write(root.join(file), "").unwrap();
+	}
+	let tags: Vec<String> = tap.agent_manifests().unwrap().into_iter().map(|(tag, _)| tag).collect();
+	assert_eq!(tags, ["dev", "dev:ok-1"]);
+}
+
+#[serial]
+#[test]
+fn a_path_is_never_built_from_an_invalid_tag() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	for bad in ["../../x", "a/b", "dev:../x", "dev@../x", ""] {
+		assert!(tap.agent_manifest(bad).is_err(), "{bad}");
+		let err = explain_missing_agent(bad).unwrap_err().to_string();
+		assert!(err.contains("Invalid agent tag"), "{bad}: {err}");
+	}
+	assert!(tap
+		.agent_manifest("dev:rust@1.0")
+		.unwrap()
+		.ends_with("agents/dev/rust.toml"));
+}
+
+#[serial]
+#[test]
+fn skill_dirs_lists_a_namespace_once_when_a_longer_name_sorts_between_its_tags() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	let root = tap.local_dir().expect("local dir");
+	// By tag the order is `ab`, `ab-c`, `ab:x`, so `ab` is split by `ab-c`.
+	for file in ["agents/ab/default.toml", "agents/ab/x.toml", "agents/ab-c/default.toml"] {
+		fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+		fs::write(root.join(file), "").unwrap();
+	}
+	fs::create_dir_all(root.join("agents/ab/skills/one")).unwrap();
+	let owned: Vec<(Option<String>, String)> = tap
+		.skill_dirs()
+		.unwrap()
+		.into_iter()
+		.map(|skill| {
+			(
+				skill.owner,
+				skill.dir.file_name().unwrap().to_string_lossy().into_owned(),
+			)
+		})
+		.collect();
+	assert_eq!(owned, [(Some("ab".to_string()), "one".to_string())]);
+}
+
+#[serial]
+#[test]
 fn skill_dirs_lists_shared_skills_first_then_each_agent_by_name() {
 	let _data = DataDirGuard::new();
 	let tap = Tap {

@@ -35,7 +35,7 @@ use std::time::SystemTime;
 
 use tokio::sync::{mpsc, watch};
 
-use crate::session::context::SessionId;
+use crate::session::context::{SessionId, SessionMode};
 
 const MAX_PENDING_PROMPTS: usize = 32;
 
@@ -97,10 +97,12 @@ pub struct TapLiveUsage {
 /// so resume is just a fresh subprocess with `--name <id>`.
 pub struct TapJob {
 	pub id: String,
-	/// Role tag — `category:variant`, e.g. `developer:general`.
+	/// Role tag — an agent's tag, e.g. `developer` or `developer:rust`, or `workflow:<name>` for a workflow run.
 	pub role: String,
 	/// Working directory the run operates in (defaults to caller's cwd).
 	pub workdir: String,
+	/// Read-only and copy flags the run was started with; a resume keeps them.
+	pub mode: SessionMode,
 	pub started_at: SystemTime,
 	pub status: Arc<RwLock<TapJobStatus>>,
 	pub error: Option<String>,
@@ -114,6 +116,8 @@ pub struct TapJobInfo {
 	pub id: String,
 	pub role: String,
 	pub workdir: String,
+	#[serde(default)]
+	pub mode: SessionMode,
 	pub started_at: SystemTime,
 	pub status: TapJobStatus,
 	pub error: Option<String>,
@@ -222,6 +226,10 @@ pub(crate) fn recover_job(message: &crate::session::Message) -> Option<TapJobInf
 		started_at: std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(message.timestamp))?,
 		error: None,
 		live: TapLiveState::default(),
+		mode: SessionMode {
+			readonly: receipt.get("readonly").and_then(|flag| flag.as_bool()).unwrap_or(false),
+			copy: receipt.get("copy").and_then(|flag| flag.as_bool()).unwrap_or(false),
+		},
 	})
 }
 
@@ -303,6 +311,7 @@ pub fn restore_runs(session_id: &SessionId, runs: &[TapJobInfo]) {
 				id: run.id,
 				role: run.role,
 				workdir: run.workdir,
+				mode: run.mode,
 				started_at: run.started_at,
 				status: Arc::new(RwLock::new(run.status)),
 				error: run.error,
@@ -372,6 +381,7 @@ pub fn find_job(id: &str) -> Option<TapJobInfo> {
 		id: job.id.clone(),
 		role: job.role.clone(),
 		workdir: job.workdir.clone(),
+		mode: job.mode,
 		started_at: job.started_at,
 		status,
 		error: job.error.clone(),
@@ -399,7 +409,7 @@ pub fn has_running_jobs() -> bool {
 }
 
 /// Labels of the current session's still-running tap-runs, `"role (id)"` each,
-/// for deterministically reminding the model a specialist is still working —
+/// for deterministically reminding the model an agent is still working —
 /// e.g. when a compaction would otherwise drop the launch message.
 pub fn pending_labels() -> Vec<String> {
 	let mut labels: Vec<String> = list_jobs()
@@ -440,6 +450,7 @@ pub fn list_jobs_for(session_id: &str) -> Vec<TapJobInfo> {
 				id: j.id.clone(),
 				role: j.role.clone(),
 				workdir: j.workdir.clone(),
+				mode: j.mode,
 				started_at: j.started_at,
 				status,
 				error: j.error.clone(),
@@ -571,6 +582,7 @@ pub fn cancel_job(id: &str) -> Option<TapJobStatus> {
 pub(crate) struct TapRunClaim {
 	pub role: String,
 	pub workdir: String,
+	pub mode: SessionMode,
 	pub status: Arc<RwLock<TapJobStatus>>,
 	pub cancel_rx: watch::Receiver<bool>,
 }
@@ -602,6 +614,7 @@ pub(crate) fn resume_run(id: &str) -> Result<TapRunClaim> {
 	Ok(TapRunClaim {
 		role: job.role.clone(),
 		workdir: job.workdir.clone(),
+		mode: job.mode,
 		status: Arc::clone(&job.status),
 		cancel_rx,
 	})

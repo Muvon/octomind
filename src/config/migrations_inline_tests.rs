@@ -539,46 +539,227 @@ fn v23_adds_commit_attribution_and_keeps_an_existing_value() {
 }
 
 #[test]
-fn v30_renames_old_agent_tags_in_taps_and_default() {
-	let input = "version = 29\ndefault = \"developer:cto\" # lead\nlog_level = \"info\"\n\n[taps]\n\"developer:cto\" = \"openai:gpt-5\"\n\"travel:planner\" = \"openai:gpt-4o\"\n\"assistant:concierge\" = \"openai:gpt-4.1\"\n\"developer:general\" = \"openai:o3\"\ndoctor = \"openai:o3-mini\"\n";
+fn v30_renames_old_agent_tags_and_v35_then_rewrites_them_to_the_current_agents() {
+	let input = "version = 29\ndefault = \"developer:cto\" # lead\nlog_level = \"info\"\n\n[taps]\n\"developer:cto\" = \"openai:gpt-5\"\n\"travel:planner\" = \"openai:gpt-4o\"\n\"assistant:concierge\" = \"openai:gpt-4.1\"\ndoctor = \"openai:o3-mini\"\n\"acme:reviewer\" = \"openai:o3\"\n";
 	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(migration.from_version, 29);
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
-	assert_eq!(value["default"].as_str(), Some("developer:chief"));
-	assert!(migration.content.contains("default = \"developer:chief\" # lead"));
+	assert_eq!(value["default"].as_str(), Some("developer"));
+	assert!(migration.content.contains("default = \"developer\" # lead"));
 	let taps = value["taps"].as_table().unwrap();
 	assert_eq!(taps.len(), 5);
-	assert_eq!(taps["developer:chief"].as_str(), Some("openai:gpt-5"));
-	assert_eq!(taps["travel:chief"].as_str(), Some("openai:gpt-4o"));
-	assert_eq!(taps["assistant:chief"].as_str(), Some("openai:gpt-4.1"));
-	assert_eq!(taps["developer:general"].as_str(), Some("openai:o3"));
+	assert_eq!(taps["developer"].as_str(), Some("openai:gpt-5"));
+	assert_eq!(taps["travel-agent"].as_str(), Some("openai:gpt-4o"));
+	assert_eq!(taps["assistant"].as_str(), Some("openai:gpt-4.1"));
 	assert_eq!(taps["doctor"].as_str(), Some("openai:o3-mini"));
+	assert_eq!(taps["acme:reviewer"].as_str(), Some("openai:o3"), "a private tag stays");
 	assert_eq!(value["log_level"].as_str(), Some("info"));
 }
 
 #[test]
 fn v30_keeps_the_new_taps_key_when_both_old_and_new_exist() {
-	let input = "version = 29\n[taps]\n\"video:producer\" = \"old-model\"\n\"video:chief\" = \"new-model\"\n";
-	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
-	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	let mut document = user_document("[taps]\n\"video:producer\" = \"old-model\"\n\"video:chief\" = \"new-model\"\n");
+	rename_v30_chief_tags(&mut document, &template_document()).unwrap();
+	let value = roundtrip(&document);
 	let taps = value["taps"].as_table().unwrap();
 	assert_eq!(taps.len(), 1);
 	assert_eq!(taps["video:chief"].as_str(), Some("new-model"));
 }
 
 #[test]
-fn v30_leaves_a_config_without_old_tags_unchanged_except_the_version() {
-	let input =
-		"version = 29\ndefault = \"assistant:general\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
+fn v30_leaves_a_config_without_old_tags_unchanged() {
+	let input = "default = \"assistant:general\"\n\n# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n";
+	let mut document = user_document(input);
+	rename_v30_chief_tags(&mut document, &template_document()).unwrap();
+	assert_eq!(document.to_string(), input);
+}
+
+fn migrate_v35(existing: &str) -> toml::Value {
+	let migration = plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
+	assert_eq!(migration.from_version, 34);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	toml::from_str(&migration.content).unwrap()
+}
+
+#[test]
+fn v35_rewrites_retired_tags_in_the_default_and_the_taps_keys() {
+	let input = "version = 34\ndefault = \"content:editor\" # lead\n\n[taps]\n\"home:realty\" = \"openai:o3\"\n\"doctor:blood\" = \"openai:gpt-4o\"\n\"acme:reviewer\" = \"openai:gpt-4.1\"\nassistant = \"openai:gpt-4.1-mini\"\n";
 	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
-	// Later steps may append root keys; what v30 could have rewritten stays as written.
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(value["default"].as_str(), Some("writer"));
+	assert!(migration.content.contains("default = \"writer\" # lead"));
+	let taps = value["taps"].as_table().unwrap();
+	assert_eq!(taps.len(), 4);
+	assert_eq!(taps["financial-planner"].as_str(), Some("openai:o3"));
+	assert_eq!(taps["doctor"].as_str(), Some("openai:gpt-4o"));
+	assert_eq!(taps["acme:reviewer"].as_str(), Some("openai:gpt-4.1"));
+	assert_eq!(taps["assistant"].as_str(), Some("openai:gpt-4.1-mini"));
+}
+
+#[test]
+fn v35_leaves_a_tag_that_is_not_retired_as_written() {
+	let input = "version = 34\ndefault = \"acme:reviewer\"\n\n[taps]\n\"developer:rust\" = \"openai:o3\"\n";
+	let value = migrate_v35(input);
+	assert_eq!(value["default"].as_str(), Some("acme:reviewer"));
+	assert_eq!(value["taps"]["developer:rust"].as_str(), Some("openai:o3"));
+}
+
+#[test]
+fn v35_collapses_retired_taps_keys_of_one_agent_by_existing_key_then_file_order() {
+	let value = migrate_v35(concat!(
+		"version = 34\n[taps]\n",
+		"\"academic:writer\" = \"first\"\n\"academic:chief\" = \"second\"\nacademic = \"existing\"\n",
+		"\"coach:resume\" = \"first\"\n\"coach:career\" = \"second\"\n",
+	));
+	let taps = value["taps"].as_table().unwrap();
+	assert_eq!(taps.len(), 2);
+	assert_eq!(taps["academic"].as_str(), Some("existing"));
+	assert_eq!(taps["coach"].as_str(), Some("first"));
+}
+
+#[test]
+fn v35_leaves_names_that_are_not_retired_alone() {
+	let input = "version = 34\ndefault = \"assistant\"\n\n# models\n[taps]\ndeveloper = \"openai:o3\"\n";
+	let migration = plan().migrate(input, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	assert!(migration.content.starts_with(&format!(
-		"version = {CURRENT_CONFIG_VERSION}\ndefault = \"assistant:general\"\n"
+		"version = {CURRENT_CONFIG_VERSION}\ndefault = \"assistant\"\n"
 	)));
 	assert!(migration
 		.content
-		.contains("# models\n[taps]\n\"developer:general\" = \"openai:o3\"\n"));
+		.contains("# models\n[taps]\ndeveloper = \"openai:o3\"\n"));
+}
+
+const EXAMPLE_ASSISTANT_ROLE_TOML: &str = r#"
+# my copy of the example
+[[roles]]
+name   = "assistant"
+system = """
+You are helpful and knowledgeable assistant.
+Working directory: {{CWD}}
+"""
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+
+[roles.mcp]
+server_refs = ["core","orchestration","runtime","filesystem","agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+"#;
+
+fn role_names(value: &toml::Value) -> Vec<String> {
+	value
+		.get("roles")
+		.and_then(toml::Value::as_array)
+		.map(|roles| {
+			roles
+				.iter()
+				.filter_map(|role| role["name"].as_str().map(str::to_string))
+				.collect()
+		})
+		.unwrap_or_default()
+}
+
+#[test]
+fn v35_rewrites_plugin_role_filters_and_server_auto_bind_without_duplicates() {
+	let input = concat!(
+		"version = 34\n",
+		"plugins = [{ name = \"p\", type = \"stdio\", roles = [\"developer:general\", \"developer:brief\", \"doctor\", \"acme:reviewer\"] }]\n",
+		"[mcp]\ncode_mode = true\n",
+		"[[mcp.servers]]\nname = \"s\"\ntype = \"stdio\"\ncommand = \"c\"\nauto_bind = [\"coach:career\", \"coach\", \"acme:reviewer\"]\n",
+	);
+	let value = migrate_v35(input);
+	let roles = value["plugins"][0]["roles"].as_array().unwrap();
+	let roles: Vec<&str> = roles.iter().filter_map(toml::Value::as_str).collect();
+	assert_eq!(roles, ["developer", "doctor", "acme:reviewer"]);
+	let bound = value["mcp"]["servers"][0]["auto_bind"].as_array().unwrap();
+	let bound: Vec<&str> = bound.iter().filter_map(toml::Value::as_str).collect();
+	assert_eq!(bound, ["coach", "acme:reviewer"]);
+}
+
+#[test]
+fn v35_notices_name_each_rewritten_tag_and_the_keys_it_dropped() {
+	let mut document = user_document(concat!(
+		"default = \"content:editor\"\n[taps]\n\"academic:writer\" = \"first\"\n\"academic:chief\" = \"second\"\n",
+		"\"coach:resume\" = \"same\"\n\"coach:career\" = \"same\"\n",
+	));
+	let notices = rewrite_v35_retired_agent_tags(&mut document).unwrap();
+	assert!(
+		notices.contains(&"Agent tag 'content:editor' is now 'writer'.".to_string()),
+		"{notices:?}"
+	);
+	assert!(
+		notices.contains(&"Agent tag 'academic:chief' is now 'academic'.".to_string()),
+		"{notices:?}"
+	);
+	let dropped: Vec<&String> = notices.iter().filter(|notice| notice.contains("dropped")).collect();
+	assert_eq!(dropped.len(), 1, "keys with equal values lose nothing: {notices:?}");
+	assert!(dropped[0].contains("kept 'academic' = \"first\""), "{}", dropped[0]);
+	assert!(dropped[0].contains("'academic:chief'"), "{}", dropped[0]);
+}
+
+#[test]
+fn every_retired_tag_row_is_a_two_part_tag_and_a_current_name() {
+	let rows: Vec<(&str, &str)> = RETIRED_AGENT_TAGS
+		.lines()
+		.filter_map(|row| row.split_once('\t'))
+		.collect();
+	assert_eq!(rows.len(), RETIRED_AGENT_TAGS.lines().count());
+	assert_eq!(rows.len(), 203);
+	for (retired, current) in rows {
+		assert_eq!(retired.matches(':').count(), 1, "{retired}");
+		assert!(!current.contains(':') && !current.is_empty(), "{current}");
+		assert_eq!(current_agent_tag(retired), Some(current));
+	}
+}
+
+#[test]
+fn v35_adds_the_registry_fields_the_config_requires() {
+	let value = migrate_v35("version = 34\n[registry]\ncache_ttl_hours = 5\n");
+	assert_eq!(value["registry"]["cache_ttl_hours"].as_integer(), Some(5));
+	assert_eq!(value["registry"]["tap"].as_str(), Some("muvon/tap"));
+	assert!(value["registry"]["ref"].as_str().is_some());
+	let value = migrate_v35("version = 34\n");
+	assert_eq!(value["registry"]["cache_ttl_hours"].as_integer(), Some(24));
+}
+
+#[test]
+fn v35_removes_the_untouched_example_assistant_role_whatever_its_layout() {
+	let input = format!("version = 34\n{EXAMPLE_ASSISTANT_ROLE_TOML}\n[[roles]]\nname = \"mine\"\nsystem = \"x\"\n");
+	let value = migrate_v35(&input);
+	assert_eq!(role_names(&value), ["mine"]);
+}
+
+#[test]
+fn v35_removes_an_older_shipped_form_of_the_example_role() {
+	let input = concat!(
+		"version = 34\n[[roles]]\nname = \"assistant\"\n",
+		"system = \"You are helpful and knowledgeable assistant.\\nWorking directory: {{CWD}}\\n\"\n",
+		"welcome = \"Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})\"\n",
+		"[roles.mcp]\nserver_refs = [\"core\", \"filesystem\", \"agent\"]\n",
+		"allowed_tools = [\"core:*\", \"filesystem:*\", \"agent:*\"]\n",
+	);
+	let value = migrate_v35(input);
+	assert!(role_names(&value).is_empty());
+	assert!(value.get("roles").is_none(), "an emptied list is dropped");
+}
+
+#[test]
+fn v35_keeps_an_assistant_role_the_user_changed() {
+	let input = format!(
+		"version = 34\n{}",
+		EXAMPLE_ASSISTANT_ROLE_TOML.replace("helpful and knowledgeable", "terse")
+	);
+	let value = migrate_v35(&input);
+	assert_eq!(role_names(&value), ["assistant"]);
+	assert!(value["roles"][0]["system"].as_str().unwrap().contains("terse"));
+}
+
+#[test]
+fn v35_leaves_a_config_without_an_assistant_role_alone() {
+	let input = "version = 34\n\n[[roles]]\nname = \"mine\"\nsystem = \"x\"\n";
+	let value = migrate_v35(input);
+	assert_eq!(role_names(&value), ["mine"]);
+	let value = migrate_v35("version = 34\n");
+	assert!(value.get("roles").is_none());
 }
 
 #[test]

@@ -278,6 +278,7 @@ async fn run_step_classifies_nonzero_exit_from_test_binary() {
 		workdir: None,
 		skills: None,
 		capabilities: None,
+		readonly: false,
 		timeout_secs: 0,
 		event_prefix: None,
 		spinner: None,
@@ -314,6 +315,7 @@ async fn run_step_with_full_args_and_timeout_wrapper_classifies_nonzero() {
 		workdir: Some(workdir.path().to_path_buf()),
 		skills: Some(Vec::new()),
 		capabilities: Some(vec!["cap-a".to_string()]),
+		readonly: false,
 		timeout_secs: 30,
 		event_prefix: Some("  │ ".to_string()),
 		spinner: None,
@@ -346,6 +348,7 @@ async fn run_step_forwards_skills_and_classifies_nonzero() {
 		workdir: None,
 		skills: Some(vec!["rust".to_string()]),
 		capabilities: None,
+		readonly: false,
 		timeout_secs: 0,
 		event_prefix: None,
 		spinner: None,
@@ -370,6 +373,7 @@ async fn run_step_missing_workdir_classifies_spawn_error() {
 		workdir: Some(std::path::PathBuf::from("/definitely/not/a/dir-12345")),
 		skills: None,
 		capabilities: None,
+		readonly: false,
 		timeout_secs: 0,
 		event_prefix: None,
 		spinner: None,
@@ -394,6 +398,7 @@ async fn run_step_clears_spinner_on_failure() {
 		workdir: None,
 		skills: None,
 		capabilities: None,
+		readonly: false,
 		timeout_secs: 0,
 		event_prefix: None,
 		spinner: Some(ProgressBar::new_spinner()),
@@ -413,4 +418,17 @@ async fn send_done_without_workdir_is_best_effort_ok() {
 	send_done("wf-no-workdir", None)
 		.await
 		.expect("best-effort /done without a workdir returns Ok");
+}
+
+#[test]
+fn step_args_carry_readonly_only_when_the_step_sets_it() {
+	let plain = step_cli_args("developer", None, None, false);
+	assert_eq!(plain, ["run", "developer", "--format", "jsonl"]);
+	assert!(!plain.contains(&"--readonly".to_string()));
+
+	let readonly = step_cli_args("developer", Some("wf-1"), Some("ollama:m"), true);
+	assert!(readonly.contains(&"--readonly".to_string()));
+	assert_eq!(readonly[..2], ["run", "developer"]);
+	assert!(readonly.windows(2).any(|pair| pair == ["--name", "wf-1"]));
+	assert!(readonly.windows(2).any(|pair| pair == ["--model", "ollama:m"]));
 }

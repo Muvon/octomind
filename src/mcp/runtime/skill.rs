@@ -15,7 +15,8 @@
 //! Skill tool — tap-integrated skill discovery and context injection.
 //!
 //! Skills are reusable instruction packs stored in taps under
-//! `<tap>/skills/<skill-name>/SKILL.md`, following the AgentSkills specification
+//! `<tap>/agents/<ns>/skills/<skill-name>/SKILL.md` (owned by that namespace) or
+//! `<tap>/skills/<skill-name>/SKILL.md` (shared), following the AgentSkills specification
 //! (https://agentskills.io/specification).
 //!
 //! Actions:
@@ -23,6 +24,7 @@
 //! - `use`    — inject a skill's content into the current session context
 //! - `forget` — remove a skill from context (triggers forced compression)
 
+use crate::agent::taps::TapSkillDir;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -486,6 +488,17 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 	})
 }
 
+/// The metadata of a skill read from a tap. A skill under `agents/<owner>/skills/` is bound to
+/// its owner namespace by location (base agent and variants), so its own `domains:` line is
+/// not read; a shared skill keeps it.
+pub(crate) fn parse_tap_skill_meta(content: &str, owner: Option<&str>) -> Option<SkillMeta> {
+	let mut meta = parse_skill_meta(content)?;
+	if let Some(owner) = owner {
+		meta.domains = vec![owner.to_string()];
+	}
+	Some(meta)
+}
+
 // ---------------------------------------------------------------------------
 // Resource catalog — Tier 3 (scripts/, references/, assets/)
 // ---------------------------------------------------------------------------
@@ -563,7 +576,7 @@ fn missing_tools(allowed_tools: &[String]) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 /// Scan all active taps for skills. Returns (meta, skill_dir) pairs.
-/// Skills live at `<tap>/skills/<skill-name>/SKILL.md`.
+/// Skills live at `<tap>/agents/<ns>/skills/<skill-name>/SKILL.md` or `<tap>/skills/<skill-name>/SKILL.md`.
 /// Public alias for use by `/skill` command.
 pub fn find_all_skills_with_details() -> Vec<(SkillMeta, PathBuf)> {
 	find_all_skills()
@@ -683,37 +696,14 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 
 	// 1. Tap skills (highest priority)
 	for tap in &taps {
-		let skills_dir = match tap.skills_dir() {
-			Ok(d) => d,
-			Err(_) => continue,
-		};
-
-		if !skills_dir.exists() {
-			continue;
-		}
-
-		let entries = match std::fs::read_dir(&skills_dir) {
-			Ok(e) => e,
-			Err(_) => continue,
-		};
-
-		for entry in entries.flatten() {
-			let skill_dir = entry.path();
-			if !skill_dir.is_dir() {
-				continue;
-			}
-
+		for TapSkillDir { owner, dir: skill_dir } in tap.skill_dirs().unwrap_or_default() {
 			let skill_md = skill_dir.join("SKILL.md");
-			if !skill_md.exists() {
-				continue;
-			}
-
 			let content = match std::fs::read_to_string(&skill_md) {
 				Ok(c) => c,
 				Err(_) => continue,
 			};
 
-			if let Some(meta) = parse_skill_meta(&content) {
+			if let Some(meta) = parse_tap_skill_meta(&content, owner.as_deref()) {
 				if seen_names.insert(meta.name.clone()) {
 					skills.push((meta, skill_dir));
 				}
@@ -802,27 +792,22 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		}
 	};
 
-	// 1. Tap skills (highest priority)
+	// 1. Tap skills (highest priority): an owned skill and a shared one are both addressed by name
 	for tap in &taps {
-		let skills_dir = match tap.skills_dir() {
-			Ok(d) => d,
-			Err(_) => continue,
-		};
+		for TapSkillDir { owner, dir: skill_dir } in tap.skill_dirs().unwrap_or_default() {
+			if skill_dir.file_name().and_then(|n| n.to_str()) != Some(name) {
+				continue;
+			}
+			let skill_md = skill_dir.join("SKILL.md");
+			let content = match std::fs::read_to_string(&skill_md) {
+				Ok(c) => c,
+				Err(_) => continue,
+			};
 
-		let skill_dir = skills_dir.join(name);
-		if !skill_dir.is_dir() {
-			continue;
-		}
-
-		let skill_md = skill_dir.join("SKILL.md");
-		let content = match std::fs::read_to_string(&skill_md) {
-			Ok(c) => c,
-			Err(_) => continue,
-		};
-
-		if let Some(meta) = parse_skill_meta(&content) {
-			if meta.name == name {
-				return Some((meta, skill_dir, content));
+			if let Some(meta) = parse_tap_skill_meta(&content, owner.as_deref()) {
+				if meta.name == name {
+					return Some((meta, skill_dir, content));
+				}
 			}
 		}
 	}
@@ -1025,7 +1010,7 @@ async fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 		let msg = if pattern.is_some() {
 			"No skills found matching the pattern.".to_string()
 		} else {
-			"No skills found. Add skills to your tap under skills/<name>/SKILL.md".to_string()
+			"No skills found. Add skills to your tap under skills/<name>/SKILL.md, or agents/<ns>/skills/<name>/SKILL.md for one agent namespace".to_string()
 		};
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),

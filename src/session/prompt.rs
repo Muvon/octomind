@@ -37,7 +37,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		prompt.push_str(
 			"\n<delegation>\n\
 		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it (no handoff). \
-		Task outside your role → tap(action=\"run\", prompt=\"…\") to hand off; the specialist is matched from the prompt. \
+		Task outside your role → tap(action=\"run\", prompt=\"…\") to hand off; the agent is matched from the prompt. \
 		A failed handoff → do not relaunch it unchanged: complete the task with the tools you have, or report the blocker.\n\
 		</delegation>",
 		);
@@ -54,10 +54,10 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		);
 		if has_tap_tool {
 			prompt.push_str(
-				"For a specialist to start later, schedule the tap call itself, not a reminder to call tap: \
+				"For an agent to start later, schedule the tap call itself, not a reminder to call tap: \
 				schedule(command=\"add\", when=\"in 30m\", tool_call={\"name\":\"tap\",\"arguments\":{\"action\":\"run\",\"prompt\":\"complete self-contained brief\"}}). \
-				Include session to resume a known run; without it the specialist is matched from the prompt when the schedule fires. \
-				The specialist's reply arrives through the normal tap handback; do not poll it. Repeated firings of the same schedule do not overlap a still-running specialist.\n",
+				Include session to resume a known run; without it the agent is matched from the prompt when the schedule fires. \
+				The agent's reply arrives through the normal tap handback; do not poll it. Repeated firings of the same schedule do not overlap a still-running agent.\n",
 			);
 		}
 		prompt.push_str("</scheduling>");

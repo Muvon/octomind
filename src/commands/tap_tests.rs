@@ -61,7 +61,7 @@ fn tap_args_parse_init_subcommand() {
 		"init",
 		"acme/team",
 		"--agent",
-		"legal:chief",
+		"legal",
 		"--dir",
 		"./somewhere",
 	])
@@ -69,7 +69,7 @@ fn tap_args_parse_init_subcommand() {
 	match cli.args.command {
 		Some(TapCommand::Init(ref init)) => {
 			assert_eq!(init.tap, "acme/team");
-			assert_eq!(init.agent.as_deref(), Some("legal:chief"));
+			assert_eq!(init.agent.as_deref(), Some("legal"));
 			assert_eq!(init.dir.as_deref(), Some(std::path::Path::new("./somewhere")));
 		}
 		ref other => panic!("expected init subcommand, got {other:?}"),
@@ -154,11 +154,11 @@ fn execute_rejects_the_builtin_default_tap() {
 
 	let err = execute(&TapArgs {
 		command: None,
-		tap: Some(taps::DEFAULT_TAP.to_string()),
+		tap: Some(taps::built_in_tap().expect("built-in tap").name),
 		local_path: None,
 	})
 	.expect_err("default tap cannot be re-added");
-	assert!(err.to_string().contains("built-in default tap"), "{err}");
+	assert!(err.to_string().contains("built-in tap"), "{err}");
 }
 
 #[test]

@@ -36,7 +36,7 @@ finishes; `/done` schedules background work rather than waiting for every memory
 ### 1. Create a project with a stable identity
 
 Scoped lessons use the repository root's folder name (the working directory's own name outside a repository) and
-the role base before `:`. Use this same directory and role
+the role name. Use this same directory and role
 for both sessions. Do not put the rule in `AGENTS.md` during this exercise: that would also supply it at startup and
 make the recall experiment ambiguous.
 
@@ -202,7 +202,7 @@ storage succeeded.
 
 - For a user-wide preference, state explicitly that it applies across projects. The extractor decides scope
   conservatively; inspect `scope` rather than assuming the rule became global.
-- Use an existing development role for real work. A tag such as `developer:general` uses `developer` as its lesson
+- Use an existing development role for real work. The `developer` agent uses `developer` as its lesson
   folder; switching from `memory_demo` does not carry this exercise's scoped lessons into that folder.
 - Let a compaction that the agent chooses trigger extraction during longer sessions. Besydr extracts after the fold
   succeeds; there is no setting that forces every conversation into a lesson.

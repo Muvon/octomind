@@ -204,6 +204,7 @@ fn timestamp_is_unix_epoch_seconds() {
 
 fn run_info(id: &str, status: tap_runs::TapJobStatus) -> tap_runs::TapJobInfo {
 	tap_runs::TapJobInfo {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp".to_string(),

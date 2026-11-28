@@ -166,7 +166,7 @@ pub fn display_injected_input(msg: &InboxMessage, config: &crate::config::Config
 	let (first_line, body) = msg.content.split_once('\n').unwrap_or((&msg.content, ""));
 
 	println!("{} {} {}", icon, format!("[{label}]").bright_black(), first_line);
-	// A specialist's report is markdown: render it the way an assistant reply is.
+	// An agent's report is markdown: render it the way an assistant reply is.
 	if config.enable_markdown_rendering && is_markdown_content(body) {
 		let theme = config.markdown_theme.parse().unwrap_or_default();
 		match MarkdownRenderer::with_theme(theme).render_and_print(body) {

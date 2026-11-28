@@ -7,11 +7,11 @@ Octomind session. It covers working role/tool configuration, asynchronous result
 
 | Mechanism | Tool/server | Execution | Use it for |
 |-----------|-------------|-----------|------------|
-| Static `[[agents]]` | `agent_<name>` / `agent` | ACP subprocess; synchronous by default, optional `async: true` | Stable local specialists |
-| Tap role | `tap` / `orchestration` | Background ACP run; resumable by returned session ID | Installed specialists found by intent |
-| Dynamic agent | `agent` / `runtime`, then `agent_<name>` | In-process; synchronous by default, optional `async: true` | Temporary specialists created during a session |
+| Static `[[agents]]` | `agent_<name>` / `agent` | ACP subprocess; synchronous by default, optional `async: true` | Stable local sub-agents |
+| Tap role | `tap` / `orchestration` | Background ACP run; resumable by returned session ID | Installed agents found by intent |
+| Dynamic agent | `agent` / `runtime`, then `agent_<name>` | In-process; synchronous by default, optional `async: true` | Temporary agents created during a session |
 
-New specialists receive their task text, not the parent's conversation. Include the goal, known facts, exact paths,
+New sub-agents receive their task text, not the parent's conversation. Include the goal, known facts, exact paths,
 constraints, and expected result in each delegation.
 
 ## Configure the filesystem server
@@ -44,7 +44,7 @@ tools = []
 `agent`. A missing server reference does not provision a filesystem server. The `octofs mcp` subprocess defaults to its
 current working directory.
 
-## Define specialist roles
+## Define sub-agent roles
 
 A role's `system` and `welcome` remain explicit role behavior. Its `[roles.model]` block is optional: omitted model
 fields inherit from the required main `[model]` profile. Set `welcome = ""` for sub-agent roles you never start
@@ -123,7 +123,7 @@ Define a local coordinator with explicit access to the delegation tools and file
 [[roles]]
 name = "coordinator"
 welcome = "Ready to delegate."
-system = "Coordinate focused specialists. Give each a self-contained task, verify their findings, and report results."
+system = "Coordinate focused sub-agents. Give each a self-contained task, verify their findings, and report results."
 
 [roles.mcp]
 server_refs = ["agent", "orchestration", "runtime", "filesystem"]
@@ -141,7 +141,7 @@ octomind run coordinator
 /mcp list
 ```
 
-The shipped default tag remains `assistant:chief`; this example selects the local role explicitly so the required
+The shipped `default` remains `assistant`; this example selects the local role explicitly so the required
 tool grants are visible in the configuration.
 
 The main AI can now use these agents as tools (illustrative transcript):
@@ -196,9 +196,9 @@ returns an error; split work into smaller batches. Results enter the inbox, and 
 be processed together. Session exit cancels active agent jobs. Async execution provides no filesystem isolation: give
 concurrent writers distinct paths or separate working directories.
 
-## Delegate to tap roles
+## Delegate to tap agents
 
-If a tap registry already provides a specialist role for the sub-task, use the `tap` tool from the `orchestration`
+If a tap registry already provides an agent for the sub-task, use the `tap` tool from the `orchestration`
 builtin server instead of defining your own `[[agents]]`:
 
 Ask the coordinator to call `tap` with these arguments:
@@ -207,8 +207,8 @@ Ask the coordinator to call `tap` with these arguments:
 {"action": "run", "prompt": "Audit src/auth/ for security bugs. Do not edit files. Return file:line evidence and concrete failure scenarios."}
 ```
 
-The runtime matches the prompt to the best installed specialist and starts it; the reply names the matched `role` and
-`title`. If no specialist fits, `run` starts nothing and returns an error that lists the closest ones. To use one of
+The runtime matches the prompt to the best installed agent and starts it; the reply names the matched `role` and
+`title`. If no agent fits, `run` starts nothing and returns an error that lists the closest ones. To use one of
 them anyway, repeat the call with `role` set to its name.
 
 `run` starts in the background and returns its ID. On completion, the inbox receives a tap-run result labeled with the
@@ -219,7 +219,7 @@ ID and role. It is a system-managed continuation, distinct from the `[Async agen
 {"action": "list"}
 ```
 
-While the specialist is running, send a follow-up for its next available turn. It keeps working on the current turn
+While the agent is running, send a follow-up for its next available turn. It keeps working on the current turn
 and receives the queued message in the same conversation:
 
 ```json
@@ -236,10 +236,12 @@ After it finishes, use `run` to resume it:
 {"action": "stop", "session": "RUN_ID"}
 ```
 
-`list` lists runs in the current session, not the installed role catalog. Omitting `session` on a follow-up starts a
-fresh specialist. Resuming a still-running tap returns a busy error.
+An agent that declares the `orchestration` capability can start copies of itself: set `role` to its own name, or omit `role` when it has no `# Uses:` header. Add `"readonly": true` to start a read-only copy that scouts or reviews without changing files. Several writable copies can run at once on disjoint files. A copy cannot start further copies.
 
-Matching requires initialized embeddings. A vague prompt may match no specialist. The separate `tap` capability action
+`list` lists runs in the current session, not the installed role catalog. Omitting `session` on a follow-up starts a
+fresh agent. Resuming a still-running tap returns a busy error.
+
+Matching requires initialized embeddings. A vague prompt may match no agent. The separate `tap` capability action
 attempts capability auto-activation and can return an empty activation list; it does not share matching's explicit
 embedding error contract:
 
@@ -285,7 +287,7 @@ For a fixed refine/research/execute sequence, see [custom development workflows]
 
 - **Why is `agent_code_reviewer` missing?** Check `/mcp list`: the coordinator needs the `agent` server and
   a matching tool grant. For a dynamic agent, call `enable` after `add`.
-- **Why can the specialist not read files?** Its role needs a real server definition plus matching tool names. Declaring
+- **Why can the sub-agent not read files?** Its role needs a real server definition plus matching tool names. Declaring
   `server_refs = ["filesystem"]` alone does not install or start an undefined server.
 - **Why does an ACP child return an error without logs?** Child stderr is suppressed by the ACP runner. Start the same
   role interactively to inspect its configuration and credentials:
@@ -296,14 +298,14 @@ For a fixed refine/research/execute sequence, see [custom development workflows]
 
 - **Why did a read filter allow more tools than expected?** Auto-bound servers can add wildcard grants, and project
   tools in `.agents/tools/` are always appended. Inspect the final tool surface; a role filter is not an OS sandbox.
-  `auto_bind` tags are exact matches: `developer` does not match `developer:general`.
+  `auto_bind` names are exact matches.
 
 ## Model override reference
 
-The complete role examples in [specialist roles](#define-specialist-roles) show the required identity and prompt fields.
+The complete role examples in [sub-agent roles](#define-sub-agent-roles) show the required identity and prompt fields.
 A role's model block is optional and inherits every omitted field from `[model]`.
 
-When a specialist needs a different main-purpose model, set a concrete override in its existing model block (do not add
+When a sub-agent needs a different main-purpose model, set a concrete override in its existing model block (do not add
 a duplicate table). These examples require the named provider credentials and model access. For example:
 
 ```toml
@@ -312,7 +314,7 @@ a duplicate table). These examples require the named provider credentials and mo
 name = "openai:gpt-5.6-luna"
 ```
 
-For a separate review specialist:
+For a separate review sub-agent:
 
 ```toml
 # Inside the code_reviewer role
@@ -322,7 +324,7 @@ name = "anthropic:claude-sonnet-4-6"
 
 Octomind has two model purposes: main and compression. Agent role overrides belong to the main
 purpose; they do not introduce another purpose. The shipped default for both is `octohub:auto` after `octomind
-login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the specialist roles above do. The
+login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the sub-agent roles above do. The
 `filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_edit` for
 edits. Verify the complete effective tool surface before relying on a restricted role.
 

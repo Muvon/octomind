@@ -178,8 +178,8 @@ fn test_validate_reports_scalar_after_nested_table_with_hint() {
 fn test_validate_reports_ignored_key_in_roles() {
 	let template = include_str!("../../config-templates/default.toml");
 	let raw = template.replace(
-		"name = \"assistant\"\n",
-		"name = \"assistant\"\nunknown_role_key = \"bad\"\n",
+		"name = \"task_refiner\"\n",
+		"name = \"task_refiner\"\nunknown_role_key = \"bad\"\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
 	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
@@ -195,9 +195,10 @@ fn test_validate_reports_ignored_key_in_roles() {
 #[test]
 fn test_validate_reports_ignored_key_in_roles_model() {
 	let template = include_str!("../../config-templates/default.toml");
-	let raw = template.replace(
-		"allowed_tools = [\"core:*\", \"orchestration:*\", \"runtime:*\", \"filesystem:*\", \"agent:*\"]\n",
-		"allowed_tools = [\"core:*\", \"orchestration:*\", \"runtime:*\", \"filesystem:*\", \"agent:*\"]\n\n[roles.model]\nunknown_model_key = \"bad\"\n",
+	let raw = template.replacen(
+		"[roles.mcp]\nserver_refs = []\nallowed_tools = []\n",
+		"[roles.mcp]\nserver_refs = []\nallowed_tools = []\n\n[roles.model]\nunknown_model_key = \"bad\"\n",
+		1,
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
 	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
@@ -353,4 +354,28 @@ fn test_validate_accepts_every_mcp_server_field() {
 		ignored_keys.is_empty(),
 		"every McpServerConfig field must be known, got: {ignored_keys:?}"
 	);
+}
+
+#[test]
+fn validate_accepts_variant_tags_wherever_an_agent_is_named() {
+	let mut config = template_config();
+	config.default = "developer:general".to_string();
+	config
+		.taps
+		.insert("doctor:blood".to_string(), "openai:gpt-4o".to_string());
+	let server = config.mcp.servers[0].with_auto_bind(Some(vec!["lawyer:us".to_string()]));
+	config.mcp.servers[0] = server;
+	config.validate().expect("tags with a variant are valid");
+}
+
+#[test]
+fn validate_accepts_a_variant_tag_in_a_plugin_role_filter() {
+	let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	let plugin: toml::Value =
+		toml::from_str("name = \"p\"\ntype = \"stdio\"\ncommand = \"p\"\nroles = [\"developer:brief\"]\n").unwrap();
+	value["plugins"] = toml::Value::Array(vec![plugin]);
+	let config: Config = value.try_into().expect("plugin parses");
+	config
+		.validate()
+		.expect("a variant tag in a plugin role filter is valid");
 }

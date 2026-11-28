@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TodoList",
-  "description": "Example schema for `octomind run --schema todos.schema.json`. Constrains the model's reply to a structured TODO list. Requires a structured-output-capable model (e.g. an OpenAI-family model); Anthropic models are rejected up front. Strict-mode friendly: every property is `required` and `additionalProperties` is false, with optional fields expressed as a `null` union. Pair with `--format jsonl`: echo \"List TODO items in the auth module\" | octomind run developer:general --format jsonl --schema todos.schema.json",
+  "description": "Example schema for `octomind run --schema todos.schema.json`. Constrains the model's reply to a structured TODO list. Requires a structured-output-capable model (e.g. an OpenAI-family model); Anthropic models are rejected up front. Strict-mode friendly: every property is `required` and `additionalProperties` is false, with optional fields expressed as a `null` union. Pair with `--format jsonl`: echo \"List TODO items in the auth module\" | octomind run developer --format jsonl --schema todos.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["todos"],

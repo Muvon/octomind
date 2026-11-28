@@ -26,7 +26,7 @@ Providers whose key is already in your environment are listed first. After you p
 compression should use it too; answer `n` to choose a cheaper model for it. Esc on the first
 screen works like Skip.
 
-Startup then resolves the default `assistant:chief` tap agent. Run `octomind configure` to change providers or models
+Startup then resolves the default `assistant` tap agent. Run `octomind configure` to change providers or models
 later. Non-interactive runs (piped input, `--format`, `--daemon`) create the default config without prompting.
 
 The first use of a tap agent fetches its manifest and dependencies, so it requires network access. Once the prompt
@@ -83,9 +83,8 @@ See [Sessions](05-sessions.md) for model switching and image attachment examples
 
 The optional positional argument to `octomind run` is a tag:
 
-- A plain name such as `assistant` selects a local `[[roles]]` entry.
-- A `category:variant` tag such as `developer:general` resolves an agent from the configured taps.
-- A domain name such as `developer` starts that domain's orchestrator (`developer:chief`) from the configured taps, unless a local role has the same name.
+- A name such as `developer` starts the tap agent of that name from the configured taps, unless a local `[[roles]]` entry has the same name; the local role takes priority.
+- A tag written with `:` is an error that shows the flat form.
 
 ```bash
 # Configured default tag
@@ -95,7 +94,7 @@ octomind
 octomind run developer
 ```
 
-Plain names select a configured local role, or else a tap domain's orchestrator. See [Roles](06-roles.md) for a complete local-role example and the [Tap
+A name selects a configured local role, or else a tap agent. See [Roles](06-roles.md) for a complete local-role example and the [Tap
 System](../integration/04-tap-system.md) for registry resolution.
 
 ## Name and Resume Sessions

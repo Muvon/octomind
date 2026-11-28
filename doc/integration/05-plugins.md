@@ -488,7 +488,7 @@ wins, and later plugins are not asked.
 |-----------|-----------|-------------------------|
 | `skills` | A user message matched no skill by rule. One choice among the skills that are not active and `none`. | The chosen skill is activated when its probability is at least 0.6. |
 | `capabilities` | A user message, after the capabilities were ranked by text similarity. One choice among the 5 best and `none`. | A capability picked by similarity is dropped when the choice gives it less than 0.05. With none picked, the chosen one is activated at 0.6 or more. |
-| `taps` | A task is delegated without naming a specialist. One choice among the 16 best matches and `none`. | The chosen specialist gets the task; `none` starts nothing. |
+| `taps` | A task is delegated without naming an agent. One choice among the 16 best matches and `none`. | The chosen agent gets the task; `none` starts nothing. |
 | `compression` | A fold of the history, once per fold. `items` holds the tool results the fold would summarize. | A result whose probability of still being needed is below 0.5 is dropped from the fold's input and stays readable in the archive. |
 
 Extra effects: `judgements`, a table from question id, and from item id for `items`, to the answer:

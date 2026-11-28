@@ -72,7 +72,8 @@ fn compression_hint_replaces_stacked_legacy_blocks() {
 
 fn template_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -141,6 +142,8 @@ async fn scheduling_guidance_matches_enabled_tools_and_focuses_on_tap() {
 		};
 		config.build_role_map();
 		let id = format!("schedule-prompt-{}", uuid::Uuid::new_v4());
+		// A session id with no recorded mode is read-only, which hides the scheduling tools.
+		crate::session::context::set_session_mode(&id, Default::default());
 		let prompt =
 			crate::session::context::with_session_id(id.clone(), create_system_prompt(dir.path(), &config, role)).await;
 		assert_eq!(
@@ -159,7 +162,7 @@ async fn scheduling_guidance_matches_enabled_tools_and_focuses_on_tap() {
 			assert!(prompt.contains("Results/errors return to your inbox"));
 		}
 		if tools.contains(&"schedule") && tools.contains(&"tap") {
-			assert!(prompt.contains("the specialist is matched from the prompt when the schedule fires"));
+			assert!(prompt.contains("the agent is matched from the prompt when the schedule fires"));
 			assert!(prompt.contains("Include session to resume"));
 			assert!(prompt.contains("do not poll it"));
 		}

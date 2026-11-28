@@ -1,0 +1,14 @@
+
+# A local `assistant` role for tests that need one: the default template ships no role of
+# that name, so `assistant` otherwise resolves to the tap agent.
+[[roles]]
+name = "assistant"
+system = """
+You are helpful and knowledgeable assistant.
+Working directory: {{CWD}}
+"""
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+
+[roles.mcp]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]

@@ -3,7 +3,9 @@ name   = "develop"
 # ── 1. Spec ─────────────────────────────────────────────────────────────────
 [[steps]]
 name    = "context"
-role    = "developer:context"
+role    = "developer"
+# readonly = true   # optional: the step runs with --readonly (read-only tools, no shell, no delegation)
+skills  = ["developer-context-scouting"]
 session = "fresh"
 retries = 1
 prompt  = """
@@ -25,7 +27,7 @@ exit_when      = { output = "evaluator", contains = "ALL GOOD" }
 
   [[steps.run]]
   name    = "developer"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   retries = 1
   prompt  = """
@@ -44,7 +46,8 @@ Proceed with development fully autonomous.
 
   [[steps.run]]
   name    = "brief"
-  role    = "developer:brief"
+  role    = "developer"
+  skills  = ["developer-diff-briefing"]
   session = "fresh"
   retries = 1
   prompt  = """
@@ -62,7 +65,7 @@ Developer response:
 
 	[[steps.run]]
 	name    = "evaluator"
-	role    = "developer:general"
+	role    = "developer"
 	session = "fresh"
 	prompt  = """
 Evaluate this code generation run.
@@ -96,7 +99,8 @@ exactly as requested
 
 [[steps]]
 name    = "summary"
-role    = "developer:brief"
+role    = "developer"
+skills  = ["developer-diff-briefing"]
 session = "fresh"
 prompt  = """
 Look on user spec and our implementation in current unstaged git changes and provide concise briefing.

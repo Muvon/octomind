@@ -182,7 +182,8 @@ fn install_source_of_classifies_each_install_path() {
 }
 
 fn template_config() -> crate::config::Config {
-	toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template")
+	toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+		.expect("parse default config template")
 }
 
 #[test]

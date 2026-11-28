@@ -417,7 +417,7 @@ async fn test_execute_tools_in_context_cancelled_before_execution_returns_empty(
 
 	let config = template_config();
 	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = ChatSession::for_tests(Vec::new());
@@ -467,7 +467,7 @@ async fn test_execute_tools_in_context_local_tool_success_then_duplicate_placeho
 
 	let config = template_config();
 	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = ChatSession::for_tests(Vec::new());
@@ -535,7 +535,7 @@ async fn slow_then_fast_order(prefix: &str, read_only: [Option<bool>; 2]) -> Str
 
 	let config = template_config();
 	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = ChatSession::for_tests(Vec::new());
@@ -645,7 +645,7 @@ async fn test_execute_tools_in_context_runs_reads_in_parallel() {
 
 	let sid = "tool-exec-parallel-reads".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.info.name = sid.clone();
@@ -730,7 +730,7 @@ async fn test_read_groups_overlap_on_each_side_of_a_write() {
 	];
 	let sid = "tool-exec-read-groups".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.info.name = sid.clone();
@@ -796,7 +796,7 @@ async fn test_cancellation_does_not_start_later_calls() {
 	}
 	let sid = "tool-exec-cancel-sequence".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.info.name = sid.clone();
@@ -1092,7 +1092,7 @@ async fn a_plugin_denial_is_the_call_result_and_the_tool_does_not_run() {
 
 	let (results, _, stop) = crate::session::context::with_session_id(rig.id.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(dir);
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		execute_tools_parallel(
 			vec![plugin_call("touch_file", "w1", json!({}))],
 			ROUND_INTENT,
@@ -1564,7 +1564,7 @@ async fn tool_after_of_a_repeated_call(tool: &str, stub: &StubPlugin) -> serde_j
 	// time, and a stub connected there would be sent their `tool.after` events.
 	let sid = format!("tool-round-own-{tool}");
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		connect_stub(&sid, "assistant", tmp.path(), stub).await;
 
@@ -1683,7 +1683,7 @@ async fn missing_delegation_log_does_not_abort_the_tool_batch() {
 	let sid = TEST_SESSION.to_owned();
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.session.session_file = Some(tmp.path().join("missing.jsonl.zst"));
 		let mut processor = ToolProcessor::new();

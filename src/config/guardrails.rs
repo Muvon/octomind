@@ -39,6 +39,7 @@
 //!   when    = ["-filesystem-read"]            # + = used since session start
 //!   message = "Use view instead of ls."        # - = NOT used since session start
 
+use crate::agent::registry::{canonical_tag, namespace_of};
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
@@ -291,8 +292,8 @@ pub struct CompiledPipe {
 	pub match_regex: Option<Regex>,
 	/// `when = "first"` restricts to first message; `when = "any"` (default) applies to all.
 	pub when: PipeWhen,
-	/// Role filter; entries match exact role (`developer:general`) or domain
-	/// prefix (`developer` matches `developer:general` via `<name>:` check).
+	/// Role filter; an entry matches the role exactly (`developer:rust`) or, naming a
+	/// namespace, that agent and all its variants (`developer`; see [`role_matches`]).
 	pub roles: Vec<String>,
 	pub evolution: Option<EvolutionBinding>,
 }
@@ -333,8 +334,8 @@ pub struct CompiledValidator {
 	pub match_regex: Option<Regex>,
 	pub when_used: Vec<Target>,
 	pub when_unused: Vec<Target>,
-	/// Role filter; entries match exact role (`developer:general`) or domain
-	/// prefix (`developer` matches `developer:general` via `<name>:` check).
+	/// Role filter; an entry matches the role exactly (`developer:rust`) or, naming a
+	/// namespace, that agent and all its variants (`developer`; see [`role_matches`]).
 	pub roles: Vec<String>,
 	pub script: PathBuf,
 	pub snapshot: ScriptSnapshot,
@@ -654,24 +655,19 @@ impl Guardrails {
 	}
 }
 
-/// Cheap role filter: empty filter = always pass; otherwise pass when the
-/// current role is either an exact match or a domain prefix (e.g. filter
-/// `developer` passes for current `developer:general`).
+/// Cheap role filter: empty filter = always pass; otherwise pass when the current role equals
+/// an entry, or the entry names the namespace of the current role (filter `developer` passes
+/// `developer:rust`, filter `developer:rust` passes only that agent). `<ns>:default` in a
+/// filter or as the current role is `<ns>`.
 pub fn role_matches(filter: &[String], current: &str) -> bool {
 	if filter.is_empty() {
 		return true;
 	}
-	for f in filter {
-		if f == current {
-			return true;
-		}
-		// Domain prefix: filter "developer" passes "developer:..." but not
-		// "developer-foo" — require the `:` separator.
-		if current.len() > f.len() && current.starts_with(f.as_str()) && current.as_bytes()[f.len()] == b':' {
-			return true;
-		}
-	}
-	false
+	let current = canonical_tag(current);
+	filter.iter().any(|entry| {
+		let entry = canonical_tag(entry);
+		entry == current || entry == namespace_of(current)
+	})
 }
 
 /// Parse one target. Forms:

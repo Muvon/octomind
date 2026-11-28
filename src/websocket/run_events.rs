@@ -241,7 +241,7 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Option<Vec<RunEven
 	let mut events = Vec::new();
 	for message in session.messages {
 		match message.role.as_str() {
-			// Only the task the specialist was given (and any resume turn). The log also
+			// Only the task the delegated agent was given (and any resume turn). The log also
 			// holds system-managed user messages — AGENTS.md `<instructions>`, inbox
 			// notes, continuations — which the live stream never shows as a prompt.
 			"user" if crate::session::is_real_user_task_message(&message) => events.push(RunEvent::Prompt {

@@ -131,3 +131,11 @@ fn name_and_model_short_flags_parse() {
 	assert_eq!(cli.args.name.as_deref(), Some("sess"));
 	assert_eq!(cli.args.model.as_deref(), Some("openrouter:x"));
 }
+
+#[test]
+fn readonly_is_off_unless_asked_for() {
+	let writable = Cli::try_parse_from(["octomind", "developer"]).expect("tag parses");
+	assert!(!writable.args.readonly);
+	let readonly = Cli::try_parse_from(["octomind", "developer", "--readonly"]).expect("--readonly parses");
+	assert!(readonly.args.readonly);
+}

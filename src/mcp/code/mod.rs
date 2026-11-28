@@ -215,7 +215,11 @@ pub fn split(config: &Config, functions: Vec<(Option<String>, McpFunction)>) -> 
 			)
 		});
 		if collapsed.is_some() {
-			definitions.push(get_search_function());
+			// It runs on the core server and only reads the catalog; a read-only
+			// session decides on its hint like on any other tool's.
+			let search = get_search_function();
+			crate::mcp::register_read_only_hints("core", std::slice::from_ref(&search));
+			definitions.push(search);
 		}
 	}
 	(definitions, catalog)

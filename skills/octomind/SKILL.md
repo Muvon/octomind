@@ -33,7 +33,7 @@ context compaction, out-of-band planning and loop detection).
 
 ## One-Shot Tasks
 
-`octomind run` takes no message argument — its positional argument is the agent tag. Pipe the task through stdin; piped
+`octomind run` takes no message argument — its positional argument is the agent name. Pipe the task through stdin; piped
 input runs non-interactively and exits when the work is done:
 
 ```
@@ -90,16 +90,17 @@ terminal(command="echo 'Continue with the remaining tests' | octomind run develo
 
 | Flag | Use |
 |------|-----|
-| `run <tag>` | Start an agent: `developer` for coding; other `domain:spec` tags come from Octomind's tap registry |
+| `run <name>` | Start an agent: `developer` for coding; other agent names come from Octomind's tap registry |
 | `--format plain` / `--format jsonl` | Non-interactive output for piped input |
 | `--name <name>` / `-n` | Create or resume a named session |
 | `--resume-recent` | Resume the latest session in this directory |
 | `--model <provider:model>` / `-m` | Override the model |
 | `--daemon` | Keep the session alive for `octomind send` |
 | `--sandbox` | Limit filesystem writes to the working directory |
+| `--readonly` | Offer and run only tools whose MCP `readOnlyHint` annotation is true; no shell, no delegation. Scripts the user configured (skill `validate`, guardrails, hooks) still run |
 | `--schema <file>` | Constrain output to a JSON Schema (model must support structured output) |
 
-Hosts that speak the Agent Client Protocol (ACP) can run the same specialist as a sub-agent over stdio:
+Hosts that speak the Agent Client Protocol (ACP) can run the same agent as a sub-agent over stdio:
 `octomind acp developer`.
 
 ## Procedure
@@ -122,9 +123,9 @@ process(action="list")
 
 ## Pitfalls
 
-- Passing the task as an argument (`octomind run 'fix it'`) treats the text as an agent tag — always pipe the task.
+- Passing the task as an argument (`octomind run 'fix it'`) treats the text as an agent name — always pipe the task.
 - `--format` at a terminal without piped input errors unless combined with `--daemon`.
-- The first run of a specialist fetches its tap and installs tool dependencies, so it is slower than later runs.
+- The first run of an agent fetches its tap and installs tool dependencies, so it is slower than later runs.
 - A missing `OCTOHUB_API_KEY` with the default `octohub:auto` model means `octomind login` was not run.
 - Avoid sharing one working directory across parallel Octomind sessions.
 - Run inside the project's git repository: the code-search server `octocode` refuses to start outside one, leaving

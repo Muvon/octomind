@@ -25,7 +25,9 @@ max_cost    = 5.00   # branch count is dynamic — bound total spend here
 # ── 1. Plan: emit one task per <task>…</task> block ─────────────────────────
 [[steps]]
 name   = "plan"
-role   = "researcher:general"
+role   = "assistant"
+# readonly = true   # optional: the step runs with --readonly (read-only tools, no shell, no delegation)
+skills = ["assistant-web-research"]
 prompt = """
 Break this research request into 3–7 independent sub-questions.
 Output ONLY the sub-questions, each wrapped exactly as <task>…</task>:
@@ -48,7 +50,8 @@ min_success  = 1
 
   [[steps.run]]
   name    = "researcher"
-  role    = "researcher:general"
+  role    = "assistant"
+  skills  = ["assistant-web-research"]
   timeout = 600
   prompt  = """
 Research this sub-question thoroughly and report findings with sources:
@@ -59,7 +62,7 @@ Research this sub-question thoroughly and report findings with sources:
 # ── 3. Summarize: every branch's output joined under {{researcher}} ─────────
 [[steps]]
 name   = "summary"
-role   = "developer:general"
+role   = "developer"
 prompt = """
 Synthesize these independent findings into one coherent report:
 

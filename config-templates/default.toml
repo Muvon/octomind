@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 34
+version = 35
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -21,10 +21,11 @@ version = 34
 log_level = "info"
 
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
-# Can be a role name (e.g. "developer"), a domain ("developer" starts developer:chief)
-# or a tap agent (e.g. "octomind:chief"). The default, assistant:chief, is the global
-# assistant from the built-in tap muvon/octomind-tap; it hands work to the domain agents.
-default = "assistant:chief"
+# A tag is a role defined in this config (e.g. "assistant") or an agent of a tap:
+# "developer" (the base agent of a namespace) or "developer:rust" (a variant). A role
+# defined here wins over a tap agent of the same name. The default, "assistant", is the global assistant from the
+# built-in tap (see [registry] tap); it hands work to the other agents.
+default = "assistant"
 
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot
@@ -166,17 +167,28 @@ request_transport = "websocket"
 [capabilities]
 
 # Tap model overrides for specific agents
-# Each key is a tap agent tag and each value is only a model name.
+# Each key is a tap agent tag ("developer:rust") or a namespace ("developer", which
+# covers its base agent and every variant; an exact tag wins) and each value is only a model name.
 # The selected model always keeps the main [model] parameters unless the
 # resolved role independently overrides them.
 # Priority: runtime override > role model > tap model > main model name
 # Example:
 # [taps]
-# "developer:general" = "ollama:glm-5"
-# "octomind:chief" = "openai:gpt-4o"
-# "developer" = "openai:gpt-4o"   # bare domain: every agent of the domain; an exact tag wins
+# "developer" = "ollama:glm-5"
+# "assistant" = "openai:gpt-4o"
 # Leave empty to use default model for all tap agents
 [taps]
+
+# Agent registry
+[registry]
+# How long a fetched agent manifest is cached before it is checked again, in hours.
+cache_ttl_hours = 24
+# The built-in tap, in `user/repo` form. It is always loaded, after the taps you
+# add with `octomind tap`, and cannot be added or removed with that command.
+tap = "muvon/tap"
+# Branch, tag or commit of the built-in tap to serve. Taps you add yourself
+# follow their default branch.
+ref = "feature/flat-agents"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # API KEYS AND AUTHENTICATION
@@ -199,26 +211,27 @@ request_transport = "websocket"
 #   https://github.com/muvon/octomind-tap
 #
 # To use a tap agent directly, just run:
-#   octomind run developer        # a domain: starts its lead agent
-#   octomind run doctor:blood     # one exact agent
+#   octomind run developer        # one tap agent, by its tag
+#   octomind run doctor           # another one
 #
 # Define a custom role below only when you need project-specific behaviour.
 # Roles inherit the complete [model] profile. Add [roles.model] only for fields
 # that genuinely differ; the whole block may be omitted.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Example: override the developer role with your own system prompt
-[[roles]]
-name = "assistant"
-system = """
-You are helpful and knowledgeable assistant.
-Working directory: {{CWD}}
-"""
-welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
-
-[roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+# Example: a local role with your own system prompt. Give it a name that is not
+# a tap agent name, or it takes priority over that tap agent.
+# [[roles]]
+# name = "my-role"
+# system = """
+# You are a helpful assistant.
+# Working directory: {{CWD}}
+# """
+# welcome = "Hello! Working in {{CWD}} (Role: {{ROLE}})"
+#
+# [roles.mcp]
+# server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+# allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 
 # Task refiner role - lightweight query refinement
 [[roles]]

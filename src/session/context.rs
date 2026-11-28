@@ -287,22 +287,72 @@ pub fn get_session_role(session_id: &SessionId) -> Option<String> {
 	registry.get(session_id).cloned()
 }
 
-/// Get the domain (the `category` part of `category:variant`) for the current
-/// session, or `None` when there's no session context or no role recorded.
+/// Get the domain for the current session, or `None` when there's no session
+/// context or no role recorded. The domain is the namespace of the role: `developer`
+/// for both `developer` and `developer:rust`.
 ///
-/// Single source of truth for the capability domain filter and the skill pool
-/// init (`init_session_services` line 1106 already does the same split). Used
-/// by `auto_activate_capabilities_for_intent`, `handle_list`, `handle_discover`,
+/// Single source of truth for the capability domain filter. Used by
+/// `auto_activate_capabilities_for_intent`, `handle_list`, `handle_discover`,
 /// `handle_enable`, and `load_env_capabilities` to gate cross-domain access.
 pub fn current_session_domain() -> Option<String> {
 	let sid = current_session_id()?;
-	let role = get_session_role(&sid)?;
-	Some(role.split(':').next().unwrap_or(&role).to_string())
+	get_session_role(&sid).map(|role| crate::agent::registry::namespace_of(&role).to_string())
 }
 
 /// Remove role when a session ends.
 pub fn clear_session_role(session_id: &SessionId) {
 	if let Ok(mut guard) = SESSION_ROLES.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+/// How a session was started, set once by `init_session_services`.
+///
+/// `readonly`: only tools whose `readOnlyHint` is true are offered or run.
+/// `copy`: the session is a copy its parent started of itself, so it may not
+/// start further copies (see `tap_route`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionMode {
+	#[serde(default)]
+	pub readonly: bool,
+	#[serde(default)]
+	pub copy: bool,
+}
+
+static SESSION_MODES: RwLock<Option<HashMap<SessionId, SessionMode>>> = RwLock::new(None);
+
+pub fn set_session_mode(session_id: &SessionId, mode: SessionMode) {
+	let mut guard = SESSION_MODES.write().unwrap();
+	guard.get_or_insert_with(HashMap::new).insert(session_id.clone(), mode);
+}
+
+/// What a session with no recorded mode may do: read only. Such a session is one that
+/// `init_session_services` has not reached yet, or one `cleanup_session` has already ended
+/// while a background job of it still runs; neither may change state on a guess.
+const UNRECORDED_SESSION_MODE: SessionMode = SessionMode {
+	readonly: true,
+	copy: false,
+};
+
+/// The mode of the current session. Without a session context there is nothing to
+/// restrict, so the default (writable, not a copy) applies; a session id with no recorded
+/// mode is read-only.
+pub fn current_session_mode() -> SessionMode {
+	let Some(session_id) = current_session_id() else {
+		return SessionMode::default();
+	};
+	let guard = SESSION_MODES.read().unwrap();
+	guard
+		.as_ref()
+		.and_then(|registry| registry.get(&session_id))
+		.copied()
+		.unwrap_or(UNRECORDED_SESSION_MODE)
+}
+
+pub fn clear_session_mode(session_id: &SessionId) {
+	if let Ok(mut guard) = SESSION_MODES.write() {
 		if let Some(registry) = guard.as_mut() {
 			registry.remove(session_id);
 		}
@@ -1209,6 +1259,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_notification_sender_for_session(session_id);
 	clear_session_workdir(session_id);
 	clear_session_role(session_id);
+	clear_session_mode(session_id);
 	clear_session_config(session_id);
 	crate::mcp::tool_map::clear_session_tool_map(session_id);
 	crate::mcp::server::clear_function_cache_for_session(session_id);
@@ -1242,12 +1293,13 @@ pub fn cleanup_session(session_id: &SessionId) {
 
 /// Initialize all session-scoped services. Call once per session inside `with_session_id`.
 /// Centralizes the init sequence so entry points don't duplicate it.
-pub fn init_session_services(role: &str) {
+pub fn init_session_services(role: &str, mode: SessionMode) {
 	let session_id = expect_session_id();
 	if get_session_workdir_anchor(&session_id).is_none() {
 		set_session_workdir(&session_id, crate::mcp::get_thread_original_working_directory());
 	}
 	set_session_role(&session_id, role);
+	set_session_mode(&session_id, mode);
 	// A (re)initialized session starts a context the servers have not served.
 	bump_context_epoch();
 	crate::session::inbox::init_inbox_for_session();
@@ -1256,9 +1308,8 @@ pub fn init_session_services(role: &str) {
 	crate::session::tap_runs::init_for_session();
 	crate::session::guardrails::init_for_session();
 	crate::mcp::agent::functions::init_job_manager();
-	// Extract domain from role/tag (e.g., "developer:general" → "developer")
-	let domain = role.split(':').next().unwrap_or(role);
-	crate::mcp::runtime::skill_auto::init_pool(domain);
+	// The session's domain is the namespace of its role; `init_pool` takes it from the tag.
+	crate::mcp::runtime::skill_auto::init_pool(role);
 }
 
 #[cfg(test)]

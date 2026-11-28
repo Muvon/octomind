@@ -106,6 +106,7 @@ impl Drop for DataDirGuard {
 fn register_test_job(id: &str, role: &str, status: TapJobStatus, started_at: SystemTime) {
 	let (cancel_tx, _cancel_rx) = watch::channel(false);
 	tap_runs::register_job(TapJob {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: role.to_string(),
 		workdir: "/tmp".to_string(),
@@ -320,14 +321,14 @@ async fn run_requires_prompt() {
 
 #[tokio::test]
 #[serial]
-async fn run_with_no_specialist_installed_is_an_error_and_starts_nothing() {
+async fn run_with_no_agent_installed_is_an_error_and_starts_nothing() {
 	let _guard = DataDirGuard::new();
 	let config = test_config();
 	let result = execute_tap_command(&tap_call(json!({"action": "run", "prompt": "do work"})), &config)
 		.await
 		.expect("dispatch");
 	assert!(result.is_error());
-	assert_eq!(result.extract_content(), super::super::tap_route::NO_SPECIALIST);
+	assert_eq!(result.extract_content(), super::super::tap_route::NO_AGENT);
 }
 
 #[tokio::test]
@@ -348,6 +349,7 @@ async fn run_with_unknown_session_is_error() {
 #[test]
 fn format_job_info_contains_all_fields() {
 	let info = TapJobInfo {
+		mode: Default::default(),
 		id: "tap-x-000001".to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp/proj".to_string(),

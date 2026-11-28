@@ -91,39 +91,20 @@ fn test_derive_project_id_matches_cwd_variant() {
 
 #[serial]
 #[test]
-fn test_session_context_round_trip_and_role_splitting() {
-	let (prev_domain, prev_spec, prev_project, _, prev_workdir) = get_session_context();
-	let prev_role = if prev_spec.is_empty() {
-		prev_domain
-	} else {
-		format!("{prev_domain}:{prev_spec}")
-	};
+fn test_session_context_round_trip_and_domain_is_the_role() {
+	let (prev_role, prev_project, _, prev_workdir) = get_session_context();
 
-	set_session_context("developer:general", "proj-ctx-1", "/tmp/w1");
-	let (domain, spec, project, session_id, workdir) = get_session_context();
+	set_session_context("developer", "proj-ctx-1", "/tmp/w1");
+	let (domain, project, session_id, workdir) = get_session_context();
 	assert_eq!(
-		(
-			domain.as_str(),
-			spec.as_str(),
-			project.as_str(),
-			session_id.as_str(),
-			workdir.as_str()
-		),
-		("developer", "general", "proj-ctx-1", "", "/tmp/w1")
+		(domain.as_str(), project.as_str(), session_id.as_str(), workdir.as_str()),
+		("developer", "proj-ctx-1", "", "/tmp/w1")
 	);
 
-	// Local role without a spec — spec must come back empty
-	set_session_context("developer", "proj-ctx-2", "/tmp/w2");
-	let (domain, spec, project, _, workdir) = get_session_context();
-	assert_eq!(
-		(domain.as_str(), spec.as_str(), project.as_str(), workdir.as_str()),
-		("developer", "", "proj-ctx-2", "/tmp/w2")
-	);
-
-	// Only the first colon splits — the rest stays in the spec
-	set_session_context("doctor:blood:panel", "proj-ctx-3", "/tmp/w3");
-	let (domain, spec, _, _, _) = get_session_context();
-	assert_eq!((domain.as_str(), spec.as_str()), ("doctor", "blood:panel"));
+	// A role is not split: a hyphenated name stays whole
+	set_session_context("doctor-blood", "proj-ctx-2", "/tmp/w2");
+	let (domain, _, _, _) = get_session_context();
+	assert_eq!(domain, "doctor-blood");
 
 	set_session_context(&prev_role, &prev_project, &prev_workdir);
 }
@@ -131,17 +112,11 @@ fn test_session_context_round_trip_and_role_splitting() {
 #[serial]
 #[test]
 fn test_init_session_context_derives_project_and_workdir() {
-	let (prev_domain, prev_spec, prev_project, _, prev_workdir) = get_session_context();
-	let prev_role = if prev_spec.is_empty() {
-		prev_domain
-	} else {
-		format!("{prev_domain}:{prev_spec}")
-	};
+	let (prev_role, prev_project, _, prev_workdir) = get_session_context();
 
-	init_session_context("tester:spec");
-	let (domain, spec, project, _, workdir) = get_session_context();
+	init_session_context("tester");
+	let (domain, project, _, workdir) = get_session_context();
 	assert_eq!(domain, "tester");
-	assert_eq!(spec, "spec");
 	assert_eq!(project, derive_project_id(), "project id derives from cwd");
 	let cwd = std::env::current_dir().expect("current dir");
 	assert_eq!(workdir, cwd.to_string_lossy());
@@ -480,12 +455,11 @@ async fn test_get_session_context_prefers_session_scoped_role_and_anchor() {
 	let sid = "proc-add-ctx-session".to_string();
 	let anchor = std::path::PathBuf::from("/tmp/octomind-proc-add-anchor");
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_role(&sid, "doctor:blood");
+		crate::session::context::set_session_role(&sid, "doctor");
 		crate::mcp::workdir::set_session_working_directory(anchor.clone());
 
-		let (domain, spec, project, session_id, workdir) = get_session_context();
+		let (domain, project, session_id, workdir) = get_session_context();
 		assert_eq!(domain, "doctor");
-		assert_eq!(spec, "blood");
 		assert_eq!(project, derive_project_id_from_path(&anchor));
 		assert_eq!(session_id, sid);
 		assert_eq!(workdir, anchor.to_string_lossy());
@@ -662,20 +636,14 @@ async fn test_stop_all_servers_clears_every_registry() {
 #[serial]
 #[tokio::test]
 async fn test_get_session_context_falls_back_to_cli_global_without_session_role() {
-	let (prev_domain, prev_spec, prev_project, _, prev_workdir) = get_session_context();
-	let prev_role = if prev_spec.is_empty() {
-		prev_domain
-	} else {
-		format!("{prev_domain}:{prev_spec}")
-	};
+	let (prev_role, prev_project, _, prev_workdir) = get_session_context();
 
 	let sid = "proc-add-ctx-no-role".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
 		// No session role registered for this id: the CLI global must win.
-		set_session_context("developer:general", "proj-cli-fallback", "/tmp/w-cli");
-		let (domain, spec, project, session_id, workdir) = get_session_context();
+		set_session_context("developer", "proj-cli-fallback", "/tmp/w-cli");
+		let (domain, project, session_id, workdir) = get_session_context();
 		assert_eq!(domain, "developer");
-		assert_eq!(spec, "general");
 		assert_eq!(project, "proj-cli-fallback");
 		assert_eq!(session_id, sid);
 		assert_eq!(workdir, "/tmp/w-cli");

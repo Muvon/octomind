@@ -14,7 +14,7 @@
 
 //! The route's error text, the judgement over the cosine pick (the ranked
 //! candidates are the input, a stub plugin answers) and the ranking of a task
-//! against a roster of specialists.
+//! against a roster of agents.
 
 use super::*;
 use crate::agent::registry::AgentHeader;
@@ -25,7 +25,6 @@ use serial_test::serial;
 
 fn agent(tag: &str) -> TapAgentHeader {
 	TapAgentHeader {
-		category: tag.split(':').next().expect("domain").to_string(),
 		tag: tag.to_string(),
 		header: AgentHeader {
 			title: Some(format!("{tag} title")),
@@ -48,7 +47,7 @@ fn describe_joins_title_and_description_and_falls_back_to_the_tag() {
 }
 
 #[test]
-fn a_no_match_error_names_the_best_ranked_specialists_and_the_recovery_step() {
+fn a_no_match_error_names_the_best_ranked_agents_and_the_recovery_step() {
 	let mut agents: Vec<TapAgentHeader> = (0..SHOWN_CANDIDATES + 2).map(|i| agent(&format!("d{i}:x"))).collect();
 	agents[1].header.title = None;
 	agents[1].header.description = None;
@@ -58,12 +57,12 @@ fn a_no_match_error_names_the_best_ranked_specialists_and_the_recovery_step() {
 		.map(|(i, agent)| (0.5 - i as f32 * 0.01, agent))
 		.collect();
 
-	let error = closest_specialists("No specialist was matched to this task.", &ranked);
+	let error = closest_agents("No agent was matched to this task.", &ranked);
 
 	let lines: Vec<&str> = error.lines().collect();
 	assert_eq!(
 		lines[0],
-		"No specialist was matched to this task. The closest ones to this task:"
+		"No agent was matched to this task. The closest ones to this task:"
 	);
 	assert_eq!(lines[1], "- d0:x — d0:x title. d0:x description");
 	// An agent with no title and no description is listed by name alone.
@@ -99,7 +98,7 @@ async fn pick_in<'a>(
 }
 
 #[test]
-fn the_named_specialist_gets_the_task_and_none_starts_nothing() {
+fn the_named_agent_gets_the_task_and_none_starts_nothing() {
 	let candidates = ["a:x", "b:x"];
 	assert_eq!(apply_tap_answer(&candidates, "b:x"), Some("b:x"));
 	assert_eq!(apply_tap_answer(&candidates, judgement::NONE), None);
@@ -134,7 +133,7 @@ async fn evaluate_pick_asks_over_the_top_candidates_and_can_veto_the_cosine_winn
 	let asked = stub.sent("judge");
 	assert_eq!(asked.len(), 1);
 	assert_eq!(asked[0]["purpose"], "taps");
-	// The task is the whole subject: the plugin reads what the specialist would.
+	// The task is the whole subject: the plugin reads what the agent would.
 	assert_eq!(asked[0]["subject"], "unrelated task");
 	let options = asked[0]["questions"]["specialist"]["options"]
 		.as_object()
@@ -157,14 +156,14 @@ async fn evaluate_pick_follows_the_choice_at_any_probability() {
 	let agents = [agent("a:x"), agent("b:x")];
 	let ranked: Vec<(f32, &TapAgentHeader)> = vec![(0.5, &agents[0]), (0.49, &agents[1])];
 
-	// Cosine abstained: the choice's specialist gets the task.
+	// Cosine abstained: the choice's agent gets the task.
 	let picked = pick_in(sid, "do the b thing", None, &ranked).await;
 	assert_eq!(
 		picked.map(|(score, agent)| (score, agent.tag.as_str())),
 		Some((0.3, "b:x"))
 	);
 
-	// Cosine picked another one: the choice's specialist replaces it.
+	// Cosine picked another one: the choice's agent replaces it.
 	let picked = pick_in(sid, "do the b thing", Some(ranked[0]), &ranked).await;
 	assert_eq!(
 		picked.map(|(score, agent)| (score, agent.tag.as_str())),
@@ -193,6 +192,137 @@ async fn evaluate_pick_keeps_cosine_when_the_plugin_gives_no_usable_answer() {
 	crate::plugins::end_session(sid);
 }
 
+// --- who a run reaches -------------------------------------------------------
+
+fn agent_using(tag: &str, uses: &[&str]) -> TapAgentHeader {
+	let mut agent = agent(tag);
+	agent.header.uses = uses.iter().map(|entry| entry.to_string()).collect();
+	agent
+}
+
+fn match_tags<'a>(reach: Result<Reach<'a>, String>) -> Vec<&'a str> {
+	match reach {
+		Ok(Reach::Match(candidates)) => candidates.iter().map(|agent| agent.tag.as_str()).collect(),
+		_ => panic!("expected the task to be matched among candidates"),
+	}
+}
+
+#[test]
+fn a_role_naming_the_caller_starts_a_copy_of_the_caller() {
+	let agents = [agent_using("alpha", &["beta"]), agent("beta")];
+	assert!(matches!(
+		reach("alpha", true, &agents, Some("alpha"), false),
+		Ok(Reach::Copy)
+	));
+}
+
+#[test]
+fn a_tap_agent_without_uses_starts_a_copy_without_matching() {
+	let agents = [agent("alpha"), agent("beta")];
+	assert!(matches!(reach("alpha", true, &agents, None, false), Ok(Reach::Copy)));
+	// A role other than its own is not reachable for an agent that reaches nobody.
+	assert_eq!(
+		reach("alpha", true, &agents, Some("beta"), false).err().as_deref(),
+		Some(NO_AGENT)
+	);
+}
+
+#[test]
+fn a_caller_that_reaches_agents_matches_among_them_and_never_itself() {
+	let agents = [agent_using("alpha", &["beta", "gamma"]), agent("beta"), agent("gamma")];
+	assert_eq!(
+		match_tags(reach("alpha", true, &agents, None, false)),
+		["beta", "gamma"]
+	);
+
+	let everyone = [agent_using("alpha", &["*"]), agent("beta"), agent("gamma")];
+	assert_eq!(
+		match_tags(reach("alpha", true, &everyone, None, false)),
+		["beta", "gamma"]
+	);
+}
+
+#[test]
+fn a_role_the_caller_reaches_is_named_and_one_it_does_not_reach_is_refused_with_the_names() {
+	let agents = [agent_using("alpha", &["beta"]), agent("beta"), agent("gamma")];
+	assert!(
+		matches!(reach("alpha", true, &agents, Some("beta"), false), Ok(Reach::Named(named)) if named.tag == "beta")
+	);
+	let refusal = reach("alpha", true, &agents, Some("gamma"), false).expect_err("gamma is outside the reach");
+	assert!(
+		refusal.starts_with("`gamma` is not an agent you can reach. You can reach: beta."),
+		"{refusal}"
+	);
+}
+
+#[test]
+fn a_base_agent_matches_among_its_variants_and_a_variant_starts_a_copy_of_itself() {
+	let agents = [agent("dev"), agent("dev:rust"), agent("dev:go"), agent("other")];
+	assert_eq!(
+		match_tags(reach("dev", true, &agents, None, false)),
+		["dev:go", "dev:rust"]
+	);
+	assert!(
+		matches!(reach("dev", true, &agents, Some("dev:rust"), false), Ok(Reach::Named(named)) if named.tag == "dev:rust")
+	);
+
+	// A variant reaches nobody, not even its siblings, so it can only start a copy of itself.
+	assert!(matches!(reach("dev:rust", true, &agents, None, false), Ok(Reach::Copy)));
+	assert!(matches!(
+		reach("dev:rust", true, &agents, Some("dev:rust"), false),
+		Ok(Reach::Copy)
+	));
+	assert_eq!(
+		reach("dev:rust", true, &agents, Some("dev:go"), false).err().as_deref(),
+		Some(NO_AGENT)
+	);
+	assert_eq!(
+		reach("dev:rust", true, &agents, None, true).err().as_deref(),
+		Some(COPY_OF_COPY)
+	);
+}
+
+#[test]
+fn a_caller_that_is_not_a_tap_agent_matches_among_all_agents_or_copies_itself_by_name() {
+	let agents = [agent("beta"), agent("gamma")];
+	assert_eq!(
+		match_tags(reach("local-role", false, &agents, None, false)),
+		["beta", "gamma"]
+	);
+	assert!(matches!(
+		reach("local-role", false, &agents, Some("local-role"), false),
+		Ok(Reach::Copy)
+	));
+}
+
+#[test]
+fn a_local_role_named_like_a_tap_agent_is_not_treated_as_that_agent() {
+	// `alpha` the tap agent reaches nobody and would copy itself; the local role `alpha` reaches the rest.
+	let agents = [agent("alpha"), agent("beta")];
+	assert!(matches!(reach("alpha", true, &agents, None, false), Ok(Reach::Copy)));
+	assert_eq!(match_tags(reach("alpha", false, &agents, None, false)), ["beta"]);
+}
+
+#[test]
+fn a_copy_cannot_start_a_copy_but_keeps_its_other_reach() {
+	let agents = [agent_using("alpha", &["beta"]), agent("beta")];
+	assert_eq!(
+		reach("alpha", true, &agents, Some("alpha"), true).err().as_deref(),
+		Some(COPY_OF_COPY)
+	);
+	assert_eq!(match_tags(reach("alpha", true, &agents, None, true)), ["beta"]);
+	assert!(matches!(
+		reach("alpha", true, &agents, Some("beta"), true),
+		Ok(Reach::Named(_))
+	));
+
+	let alone = [agent("alpha"), agent("beta")];
+	assert_eq!(
+		reach("alpha", true, &alone, None, true).err().as_deref(),
+		Some(COPY_OF_COPY)
+	);
+}
+
 // --- matching against a real roster ------------------------------------------
 
 /// The `developer` domain of the default tap as its lead reaches it: tag,
@@ -215,8 +345,8 @@ const DEVELOPER_ROSTER: [(&str, &str, &str); 14] = [
 ];
 
 /// Briefs as the developer lead is told to write them (first line names the
-/// kind of work and the deliverable), with the specialist that should take
-/// each; `None` is a task no developer specialist covers.
+/// kind of work and the deliverable), with the agent that should take
+/// each; `None` is a task no developer agent covers.
 const DEVELOPER_TASKS: [(&str, Option<&str>); 19] = [
 	("Implement a bug fix: the parser in src/parser.rs panics when the input is empty. Find the root cause, patch it, and run the test suite.", Some("developer:general")),
 	("Write unit tests for the retry module in src/net/retry.rs covering the backoff edge cases, and show each test fails without the fix.", Some("developer:tester")),
@@ -241,11 +371,10 @@ const DEVELOPER_TASKS: [(&str, Option<&str>); 19] = [
 
 #[tokio::test]
 #[serial]
-async fn developer_tasks_reach_their_specialist_and_foreign_tasks_reach_none() {
+async fn developer_tasks_reach_their_agent_and_foreign_tasks_reach_none() {
 	let roster: Vec<TapAgentHeader> = DEVELOPER_ROSTER
 		.iter()
 		.map(|(tag, title, description)| TapAgentHeader {
-			category: "developer".to_string(),
 			tag: tag.to_string(),
 			header: AgentHeader {
 				title: Some(title.to_string()),
@@ -259,7 +388,7 @@ async fn developer_tasks_reach_their_specialist_and_foreign_tasks_reach_none() {
 	let mut wrong = Vec::new();
 	let mut missed = Vec::new();
 	for (task, expected) in DEVELOPER_TASKS {
-		let ranked = rank_specialists(task, &candidates).await.expect("rank");
+		let ranked = rank_agents(task, &candidates).await.expect("rank");
 		let picked = crate::mcp::runtime::capability::select_with_margin(ranked.clone(), ROUTE_THRESHOLD, ROUTE_MARGIN)
 			.map(|(_, agent)| agent.tag.as_str());
 		eprintln!(
@@ -274,10 +403,10 @@ async fn developer_tasks_reach_their_specialist_and_foreign_tasks_reach_none() {
 			_ => wrong.push(task),
 		}
 	}
-	assert!(wrong.is_empty(), "handed to the wrong specialist: {wrong:#?}");
+	assert!(wrong.is_empty(), "handed to the wrong agent: {wrong:#?}");
 	assert!(
 		missed.len() <= MAX_MISSED_DEVELOPER_TASKS,
-		"{} developer tasks found no specialist: {missed:#?}",
+		"{} developer tasks found no agent: {missed:#?}",
 		missed.len()
 	);
 }

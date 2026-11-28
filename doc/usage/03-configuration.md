@@ -65,7 +65,7 @@ them beneath `[model]`. Leave `version` to the migration system.
 ```toml
 version = 25
 log_level = "info"
-default = "assistant:chief"
+default = "assistant"
 sandbox = false
 telemetry = true
 commit_attribution = "Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"
@@ -81,8 +81,8 @@ max_request_spending_threshold = 0.0
 auto_capabilities = true
 ```
 
-The `default` value is the tag used when `octomind run` receives no tag. `assistant:chief` comes from the built-in
-`muvon/tap`; it is distinct from the local `assistant` role in `[[roles]]`.
+The `default` value is the tag used when `octomind run` receives no tag. `assistant` is the global assistant agent from the built-in
+`muvon/tap`. A local role in `[[roles]]` with the same name as a tap agent takes priority over it.
 
 List themes and select one with:
 
@@ -135,7 +135,7 @@ moving away from OctoHub. See [AI Providers](04-providers.md#bring-your-own-keys
 
 ## Roles and Tags
 
-A plain tag selects a local `[[roles]]` entry; a tag containing `:` resolves a tap manifest. See [Roles](06-roles.md)
+A name selects a local `[[roles]]` entry, or else a tap agent of that name; a tag containing `:` is an error that shows the flat form. See [Roles](06-roles.md)
 for complete examples, profile inheritance, and tool permissions.
 
 ## MCP Servers
@@ -167,22 +167,20 @@ command = "{{ENV:PROJECT_MCP_COMMAND}}"
 args = []
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
 Then start the matching role and inspect the server:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 ```text
 /mcp
 ```
 
-`auto_bind` matches exact role strings: `developer` does not match `developer:general`. `octomind run developer` runs
-`developer:chief`, so bind that name to reach the domain's lead agent, or bind a specialist and start it with its full
-tag. For a newly added reference, it
+`auto_bind` matches exact role names. For a newly added reference, it
 also adds a `project_tools:*` grant when the role has a nonempty allowlist. Registration alone does not enable a server;
 use `auto_bind` or a role's `server_refs`. HTTP header values support `{{ENV:KEY}}`; without an explicit `Authorization`
 header, the HTTP client can
@@ -227,21 +225,22 @@ octomind config --validate
 codesearch = "octocode"
 ```
 
-`[taps]` changes only the model name for a tap tag or a whole domain; the rest of the main model profile remains inherited until an active
-role profile overrides it. A key without a `:` is a domain and applies to every agent of that domain; an exact tag key wins:
+`[taps]` changes only the model name for a tap agent; the rest of the main model profile remains inherited until an active
+role profile overrides it:
 
 ```toml
 [taps]
-"developer:general" = "ollama:glm-5.3"
-"developer" = "ollama:glm-5.3"   # every developer agent without its own tag key
+"developer" = "ollama:glm-5.3"
 ```
 
 These examples require the selected capability provider file in a tap and the selected model in Ollama. Apply either
 override to the existing table, then run:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
+
+The built-in tap and the revision of it to serve are set with `[registry] tap` and `ref`; see the [Configuration Reference](../reference/03-config-reference.md).
 
 ## Project Instructions and Template Variables
 

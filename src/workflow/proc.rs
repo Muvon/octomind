@@ -102,6 +102,8 @@ pub struct RunStepArgs {
 	pub skills: Option<Vec<String>>,
 	/// Forwarded as `OCTOMIND_CAPABILITIES` env var (comma-joined). None = unset.
 	pub capabilities: Option<Vec<String>>,
+	/// Start the subprocess with `--readonly`.
+	pub readonly: bool,
 	pub timeout_secs: u64,
 	pub event_prefix: Option<String>,
 	pub spinner: Option<ProgressBar>,
@@ -128,6 +130,21 @@ pub fn set_test_step_exe(path: Option<PathBuf>) {
 	TEST_STEP_EXE.with_borrow_mut(|slot| *slot = path);
 }
 
+/// The arguments of the `octomind run` child of one step.
+fn step_cli_args(role: &str, session_name: Option<&str>, model: Option<&str>, readonly: bool) -> Vec<String> {
+	let mut args: Vec<String> = ["run", role, "--format", "jsonl"].map(String::from).to_vec();
+	if let Some(name) = session_name {
+		args.extend(["--name".to_string(), name.to_string()]);
+	}
+	if let Some(model) = model {
+		args.extend(["--model".to_string(), model.to_string()]);
+	}
+	if readonly {
+		args.push("--readonly".to_string());
+	}
+	args
+}
+
 /// Invoke `octomind run` with `prompt` on stdin, optional `--name` to
 /// resume or create a named session, and `--format jsonl`.
 ///
@@ -141,6 +158,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		workdir,
 		skills,
 		capabilities,
+		readonly,
 		timeout_secs,
 		event_prefix,
 		spinner,
@@ -163,19 +181,15 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 	let exe = TEST_STEP_EXE.with_borrow(|slot| slot.clone()).unwrap_or(exe);
 
 	let mut cmd = Command::new(&exe);
-	cmd.arg("run")
-		.arg(role)
-		.arg("--format")
-		.arg("jsonl")
-		.stdin(Stdio::piped())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped());
-	if let Some(name) = session_name.as_deref() {
-		cmd.arg("--name").arg(name);
-	}
-	if let Some(m) = &model {
-		cmd.arg("--model").arg(m);
-	}
+	cmd.args(step_cli_args(
+		&role,
+		session_name.as_deref(),
+		model.as_deref(),
+		readonly,
+	))
+	.stdin(Stdio::piped())
+	.stdout(Stdio::piped())
+	.stderr(Stdio::piped());
 	if let Some(dir) = &workdir {
 		cmd.current_dir(dir);
 	}

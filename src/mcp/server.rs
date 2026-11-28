@@ -72,12 +72,14 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 				);
 				return None;
 			}
-			crate::mcp::tool_shape::register_tool_read_only_hint(
-				&name,
-				tool.annotations
-					.as_ref()
-					.and_then(|annotations| annotations.read_only_hint),
-			);
+			let function = McpFunction {
+				name: name.clone(),
+				freeform: None,
+				annotations: tool.annotations.clone(),
+				description: tool.description.as_deref().unwrap_or("").to_string(),
+				parameters: parameters.clone(),
+			};
+			crate::mcp::register_read_only_hints(server, std::slice::from_ref(&function));
 			// Whether this tool's `command` executes or selects — the schema
 			// distinction that separates a runner's check from an editor's edit,
 			// both of which arrive as a string under the same parameter name.
@@ -97,13 +99,7 @@ pub fn tools_to_functions(server: &str, tools: &[rmcp::model::Tool]) -> Vec<McpF
 					.as_ref()
 					.map(|schema| serde_json::Value::Object(schema.as_ref().clone())),
 			);
-			Some(McpFunction {
-				name,
-				freeform: None,
-				annotations: tool.annotations.clone(),
-				description: tool.description.as_deref().unwrap_or("").to_string(),
-				parameters,
-			})
+			Some(function)
 		})
 		.collect()
 }

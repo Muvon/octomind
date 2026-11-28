@@ -81,6 +81,7 @@ mod session_restore_tests {
 		let session_info = SessionInfo {
 			name: "test_session".to_string(),
 			role: String::new(),
+			readonly: false,
 			created_at: timestamp,
 			model: "test-model".to_string(),
 			input_tokens: 0,

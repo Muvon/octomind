@@ -127,7 +127,7 @@ tempfile = "3.27.0"
 ed25519-dalek = "3" # Verifies the signature of a plugin release manifest
 # QuickJS, compiled in: runs the scripts of the `code` tool and the TypeScript
 # compiler that checks them (assets/typescript). `parallel` makes a run Send.
-rquickjs = { version = "0.14.0", features = ["futures", "parallel"] }
+rquickjs = { version = "0.15.0", features = ["futures", "parallel"] }
 tar = "0.4"
 
 [target.'cfg(unix)'.dependencies]

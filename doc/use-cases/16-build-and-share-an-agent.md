@@ -1,6 +1,6 @@
-# Give your team a reusable release-review specialist
+# Give your team a reusable release-review agent
 
-Package a release-review specialist agent as a tap that your whole team can install and use consistently across
+Package a release-review agent as a tap that your whole team can install and use consistently across
 projects.
 
 ## The problem
@@ -12,9 +12,9 @@ method in a named agent that everyone can install, while keeping each team's pro
 ## What you will set up
 
 - [Tap scaffolding and registration](../integration/04-tap-system.md) with `octomind tap init`.
-- [An agent manifest](../integration/04-tap-system.md) addressed by a `category:variant` tag.
+- [An agent manifest](../integration/04-tap-system.md) addressed by its name.
 - [Manifest environment inputs](../integration/04-tap-system.md) using `{{ENV:TEAM_PRODUCT}}`.
-- [Interactive and piped sessions](../usage/05-sessions.md) using the same specialist.
+- [Interactive and piped sessions](../usage/05-sessions.md) using the same agent.
 - [Tap distribution and removal](../integration/04-tap-system.md) through GitHub or a local directory.
 
 ## Prerequisites
@@ -46,50 +46,50 @@ The local authoring steps do not require a GitHub token.
 ### 1. Create the tap under your account name
 
 Run this from a parent directory where you keep projects. Enter your GitHub username at the prompt. `release-kit` is the
-tap's short repository name and the agent domain; `release-kit:reviewer` is the specialist tag you add in step 3. These
+tap's short repository name; `release-reviewer` is the agent you create in steps 2 and 3. These
 are resources you are creating, not a pre-existing public tap.
 
 The command creates `./octomind-release-kit`, validates the rendered scaffold, initializes its Git repository, and
-registers it locally. The starter agent it generates is always the domain's orchestrator, `release-kit:chief`. Look for
-that directory and tag in its output.
+registers it locally. It generates a starter agent at `agents/release-reviewer.toml`. Look for
+that directory and agent name in its output.
 
 ```bash
 printf 'Your GitHub username: '
 read -r TAP_OWNER
 export TAP_OWNER
-octomind tap init "$TAP_OWNER/release-kit" --agent release-kit
+octomind tap init "$TAP_OWNER/release-kit" --agent release-reviewer
 ```
 
-### 2. Locate where the specialist goes
+### 2. Locate where the agent goes
 
-The starter agent is `agents/release-kit/chief.toml` inside the tap. The specialist `release-kit:reviewer` is a second
-file beside it, `agents/release-kit/reviewer.toml`. The tap may also contain `skills/`, `capabilities/`, `deps/`,
-`workflows/`, and `plugins/`; those are separate extension surfaces. This specialist needs only its manifest because you
+The starter agent is `agents/release-reviewer.toml` inside the tap. The agent's tag is its file name, `release-reviewer`. The tap may also contain `skills/`, `capabilities/`, `deps/`,
+`workflows/`, and `plugins/`; those are separate extension surfaces. This agent needs only its manifest because you
 will supply the release note in the conversation.
 
-Inspect the generated starter before adding the specialist:
+Inspect the generated starter before replacing it:
 
 ```bash
-cat octomind-release-kit/agents/release-kit/chief.toml
+cat octomind-release-kit/agents/release-reviewer.toml
 ```
 
 ### 3. Save the release-review method
 
-Create `octomind-release-kit/agents/release-kit/reviewer.toml` with this complete manifest. Save it before running the
+Replace `octomind-release-kit/agents/release-reviewer.toml` with this complete manifest. Save it before running the
 agent for the first time so the initial cached copy contains your instructions.
 
-The title and description headers describe the specialist for discovery. The filename supplies the runtime tag, which
+The title and description headers describe the agent for discovery. The filename supplies the runtime tag, which
 Octomind injects into the first role's `name`. Keep the explicit name consistent with the path.
 
 `TEAM_PRODUCT` is a non-secret input. Substitution puts its value directly into the prompt; do not use this field for
 credentials. Omit a model profile so each installer can choose their own model.
 
 ```toml
+# Agent: release-reviewer
 # Title: Release Readiness Reviewer
 # Description: Review release notes for compatibility, rollout, verification, and rollback evidence.
 
 [[roles]]
-name = "release-kit:reviewer"
+name = "release-reviewer"
 system = """
 You review release notes for {{ENV:TEAM_PRODUCT}}.
 Use only information supplied in the conversation.
@@ -109,7 +109,7 @@ server_refs = []
 allowed_tools = []
 ```
 
-### 4. Supply the product input and start the specialist
+### 4. Supply the product input and start the agent
 
 Use the example product value for the first run. Each teammate can export a different value without editing the tap.
 The same input appears in the welcome message, giving you a visible substitution check before sending a request.
@@ -119,7 +119,7 @@ Exporting it first also avoids input prompts during piped runs. Use simple text 
 
 ```bash
 export TEAM_PRODUCT='Harbor Reports'
-octomind run release-kit:reviewer
+octomind run release-reviewer
 ```
 
 ### 5. Exercise the review method
@@ -128,7 +128,7 @@ Type this deliberately incomplete release note. Wait for the review before enter
 
 Expect the four requested headings and questions about the missing rollout, verification, and rollback evidence.
 `Needs details` is the requested verdict. These are acceptance criteria for the prompt, not guaranteed model output.
-`/info` lets you confirm the active role is `release-kit:reviewer`.
+`/info` lets you confirm the active role is `release-reviewer`.
 
 ```text
 Review this release note: Harbor Reports 2.4 changes the CSV export date format from MM/DD/YYYY to YYYY-MM-DD.
@@ -148,15 +148,15 @@ printf '%s\n' \
   'Rollout: enable for the internal team first, then expand after a day without export errors.' \
   'Verification: the release owner reports that the CSV fixture checks passed on the release candidate.' \
   'Rollback: disable the feature flag and restore the previous service image; the owner reports a drill passed.' | \
-  octomind run release-kit:reviewer --format plain
+  octomind run release-reviewer --format plain
 ```
 
 ### 7. Publish the manifest and install it on another machine
 
 In GitHub, create a repository named exactly `octomind-release-kit` under the account entered in step 1. Add your
-`agents/release-kit/reviewer.toml` at that same relative path using GitHub's
+`agents/release-reviewer.toml` at that same relative path using GitHub's
 [file upload instructions](https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository).
-Save the repository change. The one manifest is sufficient for this specialist; it does not reference scaffold files.
+Save the repository change. The one manifest is sufficient for this agent; it does not reference scaffold files.
 
 Use a public repository for this example. On a second machine with Octomind installed and logged in, enter the
 publisher's username and install it. The installer maps `user/release-kit` to `user/octomind-release-kit` on GitHub.
@@ -166,7 +166,7 @@ printf 'Publisher GitHub username: '
 read -r TAP_OWNER
 export TEAM_PRODUCT='Harbor Reports'
 octomind tap "$TAP_OWNER/release-kit"
-octomind run release-kit:reviewer
+octomind run release-reviewer
 ```
 
 ### 8. Remove the installation when you finish trying it
@@ -188,7 +188,7 @@ On your authoring machine, keep the local tap registered. If you removed it in s
 ```bash
 export TEAM_PRODUCT='Harbor Reports'
 printf '%s\n' 'Review: Harbor Reports changes a CSV column name. No rollout or rollback details are available.' | \
-  octomind run release-kit:reviewer --format plain
+  octomind run release-reviewer --format plain
 ```
 
 Look for the four review headings, the missing details, and `Needs details`. Confirm product substitution separately
@@ -200,7 +200,7 @@ through the interactive welcome message. Compare the same input on the second ma
   `octomind tap "$TAP_OWNER/release-kit" ./octomind-release-kit` without publishing it.
 - **Use another model.** Add `-m octohub:auto` to the run command, or configure a name-only `[taps]` model mapping as
   described in the tap guide. A manifest with an explicit role model takes precedence over that mapping.
-- **Another specialist.** Copy the method into a new `agents/<category>/<variant>.toml`, change the explicit role name
+- **Another agent.** Copy the method into a new `agents/<name>.toml`, change the explicit role name
   to match, and supply a checklist appropriate to your team's domain.
 
 ## Troubleshooting
@@ -209,7 +209,7 @@ through the interactive welcome message. Compare the same input on the second ma
 existing tap directory. Initialization refuses nonempty directories and already-registered tap IDs.
 
 **The old prompt still runs after an edit.** The tag has a separate manifest cache, even for local symlinks. Remove only
-`${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/agents/release-kit/reviewer.toml`, then start a new session. Setting
+`${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/agents/release-reviewer.toml`, then start a new session. Setting
 `cache_ttl_hours = 0` alone still permits a stale cached response while refresh happens in the background.
 
 **The product input is wrong or the run prompts for it.** Export `TEAM_PRODUCT` in the launching shell. Check for a
@@ -217,7 +217,7 @@ later assignment in the user-scope or project `.env`, which can override exporte
 environment variable is accepted as empty input; it does not trigger a prompt.
 
 **GitHub installation cannot find the agent.** Check the `octomind-` repository prefix and the exact
-`agents/release-kit/reviewer.toml` path. Other taps can shadow the same tag, and the manifest cache can preserve an
+`agents/release-reviewer.toml` path. Other taps can shadow the same agent name, and the manifest cache can preserve an
 earlier resolution. Inspect `octomind tap` and the tag's cached manifest before changing the prompt again.
 
 ## See also

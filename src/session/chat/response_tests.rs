@@ -726,7 +726,7 @@ async fn test_process_response_cancelled_mid_execution_skips_assistant_message()
 	let config = config_with_core_server(fake_provider_config());
 	let session_id = "resp-cancel-mid-test".to_string();
 	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = fake_session("run the slow tool");

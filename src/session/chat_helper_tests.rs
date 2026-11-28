@@ -18,7 +18,8 @@ type CC<'a> = CommandCompleter<'a>;
 
 fn test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	// /run completion merges the role config; without a role_map that merge
 	// hits the load-time invariant panic.
 	config.build_role_map();

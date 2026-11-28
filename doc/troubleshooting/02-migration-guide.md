@@ -17,7 +17,7 @@ octomind config --validate
 ```
 
 Choose an unused backup destination if `.before-upgrade` already exists. The registered migration chain upgrades
-older files to schema `32`; a missing version is treated as `0`. It creates a backup before replacing the selected
+older files to schema `35`; a missing version is treated as `0`. It creates a backup before replacing the selected
 file atomically and prints the backup path. It only transforms fields owned by its migration steps: an upgraded
 version stamp does not prove that a historical config has every currently required field.
 
@@ -105,7 +105,7 @@ Tap mappings and workflow step `model` fields remain strings, not profile tables
 
 ```toml
 [taps]
-"developer:general" = "octohub:auto"
+"developer" = "octohub:auto"
 ```
 
 The shipped main and compression profiles use `octohub:auto`. Migration does not require replacing
@@ -163,7 +163,7 @@ Start the local role above with:
 octomind run developer
 ```
 
-The root `default` is `assistant:chief` in the template and applies when `run`, `acp`, or `server` receives no tag.
+The root `default` is `assistant` in the template and applies when `run`, `acp`, or `server` receives no tag.
 To make your newly defined local role the default, set this before any table header:
 
 ```toml
@@ -247,11 +247,10 @@ command = "octofs"
 args = ["mcp"]
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
 Use the exact role name in `auto_bind`; for the local role above, change it to `["developer"]`.
-The auto-bind matcher does not treat `developer` as a prefix of `developer:general`.
 Auto-bound servers also receive a wildcard grant when the role's allowlist is non-empty.
 
 The TOML server type is `"stdio"`, never `"stdin"`. The upgrade chain does not rewrite server types or replace
@@ -351,7 +350,7 @@ stop it there. Fix the file named in the error, compare required fields with
 octomind config --validate
 ```
 
-A file already stamped `32` is not migrated again. Do not lower its version to repair missing fields; restore the
+A file already stamped `35` is not migrated again. Do not lower its version to repair missing fields; restore the
 missing fields from the template in their proper tables. In particular, put scalar compression keys before nested
 `[compression.attention]` or `[compression.model]` headers.
 
@@ -407,16 +406,8 @@ supported older primary config:
 | `21` | Adds the optional hindsight section |
 | `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
 | `27` | Adds the optional advise section |
-| `30` | Renames old lead-agent tags to their `chief` tags in `[taps]` keys and in the root `default` |
 | `32` | Removes `[supervisor]` and `[decision]`, moves `max_identical_rounds` to the root, adds the Besydr plugin entry; see below |
-
-Old lead-agent tags keep working: a saved session, `default`, `/role` or `tap` call that names one (for example
-`developer:cto`, now `developer:chief`, or `assistant:concierge`, the global assistant, now `assistant:chief`) is mapped to
-the new tag with a notice. The mapping comes from the tap, not from octomind: the tap keeps the old name as a symlink
-to the new manifest (`cto.toml -> chief.toml`). A tap of your own listed earlier that still defines the old tag as a
-real manifest keeps it. Version `30` also rewrites those tags in `config.toml`. Where both the old and the new `[taps]`
-key exist, the new key's value is kept. A `[taps]` key with an old tag in another config file is not rewritten and
-keeps applying to the renamed agent.
+| `35` | Reduces agent names in `default`, `[taps]` keys, plugin `roles` and MCP `auto_bind` to the flat form, removes a local `assistant` role that equals the one the old template shipped, and adds `registry.tap` and `registry.ref` from the template |
 
 Version `22` preserves the legacy model, recall, skills, capabilities, and compression values and comments.
 The old authorizer, condense, distill, plan, gate, and evolution switches become one `supervisor` flag: any true

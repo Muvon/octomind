@@ -984,6 +984,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 		crate::session::tap_runs::init_for_session();
 		let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
 		crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
+			mode: Default::default(),
 			id: "tap-unit-1".to_string(),
 			role: "developer:general".to_string(),
 			workdir: ".".to_string(),

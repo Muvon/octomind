@@ -1678,7 +1678,13 @@ async fn bind_session(
 		}
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
-		crate::session::context::init_session_services(&role_for_pool);
+		crate::session::context::init_session_services(
+			&role_for_pool,
+			crate::session::context::SessionMode {
+				readonly: chat_session.session.info.readonly,
+				copy: false,
+			},
+		);
 		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()))?;
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
@@ -1872,14 +1878,12 @@ async fn resume_role_config(session_id: &str, server: &ServerState) -> Result<(A
 /// runs under that role's tools. Shared by a bind that names a role and by a
 /// disk resume that restores one.
 ///
-/// A name that resolves to the server role (a bare domain, or an alias a rename left behind)
-/// is the server role: its config is already loaded and nothing is pinned.
+/// The server role itself is not pinned: its config is already loaded.
 async fn pin_role_config(session_id: &str, role: &str, server: &ServerState) -> Result<(Arc<Config>, String)> {
-	let role = crate::agent::resolver::expand_domain_role(role, &server.config)?;
 	if role == server.role {
-		return Ok((Arc::clone(&server.config), role));
+		return Ok((Arc::clone(&server.config), role.to_string()));
 	}
-	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(&role), &server.config, None).await?;
+	let (config, role) = crate::agent::resolver::resolve_config_and_role(Some(role), &server.config, None).await?;
 	crate::session::context::with_session_id(
 		session_id.to_string(),
 		crate::mcp::initialize_mcp_for_role(&role, &config),
@@ -1921,7 +1925,13 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 		args.mode = "websocket".to_string();
 		match setup_and_initialize_session(&args, &config, false).await {
 			Ok((mut session, config_for_role, session_role, _, _)) => {
-				crate::session::context::init_session_services(&session_role);
+				crate::session::context::init_session_services(
+					&session_role,
+					crate::session::context::SessionMode {
+						readonly: session.session.info.readonly,
+						copy: false,
+					},
+				);
 				crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
 				crate::plugins::lifecycle::connect(
 					session_id,

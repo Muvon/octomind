@@ -17,7 +17,7 @@ use octomind::acp::AcpRunOptions;
 
 #[derive(Args, Debug)]
 pub struct AcpArgs {
-	/// Agent tag (e.g. `developer:general`), bare domain (e.g. `developer`, runs its `chief`) or role name (e.g. `assistant`).
+	/// Agent tag (e.g. `developer` or `developer:rust`): a tap agent, or a role defined in your config, which wins over a tap agent of the same name.
 	/// Omit to use the default role from config.
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,
@@ -44,6 +44,16 @@ pub struct AcpArgs {
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
+
+	/// Every session this agent creates is read-only: only tools whose
+	/// `readOnlyHint` is true are offered or run.
+	#[arg(long)]
+	pub readonly: bool,
+
+	/// Set by a parent that starts a copy of itself: this session may not start
+	/// further copies of itself.
+	#[arg(long, hide = true)]
+	pub copy: bool,
 }
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
@@ -66,6 +76,10 @@ pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), an
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
 		startup_error,
+		mode: octomind::session::context::SessionMode {
+			readonly: args.readonly,
+			copy: args.copy,
+		},
 	};
 	octomind::acp::run(resolved_config, role, options).await
 }

@@ -42,7 +42,7 @@ under the demo project; it does not move your saved login. Configuration files i
 ```bash
 mkdir "$HOME/octomind-spend-demo"
 cd "$HOME/octomind-spend-demo"
-mkdir -p .agents/tools spend-tap/agents/spend
+mkdir -p .agents/tools spend-tap/agents
 export OCTOMIND_CONFIG_PATH="$PWD/.octomind-config/config.toml"
 octomind config --validate
 octomind config --show
@@ -76,8 +76,7 @@ retry_timeout = 30
 request_timeout_seconds = 300
 
 [taps]
-"spend:brief" = "octohub:auto"
-"spend" = "octohub:auto"   # bare domain: every agent of the domain; the exact tag above wins
+"spend-brief" = "octohub:auto"
 
 [[roles]]
 name = "budget"
@@ -99,7 +98,7 @@ allowed_tools = ["core:*"]
 
 ### 3. Add a tap agent with an independent model mapping
 
-Save `spend-tap/agents/spend/brief.toml`. This is a local tap you author, so no unpublished remote agent is assumed.
+Save `spend-tap/agents/spend-brief.toml`. This is a local tap you author, so no unpublished remote agent is assumed.
 Its manifest omits a role model profile: the `[taps]` mapping above selects its model name, and it inherits the main
 profile's other parameters. The plain `budget` role instead has its own 512-output-token profile.
 
@@ -194,10 +193,10 @@ Replace `.octomind-config/99-probe.toml` with this complete root-level override 
 max_request_spending_threshold = 0.10
 ```
 
-Run the tap agent for one non-interactive task. The optional argument is a tag; the message arrives through stdin.
+Run the tap agent for one non-interactive task. The optional argument is an agent name; the message arrives through stdin.
 
 ```bash
-printf '%s\n' 'Call budget_probe once and report its result.' | octomind run spend:brief --format plain
+printf '%s\n' 'Call budget_probe once and report its result.' | octomind run spend-brief --format plain
 ```
 
 ## Verify it works
@@ -222,7 +221,7 @@ and independent external services also do not become part of a shared hard ceili
 ## Variations
 
 - With your own OpenAI credential, check `test -n "$OPENAI_API_KEY"` and use `openai:gpt-5.6-sol` as the role model
-  name or the `"spend:brief"` mapping. Follow [provider setup](../usage/04-providers.md); compare measured reports.
+  name or the `"spend-brief"` mapping. Follow [provider setup](../usage/04-providers.md); compare measured reports.
 - Remove the `plugins` override to run the Besydr plugin again for tasks that need completion checks, then include its
   model calls in your spending comparison. See [Supervisor](../usage/14-supervisor.md).
 - Enable `cache_keepalive_enabled = true` only when you want supported-provider cache refreshes; the ping budget is

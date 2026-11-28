@@ -334,7 +334,11 @@ pub struct SessionInfo {
 	pub name: String,
 	pub created_at: u64,
 	pub model: String,
-	pub role: String, // Full role tag (e.g. "developer:general" or "developer")
+	pub role: String, // Full role tag (e.g. "developer")
+	/// Read-only for the life of the session: set by `--readonly`, kept on resume with or
+	/// without the flag.
+	#[serde(default)]
+	pub readonly: bool,
 	pub input_tokens: u64,
 	pub output_tokens: u64,
 	pub cache_read_tokens: u64,

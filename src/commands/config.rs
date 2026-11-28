@@ -694,54 +694,37 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	render_local_api_key_row();
 
 	// ── roles ─────────────────────────────────────────────────────────
-	let (_dev_config, dev_mcp, _dev_commands, dev_system) = config.get_role_config("developer");
-	let (_ass_config, ass_mcp, _ass_commands, ass_system) = config.get_role_config("assistant");
-
+	// A config may define no role at all: tap agents then supply every role.
 	block_section("roles");
-	let role_kw = key_width(["developer", "assistant"]);
-	block_row(
-		"developer",
-		&format!(
-			"{} (system-wide) {} {} char prompt",
-			config.get_effective_model(),
-			"·".bright_black(),
-			dev_system.len()
-		),
-		role_kw,
-	);
-	block_row(
-		"assistant",
-		&format!(
-			"{} (system-wide) {} {} char prompt",
-			config.get_effective_model(),
-			"·".bright_black(),
-			ass_system.len()
-		),
-		role_kw,
-	);
+	let role_kw = key_width(config.roles.iter().map(|role| role.name.as_str()));
+	for role in &config.roles {
+		block_row(
+			&role.name,
+			&format!(
+				"{} (system-wide) {} {} char prompt",
+				config.get_effective_model(),
+				"·".bright_black(),
+				role.config.system.len()
+			),
+			role_kw,
+		);
+	}
 
 	// ── mcp ───────────────────────────────────────────────────────────
 	block_section("mcp");
-	let mcp_kw = key_width(["registry", "developer", "assistant"]);
+	let mcp_kw = key_width(std::iter::once("registry").chain(config.roles.iter().map(|role| role.name.as_str())));
 	block_row("registry", &format!("{} server(s)", config.mcp.servers.len()), mcp_kw);
-	block_row(
-		"developer",
-		&if dev_mcp.server_refs.is_empty() {
-			"None (MCP disabled)".dimmed().to_string()
-		} else {
-			dev_mcp.server_refs.join(", ")
-		},
-		mcp_kw,
-	);
-	block_row(
-		"assistant",
-		&if ass_mcp.server_refs.is_empty() {
-			"None (MCP disabled)".dimmed().to_string()
-		} else {
-			ass_mcp.server_refs.join(", ")
-		},
-		mcp_kw,
-	);
+	for role in &config.roles {
+		block_row(
+			&role.name,
+			&if role.mcp.server_refs.is_empty() {
+				"None (MCP disabled)".dimmed().to_string()
+			} else {
+				role.mcp.server_refs.join(", ")
+			},
+			mcp_kw,
+		);
+	}
 
 	if !config.mcp.servers.is_empty() {
 		block_section("mcp servers");

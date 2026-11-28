@@ -132,8 +132,8 @@ Pass one arguments object per call to the `capability` MCP tool. The enable/disa
 `enable` and `disable` are idempotent. The auto-activator and env preloading use this runtime registry. Skill-declared
 capabilities use a separate server-loading/refcount path; they are not governed by this four-capability LRU.
 
-**Domains.** Listing, discovery, and new named activation are scoped to the current session's *domain* — the category
-part of the active role (`developer` for `developer:general`). A capability with a non-empty `domains` list is only
+**Domains.** Listing, discovery, and new named activation are scoped to the current session's *domain* — the name
+of the active role (for example `developer`). A capability with a non-empty `domains` list is only
 visible to roles in those domains; an empty list means universal. `list` and `discover` silently omit out-of-domain
 caps, and `enable` **hard-fails** for one (returning an error that names the role you'd need to run). See [Domain
 Gating](#domain-gating) below.
@@ -248,8 +248,8 @@ query", "look at the postgres schema") puts the cap centroid where users actuall
 
 ## Domain Gating
 
-A capability can declare optional `domains = [...]` in its `config.toml`. The **session domain** is the category part of
-the active role: `developer:general` runs in the `developer` domain. The gate rule is simple:
+A capability can declare optional `domains = [...]` in its `config.toml`. The **session domain** is the name of
+the active role: the `developer` agent runs in the `developer` domain. The gate rule is simple:
 
 - **Empty `domains`** → universal. Available in every role (typical for filesystem-style utilities).
 - **Non-empty `domains`** → the capability is available only when the session domain is in the list.
@@ -257,7 +257,7 @@ the active role: `developer:general` runs in the `developer` domain. The gate ru
 The capability tool applies domain filtering on these paths; skill-declared server loading is a separate path:
 
 - `capability(action="list")` and `capability(action="discover")` silently omit out-of-domain caps.
-- Auto-activation filters out-of-domain caps *before* embedding their triggers — so a `developer:general` message can
+- Auto-activation filters out-of-domain caps *before* embedding their triggers — so a `developer` message can
   never accidentally flip on a `medical`-domain capability.
 - `capability(action="enable")` **hard-fails** for an out-of-domain cap with an error like `Capability 'X' is bound to
   domains ["medical"]; current domain is 'developer'. Run the matching role (e.g. octomind run doctor) to

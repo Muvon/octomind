@@ -20,6 +20,7 @@ fn test_job(id: &str, role: &str, started_at: SystemTime, status: TapJobStatus) 
 	let (cancel_tx, cancel_rx) = watch::channel(false);
 	(
 		TapJob {
+			mode: Default::default(),
 			id: id.to_string(),
 			role: role.to_string(),
 			workdir: "/tmp".to_string(),
@@ -77,7 +78,7 @@ async fn sent_prompts_are_bounded_ordered_and_closed_atomically() {
 }
 
 #[tokio::test]
-async fn sent_prompts_require_a_running_owned_specialist() {
+async fn sent_prompts_require_a_running_owned_agent() {
 	let parent = "tap-prompt-owner".to_string();
 	crate::session::context::with_session_id(parent.clone(), async {
 		init_for_session();
@@ -600,6 +601,7 @@ async fn concurrent_same_id_resume_claims_exactly_one_run() {
 
 fn run_info(id: &str, status: TapJobStatus, usage_cost: Option<f64>, last_action: Option<&str>) -> TapJobInfo {
 	TapJobInfo {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp".to_string(),
@@ -762,4 +764,76 @@ fn keep_unlogged_keeps_only_background_ids_not_yet_logged() {
 	let mut forgotten = info_with(session, &[], &ids);
 	keep_unlogged(&mut forgotten);
 	assert_eq!(forgotten.supervisor_accounting.background_runs.len(), ids.len());
+}
+
+#[tokio::test]
+#[serial]
+async fn a_resumed_run_keeps_its_readonly_and_copy_flags() {
+	let session_id = "tap-runs-mode".to_string();
+	let (mut job, _cancel) = test_job("moded", "developer", UNIX_EPOCH, TapJobStatus::Done);
+	job.mode = SessionMode {
+		readonly: true,
+		copy: true,
+	};
+	let (listed, claim) = crate::session::context::with_session_id(session_id.clone(), async {
+		register_job(job);
+		(find_job("moded").unwrap(), resume_run("moded").unwrap())
+	})
+	.await;
+	clear_for_session(&session_id);
+
+	let expected = SessionMode {
+		readonly: true,
+		copy: true,
+	};
+	assert_eq!(listed.mode, expected);
+	assert_eq!(claim.mode, expected);
+	assert_eq!(claim.role, "developer");
+}
+
+#[test]
+fn the_saved_flags_of_a_run_survive_the_session_file_and_old_files_read_as_writable() {
+	let saved = run_info("saved", TapJobStatus::Done, None, None);
+	let mut moded = saved.clone();
+	moded.mode = SessionMode {
+		readonly: true,
+		copy: false,
+	};
+	let back: TapJobInfo = serde_json::from_value(serde_json::to_value(&moded).unwrap()).unwrap();
+	assert_eq!(back.mode, moded.mode);
+
+	let mut old = serde_json::to_value(&saved).unwrap();
+	old.as_object_mut().unwrap().remove("mode");
+	let back: TapJobInfo = serde_json::from_value(old).unwrap();
+	assert_eq!(back.mode, SessionMode::default());
+}
+
+#[tokio::test]
+#[serial]
+async fn a_copy_saved_with_the_parent_session_resumes_as_a_copy_after_a_reload() {
+	let mut saved = run_info("copy-run", TapJobStatus::Done, None, None);
+	saved.mode = SessionMode {
+		readonly: true,
+		copy: true,
+	};
+	let info = crate::session::SessionInfo {
+		agent_runs: vec![saved],
+		..Default::default()
+	};
+	// What the parent's session file carries, read back as a resume reads it.
+	let reloaded: crate::session::SessionInfo = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+	let parent = "tap-runs-copy-parent".to_string();
+	restore_runs(&parent, &reloaded.agent_runs);
+
+	let claim =
+		crate::session::context::with_session_id(parent.clone(), async { resume_run("copy-run").unwrap() }).await;
+	clear_for_session(&parent);
+
+	assert_eq!(
+		claim.mode,
+		SessionMode {
+			readonly: true,
+			copy: true
+		}
+	);
 }

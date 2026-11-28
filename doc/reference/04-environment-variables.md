@@ -380,7 +380,7 @@ url = "http://127.0.0.1:9000/mcp"
 headers = { Authorization = "Bearer {{ENV:PRIVATE_API_TOKEN}}" }
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
 Set `PRIVATE_API_TOKEN` to your server’s credential before connecting; the key name is chosen by this config.

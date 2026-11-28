@@ -25,33 +25,95 @@
 //! ## Directory structure
 //! - GitHub taps cloned to: `~/.local/share/octomind/taps/user/octomind-repo/`
 //! - Local taps symlinked to: `~/.local/share/octomind/taps/user/octomind-repo/ -> /your/path`
-//! - Manifests expected at: `<tap>/agents/<category>/<variant>.toml`
+//! - Manifests expected at: `<tap>/agents/<ns>/default.toml` (the agent `<ns>`) and
+//!   `<tap>/agents/<ns>/<variant>.toml` (the agent `<ns>:<variant>`)
+//! - Skills: `<tap>/agents/<ns>/skills/<skill>/` (owned by that namespace) and `<tap>/skills/<skill>/` (shared)
 //!
 //! ## Priority
-//! User taps (in order added) → built-in default (muvon/tap)
+//! User taps (in order added) → built-in tap (`[registry] tap` in the config, `muvon/tap` by default)
+//!
+//! The built-in tap serves the branch, tag or commit named by `[registry] ref`; taps added by
+//! the user follow their default branch.
 
-use crate::agent::registry::{parse_agent_header, AgentHeader};
+use crate::agent::registry::{
+	canonical_tag, manifest_parts, namespace_of, parse_agent_header, AgentHeader, DEFAULT_VARIANT,
+};
+use crate::config::registry::RegistryConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
-/// The built-in default tap — always present as the last fallback.
-pub const DEFAULT_TAP: &str = "muvon/tap";
+/// The built-in tap and the ref of it to serve, as the config names them. Process-wide because
+/// the tap lookups below take no config and run on any thread; `Config` loading sets it
+/// ([`set_built_in_tap`]). The config template is the only source of the values, so a lookup
+/// before any config was loaded is an error, not a guess.
+static BUILT_IN_TAP: RwLock<Option<BuiltInTap>> = RwLock::new(None);
+
+#[derive(Clone)]
+struct BuiltInTap {
+	name: String,
+	git_ref: String,
+}
+
+/// Install the built-in tap from `[registry]`. Called whenever a config is loaded.
+pub fn set_built_in_tap(registry: &RegistryConfig) {
+	*BUILT_IN_TAP.write().unwrap_or_else(PoisonError::into_inner) = Some(BuiltInTap {
+		name: registry.tap.clone(),
+		git_ref: registry.git_ref.clone(),
+	});
+}
+
+fn configured_built_in_tap() -> Result<BuiltInTap> {
+	if let Some(built_in) = BUILT_IN_TAP.read().unwrap_or_else(PoisonError::into_inner).clone() {
+		return Ok(built_in);
+	}
+	not_loaded()
+}
+
+/// Unit tests run without a loaded config and use the values the template ships.
+#[cfg(test)]
+fn not_loaded() -> Result<BuiltInTap> {
+	let registry = RegistryConfig::default();
+	Ok(BuiltInTap {
+		name: registry.tap,
+		git_ref: registry.git_ref,
+	})
+}
+
+#[cfg(not(test))]
+fn not_loaded() -> Result<BuiltInTap> {
+	anyhow::bail!("The built-in tap is not configured: no configuration was loaded")
+}
+
+/// The built-in tap — always present as the last fallback.
+pub fn built_in_tap() -> Result<Tap> {
+	Ok(Tap {
+		name: configured_built_in_tap()?.name,
+		local_path: None,
+	})
+}
+
+/// The ref of the built-in tap that is served.
+pub fn built_in_tap_ref() -> Result<String> {
+	Ok(configured_built_in_tap()?.git_ref)
+}
 
 /// How often a GitHub tap is refreshed automatically. Every agent start reads the
-/// taps, and a delegated specialist has seconds to answer its parent's
+/// taps, and a delegated agent has seconds to answer its parent's
 /// handshake, so a refresh starts at most once per interval for every process
 /// sharing the data dir: the newer of git's `FETCH_HEAD` and `REFRESH_STAMP`
 /// marks the last one.
 const TAP_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// File under `.git` written when a background refresh is started, holding the
-/// octomind version that started it. `FETCH_HEAD` only changes when the fetch
+/// octomind version that started it and, for the built-in tap, the ref it serves
+/// (see [`refresh_stamp`]). `FETCH_HEAD` only changes when the fetch
 /// finishes, which on a slow mount is long after other processes have seen the
 /// same due refresh and started their own.
 const REFRESH_STAMP: &str = "octomind-refresh";
@@ -79,6 +141,32 @@ struct RefreshState {
 }
 
 /// A tap entry: either a GitHub repo or a local path.
+const AGENTS_DIR: &str = "agents";
+const SKILLS_DIR: &str = "skills";
+
+/// A skill directory of a tap and the agent it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TapSkillDir {
+	/// The namespace that owns the skill by location (`agents/<ns>/skills/`): its base agent
+	/// and every variant. `None` for a shared skill (`skills/`), bound through its `domains:`.
+	pub owner: Option<String>,
+	pub dir: PathBuf,
+}
+
+/// The subdirectories of `dir` by name; none when `dir` is missing or unreadable.
+fn sorted_subdirs(dir: &Path) -> Vec<PathBuf> {
+	let Ok(entries) = fs::read_dir(dir) else {
+		return Vec::new();
+	};
+	let mut dirs: Vec<PathBuf> = entries
+		.flatten()
+		.map(|entry| entry.path())
+		.filter(|path| path.is_dir())
+		.collect();
+	dirs.sort();
+	dirs
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tap {
 	/// Tap name in `user/repo` format.
@@ -119,17 +207,94 @@ impl Tap {
 
 	/// Returns the agents directory path for this tap.
 	pub fn agents_dir(&self) -> Result<PathBuf> {
-		Ok(self.local_dir()?.join("agents"))
+		Ok(self.local_dir()?.join(AGENTS_DIR))
+	}
+
+	/// Where the manifest of the agent `tag` lives: `agents/<ns>/default.toml` for `<ns>`,
+	/// `agents/<ns>/<variant>.toml` for `<ns>:<variant>`.
+	pub fn agent_manifest(&self, tag: &str) -> Result<PathBuf> {
+		let (namespace, variant) = manifest_parts(canonical_tag(tag));
+		Ok(self.agents_dir()?.join(namespace).join(format!("{variant}.toml")))
+	}
+
+	/// The old flat manifest file, `<ns>.toml` directly in `agents/`. It is no longer read; it
+	/// is only looked up to tell a user whose tap still has it where the file must move to.
+	fn flat_agent_manifest(&self, namespace: &str) -> Result<PathBuf> {
+		Ok(self.agents_dir()?.join(namespace).with_extension("toml"))
+	}
+
+	/// The agents of this tap as `(tag, manifest path)`, sorted by tag. Each directory of
+	/// `agents/` is a namespace: its `default.toml` is the agent `<ns>` and every other
+	/// `*.toml` is the agent `<ns>:<variant>`. A namespace may have variants and no
+	/// `default.toml`. A symlink is not an agent.
+	pub fn agent_manifests(&self) -> Result<Vec<(String, PathBuf)>> {
+		let agents_dir = self.agents_dir()?;
+		if !agents_dir.is_dir() {
+			return Ok(Vec::new());
+		}
+		let mut manifests = Vec::new();
+		for namespace_entry in fs::read_dir(&agents_dir)?.flatten() {
+			// `DirEntry::file_type` does not follow links, so a tap directory that is itself
+			// a symlink (a local tap) still lists its real agents.
+			if !namespace_entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+				continue;
+			}
+			let Ok(namespace) = namespace_entry.file_name().into_string() else {
+				continue;
+			};
+			let Ok(files) = fs::read_dir(namespace_entry.path()) else {
+				continue;
+			};
+			for file in files.flatten() {
+				let path = file.path();
+				if !file.file_type().is_ok_and(|file_type| file_type.is_file())
+					|| path.extension().and_then(|extension| extension.to_str()) != Some("toml")
+				{
+					continue;
+				}
+				let Some(variant) = path.file_stem().and_then(|stem| stem.to_str()) else {
+					continue;
+				};
+				let tag = if variant == DEFAULT_VARIANT {
+					namespace.clone()
+				} else {
+					format!("{namespace}:{variant}")
+				};
+				manifests.push((tag, path));
+			}
+		}
+		manifests.sort_by(|a, b| a.0.cmp(&b.0));
+		Ok(manifests)
+	}
+
+	/// Every skill directory of this tap with the namespace that owns it: `Some(ns)` for
+	/// `agents/<ns>/skills/<skill>/`, `None` for the shared `skills/<skill>/`. Order is
+	/// fixed: shared skills first, then namespaces by name, each namespace's skills by name.
+	pub fn skill_dirs(&self) -> Result<Vec<TapSkillDir>> {
+		let root = self.local_dir()?;
+		let mut skills: Vec<TapSkillDir> = sorted_subdirs(&root.join(SKILLS_DIR))
+			.into_iter()
+			.map(|dir| TapSkillDir { owner: None, dir })
+			.collect();
+		let mut namespaces: Vec<String> = self
+			.agent_manifests()?
+			.iter()
+			.map(|(tag, _)| namespace_of(tag).to_string())
+			.collect();
+		namespaces.dedup();
+		for namespace in namespaces {
+			let owned = sorted_subdirs(&self.agents_dir()?.join(&namespace).join(SKILLS_DIR));
+			skills.extend(owned.into_iter().map(|dir| TapSkillDir {
+				owner: Some(namespace.clone()),
+				dir,
+			}));
+		}
+		Ok(skills)
 	}
 
 	/// Returns the deps directory path for this tap.
 	pub fn deps_dir(&self) -> Result<PathBuf> {
 		Ok(self.local_dir()?.join("deps"))
-	}
-
-	/// Returns the skills directory path for this tap.
-	pub fn skills_dir(&self) -> Result<PathBuf> {
-		Ok(self.local_dir()?.join("skills"))
 	}
 
 	/// Returns the workflows directory path for this tap.
@@ -170,14 +335,26 @@ fn write_taps_file(taps: &TapsFile) -> Result<()> {
 	Ok(())
 }
 
+/// What a refresh writes into [`REFRESH_STAMP`]: the octomind version, and for the built-in
+/// tap (`git_ref` is `Some`) the ref it is served at. A changed ref makes the next refresh due
+/// at once, since the clone still holds the old one. A changed built-in tap name needs no
+/// part here: it has a clone directory of its own, which has no stamp yet.
+fn refresh_stamp(git_ref: Option<&str>) -> String {
+	match git_ref {
+		Some(git_ref) => format!("{} {git_ref}", env!("CARGO_PKG_VERSION")),
+		None => env!("CARGO_PKG_VERSION").to_string(),
+	}
+}
+
 /// Whether a GitHub tap is due for its automatic refresh. A clone that has
-/// never fetched nor started a refresh is due at once, and so is one last
-/// refreshed by another octomind version: a new version may need agents
-/// published since (a renamed `chief` on the first run after an upgrade).
-fn refresh_due(tap_dir: &Path) -> bool {
+/// never fetched nor started a refresh is due at once, and so is one whose
+/// last refresh wrote another `stamp`: a new octomind version may need agents
+/// published since (the flat layout on the first run after an upgrade), and a
+/// new `[registry] ref` names other files.
+fn refresh_due(tap_dir: &Path, stamp: &str) -> bool {
 	let git_dir = tap_dir.join(".git");
-	let stamped_version = fs::read_to_string(git_dir.join(REFRESH_STAMP)).unwrap_or_default();
-	if stamped_version != env!("CARGO_PKG_VERSION") {
+	let stamped = fs::read_to_string(git_dir.join(REFRESH_STAMP)).unwrap_or_default();
+	if stamped != stamp {
 		return true;
 	}
 	let last_refresh = ["FETCH_HEAD", REFRESH_STAMP]
@@ -230,10 +407,7 @@ fn parse_tap_arg(arg: &str) -> Result<Tap> {
 /// already cloned/symlinked and git pull would add unnecessary latency.
 pub fn get_taps() -> Result<Vec<Tap>> {
 	let mut file = read_taps_file()?;
-	file.taps.push(Tap {
-		name: DEFAULT_TAP.to_string(),
-		local_path: None,
-	});
+	file.taps.push(built_in_tap()?);
 	Ok(file.taps)
 }
 
@@ -251,34 +425,30 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 		if tap.local_path.is_none() {
 			if let Ok(tap_dir) = tap.local_dir() {
 				if tap_dir.exists() {
-					spawn_refresh(&tap_dir);
+					spawn_refresh(&tap_dir, &tap.name, None);
 				}
 			}
 		}
 	}
 
-	// Built-in default is always last
-	file.taps.push(Tap {
-		name: DEFAULT_TAP.to_string(),
-		local_path: None,
-	});
+	// Built-in tap is always last
+	file.taps.push(built_in_tap()?);
 	Ok(file.taps)
 }
 
-/// Ensure the default tap is cloned (seamless first-time setup) and refreshed
+/// Ensure the built-in tap is cloned (seamless first-time setup) and refreshed
 /// in the background. Only the first clone blocks: nothing exists to read without it.
+/// The clone ends on the configured `[registry] ref`.
 pub fn ensure_default_tap() -> Result<()> {
-	let default_tap = Tap {
-		name: DEFAULT_TAP.to_string(),
-		local_path: None,
-	};
+	let default_tap = built_in_tap()?;
+	let git_ref = built_in_tap_ref()?;
 	let tap_dir = default_tap.local_dir()?;
 	if !tap_dir.exists() {
 		let url = default_tap.github_url();
-		crate::log_info!("Cloning default tap {}...", DEFAULT_TAP);
-		git_clone(&url, &tap_dir)?;
+		crate::log_info!("Cloning built-in tap {} at {}...", default_tap.name, git_ref);
+		git_clone(&url, &tap_dir, Some(&git_ref))?;
 	} else {
-		spawn_refresh(&tap_dir);
+		spawn_refresh(&tap_dir, &default_tap.name, Some(&git_ref));
 	}
 	Ok(())
 }
@@ -306,13 +476,12 @@ pub fn list_taps() -> Result<Vec<Tap>> {
 
 /// A manifest file found in a tap, not read yet.
 struct AgentManifestFile {
-	category: String,
 	tag: String,
 	path: PathBuf,
 }
 
-/// Walk every active tap's `agents/<category>/<variant>.toml` files, leaving out aliases
-/// (symlinked manifests).
+/// Walk every active tap's agent manifests (see [`Tap::agent_manifests`]). A symlink is not an
+/// agent, and neither is the old flat `<ns>.toml`.
 ///
 /// Uses only locally cached tap data — no network calls. First tap wins on duplicates
 /// (same priority as `fetch_manifest`). Result is sorted by tag.
@@ -322,51 +491,9 @@ fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 	let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
 	for tap in &taps {
-		let agents_dir = match tap.agents_dir() {
-			Ok(d) if d.exists() => d,
-			_ => continue,
-		};
-		let category_entries = match fs::read_dir(&agents_dir) {
-			Ok(e) => e,
-			Err(_) => continue,
-		};
-		for category_entry in category_entries.flatten() {
-			let category_path = category_entry.path();
-			if !category_path.is_dir() {
-				continue;
-			}
-			let category = match category_path.file_name().and_then(|n| n.to_str()) {
-				Some(c) => c.to_string(),
-				None => continue,
-			};
-			let variant_entries = match fs::read_dir(&category_path) {
-				Ok(e) => e,
-				Err(_) => continue,
-			};
-			for variant_entry in variant_entries.flatten() {
-				// A symlinked manifest is an alias for another agent (an old name kept for older
-				// releases): fetching by name reads through it, but listings never show it.
-				// `DirEntry::file_type` does not follow links, so a tap directory that is itself
-				// a symlink (a local tap) still lists its real manifests.
-				if variant_entry.file_type().is_ok_and(|file_type| file_type.is_symlink()) {
-					continue;
-				}
-				let variant_path = variant_entry.path();
-				if variant_path.extension().and_then(|e| e.to_str()) != Some("toml") {
-					continue;
-				}
-				let variant = match variant_path.file_stem().and_then(|n| n.to_str()) {
-					Some(v) => v.to_string(),
-					None => continue,
-				};
-				let tag = format!("{category}:{variant}");
-				if seen.insert(tag.clone()) {
-					manifests.push(AgentManifestFile {
-						category: category.clone(),
-						tag,
-						path: variant_path,
-					});
-				}
+		for (tag, path) in tap.agent_manifests().unwrap_or_default() {
+			if seen.insert(tag.clone()) {
+				manifests.push(AgentManifestFile { tag, path });
 			}
 		}
 	}
@@ -375,7 +502,43 @@ fn walk_agent_manifests() -> Result<Vec<AgentManifestFile>> {
 	Ok(manifests)
 }
 
-/// Returns all available agent tags (`category:variant`) from all active taps.
+/// Explain why `tag` is not an agent, for a lookup that found none: a tap that still has the
+/// flat `<ns>.toml` file, or a namespace that has other agents but not this one. Returns `Ok`
+/// when nothing in the taps explains it, so the caller reports the plain not-found.
+pub fn explain_missing_agent(tag: &str) -> Result<()> {
+	let tag = canonical_tag(tag);
+	let namespace = namespace_of(tag);
+	let taps = get_taps()?;
+	for tap in &taps {
+		let flat = tap.flat_agent_manifest(namespace)?;
+		if flat.is_file() {
+			anyhow::bail!(
+				"Tap '{}' has the agent '{namespace}' as {}, which is no longer read. Move it to {}",
+				tap.name,
+				flat.display(),
+				tap.agent_manifest(namespace)?.display()
+			);
+		}
+	}
+	let mut known: Vec<String> = Vec::new();
+	for tap in &taps {
+		for (existing, _) in tap.agent_manifests().unwrap_or_default() {
+			if namespace_of(&existing) == namespace && !known.contains(&existing) {
+				known.push(existing);
+			}
+		}
+	}
+	if !known.is_empty() {
+		known.sort();
+		anyhow::bail!(
+			"There is no agent '{tag}': namespace '{namespace}' has the agents {}",
+			known.join(", ")
+		);
+	}
+	Ok(())
+}
+
+/// Returns all available agent tags (the agent names) from all active taps.
 ///
 /// Uses only locally cached tap data — no network calls. First tap wins on duplicates
 /// (same priority as `fetch_manifest`). Result is sorted alphabetically.
@@ -386,8 +549,7 @@ pub fn list_agent_tags() -> Result<Vec<String>> {
 /// An agent found in a tap with the fields read from its header comments.
 #[derive(Debug, Clone)]
 pub struct TapAgentHeader {
-	/// Domain part of the tag.
-	pub category: String,
+	/// The agent's name, which is also its tag.
 	pub tag: String,
 	pub header: AgentHeader,
 }
@@ -403,7 +565,6 @@ pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
 			let raw = fs::read_to_string(&manifest.path)
 				.with_context(|| format!("Failed to read agent manifest {}", manifest.path.display()))?;
 			Ok(TapAgentHeader {
-				category: manifest.category,
 				tag: manifest.tag,
 				header: parse_agent_header(&raw),
 			})
@@ -411,90 +572,9 @@ pub fn list_agent_headers() -> Result<Vec<TapAgentHeader>> {
 		.collect()
 }
 
-/// Spec name of a domain's orchestrator: `agents/<domain>/chief.toml`.
-pub const ORCHESTRATOR_SPEC: &str = "chief";
-
-/// Variant an alias manifest points to: `chief` for `cto.toml -> chief.toml`.
-///
-/// `None` for a real file, a missing one, or a link that leaves its domain directory.
-fn alias_target_variant(manifest: &Path) -> Option<String> {
-	let target = fs::read_link(manifest).ok()?;
-	if target.parent() != Some(Path::new("")) || target.extension()? != "toml" {
-		return None;
-	}
-	Some(target.file_stem()?.to_str()?.to_string())
-}
-
-/// Map an alias tag to the tag of the agent it points to; any other tag comes back unchanged.
-///
-/// A tap renames an agent by leaving a symlink under the old name (`cto.toml -> chief.toml`).
-/// The first tap that has the name decides, as in `fetch_manifest`: a real manifest there is
-/// an agent of its own and is never redirected. Local tap data only, no network. Logs one
-/// notice per mapping.
-pub fn resolve_alias_tag(tag: &str) -> Result<String> {
-	let Some((category, variant)) = tag.split_once(':') else {
-		return Ok(tag.to_string());
-	};
-	for tap in get_taps()? {
-		let manifest = tap.agents_dir()?.join(category).join(format!("{variant}.toml"));
-		if manifest.symlink_metadata().is_err() {
-			continue;
-		}
-		let Some(target_variant) = alias_target_variant(&manifest) else {
-			return Ok(tag.to_string());
-		};
-		let target_tag = format!("{category}:{target_variant}");
-		crate::log_info!("`{}` is an alias of `{}`; using `{}`", tag, target_tag, target_tag);
-		return Ok(target_tag);
-	}
-	Ok(tag.to_string())
-}
-
-/// Tags that are aliases of `tag`: the symlinks in its domain that point to its manifest.
-/// Sorted, each once. Local tap data only, no network.
-pub fn alias_tags_of(tag: &str) -> Result<Vec<String>> {
-	let Some((category, variant)) = tag.split_once(':') else {
-		return Ok(Vec::new());
-	};
-	let mut aliases: Vec<String> = Vec::new();
-	for tap in get_taps()? {
-		let Ok(entries) = fs::read_dir(tap.agents_dir()?.join(category)) else {
-			continue;
-		};
-		for entry in entries.flatten() {
-			let path = entry.path();
-			if alias_target_variant(&path).as_deref() != Some(variant) {
-				continue;
-			}
-			if let Some(alias) = path.file_stem().and_then(|stem| stem.to_str()) {
-				aliases.push(format!("{category}:{alias}"));
-			}
-		}
-	}
-	aliases.sort();
-	aliases.dedup();
-	Ok(aliases)
-}
-
-/// Resolve a bare domain (e.g. `developer`) to the tag of its orchestrator, `<domain>:chief`.
-///
-/// `None` when no tap has the domain. An error when the domain has agents but no `chief`.
-pub fn resolve_domain_chief(domain: &str) -> Result<Option<String>> {
-	let tags: Vec<String> = list_agent_tags()?
-		.into_iter()
-		.filter(|tag| tag.split_once(':').is_some_and(|(category, _)| category == domain))
-		.collect();
-	if tags.is_empty() {
-		return Ok(None);
-	}
-	let chief = format!("{domain}:{ORCHESTRATOR_SPEC}");
-	if tags.contains(&chief) {
-		return Ok(Some(chief));
-	}
-	anyhow::bail!(
-		"Domain '{domain}' has no orchestrator (no '{chief}' agent). Available agents: {}",
-		tags.join(", ")
-	)
+/// Whether an active tap has the agent `name`. Local tap data only, no network.
+pub fn has_agent(name: &str) -> Result<bool> {
+	Ok(walk_agent_manifests()?.iter().any(|manifest| manifest.tag == name))
 }
 
 /// Fetch a public workflow definition by name from taps.
@@ -537,9 +617,9 @@ pub fn fetch_workflow(name: &str) -> Result<(String, String)> {
 pub fn add_tap(arg: &str) -> Result<()> {
 	let tap = parse_tap_arg(arg)?;
 
-	if tap.name == DEFAULT_TAP {
+	if tap.name == built_in_tap()?.name {
 		anyhow::bail!(
-			"'{}' is the built-in default tap — it's always active and cannot be re-added",
+			"'{}' is the built-in tap — it's always active and cannot be re-added",
 			tap.name
 		);
 	}
@@ -584,10 +664,10 @@ pub fn add_tap(arg: &str) -> Result<()> {
 		if !tap_dir.exists() {
 			let url = tap.github_url();
 			crate::log_info!("Cloning tap {}...", tap.name);
-			git_clone(&url, &tap_dir)?;
+			git_clone(&url, &tap_dir, None)?;
 		} else {
 			crate::log_info!("Tap {} already cloned, updating...", tap.name);
-			if let Err(err) = sync_clone(&tap_dir) {
+			if let Err(err) = sync_clone(&tap_dir, None) {
 				crate::log_error!("Failed to update tap {}: {:#}", tap.name, err);
 			}
 		}
@@ -602,8 +682,8 @@ pub fn add_tap(arg: &str) -> Result<()> {
 pub fn remove_tap(name: &str) -> Result<()> {
 	let name = name.trim().to_string();
 
-	if name == DEFAULT_TAP {
-		anyhow::bail!("'{}' is the built-in default tap and cannot be removed", name);
+	if name == built_in_tap()?.name {
+		anyhow::bail!("'{}' is the built-in tap and cannot be removed", name);
 	}
 
 	let mut file = read_taps_file()?;
@@ -644,7 +724,10 @@ fn remove_local_tap_link(path: &std::path::Path) -> std::io::Result<()> {
 }
 
 /// Clone a Git repository. Stderr is captured and included in the error on failure.
-fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
+///
+/// With a `git_ref` (the built-in tap) the clone ends on that ref, not on the default branch.
+/// A clone that cannot reach it is removed: left in place it would be served on the wrong files.
+fn git_clone(url: &str, dir: &std::path::Path, git_ref: Option<&str>) -> Result<()> {
 	let output = std::process::Command::new("git")
 		.args(["clone", "--depth", "1", url, &dir.to_string_lossy()])
 		.stdout(Stdio::null())
@@ -664,11 +747,18 @@ fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 			}
 		);
 	}
+	if let Some(git_ref) = git_ref {
+		if let Err(err) = sync_clone(dir, Some(git_ref)) {
+			let _ = fs::remove_dir_all(dir);
+			return Err(err.context(format!("Failed to check out '{git_ref}' of {url}")));
+		}
+	}
 	crate::agent::registry::invalidate_capability_catalog();
 	Ok(())
 }
 
-/// Make a GitHub tap's clone match its upstream default branch exactly.
+/// Make a GitHub tap's clone match its upstream exactly: `git_ref` when given (the built-in
+/// tap), the default branch otherwise.
 ///
 /// The clone is a mirror, not a workspace (Homebrew-style): local edits, local
 /// commits and new files are discarded, so nothing written into it can block a
@@ -676,7 +766,7 @@ fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 /// symlinked tap dir points at someone's working copy and is never touched.
 /// Each step is its own git process; a refresh that stops between them leaves
 /// a usable clone, and the next refresh completes it.
-fn sync_clone(dir: &Path) -> Result<()> {
+fn sync_clone(dir: &Path, git_ref: Option<&str>) -> Result<()> {
 	if dir.symlink_metadata()?.file_type().is_symlink() {
 		return Ok(());
 	}
@@ -685,7 +775,7 @@ fn sync_clone(dir: &Path) -> Result<()> {
 	if !dir.join(".git").is_dir() {
 		anyhow::bail!("{} is not a git clone", dir.display());
 	}
-	run_git(dir, &["fetch", "--depth", "1", "origin", "HEAD"])?;
+	run_git(dir, &["fetch", "--depth", "1", "origin", git_ref.unwrap_or("HEAD")])?;
 	run_git(dir, &["reset", "--hard", "FETCH_HEAD"])?;
 	run_git(dir, &["clean", "-fd"])
 }
@@ -737,11 +827,16 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
 /// Start a background [`sync_clone`] for a due tap and return at once.
 ///
 /// The sync is never awaited on the caller's path: on a slow network mount it
-/// takes minutes, and a delegated specialist must answer its parent's ACP
+/// takes minutes, and a delegated agent must answer its parent's ACP
 /// handshake first. Only a lookup that found nothing waits for it, through
 /// [`wait_for_started_refreshes`].
-fn spawn_refresh(tap_dir: &Path) {
-	if !refresh_due(tap_dir) {
+///
+/// `git_ref` is the ref the built-in tap serves; a user tap passes `None` and follows `HEAD`.
+/// The stamp claims the refresh for other processes while it runs; a failed sync takes the
+/// claim back, so the next start tries again instead of waiting out the interval.
+fn spawn_refresh(tap_dir: &Path, tap_name: &str, git_ref: Option<&str>) {
+	let stamp_content = refresh_stamp(git_ref);
+	if !refresh_due(tap_dir, &stamp_content) {
 		return;
 	}
 	remove_stale_locks(&tap_dir.join(".git"));
@@ -750,7 +845,7 @@ fn spawn_refresh(tap_dir: &Path) {
 	let stamp = tap_dir.join(".git").join(REFRESH_STAMP);
 	if fs::File::create(&stamp)
 		.and_then(|mut file| {
-			file.write_all(env!("CARGO_PKG_VERSION").as_bytes())?;
+			file.write_all(stamp_content.as_bytes())?;
 			file.set_modified(SystemTime::now())
 		})
 		.is_err()
@@ -759,6 +854,8 @@ fn spawn_refresh(tap_dir: &Path) {
 	}
 
 	let tap_dir = tap_dir.to_path_buf();
+	let git_ref = git_ref.map(str::to_string);
+	let tap_name = tap_name.to_string();
 	// Counted before the thread starts: a lookup that misses right after this call
 	// must already see the refresh as running.
 	let refresh = RefreshEndGuard::start();
@@ -766,11 +863,32 @@ fn spawn_refresh(tap_dir: &Path) {
 	// drops last, after the catalog is invalidated, on every exit path, panic included.
 	std::thread::spawn(move || {
 		let _refresh = refresh;
-		if let Err(err) = sync_clone(&tap_dir) {
-			tracing::warn!("Failed to update tap at {}: {:#}", tap_dir.display(), err);
-		}
+		sync_or_release_stamp(&tap_dir, &tap_name, git_ref.as_deref());
 		crate::agent::registry::invalidate_capability_catalog();
 	});
+}
+
+/// Set once the first failed refresh has been shown to the user.
+static REFRESH_FAILURE_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Sync a clone; on failure remove the stamp (so the refresh is due again at the next start)
+/// and tell the user once per process that the previous checkout is still in use.
+fn sync_or_release_stamp(tap_dir: &Path, tap_name: &str, git_ref: Option<&str>) {
+	let Err(err) = sync_clone(tap_dir, git_ref) else {
+		return;
+	};
+	if let Err(remove_err) = fs::remove_file(tap_dir.join(".git").join(REFRESH_STAMP)) {
+		crate::log_debug!(
+			"Failed to release the refresh stamp of tap {}: {}",
+			tap_name,
+			remove_err
+		);
+	}
+	if REFRESH_FAILURE_SHOWN.swap(true, Ordering::SeqCst) {
+		return;
+	}
+	let target = git_ref.map_or_else(|| "its default branch".to_string(), |git_ref| format!("'{git_ref}'"));
+	eprintln!("Could not update tap {tap_name} to {target}: {err:#}. The previous checkout is still in use.");
 }
 
 /// Counts one refresh as running from start to drop, so a refresh thread that

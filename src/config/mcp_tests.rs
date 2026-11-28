@@ -276,7 +276,7 @@ welcome = "Hi."
 mcp = { server_refs = [], allowed_tools = [] }
 
 [[roles]]
-name = "assistant"
+name = "task_refiner"
 system = "OVERRIDE"
 welcome = "No."
 mcp = { server_refs = [], allowed_tools = [] }
@@ -285,7 +285,7 @@ mcp = { server_refs = [], allowed_tools = [] }
 	.expect("agent manifest must merge");
 	assert_eq!(merged.model, "openai:agent-model");
 	assert!(merged.roles.iter().any(|role| role.name == "agent-role"));
-	let assistants: Vec<_> = merged.roles.iter().filter(|role| role.name == "assistant").collect();
-	assert_eq!(assistants.len(), 1, "duplicate role names must be skipped");
-	assert_ne!(assistants[0].config.system, "OVERRIDE", "base role wins");
+	let refiners: Vec<_> = merged.roles.iter().filter(|role| role.name == "task_refiner").collect();
+	assert_eq!(refiners.len(), 1, "duplicate role names must be skipped");
+	assert_ne!(refiners[0].config.system, "OVERRIDE", "base role wins");
 }

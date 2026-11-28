@@ -17,6 +17,9 @@
 //! session/new, session/prompt — against the fake ollama provider. This is
 //! exactly how Zed and other ACP clients drive octomind.
 
+#[path = "fixtures/template_with_assistant_role.rs"]
+mod template_with_assistant_role;
+
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -129,7 +132,8 @@ fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serd
 
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.telemetry = false;
@@ -676,7 +680,7 @@ async fn tap_child_searches_the_parent_through_the_real_acp_launch() {
 			tool_call_message(
 				"parent-tap",
 				"tap",
-				json!({"action": "run", "role": "developer:general", "prompt": BRIEF}),
+				json!({"action": "run", "role": "developer", "prompt": BRIEF}),
 			),
 		),
 		(Some(DELEGATE), text_message("parent delegated the task")),
@@ -691,7 +695,7 @@ async fn tap_child_searches_the_parent_through_the_real_acp_launch() {
 		.join(".local/share/octomind/taps/muvon/octomind-tap/agents/developer");
 	std::fs::create_dir_all(&role).unwrap();
 	std::fs::write(
-		role.join("general.toml"),
+		role.join("default.toml"),
 		"# Title: Context specialist\n# Description: Verifies constraints.\n[[roles]]\nname = \"general\"\nsystem = \"Verify the task constraints.\"\nwelcome = \"Ready.\"\n",
 	)
 	.unwrap();

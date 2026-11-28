@@ -15,7 +15,7 @@ endpoint, internal model requests, and any later switch to a cloud role all matt
 - [An isolated configuration](../usage/03-configuration.md) with local main and compression profiles, and with the Besydr
   plugin switched off.
 - [Per-role model selection](../usage/06-roles.md) for private and public conversations.
-- [A tap model mapping](../integration/04-tap-system.md) for a locally authored specialist.
+- [A tap model mapping](../integration/04-tap-system.md) for a locally authored agent.
 - [Runtime overrides and inspection](../reference/02-session-commands.md) using `-m` and `/info`.
 
 ## Prerequisites
@@ -128,7 +128,7 @@ auto_activation = false
 auto_validation = false
 
 [taps]
-"private-notes:review" = "ollama:glm-5.3"
+"private-notes-review" = "ollama:glm-5.3"
 
 [[roles]]
 name = "private_review"
@@ -195,14 +195,14 @@ Explain this Python function: def total(items): return sum(items[:-1])
 /exit
 ```
 
-### 7. Apply a name-only mapping to a tap specialist
+### 7. Apply a name-only mapping to a tap agent
 
 Create your own local tap directory and save the manifest below at
-`octomind-private-lab/octomind-private-notes/agents/private-notes/review.toml`. This tag is supplied by the file you
+`octomind-private-lab/octomind-private-notes/agents/private-notes-review.toml`. This agent is supplied by the file you
 create; it is not assumed to exist in the built-in tap.
 
 ```bash
-mkdir -p octomind-private-notes/agents/private-notes
+mkdir -p octomind-private-notes/agents
 ```
 
 The role omits `[roles.model]`, allowing the `[taps]` mapping in `privacy.toml` to select its main model. The environment
@@ -213,7 +213,7 @@ input is a non-secret workspace label and is resolved when the manifest loads.
 # Description: Explain supplied code and record unresolved questions for a local workspace.
 
 [[roles]]
-name = "private-notes:review"
+name = "private-notes-review"
 system = "Explain code supplied for {{ENV:PRIVATE_WORKSPACE}}. Use only conversation content."
 welcome = "Local notes for {{ENV:PRIVATE_WORKSPACE}}. Check /info before adding code."
 
@@ -222,7 +222,7 @@ server_refs = []
 allowed_tools = []
 ```
 
-### 8. Run the mapped specialist
+### 8. Run the mapped agent
 
 Register the directory as a local tap. `tutorial/private-notes` is only a local registration in this example; no remote
 repository is needed. Check `/info` in the resulting session, then `/exit` before continuing.
@@ -230,7 +230,7 @@ repository is needed. Check `/info` in the resulting session, then `/exit` befor
 ```bash
 export PRIVATE_WORKSPACE='Private code lab'
 octomind tap tutorial/private-notes ./octomind-private-notes
-octomind run private-notes:review
+octomind run private-notes-review
 ```
 
 ### 9. Keep cloud work in a fresh public conversation

@@ -69,6 +69,7 @@ async fn tap_send_uses_sequential_user_prompts_and_keeps_background_input_open()
 			tap_runs::init_for_session();
 			let (cancel_tx, cancel_rx) = watch::channel(false);
 			tap_runs::register_job(TapJob {
+				mode: Default::default(),
 				id: "run".into(), role: "developer:general".into(), workdir: ".".into(),
 				started_at: std::time::SystemTime::now(), status: Arc::new(RwLock::new(TapJobStatus::Running)),
 				error: None, cancel_tx, live: Arc::new(RwLock::new(TapLiveState::default())),
@@ -238,6 +239,7 @@ async fn streams_live_updates_into_tap_registry() {
 	crate::session::context::with_session_id("tap-live-test-session".to_string(), async {
 			let (cancel_tx, _keep_alive) = watch::channel(false);
 			tap_runs::register_job(TapJob {
+				mode: Default::default(),
 				id: "tap-test-live-000001".to_string(),
 				role: "test:live".to_string(),
 				workdir: ".".to_string(),

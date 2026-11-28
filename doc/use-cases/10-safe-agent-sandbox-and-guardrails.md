@@ -49,7 +49,7 @@ stays in the normal data directory. The first validation generates the complete 
 ```bash
 mkdir "$HOME/octomind-safety-demo"
 cd "$HOME/octomind-safety-demo"
-mkdir -p .agents/tools .agents/hooks .agents/validators scripts disposable safety-tap/agents/safety
+mkdir -p .agents/tools .agents/hooks .agents/validators scripts disposable safety-tap/agents
 export OCTOMIND_CONFIG_PATH="$PWD/.octomind-config/config.toml"
 octomind config --validate
 printf '42\n' > answer.txt
@@ -59,13 +59,13 @@ printf 'keep this\n' > disposable/keep.txt
 ### 2. Give a local agent the verified capabilities
 
 You create `tutorial/safety` here; it is a local tap, not a published package. Save this entire manifest as
-`safety-tap/agents/safety/check.toml`. The resolver uses `safety:check` as the runtime role name.
+`safety-tap/agents/safety-check.toml`. The resolver uses `safety-check` as the runtime role name.
 
 ```toml
 capabilities = ["octomind/shell", "octomind/filesystem-read"]
 
 [[roles]]
-name = "safety"
+name = "safety-check"
 system = "Follow the user's exact probe sequence. Report tool errors accurately and do not bypass denied calls."
 welcome = "Safety checks ready."
 ```
@@ -190,7 +190,7 @@ script = ".agents/hooks/record-result"
 
 [[validator]]
 name = "project-tests"
-roles = ["safety:check"]
+roles = ["safety-check"]
 script = ".agents/validators/tests"
 ```
 
@@ -204,7 +204,7 @@ succeeds. An unenforced sandbox is not a successful setup.
 
 ```bash
 python3 -c 'import tomllib; tomllib.load(open(".agents/guardrails.toml", "rb")); print("TOML OK")'
-octomind run safety:check --sandbox
+octomind run safety-check --sandbox
 ```
 
 ### 7. Exercise each boundary

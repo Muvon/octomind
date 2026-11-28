@@ -28,7 +28,8 @@ use std::rc::Rc;
 
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -320,7 +321,7 @@ async fn execute_command_done_is_handled_and_wakes_the_inbox_monitor() {
 	let _data = TestDataDirGuard::new();
 	let (sessions, locks, config, cancellations) = harness();
 	context::with_session_id("s1".to_string(), async {
-		context::init_session_services("assistant");
+		context::init_session_services("assistant", Default::default());
 	})
 	.await;
 

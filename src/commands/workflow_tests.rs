@@ -36,7 +36,8 @@ fn sandbox(tag: &str) -> PathBuf {
 
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::commands::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -509,7 +510,7 @@ max_cost = 0.5
 
 [[steps]]
 name = "only"
-role = "developer:general"
+role = "developer"
 prompt = "do {{input}}"
 "#;
 
@@ -533,14 +534,14 @@ async fn tap_workflow_dry_run_checks_public_roles_and_prints_plan() {
 	install_tap_workflow(&dir, TAP_WF.trim());
 
 	// The workflow's role is public: the tap ships a matching agent file.
-	let agents = dir
+	let agent = dir
 		.join("taps")
 		.join("acme")
 		.join("octomind-lib")
 		.join("agents")
 		.join("developer");
-	std::fs::create_dir_all(&agents).expect("tap agents dir");
-	std::fs::write(agents.join("general.toml"), "# agent\n").expect("tap agent");
+	std::fs::create_dir_all(&agent).expect("tap agent dir");
+	std::fs::write(agent.join("default.toml"), "# agent\n").expect("tap agent");
 
 	execute(&wf_args(Some("alpha"), true), &template_config())
 		.await

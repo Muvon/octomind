@@ -207,6 +207,9 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 			if let Some(w) = &s.workdir {
 				meta = format!("{meta}  workdir: {w}");
 			}
+			if s.readonly {
+				meta = format!("{meta}  readonly");
+			}
 			println!("{indent}   {meta}");
 			println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 		}
@@ -296,6 +299,9 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	}
 	if let Some(c) = s.count {
 		meta = format!("{meta}  count={c}");
+	}
+	if s.readonly {
+		meta = format!("{meta}  readonly");
 	}
 	println!("{indent}{idx}. {name}  {meta}", idx = idx, name = s.name.bright_white(),);
 	println!("{indent}   prompt: {}", truncate(&s.prompt, 120));

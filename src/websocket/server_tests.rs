@@ -371,7 +371,7 @@ async fn releasing_a_client_turn_wakes_pending_idle_tool_calls_without_inbox_mes
 
 	let id = format!("ws-idle-schedule-{}", uuid::Uuid::new_v4());
 	let notify = with_session_id(id.clone(), async {
-		init_session_services("assistant");
+		init_session_services("assistant", Default::default());
 		let entry = ScheduleEntry::new_idle(
 			String::new(),
 			ScheduleAction::ToolCall {
@@ -413,7 +413,8 @@ async fn session_lock_is_reused_per_session_id() {
 
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -1123,8 +1124,8 @@ async fn named_session_resumes_from_disk_on_a_fresh_connection() {
 async fn bind_ack_lists_session_commands_only_for_a_client_that_asks() {
 	let _data = TestDataDirGuard::new();
 	// The shipped template's custom commands, so `/run <name>` entries are covered too.
-	let template: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
+	let template: Config = toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+		.expect("default template parses");
 	let custom = template.commands.clone().unwrap_or_default();
 	assert!(!custom.is_empty(), "the default template ships a custom command");
 	let mut config = ws_fake_config();
@@ -2934,6 +2935,7 @@ async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 	let status = Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running));
 	let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
 	let job = crate::session::tap_runs::TapJob {
+		mode: Default::default(),
 		id: "tap-researcher-000001".to_string(),
 		role: "assistant:researcher".to_string(),
 		workdir: String::new(),
@@ -2992,7 +2994,7 @@ async fn an_early_close_keeps_the_computed_pending_work() {
 	stream.own(&sender);
 
 	with_session_id(id.clone(), async {
-		init_session_services("assistant");
+		init_session_services("assistant", Default::default());
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
 			source: crate::session::inbox::InboxSource::TapRun {
 				id: "tap-early-close-1".to_string(),
@@ -3655,14 +3657,13 @@ async fn unknown_command_is_refused_instead_of_treated_as_user_input() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn session_resume_with_an_unresolvable_tap_role_reports_the_restore_failure() {
+async fn session_resume_with_a_variant_no_tap_has_reports_the_restore_failure() {
 	let _data = TestDataDirGuard::new();
-	// An unparseable taps.toml makes every tap lookup fail offline — no
-	// network fetch, no default-tap clone.
-	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
-	std::fs::write(data_dir.join("taps.toml"), "taps = [").expect("write invalid taps.toml");
 
-	// Forge a disk session whose recorded role is a tap tag no tap provides.
+	// Forge a disk session whose role is a variant no tap has. The built-in tap directory
+	// exists, so the lookup stays offline.
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	std::fs::create_dir_all(data_dir.join("taps/muvon/octomind-tap")).expect("tap dir");
 	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
 	write_session_log_entry(
 		&sessions_dir.join("forged.jsonl.zst"),
@@ -3684,41 +3685,6 @@ async fn session_resume_with_an_unresolvable_tap_role_reports_the_restore_failur
 			.contains("Failed to restore role 'ghost:agent'"),
 		"got: {error}"
 	);
-}
-
-// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
-#[cfg(unix)]
-#[tokio::test]
-#[serial_test::serial]
-async fn session_saved_under_an_alias_of_the_server_role_resumes_on_the_server_role() {
-	let _data = TestDataDirGuard::new();
-	// The tap renamed `ztest:old` to `ztest:chief` and kept the old name as a symlink.
-	let domain_dir = crate::agent::taps::Tap {
-		name: crate::agent::taps::DEFAULT_TAP.to_string(),
-		local_path: None,
-	}
-	.agents_dir()
-	.expect("agents dir")
-	.join("ztest");
-	std::fs::create_dir_all(&domain_dir).expect("create domain dir");
-	std::fs::write(domain_dir.join("chief.toml"), "").expect("write manifest");
-	std::os::unix::fs::symlink("chief.toml", domain_dir.join("old.toml")).expect("create alias");
-
-	// A session logged before the rename records the old name.
-	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
-	write_session_log_entry(
-		&sessions_dir.join("aliased.jsonl.zst"),
-		r#"{"type":"SUMMARY","session_info":{"role":"ztest:old","name":"aliased"}}"#,
-	);
-	let server = ServerState::new(Arc::new(ws_fake_config()), "ztest:chief".to_string(), Vec::new());
-
-	let (config, role) = resume_role_config("aliased", &server)
-		.await
-		.expect("an alias of the server role restores");
-
-	assert_eq!(role, "ztest:chief");
-	assert!(Arc::ptr_eq(&config, &server.config), "the server config is reused");
-	assert!(server.role_configs.lock().await.is_empty(), "nothing is pinned");
 }
 
 #[tokio::test]
@@ -5078,6 +5044,7 @@ fn register_streaming_tap(id: &str) {
 	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
 	let (cancel_tx, _) = tokio::sync::watch::channel(false);
 	tap_runs::register_job(TapJob {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:cto".to_string(),
 		workdir: ".".to_string(),
@@ -5151,7 +5118,7 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 		let (sender, writer) = WsSender::spawn(sink);
 		let subscriptions = RunSubscriptions(sender.clone());
 		with_session_id(parent.to_string(), async {
-			crate::session::context::init_session_services("developer:cto");
+			crate::session::context::init_session_services("developer:cto", Default::default());
 			crate::session::tap_runs::enable_run_events(Some(sender.clone())).unwrap();
 			set_notification_sender_for_session(&parent.to_string(), notify_tx);
 			register_streaming_tap(run_id);
@@ -5259,7 +5226,7 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 	let run_id = "tap-developer-cto-abcdef";
 	let (sender, mut receiver) = WsSender::channel();
 	crate::session::context::with_session_id(parent.clone(), async {
-		crate::session::context::init_session_services("developer:cto");
+		crate::session::context::init_session_services("developer:cto", Default::default());
 		tap_runs::enable_run_events(Some(sender)).unwrap();
 		register_streaming_tap(run_id);
 		let running: serde_json::Value =
@@ -5305,7 +5272,7 @@ async fn tap_child_forwarding_outside_websocket_is_unchanged() {
 	let parent = "cli-tap-forwarding".to_string();
 	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
 	crate::session::context::with_session_id(parent.clone(), async {
-		crate::session::context::init_session_services("developer:cto");
+		crate::session::context::init_session_services("developer:cto", Default::default());
 		crate::session::context::set_notification_sender_for_session(&parent, sender);
 		assert!(crate::session::tap_runs::with_run_events(|_, _| Ok(()))
 			.unwrap()
@@ -5335,7 +5302,7 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 	let (sender, mut rx) = WsSender::channel();
 	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
 	crate::session::context::with_session_id(parent.clone(), async {
-		crate::session::context::init_session_services("developer:cto");
+		crate::session::context::init_session_services("developer:cto", Default::default());
 		tap_runs::enable_run_events(Some(sender.clone())).unwrap();
 		crate::session::context::set_notification_sender_for_session(&parent, notify_tx);
 		register_streaming_tap(run_id);
@@ -5427,6 +5394,7 @@ async fn run_log_disk_reply_and_missing_run_echo_request_id() {
 		let status = Arc::new(std::sync::RwLock::new(TapJobStatus::Running));
 		let (cancel_tx, _) = tokio::sync::watch::channel(false);
 		tap_runs::register_job(TapJob {
+			mode: Default::default(),
 			id: failed_id.into(),
 			role: "developer:cto".into(),
 			workdir: ".".into(),

@@ -124,9 +124,16 @@ fn empty_name_is_rejected() {
 #[test]
 fn roles_use_the_guardrail_matching_rule() {
 	let plugin = parse("name = \"a\"\ntype = \"stdio\"\ncommand = \"p\"\nroles = [\"developer\"]\n");
-	assert!(plugin.applies_to_role("developer:general"));
 	assert!(plugin.applies_to_role("developer"));
-	assert!(!plugin.applies_to_role("assistant:chief"));
+	assert!(
+		plugin.applies_to_role("developer:general"),
+		"a namespace covers its variants"
+	);
+	assert!(!plugin.applies_to_role("developer-lite"));
+	assert!(!plugin.applies_to_role("assistant"));
+	let variant = parse("name = \"a\"\ntype = \"stdio\"\ncommand = \"p\"\nroles = [\"developer:general\"]\n");
+	assert!(variant.applies_to_role("developer:general"));
+	assert!(!variant.applies_to_role("developer"));
 	let all = parse("name = \"a\"\ntype = \"stdio\"\ncommand = \"p\"\n");
 	assert!(all.applies_to_role("anything"));
 }

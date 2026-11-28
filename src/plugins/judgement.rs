@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The judgements octomind asks its plugins for: which skill, capability or
-//! specialist fits a request, and which tool results a fold of the history
+//! agent fits a request, and which tool results a fold of the history
 //! may drop. Each has a rule of octomind's own that stands when no plugin
 //! answers. This file holds what is octomind's part of a judgement: the
 //! question, and what an answer must reach before octomind acts on it.
@@ -41,7 +41,7 @@ pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
 /// How many of the best-matching capabilities the choice lists.
 pub const CAPABILITY_TOP_K: usize = 5;
 
-/// How many of the best-matching specialists the choice lists.
+/// How many of the best-matching agents the choice lists.
 pub const TAP_TOP_K: usize = 16;
 
 /// A tool result is dropped from a fold when the probability that later work
@@ -79,8 +79,8 @@ pub const CAPABILITIES: Roster = Roster {
 pub const TAPS: Roster = Roster {
 	purpose: "taps",
 	id: "specialist",
-	question: "Which specialist should do the task? Choose the one whose description covers the work the task asks for; choose none when no listed specialist fits.",
-	none: "No specialist in this list fits the task",
+	question: "Which agent should do the task? Choose the one whose description covers the work the task asks for; choose none when no listed agent fits.",
+	none: "No agent in this list fits the task",
 };
 
 /// The purpose of the judgement over the tool results of a fold.

@@ -31,8 +31,8 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn template_config() -> Config {
-	let config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+	let config: Config = toml::from_str(&crate::commands::template_with_assistant_role::template_with_assistant_role())
+		.expect("parse default config template");
 	config
 }
 
@@ -50,14 +50,14 @@ fn run_subcommand_lists_tap_tags_and_config_roles() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	// One agent tag from the default tap's agents tree.
-	let agents = dir
+	let agent = dir
 		.join("taps")
 		.join("muvon")
 		.join("octomind-tap")
 		.join("agents")
 		.join("dev");
-	std::fs::create_dir_all(&agents).expect("agents dir");
-	std::fs::write(agents.join("general.toml"), "name = \"general\"\n").expect("agent manifest");
+	std::fs::create_dir_all(&agent).expect("agent dir");
+	std::fs::write(agent.join("default.toml"), "name = \"dev\"\n").expect("agent manifest");
 
 	let config = template_config();
 	assert!(!config.roles.is_empty(), "template ships roles");

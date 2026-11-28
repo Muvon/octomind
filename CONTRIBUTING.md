@@ -144,7 +144,7 @@ See [Architecture](doc/dev/02-architecture.md) for module-by-module detail.
 - All `*.toml` files in the config directory are merged alphabetically
 - Files matching `mcp-*.toml` are loaded **after** all base files — they always win for same-named servers
 - Arrays are concatenated and deduped by `name`; tables are deep-merged
-- `auto_bind` is **exact-match** — `"developer"` does not match `"developer:general"`
+- `auto_bind` is **exact-match** against the role name
 - `allowed_tools` non-empty silently drops any unlisted tool — `get_merged_config_for_role` auto-appends `"<server>:*"` for auto-bind servers
 
 ---

@@ -561,8 +561,8 @@ pub fn var_regex() -> Regex {
 	Regex::new(r"\{\{([A-Za-z_][A-Za-z0-9_\-]*)\}\}").expect("static regex")
 }
 
-/// Validate that every step role is a *public tap role* — a `category:variant`
-/// tag present in `public_roles` (built from `taps::list_agent_tags()`).
+/// Validate that every step role is a *public tap role* — an agent tag
+/// (`<ns>` or `<ns>:<variant>`) present in `public_roles` (built from `taps::list_agent_tags()`).
 ///
 /// Applied to tap-fetched (public) workflows only: they may reference public
 /// roles installed via taps, never local config roles, so the workflow stays
@@ -571,10 +571,10 @@ pub fn var_regex() -> Regex {
 pub fn validate_public_roles(wf: &WorkflowDef, public_roles: &HashSet<String>) -> Result<()> {
 	for step in &wf.steps {
 		for s in step_sequentials(step) {
-			if !public_roles.contains(&s.role) {
+			if !public_roles.contains(crate::agent::registry::canonical_tag(&s.role)) {
 				bail!(
 					"step '{}': role '{}' is not a public tap role. \
-					 Public workflows may only use 'category:variant' roles available in taps \
+					 Public workflows may only use agents available in taps \
 					 (run `octomind tap` to see installed taps).",
 					s.name,
 					s.role

@@ -214,6 +214,8 @@ pub struct OctomindAgent {
 	pending_resume_recent: RefCell<bool>,
 	/// Model override applied to every session (new and loaded).
 	model: Option<String>,
+	/// Read-only and copy flags of every session this process creates.
+	mode: crate::session::context::SessionMode,
 	/// Set when the role failed to start; every session request answers with it.
 	startup_error: Option<String>,
 	/// What the client advertised for elicitation in `initialize`; default until then.
@@ -235,6 +237,7 @@ impl OctomindAgent {
 			pending_resume: RefCell::new(options.resume),
 			pending_resume_recent: RefCell::new(options.resume_recent),
 			model: options.model,
+			mode: options.mode,
 			startup_error: options.startup_error,
 			elicitation_support: Cell::new(ElicitationSupport::default()),
 		}
@@ -376,6 +379,7 @@ impl OctomindAgent {
 			resume: self.pending_resume.borrow_mut().take(),
 			resume_recent: std::mem::replace(&mut *self.pending_resume_recent.borrow_mut(), false),
 			model: self.model.clone(),
+			readonly: self.mode.readonly,
 			..Default::default()
 		}
 	}
@@ -387,6 +391,7 @@ impl OctomindAgent {
 			role: self.role.clone(),
 			mode: "websocket".into(),
 			model: self.model.clone(),
+			readonly: self.mode.readonly,
 			..Default::default()
 		}
 	}
@@ -1227,6 +1232,18 @@ impl OctomindAgent {
 		if let Some((parent_session_id, inherited)) = plugin_parentage {
 			crate::plugins::lifecycle::set_parentage(&session_id, &parent_session_id, inherited);
 		}
+		// Session-scoped services (inbox, job manager, skill pool, mode) come up before anything
+		// reads the session's tools, so they never see a session whose mode is not recorded yet.
+		let role_for_pool = self.role.clone();
+		// The session's own flag covers both `acp --readonly` and a stored read-only session.
+		let mode = crate::session::context::SessionMode {
+			readonly: chat_session.session.info.readonly,
+			copy: self.mode.copy,
+		};
+		crate::session::context::with_session_id(session_id.clone(), async move {
+			crate::session::context::init_session_services(&role_for_pool, mode);
+		})
+		.await;
 		// Plugins connect before the system prompt is built: its status-line
 		// instruction lists the fields they registered, read in the session's scope.
 		crate::plugins::lifecycle::connect(
@@ -1247,13 +1264,6 @@ impl OctomindAgent {
 		})?;
 		log_debug!("ACP: new_session created: {}", session_id);
 
-		// Initialize session-scoped inbox and job manager inside the session context
-		// so schedule/inbox storage is keyed to this session ID.
-		let role_for_pool = self.role.clone();
-		crate::session::context::with_session_id(session_id.clone(), async move {
-			crate::session::context::init_session_services(&role_for_pool);
-		})
-		.await;
 		if let Err(error) =
 			crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, "startup").await
 		{
@@ -1997,6 +2007,18 @@ impl OctomindAgent {
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
 		let actual_session_id = chat_session.session.info.name.clone();
+		// Session-scoped services (inbox, job manager, skill pool, mode) come up before anything
+		// reads the session's tools, so they never see a session whose mode is not recorded yet.
+		let role_for_pool = self.role.clone();
+		// The session's own flag covers both `acp --readonly` and a stored read-only session.
+		let mode = crate::session::context::SessionMode {
+			readonly: chat_session.session.info.readonly,
+			copy: self.mode.copy,
+		};
+		crate::session::context::with_session_id(actual_session_id.clone(), async move {
+			crate::session::context::init_session_services(&role_for_pool, mode);
+		})
+		.await;
 		// Plugins connect before the system prompt is rebuilt: its status-line
 		// instruction lists the fields they registered, read in the session's scope.
 		crate::plugins::lifecycle::connect(
@@ -2013,13 +2035,6 @@ impl OctomindAgent {
 		.await
 		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
-		// Initialize session-scoped inbox, job manager, and skill pool inside the session context
-		// so schedule/inbox storage is keyed to this session ID.
-		let role_for_pool = self.role.clone();
-		crate::session::context::with_session_id(actual_session_id.clone(), async move {
-			crate::session::context::init_session_services(&role_for_pool);
-		})
-		.await;
 		if let Err(error) =
 			crate::plugins::lifecycle::session_started(&mut chat_session, &config_for_role, "resume").await
 		{

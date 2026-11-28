@@ -67,16 +67,39 @@ impl Drop for EnvVarGuard {
 	}
 }
 
+/// Name of the built-in tap as the lookups currently see it.
+fn default_tap_name() -> String {
+	built_in_tap().expect("built-in tap").name
+}
+
+/// Serve the built-in tap at `git_ref` for the length of a test, then go back to the
+/// template defaults. The setting is process-wide, so users of it must be `#[serial]`.
+struct BuiltInRefGuard;
+
+impl BuiltInRefGuard {
+	fn set(git_ref: &str) -> Self {
+		set_built_in_tap(&RegistryConfig {
+			git_ref: git_ref.to_string(),
+			..RegistryConfig::default()
+		});
+		Self
+	}
+}
+
+impl Drop for BuiltInRefGuard {
+	fn drop(&mut self) {
+		*BUILT_IN_TAP.write().unwrap_or_else(PoisonError::into_inner) = None;
+	}
+}
+
 /// Pre-create the default tap directory so `ensure_default_tap` takes the
 /// already-cloned branch (a directory without `.git` starts no refresh) and no
 /// network clone is attempted.
 fn create_default_tap() -> PathBuf {
-	let dir = Tap {
-		name: DEFAULT_TAP.to_string(),
-		local_path: None,
-	}
-	.local_dir()
-	.expect("default tap dir");
+	let dir = built_in_tap()
+		.expect("built-in tap")
+		.local_dir()
+		.expect("default tap dir");
 	fs::create_dir_all(&dir).expect("create default tap dir");
 	dir
 }
@@ -98,6 +121,92 @@ fn tap_dir_for(name: &str) -> PathBuf {
 
 #[serial]
 #[test]
+fn agent_manifests_list_each_namespace_as_its_base_and_its_variants() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	let root = tap.local_dir().expect("local dir");
+	for file in [
+		"agents/dev/default.toml",
+		"agents/dev/rust.toml",
+		"agents/dev/go.toml",
+		"agents/acme/reviewer.toml",
+	] {
+		fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+		fs::write(root.join(file), "").unwrap();
+	}
+	fs::write(root.join("agents/dev/notes.md"), "").unwrap();
+	fs::write(root.join("agents/flat.toml"), "").unwrap();
+
+	let tags: Vec<String> = tap.agent_manifests().unwrap().into_iter().map(|(tag, _)| tag).collect();
+	assert_eq!(tags, ["acme:reviewer", "dev", "dev:go", "dev:rust"]);
+}
+
+#[serial]
+#[test]
+fn skill_dirs_lists_shared_skills_first_then_each_agent_by_name() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	let root = tap.local_dir().expect("local dir");
+	for dir in [
+		"skills/s-b",
+		"skills/s-a",
+		"agents/zeta/skills/z-1",
+		"agents/alpha/skills/a-2",
+		"agents/alpha/skills/a-1",
+		"agents/no-manifest/skills/ignored",
+	] {
+		fs::create_dir_all(root.join(dir)).unwrap();
+	}
+	fs::write(root.join("skills/not-a-skill.txt"), "").unwrap();
+	for agent in ["alpha", "zeta"] {
+		fs::write(root.join("agents").join(agent).join("default.toml"), "").unwrap();
+	}
+
+	let found: Vec<(Option<String>, String)> = tap
+		.skill_dirs()
+		.unwrap()
+		.into_iter()
+		.map(|skill| {
+			(
+				skill.owner,
+				skill.dir.file_name().unwrap().to_string_lossy().into_owned(),
+			)
+		})
+		.collect();
+	let owned = |agent: &str, skill: &str| (Some(agent.to_string()), skill.to_string());
+	assert_eq!(
+		found,
+		vec![
+			(None, "s-a".to_string()),
+			(None, "s-b".to_string()),
+			owned("alpha", "a-1"),
+			owned("alpha", "a-2"),
+			owned("zeta", "z-1"),
+		],
+		"a directory with no manifest owns nothing"
+	);
+}
+
+#[serial]
+#[test]
+fn skill_dirs_of_a_tap_without_skills_is_empty() {
+	let _data = DataDirGuard::new();
+	let tap = Tap {
+		name: "alice/tools".to_string(),
+		local_path: None,
+	};
+	fs::create_dir_all(tap.local_dir().unwrap()).unwrap();
+	assert!(tap.skill_dirs().unwrap().is_empty());
+}
+
+#[serial]
+#[test]
 fn tap_directory_helpers_use_standard_layout() {
 	let _data = DataDirGuard::new();
 	let tap = Tap {
@@ -109,7 +218,18 @@ fn tap_directory_helpers_use_standard_layout() {
 	assert_eq!(dir, data.join("taps").join("alice").join("octomind-tools"));
 	assert_eq!(tap.agents_dir().unwrap(), dir.join("agents"));
 	assert_eq!(tap.deps_dir().unwrap(), dir.join("deps"));
-	assert_eq!(tap.skills_dir().unwrap(), dir.join("skills"));
+	assert_eq!(
+		tap.agent_manifest("helper").unwrap(),
+		dir.join("agents/helper/default.toml")
+	);
+	assert_eq!(
+		tap.agent_manifest("helper:default").unwrap(),
+		dir.join("agents/helper/default.toml")
+	);
+	assert_eq!(
+		tap.agent_manifest("helper:rust").unwrap(),
+		dir.join("agents/helper/rust.toml")
+	);
 	assert_eq!(tap.workflows_dir().unwrap(), dir.join("workflows"));
 	assert_eq!(tap.plugins_dir().unwrap(), dir.join("plugins"));
 }
@@ -196,7 +316,7 @@ fn get_taps_appends_builtin_default_last() {
 	let taps = get_taps().unwrap();
 	assert_eq!(taps.len(), 2);
 	assert_eq!(taps[0].name, "alice/tools");
-	assert_eq!(taps[1].name, DEFAULT_TAP);
+	assert_eq!(taps[1].name, default_tap_name());
 }
 
 // --- add_tap ----------------------------------------------------------------
@@ -209,8 +329,8 @@ fn add_tap_rejects_invalid_names_default_and_duplicates() {
 	let err = add_tap("plainname").unwrap_err();
 	assert!(err.to_string().contains("user/repo"), "{err}");
 
-	let err = add_tap(DEFAULT_TAP).unwrap_err();
-	assert!(err.to_string().contains("built-in default"), "{err}");
+	let err = add_tap(&default_tap_name()).unwrap_err();
+	assert!(err.to_string().contains("built-in tap"), "{err}");
 
 	let src = tempfile::tempdir().unwrap();
 	add_tap(&format!("alice/tools {}", src.path().display())).expect("add local tap");
@@ -271,7 +391,7 @@ fn add_tap_local_replaces_stale_symlink() {
 #[test]
 fn remove_tap_rejects_default_and_unknown() {
 	let _data = DataDirGuard::new();
-	let err = remove_tap(DEFAULT_TAP).unwrap_err();
+	let err = remove_tap(&default_tap_name()).unwrap_err();
 	assert!(err.to_string().contains("cannot be removed"), "{err}");
 	let err = remove_tap("ghost/repo").unwrap_err();
 	assert!(err.to_string().contains("not in your tap list"), "{err}");
@@ -315,18 +435,20 @@ fn list_agent_tags_discovers_sorts_and_skips_non_toml() {
 	let _data = DataDirGuard::new();
 	let src = tempfile::tempdir().unwrap();
 	let agents = src.path().join("agents");
-	fs::create_dir_all(agents.join("developer")).unwrap();
-	fs::create_dir_all(agents.join("reviewer")).unwrap();
-	fs::write(agents.join("developer").join("general.toml"), "").unwrap();
-	fs::write(agents.join("developer").join("extra.toml"), "").unwrap();
-	fs::write(agents.join("developer").join("notes.txt"), "").unwrap();
-	fs::write(agents.join("reviewer").join("main.toml"), "").unwrap();
-	// A plain file in the agents dir is not a category — skipped.
-	fs::write(agents.join("stray.toml"), "").unwrap();
+	fs::create_dir_all(&agents).unwrap();
+	for name in ["developer", "assistant"] {
+		fs::create_dir_all(agents.join(name)).unwrap();
+		fs::write(agents.join(name).join("default.toml"), "").unwrap();
+	}
+	fs::write(agents.join("notes.txt"), "").unwrap();
+	// A namespace without `default.toml` lists its variants only; a flat `<name>.toml` is no agent.
+	fs::create_dir_all(agents.join("legacy")).unwrap();
+	fs::write(agents.join("legacy").join("chief.toml"), "").unwrap();
+	fs::write(agents.join("flat.toml"), "").unwrap();
 	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
 
 	let tags = list_agent_tags().unwrap();
-	assert_eq!(tags, vec!["developer:extra", "developer:general", "reviewer:main"]);
+	assert_eq!(tags, vec!["assistant", "developer", "legacy:chief"]);
 }
 
 #[serial]
@@ -338,74 +460,35 @@ fn list_agent_tags_first_tap_wins_on_duplicates() {
 	let first = tempfile::tempdir().unwrap();
 	let second = tempfile::tempdir().unwrap();
 	for (src, name) in [(&first, "alice/one"), (&second, "bob/two")] {
-		let shared = src.path().join("agents").join("shared");
-		fs::create_dir_all(&shared).unwrap();
-		fs::write(shared.join("x.toml"), "").unwrap();
+		let agent = src.path().join("agents").join("shared");
+		fs::create_dir_all(&agent).unwrap();
+		fs::write(agent.join("default.toml"), "").unwrap();
 		add_tap(&format!("{name} {}", src.path().display())).unwrap();
 	}
 
 	let tags = list_agent_tags().unwrap();
-	assert_eq!(tags, vec!["shared:x"], "duplicate tag must appear once");
+	assert_eq!(tags, vec!["shared"], "duplicate tag must appear once");
 }
 
-// Symlinks need elevated rights on Windows, so the alias rule is checked on unix only.
+// Symlinks need elevated rights on Windows, so the symlink rule is checked on unix only.
 #[cfg(unix)]
 #[serial]
 #[test]
-fn symlinked_manifest_is_an_alias_and_is_not_listed() {
+fn symlinked_agent_directory_is_not_an_agent() {
 	let _data = DataDirGuard::new();
 	let src = tempfile::tempdir().unwrap();
-	write_agent(src.path(), "assistant", "chief", PLAIN_HEADER);
-	let dir = src.path().join("agents").join("assistant");
-	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
+	write_agent(src.path(), "assistant", PLAIN_HEADER);
+	let dir = src.path().join("agents");
+	std::os::unix::fs::symlink(dir.join("assistant"), dir.join("old")).unwrap();
 	// The tap itself is a symlink here (a local tap): its real manifests must still list.
 	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
 
-	assert_eq!(list_agent_tags().unwrap(), vec!["assistant:chief"]);
+	assert_eq!(list_agent_tags().unwrap(), vec!["assistant"]);
 	let headers = list_agent_headers().unwrap();
 	assert_eq!(headers.len(), 1);
-	assert_eq!(headers[0].tag, "assistant:chief");
-	assert!(
-		dir.join("old.toml").exists(),
-		"the alias still reads through to the chief"
-	);
-}
-
-#[cfg(unix)]
-#[serial]
-#[test]
-fn alias_tag_resolves_to_the_agent_its_symlink_points_to() {
-	let _data = DataDirGuard::new();
-	let src = tempfile::tempdir().unwrap();
-	write_agent(src.path(), "assistant", "chief", PLAIN_HEADER);
-	let dir = src.path().join("agents").join("assistant");
-	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
-	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
-
-	assert_eq!(resolve_alias_tag("assistant:old").unwrap(), "assistant:chief");
-	assert_eq!(alias_tags_of("assistant:chief").unwrap(), vec!["assistant:old"]);
-	// Not an alias: the agent itself, a tag no tap has, a plain role name.
-	for tag in ["assistant:chief", "assistant:missing", "assistant"] {
-		assert_eq!(resolve_alias_tag(tag).unwrap(), tag);
-	}
-	assert!(alias_tags_of("assistant:old").unwrap().is_empty());
-}
-
-#[cfg(unix)]
-#[serial]
-#[test]
-fn real_manifest_in_an_earlier_tap_is_not_redirected_by_a_later_alias() {
-	let _data = DataDirGuard::new();
-	let own = tempfile::tempdir().unwrap();
-	write_agent(own.path(), "assistant", "old", PLAIN_HEADER);
-	let renamed = tempfile::tempdir().unwrap();
-	write_agent(renamed.path(), "assistant", "chief", PLAIN_HEADER);
-	let dir = renamed.path().join("agents").join("assistant");
-	std::os::unix::fs::symlink("chief.toml", dir.join("old.toml")).unwrap();
-	add_tap(&format!("alice/own {}", own.path().display())).unwrap();
-	add_tap(&format!("bob/renamed {}", renamed.path().display())).unwrap();
-
-	assert_eq!(resolve_alias_tag("assistant:old").unwrap(), "assistant:old");
+	assert_eq!(headers[0].tag, "assistant");
+	assert!(!has_agent("old").unwrap(), "a symlink is not an agent");
+	assert!(has_agent("assistant").unwrap());
 }
 
 // --- load_taps / fetch_workflow ------------------------------------------------
@@ -435,7 +518,7 @@ fn load_taps_lists_user_taps_then_default() {
 
 	let taps = load_taps().expect("load taps");
 	let names: Vec<&str> = taps.iter().map(|t| t.name.as_str()).collect();
-	assert_eq!(names, vec!["alice/tools", "gh/repo", DEFAULT_TAP]);
+	assert_eq!(names, vec!["alice/tools", "gh/repo", default_tap_name().as_str()]);
 }
 
 #[serial]
@@ -449,7 +532,7 @@ fn fetch_workflow_reads_from_user_tap_before_default() {
 
 	let (content, source) = fetch_workflow("greet").expect("workflow from default tap");
 	assert_eq!(content, "name = \"default-greet\"");
-	assert_eq!(source, DEFAULT_TAP);
+	assert_eq!(source, default_tap_name());
 
 	let src = tempfile::tempdir().unwrap();
 	let user_wf = src.path().join("workflows");
@@ -479,7 +562,7 @@ fn fetch_workflow_missing_reports_lookup_detail() {
 fn git_clone_failure_surfaces_error() {
 	let dir = tempfile::tempdir().unwrap();
 	// A local-looking path that is not a repository fails fast without network.
-	let err = git_clone("octomind-no-such-local-repository", dir.path()).unwrap_err();
+	let err = git_clone("octomind-no-such-local-repository", dir.path(), None).unwrap_err();
 	assert!(err.to_string().contains("Failed to clone tap"), "{err}");
 }
 
@@ -495,7 +578,7 @@ fn sync_clone_never_touches_an_enclosing_repository() {
 	let tap_dir = outer.path().join("taps").join("probe");
 	fs::create_dir_all(&tap_dir).unwrap();
 
-	let err = sync_clone(&tap_dir).unwrap_err();
+	let err = sync_clone(&tap_dir, None).unwrap_err();
 
 	assert!(err.to_string().contains("is not a git clone"), "{err:#}");
 	assert_eq!(
@@ -530,11 +613,42 @@ fn sync_clone_makes_a_dirty_diverged_clone_match_upstream() {
 	fs::write(clone.join("agent.toml"), "edited in place").expect("edit tracked file");
 	fs::write(clone.join("untracked.toml"), "new").expect("write untracked file");
 
-	sync_clone(&clone).expect("sync a dirty, diverged clone");
+	sync_clone(&clone, None).expect("sync a dirty, diverged clone");
 
 	assert_eq!(fs::read_to_string(clone.join("agent.toml")).unwrap(), "v2");
 	assert!(!clone.join("committed.toml").exists(), "local commit discarded");
 	assert!(!clone.join("untracked.toml").exists(), "untracked file removed");
+}
+
+#[test]
+#[serial]
+fn a_clone_follows_the_ref_it_is_given_and_a_missing_ref_removes_it() {
+	let remote = tempfile::tempdir().expect("remote");
+	fs::write(remote.path().join("agent.toml"), "default branch").expect("write default");
+	git_in(remote.path(), &["init"]);
+	commit_all(remote.path(), "init");
+	git_in(remote.path(), &["checkout", "-b", "flat-agents"]);
+	fs::write(remote.path().join("agent.toml"), "flat-agents").expect("write ref");
+	commit_all(remote.path(), "flat");
+	git_in(remote.path(), &["checkout", "-"]);
+	let url = format!("file://{}", remote.path().display());
+
+	let root = tempfile::tempdir().expect("clone root");
+	let clone = root.path().join("tap");
+	git_clone(&url, &clone, Some("flat-agents")).expect("clone at a ref");
+	assert_eq!(fs::read_to_string(clone.join("agent.toml")).unwrap(), "flat-agents");
+
+	// A clone that follows HEAD can be moved to the ref, and back.
+	git_in(&clone, &["checkout", "-q", "--detach"]);
+	sync_clone(&clone, None).expect("sync to HEAD");
+	assert_eq!(fs::read_to_string(clone.join("agent.toml")).unwrap(), "default branch");
+	sync_clone(&clone, Some("flat-agents")).expect("sync to the ref");
+	assert_eq!(fs::read_to_string(clone.join("agent.toml")).unwrap(), "flat-agents");
+
+	let missing = root.path().join("missing");
+	let err = git_clone(&url, &missing, Some("no-such-ref")).unwrap_err();
+	assert!(err.to_string().contains("no-such-ref"), "{err:#}");
+	assert!(!missing.exists(), "a clone that cannot reach the ref is removed");
 }
 
 #[cfg(unix)]
@@ -546,7 +660,7 @@ fn sync_clone_leaves_a_symlinked_tap_alone() {
 	let link = root.path().join("tap");
 	std::os::unix::fs::symlink(target.path(), &link).expect("symlink tap");
 
-	sync_clone(&link).expect("a local tap is never synced");
+	sync_clone(&link, None).expect("a local tap is never synced");
 }
 
 /// Run `git` in `dir` with no user config prompts; panics on failure.
@@ -606,7 +720,7 @@ fn load_taps_skips_refresh_of_existing_github_tap_dirs_without_git() {
 	let names: Vec<&str> = taps.iter().map(|t| t.name.as_str()).collect();
 	assert_eq!(
 		names,
-		vec!["probe/github", DEFAULT_TAP],
+		vec!["probe/github", default_tap_name().as_str()],
 		"user taps first, built-in default last"
 	);
 }
@@ -621,49 +735,38 @@ fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
 	// A user tap whose agents dir cannot be read is skipped entirely.
 	let locked_tap = tap_dir_for("probe/locked");
 	let locked_agents = locked_tap.join("agents");
-	fs::create_dir_all(locked_agents.join("hidden")).expect("create hidden category");
-	fs::write(locked_agents.join("hidden").join("var.toml"), "x").expect("write hidden agent");
+	fs::create_dir_all(locked_agents.join("hidden")).expect("create locked agents dir");
+	fs::write(locked_agents.join("hidden").join("default.toml"), "x").expect("write hidden agent");
 	chmod(&locked_agents, 0o000);
 	write_taps(vec![Tap {
 		name: "probe/locked".to_string(),
 		local_path: None,
 	}]);
 
-	// Default tap: a good agent, an unreadable category, a non-UTF-8 category,
-	// and a non-UTF-8 variant stem.
+	// Default tap: a good agent, a subdirectory, and a non-UTF-8 file name.
 	let agents = default_tap.join("agents");
-	fs::create_dir_all(agents.join("good")).expect("create good category");
-	fs::write(agents.join("good").join("var.toml"), "x").expect("write good agent");
-
-	let locked_category = agents.join("sealed");
-	fs::create_dir_all(&locked_category).expect("create sealed category");
-	fs::write(locked_category.join("var.toml"), "x").expect("write sealed agent");
-	chmod(&locked_category, 0o000);
+	fs::create_dir_all(&agents).expect("create agents dir");
+	fs::create_dir_all(agents.join("good")).expect("create good agent dir");
+	fs::write(agents.join("good").join("default.toml"), "x").expect("write good agent");
+	fs::create_dir_all(agents.join("sealed")).expect("create sealed subdirectory");
 
 	// Linux only: APFS rejects non-UTF-8 names with EILSEQ.
 	#[cfg(target_os = "linux")]
 	{
 		use std::os::unix::ffi::OsStringExt;
-		let non_utf8_category = agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
-		fs::create_dir_all(&non_utf8_category).expect("create non-utf8 category");
-		fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
-
-		fs::create_dir_all(agents.join("cat2")).expect("create cat2");
-		let non_utf8_variant = agents
-			.join("cat2")
-			.join(std::ffi::OsString::from_vec(vec![0xfe, b'.', b't', b'o', b'm', b'l']));
-		fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
+		let non_utf8_dir = agents.join(std::ffi::OsString::from_vec(vec![0xfe, b'a']));
+		fs::create_dir_all(&non_utf8_dir).expect("create non-utf8 agent dir");
+		fs::write(non_utf8_dir.join("default.toml"), "x").expect("write non-utf8 agent");
 	}
 
 	let tags = list_agent_tags().expect("tag discovery succeeds");
 	assert_eq!(
 		tags,
-		vec!["good:var".to_string()],
+		vec!["good".to_string()],
 		"unreadable and non-UTF-8 entries are skipped"
 	);
 
 	chmod(&locked_agents, 0o755);
-	chmod(&locked_category, 0o755);
 }
 
 #[test]
@@ -684,7 +787,7 @@ fn fetch_workflow_falls_back_past_a_tap_with_invalid_name() {
 
 	let (content, source) = fetch_workflow("probe").expect("workflow found via default tap");
 	assert!(content.contains("probe workflow"));
-	assert_eq!(source, DEFAULT_TAP);
+	assert_eq!(source, default_tap_name());
 }
 
 // --- add_tap / remove_tap failure and lifecycle branches --------------------
@@ -935,14 +1038,20 @@ fn back_to_back_load_taps_start_one_refresh() {
 
 #[test]
 #[serial]
-fn missing_default_tap_is_cloned_before_load_taps_returns() {
+fn missing_default_tap_is_cloned_at_the_configured_ref_before_load_taps_returns() {
 	let _guard = DataDirGuard::new();
+	let _ref = BuiltInRefGuard::set("flat-agents");
 	let remote_root = tempfile::tempdir().expect("remote root");
 	let remote = remote_root.path().join("muvon").join("octomind-tap");
 	fs::create_dir_all(&remote).expect("create remote");
-	fs::write(remote.join("marker.txt"), "cloned").expect("write marker");
+	fs::write(remote.join("marker.txt"), "default branch").expect("write marker");
 	git_in(&remote, &["init"]);
 	commit_all(&remote, "init");
+	// The configured ref is another branch, with other files.
+	git_in(&remote, &["checkout", "-b", "flat-agents"]);
+	fs::write(remote.join("marker.txt"), "flat-agents").expect("write ref marker");
+	commit_all(&remote, "flat");
+	git_in(&remote, &["checkout", "-"]);
 
 	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
 	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");
@@ -954,19 +1063,20 @@ fn missing_default_tap_is_cloned_before_load_taps_returns() {
 
 	load_taps().expect("load taps clones the missing default tap");
 
-	let default_dir = tap_dir_for(DEFAULT_TAP);
-	assert!(
-		default_dir.join("marker.txt").exists(),
-		"the first run must have the clone on disk when it returns"
+	let default_dir = tap_dir_for(&default_tap_name());
+	assert_eq!(
+		fs::read_to_string(default_dir.join("marker.txt")).expect("the first run has the clone on disk"),
+		"flat-agents",
+		"the first clone ends on the configured ref, not on the default branch"
 	);
 }
 
-// --- agent headers and domain chief -----------------------------------------
+// --- agent headers and lookup ----------------------------------------------
 
-fn write_agent(tap_root: &Path, category: &str, variant: &str, header: &str) {
-	let dir = tap_root.join("agents").join(category);
-	fs::create_dir_all(&dir).expect("create category dir");
-	fs::write(dir.join(format!("{variant}.toml")), format!("{header}\n[[roles]]\n")).expect("write agent");
+fn write_agent(tap_root: &Path, name: &str, header: &str) {
+	let dir = tap_root.join("agents").join(name);
+	fs::create_dir_all(&dir).expect("create agent dir");
+	fs::write(dir.join("default.toml"), format!("{header}\n[[roles]]\n")).expect("write agent");
 }
 
 const PLAIN_HEADER: &str = "# Title: T\n# Description: D\n";
@@ -977,19 +1087,18 @@ fn list_agent_headers_reads_fields_sorted_and_first_tap_wins() {
 	let _data = DataDirGuard::new();
 	let first = tempfile::tempdir().unwrap();
 	let second = tempfile::tempdir().unwrap();
-	write_agent(first.path(), "shared", "x", "# Title: First\n");
-	write_agent(first.path(), "alpha", "b", PLAIN_HEADER);
-	write_agent(second.path(), "shared", "x", "# Title: Second\n");
-	write_agent(second.path(), "alpha", "a", PLAIN_HEADER);
+	write_agent(first.path(), "shared", "# Title: First\n");
+	write_agent(first.path(), "beta", PLAIN_HEADER);
+	write_agent(second.path(), "shared", "# Title: Second\n");
+	write_agent(second.path(), "alpha", PLAIN_HEADER);
 	add_tap(&format!("alice/one {}", first.path().display())).unwrap();
 	add_tap(&format!("bob/two {}", second.path().display())).unwrap();
 
 	let agents = list_agent_headers().unwrap();
 	let tags: Vec<&str> = agents.iter().map(|a| a.tag.as_str()).collect();
-	assert_eq!(tags, vec!["alpha:a", "alpha:b", "shared:x"]);
+	assert_eq!(tags, vec!["alpha", "beta", "shared"]);
 
 	let shared = &agents[2];
-	assert_eq!(shared.category, "shared");
 	assert_eq!(shared.header.title.as_deref(), Some("First"));
 	assert!(shared.header.description.is_none());
 	assert_eq!(agents[0].header.description.as_deref(), Some("D"));
@@ -997,69 +1106,35 @@ fn list_agent_headers_reads_fields_sorted_and_first_tap_wins() {
 
 #[serial]
 #[test]
-fn domain_with_a_chief_resolves_to_it() {
+fn has_agent_finds_an_agent_by_its_flat_name() {
 	let _data = DataDirGuard::new();
 	let tap = tempfile::tempdir().unwrap();
-	write_agent(tap.path(), "developer", "chief", PLAIN_HEADER);
-	write_agent(tap.path(), "developer", "general", PLAIN_HEADER);
+	write_agent(tap.path(), "developer", PLAIN_HEADER);
 	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
 
-	assert_eq!(
-		resolve_domain_chief("developer").unwrap().as_deref(),
-		Some("developer:chief")
-	);
-}
-
-#[serial]
-#[test]
-fn domain_without_a_chief_is_an_error_listing_its_agents() {
-	let _data = DataDirGuard::new();
-	let tap = tempfile::tempdir().unwrap();
-	write_agent(tap.path(), "developer", "cto", PLAIN_HEADER);
-	write_agent(tap.path(), "developer", "general", PLAIN_HEADER);
-	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
-
-	let err = resolve_domain_chief("developer").unwrap_err().to_string();
+	assert!(has_agent("developer").unwrap());
+	assert!(!has_agent("nowhere").unwrap());
 	assert!(
-		err.contains("no orchestrator") && err.contains("developer:chief"),
-		"{err}"
-	);
-	assert!(
-		err.contains("developer:cto") && err.contains("developer:general"),
-		"{err}"
+		!has_agent("developer:general").unwrap(),
+		"a two-part tag names no agent"
 	);
 }
 
 #[serial]
 #[test]
-fn unknown_domain_is_none() {
+fn user_tap_agent_wins_over_builtin_tap_agent() {
 	let _data = DataDirGuard::new();
+	write_agent(&create_default_tap(), "developer", "# Title: Builtin\n");
 	let tap = tempfile::tempdir().unwrap();
-	write_agent(tap.path(), "developer", "chief", PLAIN_HEADER);
+	write_agent(tap.path(), "developer", "# Title: User\n");
 	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
 
-	assert_eq!(resolve_domain_chief("nowhere").unwrap(), None);
-}
-
-#[serial]
-#[test]
-fn user_tap_chief_wins_over_builtin_tap_chief() {
-	let _data = DataDirGuard::new();
-	write_agent(&create_default_tap(), "developer", "chief", "# Title: Builtin\n");
-	let tap = tempfile::tempdir().unwrap();
-	write_agent(tap.path(), "developer", "chief", "# Title: User\n");
-	add_tap(&format!("alice/tools {}", tap.path().display())).unwrap();
-
-	assert_eq!(
-		resolve_domain_chief("developer").unwrap().as_deref(),
-		Some("developer:chief")
-	);
-	let chief = list_agent_headers()
+	let agent = list_agent_headers()
 		.unwrap()
 		.into_iter()
-		.find(|a| a.tag == "developer:chief")
+		.find(|a| a.tag == "developer")
 		.unwrap();
-	assert_eq!(chief.header.title.as_deref(), Some("User"));
+	assert_eq!(agent.header.title.as_deref(), Some("User"));
 }
 
 #[test]

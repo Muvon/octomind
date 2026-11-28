@@ -57,6 +57,10 @@ pub mod runtime_overlay;
 // get_merged_config_for_interactive_role) — split out of this file.
 mod merge;
 
+#[cfg(test)]
+#[path = "../../tests/fixtures/template_with_assistant_role.rs"]
+pub(crate) mod template_with_assistant_role;
+
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
 
@@ -72,7 +76,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 34;
+pub const CURRENT_CONFIG_VERSION: u32 = 35;
 
 /// Accepted only for old configs and tap manifests; remove in a later release.
 pub(crate) const DEPRECATED_SAMPLING_KEYS: [&str; 3] = ["temperature", "top_p", "top_k"];
@@ -358,7 +362,7 @@ pub struct Config {
 	pub model_profile: ModelProfile,
 
 	// Default tag used when no TAG is passed to `octomind run/acp/server`.
-	// Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:chief").
+	// A role defined in the config or an agent of a tap: `<ns>` or `<ns>:<variant>` (e.g. "developer").
 	pub default: String,
 
 	// System-wide configuration settings (not role-specific)
@@ -392,7 +396,9 @@ pub struct Config {
 
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 
-	// Role configurations - array format like layers
+	// Role configurations - array format like layers. Optional: roles come from taps too, so a
+	// config without any `[[roles]]` is valid (the template ships none).
+	#[serde(default)]
 	pub roles: Vec<crate::config::roles::Role>,
 
 	// Internal role lookup map (populated during loading)
@@ -443,11 +449,11 @@ pub struct Config {
 	#[serde(default)]
 	pub capabilities: HashMap<String, String>,
 
-	// Tap model overrides (tap_tag or domain → model)
-	// Allows setting preferred model for specific tap agents, or for a whole domain.
-	// Example: taps = { "developer:general" = "ollama:glm-5", "developer" = "openai:gpt-4o" }
-	// When running `octomind run developer:general`, uses ollama:glm-5 instead of default.
-	// A bare domain key applies to every agent of that domain; an exact tag wins over it.
+	// Tap model overrides (agent tag or namespace → model)
+	// Allows setting preferred model for specific tap agents, or for a whole namespace.
+	// Example: taps = { "developer:rust" = "ollama:glm-5", "developer" = "openai:gpt-4o" }
+	// When running `octomind run developer:rust`, uses ollama:glm-5 instead of default.
+	// A namespace key applies to its base agent and every variant; an exact tag wins over it.
 	#[serde(default)]
 	pub taps: HashMap<String, String>,
 
@@ -471,7 +477,6 @@ pub struct Config {
 	pub plugins: Vec<PluginConfig>,
 
 	// Agent registry configuration
-	#[serde(default)]
 	pub registry: crate::config::registry::RegistryConfig,
 
 	#[serde(skip)]

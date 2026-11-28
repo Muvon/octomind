@@ -7,14 +7,14 @@ clients.
 ## Starting Sessions
 
 ```bash
-# Default tag (assistant:chief)
+# Default agent (assistant)
 octomind run
 
-# A domain from the registry: starts its orchestrator (developer:chief)
+# A tap agent from the registry
 octomind run developer
 
-# An explicit local [[roles]] entry from the shipped config
-octomind run assistant
+# Read-only session: only tools marked read-only run
+octomind run developer --readonly
 
 # Named session
 octomind run --name feature-auth
@@ -23,10 +23,17 @@ octomind run --name feature-auth
 octomind run -m anthropic:claude-sonnet-4-6
 ```
 
-With no argument, `octomind run` uses the configured default tag, `assistant:chief`. Bare names such as `assistant`
-refer to roles in the shipped config. A bare name with no matching config role is a tap domain and starts its `chief`:
-`developer` starts `developer:chief`. `category:variant` names such as `developer:general` are tap agents resolved from
-the registry.
+With no argument, `octomind run` uses the configured `default`, which is `assistant`. A name refers to a role in your
+config, or else to a tap agent of that name: `developer` starts the `developer` agent. A role in your config with the
+same name as a tap agent takes priority. A tag written with `:` is an error that shows the flat form.
+
+## Read-Only Sessions
+
+`octomind run <name> --readonly` (and `octomind acp <name> --readonly`) starts a session in which only tools whose MCP `readOnlyHint` annotation is true are offered and can run. A tool with no hint counts as mutable, and shell runners declare `readOnlyHint: false`, so the session has no shell. It cannot delegate, and `/run` and `/workflow` are refused. In code mode only read-only tools are in the catalog.
+
+The mode is fixed for the life of the session and is restored when you resume it, with or without the flag. Passing `--readonly` when you resume a writable session makes it read-only from then on.
+
+This restricts the tools the model can call; scripts you configured yourself (skill `validate` scripts, guardrail scripts, hooks) still run.
 
 ## Resuming Sessions
 

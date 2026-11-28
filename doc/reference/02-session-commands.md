@@ -116,19 +116,17 @@ Show or change the current role. Without argument, displays the current role.
 
 The argument is either:
 
-- a **plain role name** defined in your config's `[[roles]]` (validated up front; an unknown name is rejected with `Invalid role`), or
-- a **tap agent tag** in `domain:spec` form (e.g. `developer:general`), which resolves the manifest, INPUT/ENV placeholders, and dependency scripts.
-- a **domain name** with no `:` (e.g. `developer`), which switches to that domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins.
+- a **role name** defined in your config's `[[roles]]` (validated up front; an unknown name is rejected with `Invalid role`), or
+- a **tap agent name** (e.g. `developer`), which resolves the manifest, INPUT/ENV placeholders, and dependency scripts. A role in your config with the same name wins.
 
 On success the session is saved; on failure the previous role and complete resolved model profile are restored.
 
 ```text
-/role developer:general
-/role assistant:chief
+/role developer
 /role assistant
 ```
 
-> The default config ships the roles `assistant`, `task_refiner`, `task_researcher`, and `reduce`. There is no built-in `developer` role — `developer:general` above is a tap agent tag.
+> The default config ships the roles `task_refiner`, `task_researcher`, and `reduce`. `developer` and `assistant` above are tap agents.
 
 ### `/effort [LEVEL]`
 
@@ -226,7 +224,7 @@ removed.
 | `/status monitors` | Full configuration and elapsed time for active command monitors |
 | `/status jobs` | Full live status and bounded output for active MCP resource-backed jobs |
 
-`agents` merges tap specialists with asynchronous `agent_*` calls. Tap runs carry live or persisted usage accounting;
+`agents` merges tap agent runs with asynchronous `agent_*` calls. Tap runs carry live or persisted usage accounting;
 async `agent_*` cost is explicitly shown as not tracked rather than guessed. `jobs` is generic across MCP servers: a
 tool must return a standard `ResourceLink` from a server that advertises the standard `resources.subscribe`
 capability, because only such a server can signal that a job ended. Links from other servers are plain references and

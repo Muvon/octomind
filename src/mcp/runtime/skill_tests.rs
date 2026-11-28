@@ -805,6 +805,81 @@ mod tests {
 	}
 
 	#[test]
+	#[serial_test::serial]
+	fn test_owned_skill_is_found_by_bare_name_and_bound_to_its_owner() {
+		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		let dir = tempfile::tempdir().unwrap();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+
+		let tap = dir.path().join("taps").join("muvon").join("octomind-tap");
+		let owned = tap.join("agents").join("writer").join("skills").join("skilltest-owned");
+		fs::create_dir_all(&owned).unwrap();
+		fs::write(tap.join("agents").join("writer").join("default.toml"), "").unwrap();
+		fs::write(
+			owned.join("SKILL.md"),
+			"---\nname: skilltest-owned\ndescription: Owned fixture\ndomains: lawyer\n---\n\nOWNED-BODY\n",
+		)
+		.unwrap();
+
+		let (meta, skill_dir, content) = crate::mcp::runtime::skill::find_skill_by_name_pub("skilltest-owned")
+			.expect("owned skill resolves by name");
+		assert!(content.contains("OWNED-BODY"));
+		assert_eq!(skill_dir, owned);
+		assert_eq!(
+			meta.domains,
+			vec!["writer".to_string()],
+			"the location binds it, not `domains:`"
+		);
+		let listed = crate::mcp::runtime::skill::find_all_skills_with_details();
+		assert!(listed.iter().any(|(meta, _)| meta.name == "skilltest-owned"));
+	}
+
+	#[test]
+	#[serial_test::serial]
+	fn test_tap_skills_are_listed_shared_first_then_agents_by_name() {
+		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		let dir = tempfile::tempdir().unwrap();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+
+		let tap = dir.path().join("taps").join("muvon").join("octomind-tap");
+		for (owner, name) in [
+			(Some("zeta"), "skilltest-order-z2"),
+			(Some("zeta"), "skilltest-order-z1"),
+			(Some("alpha"), "skilltest-order-a"),
+			(None, "skilltest-order-shared"),
+		] {
+			let base = match owner {
+				Some(agent) => tap.join("agents").join(agent).join("skills"),
+				None => tap.join("skills"),
+			};
+			fs::create_dir_all(base.join(name)).unwrap();
+			fs::write(
+				base.join(name).join("SKILL.md"),
+				format!("---\nname: {name}\ndescription: Order fixture\n---\n\nBody\n"),
+			)
+			.unwrap();
+			if let Some(agent) = owner {
+				fs::write(tap.join("agents").join(agent).join("default.toml"), "").unwrap();
+			}
+		}
+
+		let names: Vec<String> = crate::mcp::runtime::skill::find_all_skills_with_details()
+			.into_iter()
+			.map(|(meta, _)| meta.name)
+			.filter(|name| name.starts_with("skilltest-order-"))
+			.collect();
+		assert_eq!(
+			names,
+			[
+				"skilltest-order-shared",
+				"skilltest-order-a",
+				"skilltest-order-z1",
+				"skilltest-order-z2"
+			]
+		);
+	}
+
+	#[test]
 	fn test_parse_check_rejects_malformed_parens() {
 		use crate::mcp::runtime::skill::ActivateCheck;
 		// Close paren before the open paren: not a check.

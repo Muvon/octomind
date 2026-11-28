@@ -465,7 +465,8 @@ fn test_convert_response_passes_fields_through() {
 
 fn test_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	// Keep the conversion offline: no MCP servers → no tool fetching.
 	config.mcp.servers.clear();
 	config
@@ -507,6 +508,8 @@ async fn test_octolib_params_pass_through_freeform_tool_parameter() {
 		.servers
 		.push(McpServerConfig::builtin("orchestration", 30, vec![]));
 	let session_id = format!("freeform-tool-{}", uuid::Uuid::new_v4());
+	// A session id with no recorded mode is read-only, which hides the tools this test needs.
+	crate::session::context::set_session_mode(&session_id, Default::default());
 	with_session_id(session_id.clone(), async {
 		let server_name = "freeform-test-files";
 		let server = McpServerConfig::http(server_name, "http://127.0.0.1:1", 30, vec![]);

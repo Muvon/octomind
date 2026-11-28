@@ -83,6 +83,7 @@ fn drain_global_store() {
 fn register_running_tap_job(id: &str, running: bool) {
 	let (cancel_tx, _keep_alive) = tokio::sync::watch::channel(false);
 	crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp".to_string(),

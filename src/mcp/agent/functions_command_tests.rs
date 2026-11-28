@@ -502,6 +502,7 @@ async fn record_tap_live_updates_action_and_usage() {
 	crate::session::context::with_session_id(sid, async {
 		let (cancel_tx, _keep_alive) = watch::channel(false);
 		tap_runs::register_job(TapJob {
+			mode: Default::default(),
 			id: "tap-agenttest-live".to_string(),
 			role: "test:live".to_string(),
 			workdir: ".".to_string(),

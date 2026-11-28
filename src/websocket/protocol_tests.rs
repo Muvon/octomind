@@ -763,7 +763,7 @@ async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
 		};
 		accounting::take();
 		let mut config: crate::config::Config =
-			toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+			toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role()).unwrap();
 		with_session_id("ws-info-accounting".into(), async {
 			let mut session = ChatSession::for_tests(Vec::new());
 			session.session.info.name = "ws-info-accounting".into();

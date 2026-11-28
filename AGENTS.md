@@ -115,7 +115,7 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 
 ## Gotchas
 - `mcp-*.toml` loads AFTER all base `*.toml` regardless of sort order — the intended override mechanism
-- `auto_bind` is exact-match: `"developer"` ≠ `"developer:general"` — use the full tag in both places
+- `auto_bind` is exact-match against the role name (the tap agent name, e.g. `"developer"`) — use the same name in both places
 - A non-empty `allowed_tools` silently drops unlisted tools; `get_merged_config_for_role` auto-appends `"<server>:*"` for auto-bind servers — beware when constructing configs manually
 - In TOML config files, scalar keys must come BEFORE nested table headers in a section — a scalar placed after `[x.y]` is parsed as a field of that table and silently ignored
 - The compression decision/summary model is `[compression.model]`, separate from `model` (the legacy `[compression.decision]` spelling is migrated away)

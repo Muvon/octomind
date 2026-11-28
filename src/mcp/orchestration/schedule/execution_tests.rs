@@ -61,7 +61,7 @@ impl TestSession {
 			crate::mcp::tool_map::isolate_session_tool_map(&self.id);
 			// In particular, this loads project guardrails and initializes authorizer,
 			// inbox, scheduled executions, tap registry and background job manager.
-			init_session_services("assistant");
+			init_session_services("assistant", Default::default());
 			crate::mcp::tool_map::initialize_tool_map(config)
 				.await
 				.expect("initialize isolated real tool map");
@@ -263,6 +263,7 @@ async fn due_tick_skips_stored_running_tap_then_dispatches_after_tap_finishes() 
 			let status = Arc::new(RwLock::new(TapJobStatus::Running));
 			let (cancel_tx, _cancel_rx) = watch::channel(false);
 			register_job(TapJob {
+				mode: Default::default(),
 				id: tap_id.clone(),
 				role: "developer:general".to_string(),
 				workdir: session.dir.path().display().to_string(),

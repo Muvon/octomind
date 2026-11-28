@@ -80,7 +80,14 @@ async fn init_session_runtime(
 	chat_session: &ChatSession,
 	role: &str,
 ) -> Result<SessionRuntimeGuards> {
-	crate::session::context::init_session_services(role);
+	crate::session::context::init_session_services(
+		role,
+		crate::session::context::SessionMode {
+			// The session's own flag: a resumed read-only session stays read-only.
+			readonly: chat_session.session.info.readonly,
+			copy: false,
+		},
+	);
 	crate::plugins::lifecycle::connect(
 		&chat_session.session.info.name,
 		role,
@@ -1012,6 +1019,7 @@ pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, c
 										crate::session::context::set_session_workdir(&new_session_name, workdir);
 										let session_params = SessionInitParams::new(&current_config, &role)
 											.with_name(new_session_name)
+											.with_readonly(args.readonly)
 											.with_max_retries(current_config.max_retries);
 										let mut new_session = ChatSession::initialize(session_params).await?;
 										new_session.session.info.interactive = true;
@@ -2002,7 +2010,7 @@ pub async fn run_interactive_session_with_input(
 			// drop the result the turn is waiting for.
 			let has_background_jobs = crate::session::shell_jobs::has_pending();
 			// A backgrounded tap-run is the same contract: its reply is injected into
-			// the inbox when the specialist finishes, so exiting here would orphan the
+			// the inbox when the agent finishes, so exiting here would orphan the
 			// subprocess and drop the reply the turn is waiting for.
 			let has_tap_runs = crate::session::tap_runs::has_running_jobs();
 

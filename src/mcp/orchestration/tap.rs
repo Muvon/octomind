@@ -23,7 +23,7 @@
 //! - `list`     — show every tap-run in the current session with id, tag,
 //!   status, and start time.
 //! - `stop`     — cancel a running tap-run by id (sends the cancel watch).
-//! - `send`     — queue a user prompt for a running specialist's next turn.
+//! - `send`     — queue a user prompt for a running agent's next turn.
 //! - `capability` — send a short intent through the same skill/capability
 //!   auto-activation path used for user messages.
 //!
@@ -41,6 +41,7 @@ use tokio::sync::watch;
 use crate::config::Config;
 use crate::mcp::agent::functions::run_acp_command;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
+use crate::session::context::SessionMode;
 use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus, TapLiveState};
 
 // ---------------------------------------------------------------------------
@@ -53,26 +54,31 @@ pub fn get_tap_function() -> McpFunction {
 		freeform: None,
 		// The tapped agent may change anything its own tools can.
 		annotations: Some(rmcp::model::ToolAnnotations::new().read_only(false)),
-		description: r#"Delegate work to specialist roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. Send the task, and the specialist that fits it is matched and started for you; you name a role only after this tool has shown you its name. Use this tool to hand off a focused task, check its status, or stop it.
+		description: r#"Delegate work to agent roles installed via taps. A role is a pre-built agent persona — its own system prompt, model, and tool kit. Send the task, and the agent that fits it is matched and started for you; you name a role only after this tool has shown you its name. Use this tool to hand off a focused task, check its status, or stop it.
 
 When to use:
-- The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
-- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn on its own; do not poll, re-check or relaunch it, not even once (`list` is not a way to wait for it).
-- You want to keep a focused dialog with one specialist across multiple turns — keep the returned `id` and pass it back as `session` on subsequent `run` calls.
+- The current task fits an agent better than your generalist context (legal review, docker debugging, financial analysis, …).
+- You want to delegate a side task while continuing other work — the agent's reply lands in your next turn on its own; do not poll, re-check or relaunch it, not even once (`list` is not a way to wait for it).
+- You want to keep a focused dialog with one agent across multiple turns — keep the returned `id` and pass it back as `session` on subsequent `run` calls.
 
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
 
 Matching:
-- `run` without `role` reads only `prompt` to match a specialist, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
-- When no specialist is matched, `run` returns an error, starts nothing, and lists the closest specialists by name. If one of them covers the task, call `run` again with the same prompt and `role` set to that name. If none does, do the task with your own tools or report it. Do not rephrase the same task to force a match.
-- Pass `role` only with a name this tool returned: in that list, or as the role of an earlier run. Never guess a name. No action lists every installed specialist.
+- `run` without `role` reads only `prompt` to match an agent, so the prompt must name the kind of work and the deliverable. The result names the role that took the task.
+- When no agent is matched, `run` returns an error, starts nothing, and lists the closest agents by name. If one of them covers the task, call `run` again with the same prompt and `role` set to that name. If none does, do the task with your own tools or report it. Do not rephrase the same task to force a match.
+- Pass `role` only with a name this tool returned: in that list, or as the role of an earlier run. Never guess a name. No action lists every installed agent.
+
+Copies of yourself:
+- `role` set to your own name starts a fresh session of you: your prompt and tools, no memory of this conversation. Start several at once, each with a self-contained `prompt`.
+- Without `role`, an agent that reaches no other agent gets a copy of itself; one that reaches others matches among them, never itself.
+- A copy cannot start copies: it does its part itself.
 
 Actions:
-- `run`        — match a specialist to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `role` (start that specialist without matching), `session` (resume that run with its original role), `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
+- `run`        — match an agent to `prompt` and launch it in the background, or resume one. Required: `prompt`. Optional: `role` (start that agent without matching), `readonly` (true: the run may only use tools that cannot change state, and cannot delegate; default false), `session` (resume that run with its original role, workdir and readonly; `readonly: true` is refused for a run started writable), `workdir` (defaults to current cwd).
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
-- `stop`       — cancel a running specialist. Required: `session` (the id).
-- `send`       — queue a user message for a running specialist's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
-- `capability` — activate a missing TOOL or skill for yourself: `prompt` is the tool need ("query a Postgres database"). It never finds or starts a specialist. Required: `prompt`.
+- `stop`       — cancel a running agent. Required: `session` (the id).
+- `send`       — queue a user message for a running agent's next available turn. Required: `session` (the run id) and `prompt`. Keeps the current task running; does not start or resume a run. For a finished run, use `run` with `session` instead. Workflows do not accept prompts.
+- `capability` — activate a missing TOOL or skill for yourself: `prompt` is the tool need ("query a Postgres database"). It never finds or starts an agent. Required: `prompt`.
 - `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. With `name` but no `input`: nothing runs; returns the workflow definition (its steps and where `{{input}}` lands) so you can compose the input, then call again with `input`. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
 		parameters: json!({
 			"type": "object",
@@ -84,19 +90,23 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run or send, or capability-need phrase for capability. This text is the delegation brief and the only input used to match a specialist. Same-workspace tap runs can search authorized ancestor context for omitted details. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
+					"description": "Prompt for run or send, or capability-need phrase for capability. This text is the delegation brief and the only input used to match an agent. Same-workspace tap runs can search authorized ancestor context for omitted details. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the agent cannot see ('as discussed', 'the item we found')."
 				},
 				"role": {
 					"type": "string",
-					"description": "Specialist to start for a new run, by the exact name this tool returned (e.g. 'developer:general'). Optional — omit it and the specialist is matched from `prompt`. Ignored when resuming with `session` (the original role is kept)."
+					"description": "Agent to start for a new run, by the exact name this tool returned (e.g. 'developer'), or your own name to start a copy of yourself. Optional — omit it and the agent is matched from `prompt`. Ignored when resuming with `session` (the original role is kept)."
 				},
 				"session": {
 					"type": "string",
-					"description": "Run id (e.g. 'tap-developer-general-a3f1c2'). Required for stop or send. For run, supply this to resume an existing run instead of starting fresh."
+					"description": "Run id (e.g. 'tap-developer-a3f1c2'). Required for stop or send. For run, supply this to resume an existing run instead of starting fresh."
+				},
+				"readonly": {
+					"type": "boolean",
+					"description": "Start the run read-only: it may only use tools that cannot change files, processes, or external systems, and it cannot delegate. Optional, default false. A run keeps the value it started with: with `session`, `true` on a run started writable is an error; omit it."
 				},
 				"workdir": {
 					"type": "string",
-					"description": "Working directory the specialist operates in. Optional — defaults to the current working directory. Useful when the specialist must reason over a different repo or sub-project than the parent. Ignored when resuming with `session` (the original workdir is kept)."
+					"description": "Working directory the agent operates in. Optional — defaults to the current working directory. Useful when the agent must reason over a different repo or sub-project than the parent. Ignored when resuming with `session` (the original workdir is kept)."
 				},
 				"name": {
 					"type": "string",
@@ -169,7 +179,7 @@ async fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 
 /// `workflow`: list tap workflows, show one's definition, or run one as a
 /// background tap-run whose result is handed back through the inbox like a
-/// specialist reply.
+/// agent reply.
 async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 	let param = |key: &str| {
 		call.parameters
@@ -220,6 +230,7 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 		id: id.clone(),
 		role: role.clone(),
 		workdir: workdir.clone(),
+		mode: SessionMode::default(),
 		started_at: SystemTime::now(),
 		status: Arc::clone(&status),
 		error: None,
@@ -391,8 +402,7 @@ fn handle_send(call: &McpToolCall) -> Result<McpToolResult> {
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
-		json!({"id": session, "message": "Prompt queued for the running specialist's next available turn."})
-			.to_string(),
+		json!({"id": session, "message": "Prompt queued for the running agent's next available turn."}).to_string(),
 	))
 }
 
@@ -426,6 +436,17 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 		.and_then(|v| v.as_str())
 		.map(|s| s.trim().to_string())
 		.filter(|s| !s.is_empty());
+	let readonly = match call.parameters.get("readonly") {
+		None => false,
+		Some(serde_json::Value::Bool(readonly)) => *readonly,
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"readonly: boolean required".to_string(),
+			));
+		}
+	};
 	// Default workdir is the parent session's current cwd. Use the thread-local
 	// session working directory (not the process cwd, which is wrong under the
 	// server/daemon where all sessions share one process). Resolved early so
@@ -435,7 +456,18 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	// Resolve (id, role, title, workdir, status, cancel_rx) for resume vs. fresh.
 	// Conversation history is persisted on disk by the ACP subprocess under
 	// the session name `<id>` — we don't track messages in-memory anymore.
-	let (id, role, title, workdir, status, cancel_rx, launch) = if let Some(sid) = session {
+	let (id, role, title, workdir, status, cancel_rx, launch, mode) = if let Some(sid) = session {
+		// A run keeps the mode it started with: asking for read-only on a writable run is
+		// refused instead of resumed writable.
+		if readonly && tap_runs::find_job(&sid).is_some_and(|job| !job.mode.readonly) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Run {sid} was started writable and cannot be resumed read-only: start a new run with `readonly` set."
+				),
+			));
+		}
 		let claim = match tap_runs::resume_run(&sid) {
 			Ok(claim) => claim,
 			Err(error) => {
@@ -454,10 +486,11 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 			claim.status,
 			claim.cancel_rx,
 			None,
+			claim.mode,
 		)
 	} else {
-		let specialist = match super::tap_route::route_task(&prompt, role_param.as_deref()).await {
-			Ok(specialist) => specialist,
+		let agent = match super::tap_route::route_task(&prompt, role_param.as_deref()).await {
+			Ok(agent) => agent,
 			Err(error) => {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
@@ -466,7 +499,11 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 				));
 			}
 		};
-		let role = specialist.tag;
+		let mode = SessionMode {
+			readonly,
+			copy: agent.copy,
+		};
+		let role = agent.tag;
 		let workdir = workdir_param.unwrap_or(cwd_default);
 		let id = tap_runs::generate_id(&role);
 		let status = Arc::new(RwLock::new(TapJobStatus::Running));
@@ -475,6 +512,7 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 			id: id.clone(),
 			role: role.clone(),
 			workdir: workdir.clone(),
+			mode,
 			started_at: SystemTime::now(),
 			status: Arc::clone(&status),
 			error: None,
@@ -485,15 +523,7 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 			crate::log_error!("Tap run {}: failed to start event stream: {}", id, error);
 		}
 		let launch = delegation::DISPATCH.try_with(Clone::clone).ok().flatten();
-		(
-			id,
-			role,
-			specialist.header.title,
-			workdir,
-			status,
-			cancel_rx,
-			Some(launch),
-		)
+		(id, role, agent.title, workdir, status, cancel_rx, Some(launch), mode)
 	};
 
 	let workdir_path = std::path::PathBuf::from(&workdir);
@@ -557,7 +587,14 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 	// `--name <id>` creates a fresh session if `<id>.jsonl` doesn't exist
 	// and resumes it if it does — works for both the first call and
 	// every subsequent turn against the same tap-run id.
-	let acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
+	let mut acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
+	if mode.readonly {
+		acp_args.push("--readonly".to_string());
+	}
+	if mode.copy {
+		// Tells the child it is a copy, so it cannot start copies of itself.
+		acp_args.push("--copy".to_string());
+	}
 	let prompts = match session_id
 		.as_ref()
 		.map(|_| tap_runs::open_prompt_channel(&id))
@@ -656,9 +693,15 @@ async fn handle_run(call: &McpToolCall) -> Result<McpToolResult> {
 				"context": if grant_id.is_some() { "available" } else { "unavailable" },
 				"message": "Tap-run started. Reply will be injected as a user message when ready.",
 			});
-			// What the matched specialist does, so a wrong match is visible and can be stopped.
+			// What the matched agent does, so a wrong match is visible and can be stopped.
 			if let Some(title) = title {
 				started["title"] = json!(title);
+			}
+			if mode.readonly {
+				started["readonly"] = json!(true);
+			}
+			if mode.copy {
+				started["copy"] = json!(true);
 			}
 			started
 		}

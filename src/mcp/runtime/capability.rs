@@ -1035,7 +1035,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 	};
 	// Domain gate: skip out-of-domain caps before embedding their triggers.
 	// Saves embed work AND prevents the gate from picking, say, medical-
-	// reference for a `developer:general` user message that happens to score
+	// reference for a `developer` user message that happens to score
 	// well against medical-domain triggers.
 	let caps = filter_caps_by_domain(caps);
 

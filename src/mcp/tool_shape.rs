@@ -186,6 +186,41 @@ pub fn tool_read_only_hint(tool: &str) -> Option<bool> {
 	tool_read_only_hints().read().ok()?.get(tool).copied()
 }
 
+type ServerToolKey = (String, String);
+
+fn server_tool_read_only_hints() -> &'static std::sync::RwLock<std::collections::HashMap<ServerToolKey, bool>> {
+	static HINTS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<ServerToolKey, bool>>> =
+		std::sync::OnceLock::new();
+	HINTS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Register the read-only hint of `tool` as `server` declares it. Two servers can expose the
+/// same tool name and only the first runs, so a read-only session decides from the hint of the
+/// server that will run the call, never from a name alone.
+pub fn register_server_tool_read_only_hint(server: &str, tool: &str, read_only: Option<bool>) {
+	if let Ok(mut hints) = server_tool_read_only_hints().write() {
+		let key = (server.to_string(), tool.to_string());
+		match read_only {
+			Some(read_only) => {
+				hints.insert(key, read_only);
+			}
+			// A refreshed inventory without a hint must not inherit an old read-only promise.
+			None => {
+				hints.remove(&key);
+			}
+		}
+	}
+}
+
+/// Whether `server` declared `tool` read-only. No hint, or none registered yet, is `false`.
+pub fn server_tool_is_read_only(server: &str, tool: &str) -> bool {
+	server_tool_read_only_hints()
+		.read()
+		.ok()
+		.and_then(|hints| hints.get(&(server.to_string(), tool.to_string())).copied())
+		.unwrap_or(false)
+}
+
 fn tool_command_shapes() -> &'static std::sync::RwLock<std::collections::HashMap<String, bool>> {
 	static SHAPES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
 		std::sync::OnceLock::new();

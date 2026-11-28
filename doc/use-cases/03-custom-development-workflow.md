@@ -52,7 +52,7 @@ name   = "dev"
 
 [[steps]]
 name    = "refine"
-role    = "developer:general"
+role    = "developer"
 session = "fresh"
 prompt  = """
 Refine this request into a clear, actionable task. Guess which files might
@@ -65,7 +65,7 @@ Request:
 
 [[steps]]
 name    = "research"
-role    = "developer:general"
+role    = "developer"
 session = "fresh"
 workdir = "."                          # relative to the directory running the workflow
 timeout = 300                          # seconds; 0 = no timeout (default)
@@ -86,7 +86,7 @@ Project instructions:
 
 [[steps]]
 name    = "execute"
-role    = "developer:general"
+role    = "developer"
 session = "fresh"
 model   = "anthropic:claude-sonnet-4-6"     # main model name override
 retries = 1                                # one extra attempt on failure
@@ -152,7 +152,7 @@ name   = "validated_dev"
 
 [[steps]]
 name    = "refine"
-role    = "developer:general"
+role    = "developer"
 session = "fresh"
 prompt  = "Refine: {{input}}"
 
@@ -164,13 +164,13 @@ exit_when      = { output = "tester", matches = '^\s*READY\s*$' }
 
   [[steps.run]]
   name    = "research"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   prompt  = "Gather context for: {{refine}}"
 
   [[steps.run]]
   name    = "tester"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   prompt  = """
 Is the gathered context sufficient to proceed?
@@ -183,7 +183,7 @@ Context:
 
 [[steps]]
 name    = "execute"
-role    = "developer:general"
+role    = "developer"
 session = "fresh"
 prompt  = "Implement: {{refine}}\n\nContext:\n{{research}}"
 ```

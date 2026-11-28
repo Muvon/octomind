@@ -283,8 +283,8 @@ fn progress_without_a_tool_call_is_dropped() {
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
 async fn graceful_shutdown_waits_for_pending_work_in_every_session() {
-	let config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default config parses");
+	let config: Config = toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+		.expect("default config parses");
 	let agent = Rc::new(OctomindAgent::new(config, "assistant".into(), Default::default()));
 	let idle_session = "acp-idle-session".to_string();
 	let busy_session = "acp-busy-session".to_string();
@@ -300,7 +300,7 @@ async fn graceful_shutdown_waits_for_pending_work_in_every_session() {
 
 	for session_id in [&idle_session, &busy_session] {
 		crate::session::context::with_session_id(session_id.clone(), async {
-			crate::session::context::init_session_services("assistant");
+			crate::session::context::init_session_services("assistant", Default::default());
 		})
 		.await;
 	}
@@ -524,7 +524,8 @@ fn available_commands_are_advertised_without_leading_slash() {
 
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -552,6 +553,7 @@ fn new_session_args_consume_one_shot_overrides_once() {
 		resume_recent: true,
 		model: Some("openai:gpt-5".to_string()),
 		startup_error: None,
+		mode: Default::default(),
 	});
 
 	let first = agent.build_new_session_args();
@@ -1248,7 +1250,7 @@ async fn install_session(agent: &Rc<OctomindAgent>, session_id: &str, mut sessio
 		.borrow_mut()
 		.insert(session_id.to_string(), (session, std::env::current_dir().expect("cwd")));
 	context::with_session_id(session_id.to_string(), async {
-		context::init_session_services("assistant");
+		context::init_session_services("assistant", Default::default());
 	})
 	.await;
 }

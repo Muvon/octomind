@@ -15,8 +15,8 @@
 // Role switching command implementation.
 //
 // Supports two kinds of role identifiers (identical to `octomind run <TAG>`):
-//   - Plain role name (e.g. `assistant`)            → must exist in config.roles
-//   - Tap agent tag   (e.g. `developer:general`)    → fetched from tap registry,
+//   - A role defined in config.roles               → used as is, wins over a tap agent
+//   - A tap agent (`developer`, `developer:rust`)  → fetched from tap registry,
 //     INPUT/ENV resolved, dep scripts run, manifest merged into the active config
 //
 // Both paths end with `reinitialize_for_role` which starts the new role's MCP
@@ -30,8 +30,8 @@ use anyhow::Result;
 
 /// Handle /role command for runtime role switching.
 ///
-/// Accepts either a plain role name defined in `config.roles` or a tap agent
-/// tag (`domain:spec`) that is resolved via the same path as `octomind run`.
+/// Accepts either a role name defined in `config.roles` or a tap agent tag
+/// that is resolved via the same path as `octomind run`.
 pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params: &[&str]) -> Result<CommandResult> {
 	if params.is_empty() {
 		// Show current role and available roles
@@ -48,33 +48,7 @@ pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params:
 		})));
 	}
 
-	// A bare domain (e.g. `developer`) switches to its orchestrator (`developer:chief`); the role
-	// is then handled as the full tag everywhere below.
-	let expanded_role = match resolver::expand_domain_role(params[0], config) {
-		Ok(role) => role,
-		Err(e) => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
-				error: format!("Failed to resolve role '{}': {}", params[0], e),
-				context: None,
-			})));
-		}
-	};
-	let new_role_arg = expanded_role.as_str();
-	let is_tap_tag = new_role_arg.contains(':');
-
-	// Plain role: validate up-front against the active config.
-	// Tap tag: no pre-validation — resolver will fail loudly if the manifest
-	// cannot be fetched or merged.
-	if !is_tap_tag && !config.roles.iter().any(|r| r.name == new_role_arg) {
-		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
-
-		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
-			error: format!("Invalid role: {}", new_role_arg),
-			context: Some(serde_json::json!({
-				"available_roles": available_roles
-			})),
-		})));
-	}
+	let new_role_arg = crate::agent::registry::canonical_tag(params[0]);
 
 	// Don't switch if already using this role
 	if session.role == new_role_arg {
@@ -108,6 +82,18 @@ pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params:
 				})));
 			}
 		};
+
+	// A name that is neither a config role nor a tap agent comes back unmerged: it is no role.
+	if !resolved_config.roles.iter().any(|r| r.name == resolved_role) {
+		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
+
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Invalid role: {}", new_role_arg),
+			context: Some(serde_json::json!({
+				"available_roles": available_roles
+			})),
+		})));
+	}
 
 	let target_role = resolved_role;
 

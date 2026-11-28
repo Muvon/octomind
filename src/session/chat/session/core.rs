@@ -53,6 +53,8 @@ pub struct SessionInitParams<'a> {
 	pub role_explicit: bool,
 	/// Optional JSON schema for structured output
 	pub schema: Option<serde_json::Value>,
+	/// Start the session read-only; a resumed read-only session stays read-only either way.
+	pub readonly: bool,
 }
 
 impl<'a> SessionInitParams<'a> {
@@ -70,6 +72,7 @@ impl<'a> SessionInitParams<'a> {
 			role,
 			role_explicit: false,
 			schema: None,
+			readonly: false,
 		}
 	}
 
@@ -124,6 +127,12 @@ impl<'a> SessionInitParams<'a> {
 	/// Set JSON schema for structured output
 	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
 		self.schema = Some(schema);
+		self
+	}
+
+	/// Start the session read-only.
+	pub fn with_readonly(mut self, readonly: bool) -> Self {
+		self.readonly = readonly;
 		self
 	}
 }
@@ -269,7 +278,7 @@ pub struct ChatSession {
 	/// holds the stored form; the cache keepalive replays this copy so a ping
 	/// matches the cached prefix without rebuilding the request.
 	pub last_sent_messages: Vec<crate::session::Message>,
-	/// Pack-local IDs the specialist reported materially using this turn. Unioned
+	/// Pack-local IDs the agent reported materially using this turn. Unioned
 	/// across tool rounds and consumed by outcome-driven reinforcement.
 	pub used_memory_ids: std::collections::HashSet<String>,
 	/// Runtime override for reasoning effort (set via /effort). None = use config default.
@@ -301,7 +310,7 @@ pub struct ChatSession {
 	/// an untrusted attention prior by conversation compression, never as evidence.
 	pub last_self_report_handoff: Option<crate::session::self_report::SelfReportHandoff>,
 	/// Supervisor: entries in the active pack (pack id, content, role, project).
-	/// Only IDs the specialist reports using receive verify-gate outcome credit.
+	/// Only IDs the agent reports using receive verify-gate outcome credit.
 	pub recalled_refs: Vec<(String, String, String, String)>,
 	/// Runtime-only, never persisted: the system prompt was built from the
 	/// current role config in this process. A prompt loaded from disk is a
@@ -501,14 +510,11 @@ impl ChatSession {
 					plan,
 					schedule,
 				}) => {
-					// A session logged before its agent was renamed stores the old tag, while the
-					// config was resolved under the new one. A stored role the config has is kept.
-					let restored_role = match runtime_state.role.as_deref().filter(|_| !params.role_explicit) {
-						Some(role) if params.config.has_role(role) => Some(role.to_string()),
-						Some(role) => Some(crate::agent::taps::resolve_alias_tag(role)?),
-						None => None,
-					};
-					let role = restored_role.as_deref().unwrap_or(params.role);
+					let role = runtime_state
+						.role
+						.as_deref()
+						.filter(|_| !params.role_explicit)
+						.unwrap_or(params.role);
 					if !params.config.has_role(role) {
 						anyhow::bail!("Cannot resume session '{}': role '{}' not found", session_name, role);
 					}
@@ -683,6 +689,8 @@ impl ChatSession {
 						&chat_session.session.info.agent_runs,
 					);
 
+					// Read-only is fixed for the life of a session: a flag adds it, nothing removes it.
+					chat_session.session.info.readonly |= params.readonly;
 					Ok(chat_session)
 				}
 				Err(e) => {
@@ -717,6 +725,7 @@ impl ChatSession {
 						role: params.role.to_string(),
 					});
 					chat_session.session.session_file = Some(new_session_file);
+					chat_session.session.info.readonly = params.readonly;
 
 					Ok(chat_session)
 				}
@@ -734,6 +743,7 @@ impl ChatSession {
 				role: params.role.to_string(),
 			});
 			chat_session.session.session_file = Some(session_file);
+			chat_session.session.info.readonly = params.readonly;
 
 			Ok(chat_session)
 		}

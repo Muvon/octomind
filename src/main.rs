@@ -47,7 +47,7 @@ enum Commands {
 	Configure,
 
 	/// Run an agent or start an interactive session.
-	/// TAG can be a registry agent (e.g. `developer:general`), a bare domain (e.g. `developer`, runs its `chief`) or a role name (e.g. `assistant`).
+	/// TAG is a tap agent (`developer`, or a variant such as `developer:rust`), or a role defined in your config, which wins over a tap agent of the same name.
 	/// Use --format to run non-interactively.
 	/// Default when no subcommand is given.
 	Run(commands::RunArgs),
@@ -416,7 +416,7 @@ fn patch_zsh(script: &str, sub: &str, field_id: &str) -> String {
 	// Strategy: keep #compdef on line 1, then inject the helper right after it.
 	//
 	// Use compadd instead of _describe: _describe treats ':' as the
-	// completion:description separator, which breaks tags like 'developer:general'.
+	// completion:description separator, which breaks any name that holds a ':'.
 	let helper = format!(
 		"\n_octomind_complete_{sub}() {{\n  local -a items\n  items=(${{(f)\"$(octomind complete {sub} 2>/dev/null)\"}})\n  compadd -a items\n}}\n"
 	);

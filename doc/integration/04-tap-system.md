@@ -42,21 +42,21 @@ octomind tap init myorg/my-agents --agent my-agents
 Bootstraps a ready-to-use tap from the default tap's scaffold (`scaffolds/tap/` in the locally downloaded built-in tap).
 In one command it:
 
-1. Renders the scaffold into `./octomind-my-agents/` (override with `--dir`), substituting `__TOKEN__` placeholders in
+1. Renders the scaffold into `./octomind-my-agents/` (override with `--dir`), substituting `__TOKEN__` placeholders (such as `__AGENT_NAME__`, the starter agent's name) in
   file paths and contents. Rendering fails if any token remains unresolved, and refuses a non-empty destination.
 
 2. Runs the optional command configured by `[post_create] validate` in `scaffold.toml`, using `sh -c`.
 3. Initializes a Git repository.
 4. Registers the directory as a local tap.
 
-`--agent` names the starter agent's domain and defaults to the repo name. The starter is always the domain's
-orchestrator, `chief`, so `--agent my-agents:chief` means the same; any other spec is rejected. Start it with the domain:
+`--agent` names the starter agent and defaults to the repo name. The starter is written to `agents/<name>.toml`, and its
+tag is `<name>`. Start it with that name:
 
 ```bash
 octomind run my-agents
 ```
 
-To choose the output directory and starter domain together:
+To choose the output directory and starter agent together:
 
 ```bash
 octomind tap init myorg/review-tools --dir ./review-tools --agent review-tools
@@ -70,6 +70,17 @@ Use a tap ID under your own GitHub account when publishing. Remote installation 
 The default tap `muvon/tap` is always present as the **last-priority fallback**. It is auto-cloned on first use, and it
 cannot be added (`tap muvon/tap` is rejected) or removed (`untap muvon/tap` is rejected).
 
+The `[registry]` section of your config names it and the revision to serve:
+
+```toml
+# In config.toml
+[registry]
+tap = "muvon/tap"   # built-in tap, in user/repo form
+ref = "<branch|tag|commit>"   # revision of the built-in tap to serve
+```
+
+Both keys come from your config; Octomind has no built-in fallback for them. The config upgrade writes them from the template. Taps you add with `octomind tap` follow their default branch.
+
 ## Tap Priority
 
 On an uncached manifest lookup, priority is:
@@ -77,7 +88,7 @@ On an uncached manifest lookup, priority is:
 1. User-added taps (in order added)
 2. Built-in default tap (`muvon/tap`)
 
-When more than one tap provides the same `category:variant`, the **first-listed tap wins** and a debug-level log line is
+When more than one tap provides the same agent name, the **first-listed tap wins** and a debug-level log line is
 emitted (`'…' found in multiple taps — using first match`). Skills also use first-wins lookup. Bare capability
 references in manifests try the agent's own tap first; pinned references and provider overrides further constrain
 capability lookup, as described below.
@@ -88,8 +99,7 @@ A tap is a Git repository (or local directory) containing:
 
 ```text
 agents/
-  category/
-    variant.toml         # Agent manifest (tag = category:variant)
+  name.toml              # Agent manifest (tag = name)
 deps/
   org/
     tool.sh              # Dependency install script (idempotent)
@@ -116,18 +126,19 @@ plugins/
 
 ## Agent Manifests
 
-Agent manifests are TOML files in `agents/<category>/<variant>.toml`. For discovery, `# Title:` and `# Description:`
-header comments are required and feed the `tap` tool's specialist matching (they are the embedding corpus). They are
-**not** used by `octomind run` shell autocomplete, which derives `category:variant` purely from the file path:
+Agent manifests are TOML files at `agents/<name>.toml`, directly under `agents/`: no subdirectories and no symbolic
+links. The name is lowercase letters, digits and hyphens. For discovery, `# Title:` and `# Description:`
+header comments are required and feed the `tap` tool's agent matching (they are the embedding corpus). They are
+**not** used by `octomind run` shell autocomplete, which derives the tag purely from the file name:
 
 ```toml
-# agents/developer/general.toml
-# Agent: developer:general
-# Title: General Developer
+# agents/developer.toml
+# Agent: developer
+# Title: Developer
 # Description: Review source code and explain implementation choices.
 
 [[roles]]
-name = "developer:general"
+name = "developer"
 system = "Review source code and explain implementation choices. Working directory: {{CWD}}."
 welcome = ""
 
@@ -136,19 +147,11 @@ server_refs = ["core", "runtime", "orchestration"]
 allowed_tools = ["core:*", "runtime:*", "orchestration:*"]
 ```
 
-The role's `name` is **always force-injected from the tag** — `category:variant` is written into the first `[[roles]]`
+The role's `name` is **always force-injected from the tag** — the agent name is written into the first `[[roles]]`
 entry's `name`, overwriting any value you declare there. Declare `name` for readability, while treating the filename tag
 as authoritative. Manifests can include any config sections: roles, commands, MCP servers, etc.
 
-Each domain (the `category` part of a tag, such as `developer`) can have one **orchestrator**: the agent that `octomind run <domain>` starts. It is the agent named `chief`, stored at `agents/<domain>/chief.toml`, so `octomind run developer` starts `developer:chief`:
-
-```toml
-# agents/developer/chief.toml
-# Title: Engineering Orchestrator
-# Description: Plan engineering work and delegate it to the domain's specialists.
-```
-
-A domain that has agents but no `chief` has no orchestrator. `octomind run <domain>` then fails with an error that lists the domain's agents. If several taps provide `<domain>:chief`, the first tap in [priority](#tap-priority) wins.
+`octomind run <name>` starts that agent, so `octomind run developer` starts `agents/developer.toml`. A tag written with `:` is an error that shows the flat form. A specialty of an agent is a skill bound to it with `domains: <agent name>`; see [Skills](#skills).
 
 If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
 `server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is done by a plugin, not a tool, and
@@ -156,8 +159,10 @@ If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` /
 
 ## Skills
 
-Skills are reusable instruction packs. Auto-activation uses declarative `rules:` in SKILL.md frontmatter — see
-[Skills](../usage/15-skills.md) for full documentation.
+Skills are reusable instruction packs. Each specialty procedure of an agent is a skill bound to that agent with
+`domains: <agent name>`. A skill loads when the user's message matches its `rules:` in SKILL.md frontmatter, when a
+workflow step lists it in `skills = [...]`, when `OCTOMIND_SKILLS=a,b octomind run <name>` preloads it, or when
+`/skill use <name>` loads it by hand. See [Skills](../usage/15-skills.md) for full documentation.
 
 Skills are **not tap-only**. They are resolved (first-wins, deduped by name) from, in order: taps, then
 `<workdir>/.agents/skills/`, then `~/.agents/skills/`. Agent Plugin skills are searched next, followed by skills
@@ -222,34 +227,23 @@ the braces (`{{{{INPUT:KEY}}}}`).
 - **`{{CWD}}`** — the runtime current working directory (resolved by the prompt-placeholder layer, e.g. inside a role
   `system` prompt).
 
-- **`{{SPECIALISTS}}`** and **`{{USES}}`** — removed. Octomind 0.71 and older expanded them to lists of agents; newer versions do not expand them, so one left in a manifest reaches the model as written. Do not add them: the agent never names a specialist, because the runtime matches the prompt to one. The tap registry lint rejects both.
-
-When an agent calls `tap(action="run", prompt=…)`, the runtime picks the specialist from the agents that caller may reach. A tap agent reaches the other agents of its own domain, plus what its `# Uses:` header declares. A caller that is not a tap agent, such as a role from your local config, reaches every installed agent. A lead that needs other domains or single agents declares them in a header comment, as a comma-separated list of bare domains and full tags:
+When an agent calls `tap(action="run", prompt=…)`, the runtime picks the target agent from the agents that caller may reach. The `# Uses:` header in the manifest sets that set: a comma-separated list of agent names, or `*` for every other agent. An agent with the header declares the `orchestration` capability. A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 
 ```toml
-# agents/marketing/chief.toml
-# Uses: content, seo:audit
-```
-
-The global assistant, `assistant:chief`, uses the entry `*`:
-
-```toml
-# agents/assistant/chief.toml
+# agents/assistant.toml
 # Uses: *
 ```
 
-A domain entry (`content`) is called by its bare name, and that domain's lead picks the agent. A tag entry (`seo:audit`) is called directly. `*` lists every other domain that has a `chief`; it can stand next to other entries, and a domain named both ways appears once. Anything not declared stays outside the lead's reach, and the runtime enforces this when it matches a prompt. Loading the agent fails if a domain entry has no `chief`, if a tag entry does not exist, if an entry is empty (`content,,seo`), or if an entry names the agent's own domain: its agents are reachable without it. Which agents may carry `# Uses:`, and which may use `*`, is also checked by the registry's lint.
-
-A manifest file that is a symbolic link is an alias: an old agent name kept so that older releases still find the agent. Asking for the alias by name (`octomind run <alias tag>`) loads the agent behind the link. Tag completion and the `tap` tool's specialist matching leave the alias out, so each agent appears once under its current name.
+In the community tap only `assistant` carries the header. An agent without the header can still start copies of itself with `tap` (see [From within a session](#from-within-a-session--the-tap-orchestration-tool)).
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 
 ```toml
-# agents/developer/service.toml
+# agents/service.toml
 # Title: Service Reviewer
 # Description: Review the service identified by your configured project label and URL.
 [[roles]]
-name = "developer:service"
+name = "service"
 system = "Project {{INPUT:PROJECT_LABEL}} at {{ENV:SERVICE_URL}}. Working directory: {{CWD}}."
 welcome = ""
 ```
@@ -258,7 +252,7 @@ Run once interactively to answer `PROJECT_LABEL`; an existing `.env` is loaded a
 environment values, so keep its `SERVICE_URL` consistent with your intended value:
 
 ```bash
-SERVICE_URL=http://127.0.0.1:9000 octomind run developer:service
+SERVICE_URL=http://127.0.0.1:9000 octomind run service
 ```
 
 ## Dependencies (`[deps]`)
@@ -275,7 +269,7 @@ Each entry is an `org/tool` string that maps to a script at `<tap_root>/deps/<or
 `deps/local/git.sh`). Flat names are not rejected syntactically; they resolve directly to `deps/<name>.sh` and work only
 if that file exists. The scripts:
 
-- Run in order, via `bash`, **on every resolution** of a `category:variant` tag (not just the first run) — they must be
+- Run in order, via `bash`, **on every resolution** of an agent tag (not just the first run) — they must be
   **idempotent**: exit `0` immediately if the tool is already installed, non-zero to abort.
 
 - Run **after** `{{INPUT}}`/`{{ENV}}` placeholder resolution and **before** MCP initialization.
@@ -310,7 +304,7 @@ capabilities/
 | Key | Requirement | Behavior |
 |-----|-------------|----------|
 | `triggers` | Non-empty array | Phrases used for semantic auto-activation; runtime loading rejects missing/empty triggers. |
-| `domains` | Optional array; empty means universal | Runtime activation requires an exact match with the role domain, such as `developer` for `developer:general`. |
+| `domains` | Optional array; empty means universal | Runtime activation requires an exact match with the role domain, such as `developer` for the `developer` agent. |
 
 The domain gate applies to runtime auto-activation, `capability list`/`discover`/`enable`, and
 `OCTOMIND_CAPABILITIES`. Static `capabilities = [...]` expansion in an agent manifest reads provider wiring directly
@@ -362,17 +356,17 @@ resolves to whichever tap is listed first. A pinned capability's `[deps]` script
 referencing agent's. Provider overrides (below) and the active-capability registry are keyed by the bare name, so
 `myorg/git-tools` and `git-tools` are the same capability once loaded.
 
-For example, replace the earlier `agents/developer/general.toml` in your local tap with this manifest. Put capability
+For example, replace the earlier `agents/developer.toml` in your local tap with this manifest. Put capability
 references at the top level, before any table header:
 
 ```toml
-# agents/developer/general.toml
-# Title: General Developer
+# agents/developer.toml
+# Title: Developer
 # Description: Review source code after checking that Git is installed.
 capabilities = ["myorg/git-tools"]
 
 [[roles]]
-name = "developer:general"
+name = "developer"
 system = "Review source code and explain your findings."
 welcome = ""
 ```
@@ -420,30 +414,21 @@ Set a preferred model for specific tap agents in your config:
 ```toml
 # In config.toml
 [taps]
-"my-agents:chief" = "octohub:auto"
+"my-agents" = "octohub:auto"
 ```
 
-This replaces only the main model name for `octomind run my-agents:chief`; other parameters inherit `[model]` unless
+This replaces only the main model name for `octomind run my-agents`; other parameters inherit `[model]` unless
 the role overrides them. Explicit runtime fields win, then the manifest role profile, then the tap name mapping, then
 `[model]`.
-
-A key without a `:` is a domain and sets the model for every agent of that domain. An exact tag key wins over the domain key:
-
-```toml
-# In config.toml
-[taps]
-"my-agents" = "octohub:auto"
-"my-agents:reviewer" = "openai:gpt-4o"
-```
 
 ## Using Tap Agents
 
 ### From the CLI
 
-Run a tap agent with `category:variant` format:
+Run a tap agent by its name:
 
 ```bash
-octomind run my-agents:chief
+octomind run my-agents
 ```
 
 This uses the starter agent created above. Discover tags installed on your machine with:
@@ -452,15 +437,11 @@ This uses the starter agent created above. Discover tags installed on your machi
 octomind complete run
 ```
 
-A domain name without a `:` starts that domain's orchestrator, `<domain>:chief`:
+`octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below reaches only tap agents, so a config role never wins there. A tag written with `:` is an error that shows the flat form.
 
-```bash
-octomind run my-agents
-```
+To start an agent in a read-only session, add `--readonly`; see [Read-Only Sessions](../usage/05-sessions.md#read-only-sessions).
 
-If your config defines a role with the same name, that role wins. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below also takes a bare domain, but it reaches only tap agents, so a config role never wins there. Workflows still require full `category:variant` tags.
-
-When you specify a tag containing `:`, Octomind runs the full resolution pipeline:
+When a name resolves to a tap agent, Octomind runs the full resolution pipeline:
 
 1. **Fetch** the matching agent manifest from taps (first-wins; cached locally — see [Manifest
   Caching](#manifest-caching))
@@ -477,7 +458,7 @@ When you specify a tag containing `:`, Octomind runs the full resolution pipelin
 4. **Run dependency scripts** — any `[deps] require = [...]` scripts run before MCP init (see
   [Dependencies](#dependencies-deps))
 
-5. **Inject the tag** as the role name (`category:variant` becomes the role's `name`)
+5. **Inject the tag** as the role name (the agent name becomes the role's `name`)
 6. **Merge** the manifest into config and start the session
 
 If a manifest needs a missing value, resolution can prompt on stderr before the session starts. Supply credentials
@@ -485,8 +466,8 @@ before automating ACP/tap subprocesses; do not expect their stdin to be availabl
 
 ### From within a session — the `tap` orchestration tool
 
-Inside a running session, the model can hand a task to a specialist using the `tap` tool from the `orchestration` builtin server.
-The runtime matches the prompt to a specialist. The model can also name one with `role`.
+Inside a running session, the model can hand a task to another agent using the `tap` tool from the `orchestration` builtin server.
+The runtime matches the prompt to an agent. The model can also name one with `role`, an agent name. An agent can start copies of itself this way (`role` set to its own name, or no `role` when it has no `# Uses:` header), and `readonly: true` starts a read-only copy.
 These are JSON argument objects for separate MCP calls:
 
 ```json
@@ -500,13 +481,13 @@ These are JSON argument objects for separate MCP calls:
 Use the actual `id` returned by `run` in place of the illustrative ID below:
 
 ```json
-{"action": "stop", "session": "tap-my-agents-chief-9b2c1d"}
+{"action": "stop", "session": "tap-my-agents-9b2c1d"}
 ```
 
 After a run has stopped or finished, resume it within the same parent session:
 
 ```json
-{"action": "run", "session": "tap-my-agents-chief-9b2c1d", "prompt": "Summarize your conclusions"}
+{"action": "run", "session": "tap-my-agents-9b2c1d", "prompt": "Summarize your conclusions"}
 ```
 
 `workdir` defaults to the parent session's directory. Resume reuses the original role and workdir and rejects an
@@ -518,8 +499,8 @@ To activate capabilities matching an intent in the current session, use the addi
 {"action": "capability", "prompt": "Search the codebase for authentication handlers"}
 ```
 
-Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-my-agents-chief-9b2c1d` for
-`my-agents:chief`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
+Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-my-agents-9b2c1d` for
+`my-agents`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
 `run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
 description. The best one gets the task when it clears a score threshold and a margin over the second best. If nothing matches, `run` starts nothing and returns an
@@ -527,7 +508,7 @@ error that lists the closest agents; the same call with `role` set to one of tho
 matching. Matching needs the local embedding
 model. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
-`tap`](../usage/07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps) for the full schema.
+`tap`](../usage/07-mcp-tools.md#tap-tool-run-agents-from-taps) for the full schema.
 
 ## Common questions
 
@@ -553,8 +534,8 @@ manifest, remove only its cached copy:
 
 ```bash
 # macOS/Linux default; set OCTOMIND_DATA_DIR here if you use another data root.
-rm -f "${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/agents/developer/general.toml"
-octomind run developer:general
+rm -f "${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}"/agents/developer.*.toml
+octomind run developer
 ```
 
 ## Storage
@@ -578,10 +559,10 @@ during full tap loading, at most every 15 minutes and at once on the first run o
 discovery uses already-local tap data without a sync. Local taps are live symlinks, but agent resolution still uses the
 separate manifest cache below. The default `muvon/tap` is auto-cloned on first use.
 
-A GitHub tap's clone is a read-only mirror: each sync resets it to the upstream default branch, discarding local edits,
-local commits and new files in it. To customise agents, use a local tap or push to the tap's repository.
+A GitHub tap's clone is a read-only mirror: each sync resets it to the upstream default branch (the built-in tap: to `[registry] ref`), discarding local edits,
+local commits and new files in it. If a sync of the built-in tap fails, Octomind prints one line on stderr (`Could not update tap …; the previous checkout is still in use`) and tries again at the next start. To customise agents, use a local tap or push to the tap's repository.
 
-The sync runs in the background. A tag or bare domain that the clone does not have yet waits for the sync that run
+The sync runs in the background. An agent name that the clone does not have yet waits for the sync that run
 started, up to 30 seconds, and is then looked up once more, so an agent published since the last sync resolves on the
 first try.
 
@@ -590,8 +571,10 @@ first try.
 Fetched agent manifests are cached separately from the tap repos, at:
 
 ```text
-agents/<category>/<variant>.toml
+agents/<name>.<source>.toml
 ```
+
+`<source>` is the tap the manifest came from; for the built-in tap it also holds the `[registry] ref`, with characters other than letters, digits, `-` and `.` written as `_`. A manifest cached from another tap or ref is a different file, so changing `[registry] tap` or `ref` never serves an old one.
 
 Cache lifetime is controlled by `[registry] cache_ttl_hours` in your config (default `24`):
 
@@ -608,7 +591,7 @@ manifest is fetched synchronously from the taps (first-wins) and written to the 
 
 Persisted `{{INPUT:KEY}}` answers live alongside the cache in `inputs.toml` under the data root.
 
-> A `category:variant@version` tag is accepted (the `@version` segment is parsed) but currently unused — version pinning
+> A `<name>@version` tag is accepted (the `@version` segment is parsed) but currently unused — version pinning
 > is not yet enforced.
 
 ## See also

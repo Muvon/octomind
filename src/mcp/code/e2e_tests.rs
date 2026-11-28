@@ -153,7 +153,7 @@ async fn call_code(config: &Config, script: &str) -> McpToolResult {
 async fn run_script(config: &Config, script: &str) -> McpToolResult {
 	let session = format!("code-e2e-{}", uuid::Uuid::new_v4());
 	let result = crate::session::context::with_session_id(session.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		call_code(config, script).await
 	})
 	.await;
@@ -245,7 +245,7 @@ async fn a_direct_call_of_a_script_tool_becomes_its_script() {
 	let hint = format!("`greet` ran as a `code` script. Call tools inside `code`, several in one script. Its description:\n{description}");
 	let session = format!("code-e2e-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		let calls = super::script_direct_calls(
 			&config,
 			vec![
@@ -319,7 +319,7 @@ async fn a_direct_call_runs_as_a_script() {
 
 	let session = format!("code-e2e-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		let run = |name: String, parameters: serde_json::Value| {
 			let config = &config;
 			async move {
@@ -498,7 +498,7 @@ async fn a_guardrail_denial_makes_the_script_call_fail_and_the_tool_does_not_run
 		crate::mcp::set_session_working_directory(project.path().to_path_buf());
 		tool_map::isolate_session_tool_map(&session);
 		crate::mcp::clear_function_cache();
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::initialize_servers_for_role(&config)
 			.await
 			.expect("start servers");

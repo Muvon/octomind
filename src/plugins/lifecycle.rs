@@ -204,7 +204,7 @@ pub async fn subagent_ended(parent_session_id: &str, child_session_id: Option<&s
 }
 
 /// Ask the plugins of `session_id` for a judgement. The places that need one
-/// (skill and capability choice, specialist routing, the fold of the history)
+/// (skill and capability choice, agent routing, the fold of the history)
 /// have no message list at hand, and a judgement needs none. `None` when no
 /// plugin gave one: the caller keeps the outcome of its own rule.
 pub async fn judge_detached(session_id: &str, payload: Judge) -> Option<super::Judged> {
@@ -336,11 +336,10 @@ fn spill_reader_available() -> bool {
 
 /// Capabilities the role's domain may use, as the `capability` tool lists them.
 fn capability_names(role: &str, config: &Config) -> Vec<String> {
-	let domain = role.split(':').next().unwrap_or(role);
 	match crate::agent::registry::list_all_capabilities(&config.capabilities) {
 		Ok(capabilities) => capabilities
 			.into_iter()
-			.filter(|capability| crate::agent::registry::cap_available_in_domain(&capability.domains, domain))
+			.filter(|capability| crate::agent::registry::cap_available_in_domain(&capability.domains, role))
 			.map(|capability| capability.name)
 			.collect(),
 		Err(error) => {

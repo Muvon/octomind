@@ -482,6 +482,14 @@ pub async fn process_command(
 		return Ok(CommandResult::HandledWithOutput(Box::new(output)));
 	}
 
+	// These start child `octomind` processes that are not read-only.
+	if session.session.info.readonly && matches!(command, WORKFLOW_COMMAND | RUN_COMMAND) {
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("{command} is not available in a read-only session."),
+			context: None,
+		})));
+	}
+
 	let result = match command {
 		EXIT_COMMAND | QUIT_COMMAND => Ok(CommandResult::Exit),
 		HELP_COMMAND | HELP_COMMAND_ALT => help::handle_help(config, &current_role).await,

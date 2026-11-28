@@ -27,7 +27,7 @@ fn builtin_placeholders_pass_validation() {
 			name = "wf"
 			[[steps]]
 			name = "s1"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Today is {{DATE}} in {{CWD}}. Context:\n{{CONTEXT}}\n\nRequest: {{input}}"
 			"#,
 	);
@@ -41,7 +41,7 @@ fn genuinely_unknown_variable_still_fails() {
 			name = "wf"
 			[[steps]]
 			name = "s1"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Hello {{nope}}"
 			"#,
 	);
@@ -57,7 +57,7 @@ fn max_cost_must_be_positive() {
 			max_cost = 0.0
 			[[steps]]
 			name = "s1"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			"#,
 	);
@@ -69,7 +69,7 @@ fn max_cost_must_be_positive() {
 			max_cost = 1.5
 			[[steps]]
 			name = "s1"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			"#,
 	);
@@ -87,12 +87,12 @@ fn count_sweep_in_parallel_validates() {
 			min_success = 2
 			  [[steps.run]]
 			  name = "candidate"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			  count = 3
 			  [[steps.run]]
 			  name = "other"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			"#,
 	);
@@ -106,7 +106,7 @@ fn expansion_fields_rejected_outside_parallel() {
 			name = "wf"
 			[[steps]]
 			name = "s1"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			count = 3
 			"#,
@@ -125,12 +125,12 @@ fn count_below_two_fails() {
 			parallel = true
 			  [[steps.run]]
 			  name = "a"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			  count = 1
 			  [[steps.run]]
 			  name = "b"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			"#,
 	);
@@ -150,12 +150,12 @@ fn min_success_out_of_range_fails() {
 			min_success = 4
 			  [[steps.run]]
 			  name = "a"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			  count = 2
 			  [[steps.run]]
 			  name = "b"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			"#,
 	);
@@ -185,7 +185,7 @@ fn dynamic_parallel_validates() {
 			  prompt = "Research:\n{{research}}"
 			[[steps]]
 			name = "summary"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Summarize:\n{{researcher}}"
 			"#,
 	);
@@ -319,15 +319,15 @@ fn parallel_block_name_reference_resolves() {
 			parallel = true
 			  [[steps.run]]
 			  name = "a"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			  [[steps.run]]
 			  name = "b"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{input}}"
 			[[steps]]
 			name = "judge"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Pick best:\n{{candidates}}"
 			"#,
 	);
@@ -341,11 +341,11 @@ fn step_output_reference_resolves() {
 			name = "wf"
 			[[steps]]
 			name = "spec"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			[[steps]]
 			name = "build"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Build {{spec}} on {{DATE}}"
 			"#,
 	);
@@ -362,17 +362,17 @@ fn bounded_graph_with_cycle_validates() {
 
 			[[steps]]
 			name = "plan"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 
 			[[steps]]
 			name = "review"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Review {{plan}}"
 
 			[[steps]]
 			name = "fix"
-			role = "developer:general"
+			role = "developer"
 			prompt = "Fix {{review}}"
 
 			[[edges]]
@@ -404,7 +404,7 @@ fn graph_requires_explicit_transition_bound() {
 			entry = "only"
 			[[steps]]
 			name = "only"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			[[edges]]
 			from = "only"
@@ -424,7 +424,7 @@ fn graph_requires_last_unconditional_edge() {
 			max_transitions = 2
 			[[steps]]
 			name = "only"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			[[edges]]
 			from = "only"
@@ -452,7 +452,7 @@ fn graph_dynamic_parallel_requires_named_source() {
 			match = "<task>(.*?)</task>"
 			  [[steps.run]]
 			  name = "worker"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{fanout}}"
 			[[edges]]
 			from = "fanout"
@@ -477,11 +477,11 @@ fn graph_dynamic_parallel_uses_named_source_independent_of_declaration_order() {
 			match = "<task>(.*?)</task>"
 			  [[steps.run]]
 			  name = "worker"
-			  role = "developer:general"
+			  role = "developer"
 			  prompt = "{{fanout}}"
 			[[steps]]
 			name = "plan"
-			role = "developer:general"
+			role = "developer"
 			prompt = "{{input}}"
 			[[edges]]
 			from = "plan"
@@ -528,7 +528,7 @@ fn max_transitions_zero_is_rejected() {
 		max_transitions = 0
 		[[steps]]
 		name = "s1"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		"#,
 	);
@@ -544,7 +544,7 @@ fn max_transitions_requires_graph_mode() {
 		max_transitions = 5
 		[[steps]]
 		name = "s1"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		"#,
 	);
@@ -563,7 +563,7 @@ fn graph_without_edges_is_rejected() {
 		max_transitions = 2
 		[[steps]]
 		name = "only"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		"#,
 	);
@@ -580,7 +580,7 @@ fn graph_entry_must_reference_a_top_level_step() {
 		max_transitions = 2
 		[[steps]]
 		name = "only"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[edges]]
 		from = "only"
@@ -605,7 +605,7 @@ fn graph_dynamic_parallel_source_must_be_a_known_output() {
 		match = "(.+)"
 		  [[steps.run]]
 		  name = "worker"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "{{fan}}"
 		[[edges]]
 		from = "fan"
@@ -628,7 +628,7 @@ fn graph_edge_endpoints_must_reference_known_steps() {
 		max_transitions = 2
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[edges]]
 		from = "ghost"
@@ -648,7 +648,7 @@ fn graph_edge_endpoints_must_reference_known_steps() {
 		max_transitions = 2
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[edges]]
 		from = "a"
@@ -671,11 +671,11 @@ fn graph_edge_condition_output_must_be_a_known_step() {
 		max_transitions = 3
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "b"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "a"
@@ -702,11 +702,11 @@ fn graph_edge_condition_output_must_be_a_known_step() {
 		max_transitions = 3
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "b"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "a"
@@ -732,11 +732,11 @@ fn graph_node_without_outgoing_route_is_rejected() {
 		max_transitions = 3
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "b"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "a"
@@ -756,7 +756,7 @@ fn graph_node_requires_exactly_one_default_edge() {
 		max_transitions = 2
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[edges]]
 		from = "a"
@@ -781,11 +781,11 @@ fn graph_unreachable_steps_are_rejected() {
 		max_transitions = 3
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "b"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "a"
@@ -808,11 +808,11 @@ fn graph_without_end_route_is_rejected() {
 		max_transitions = 5
 		[[steps]]
 		name = "a"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "b"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "a"
@@ -855,7 +855,7 @@ fn reserved_and_empty_step_names_are_rejected() {
 		name = "wf"
 		[[steps]]
 		name = "{name}"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{{{input}}}}"
 		"#
 		));
@@ -873,7 +873,7 @@ fn dynamic_parallel_min_success_zero_is_rejected() {
 		name = "wf"
 		[[steps]]
 		name = "plan"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		name = "fan"
@@ -883,7 +883,7 @@ fn dynamic_parallel_min_success_zero_is_rejected() {
 		min_success = 0
 		  [[steps.run]]
 		  name = "worker"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "{{fan}}"
 		"#,
 	);
@@ -902,11 +902,11 @@ fn static_parallel_source_requires_match() {
 		source = "plan"
 		  [[steps.run]]
 		  name = "a"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pa"
 		  [[steps.run]]
 		  name = "b"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pb"
 		"#,
 	);
@@ -924,7 +924,7 @@ fn static_parallel_requires_two_sub_steps() {
 		parallel = true
 		  [[steps.run]]
 		  name = "a"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pa"
 		"#,
 	);
@@ -943,11 +943,11 @@ fn parallel_max_parallel_zero_is_rejected() {
 		max_parallel = 0
 		  [[steps.run]]
 		  name = "a"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pa"
 		  [[steps.run]]
 		  name = "b"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pb"
 		"#,
 	);
@@ -982,7 +982,7 @@ fn loop_requires_exit_when() {
 		name = "spin"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1001,7 +1001,7 @@ fn loop_max_iterations_zero_is_rejected() {
 		max_iterations = 0
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[steps.exit_when]
 		contains = "done"
@@ -1022,7 +1022,7 @@ fn loop_max_iterations_more_than_zero_passes() {
 		max_iterations = 1
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[steps.exit_when]
 		contains = "done"
@@ -1037,7 +1037,7 @@ fn loop_max_iterations_more_than_zero_passes() {
 		name = "spin"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[steps.exit_when]
 		contains = "done"
@@ -1053,7 +1053,7 @@ fn empty_model_and_workdir_are_rejected() {
 		name = "wf"
 		[[steps]]
 		name = "s1"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		model = ""
 		"#,
@@ -1066,7 +1066,7 @@ fn empty_model_and_workdir_are_rejected() {
 		name = "wf"
 		[[steps]]
 		name = "s1"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		workdir = ""
 		"#,
@@ -1082,7 +1082,7 @@ fn step_with_explicit_workdir_validates() {
 		name = "wf"
 		[[steps]]
 		name = "s1"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		workdir = "/tmp"
 		"#,
@@ -1099,7 +1099,7 @@ fn conditional_workflow_validates() {
 		name = "wf"
 		[[steps]]
 		name = "prev"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		conditional = true
@@ -1111,11 +1111,11 @@ fn conditional_workflow_validates() {
 		output = "prev"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "ship {{prev}}"
 		[[steps.run]]
 		name = "nope"
-		role = "developer:general"
+		role = "developer"
 		prompt = "fix {{prev}}"
 		"#,
 	);
@@ -1129,7 +1129,7 @@ fn conditional_without_any_branch_is_rejected() {
 		name = "wf"
 		[[steps]]
 		name = "prev"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		conditional = true
@@ -1140,7 +1140,7 @@ fn conditional_without_any_branch_is_rejected() {
 		contains = "go"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1164,7 +1164,7 @@ fn conditional_branch_must_reference_a_sub_step() {
 		contains = "go"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1189,11 +1189,11 @@ fn dynamic_parallel_source_must_already_be_available() {
 		match = "(.+)"
 		  [[steps.run]]
 		  name = "worker"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "{{fan}}"
 		[[steps]]
 		name = "later"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		"#,
 	);
@@ -1217,7 +1217,7 @@ fn loop_exit_when_output_must_be_a_known_step() {
 		output = "ghost"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1241,7 +1241,7 @@ fn loop_with_named_exit_output_validates() {
 		output = "iter"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1255,7 +1255,7 @@ fn conditional_condition_output_must_be_available() {
 		name = "wf"
 		[[steps]]
 		name = "prev"
-		role = "developer:general"
+		role = "developer"
 		prompt = "{{input}}"
 		[[steps]]
 		conditional = true
@@ -1266,7 +1266,7 @@ fn conditional_condition_output_must_be_available() {
 		output = "ghost"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
@@ -1293,7 +1293,7 @@ fn graph_loop_node_validates() {
 		contains = "done"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[edges]]
 		from = "spin"
@@ -1319,11 +1319,11 @@ fn graph_conditional_node_validates() {
 		contains = "go"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[steps.run]]
 		name = "nope"
-		role = "developer:general"
+		role = "developer"
 		prompt = "q"
 		[[edges]]
 		from = "gate"
@@ -1342,18 +1342,18 @@ fn public_role_validation_covers_every_step_kind() {
 		name = "kinds"
 		[[steps]]
 		name = "leaf"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[steps]]
 		parallel = true
 		name = "fan"
 		  [[steps.run]]
 		  name = "a"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pa"
 		  [[steps.run]]
 		  name = "b"
-		  role = "developer:general"
+		  role = "developer"
 		  prompt = "pb"
 		[[steps]]
 		loop = true
@@ -1362,7 +1362,7 @@ fn public_role_validation_covers_every_step_kind() {
 		contains = "done"
 		[[steps.run]]
 		name = "iter"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		[[steps]]
 		conditional = true
@@ -1372,11 +1372,11 @@ fn public_role_validation_covers_every_step_kind() {
 		contains = "go"
 		[[steps.run]]
 		name = "yes"
-		role = "developer:general"
+		role = "developer"
 		prompt = "p"
 		"#,
 	);
-	let public: HashSet<String> = ["developer:general".to_string()].into_iter().collect();
+	let public: HashSet<String> = ["developer".to_string()].into_iter().collect();
 	validate_public_roles(&wf, &public).expect("all-public workflow passes");
 
 	let none: HashSet<String> = HashSet::new();

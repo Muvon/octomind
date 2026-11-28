@@ -18,8 +18,9 @@
 use super::*;
 
 fn test_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -983,4 +984,41 @@ async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
 		assert_eq!(session.session.info.supervisor_accounting.turn_time.completed, 1);
 	})
 	.await;
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn a_read_only_session_stays_read_only_on_resume_with_or_without_the_flag() {
+	let _data = DataDirGuard::new();
+	let config = test_config();
+
+	// Started read-only: resuming without the flag keeps it.
+	let params = SessionInitParams::new(&config, "assistant")
+		.with_name("core-init-readonly".to_string())
+		.with_readonly(true);
+	let mut created = ChatSession::initialize(params).await.expect("create read-only session");
+	assert!(created.session.info.readonly);
+	created.add_user_message("look around").unwrap();
+	created.save().unwrap();
+	let params = SessionInitParams::new(&config, "assistant").with_name("core-init-readonly".to_string());
+	let resumed = ChatSession::initialize(params).await.expect("resume without the flag");
+	assert!(resumed.was_resumed && resumed.session.info.readonly);
+
+	// Started writable: resuming with the flag makes it read-only from then on.
+	let writable = initialized_named_session("core-init-writable").await;
+	assert!(!writable.session.info.readonly);
+	let params = SessionInitParams::new(&config, "assistant")
+		.with_name("core-init-writable".to_string())
+		.with_readonly(true);
+	let mut flagged = ChatSession::initialize(params).await.expect("resume with the flag");
+	assert!(flagged.session.info.readonly);
+	flagged.save().unwrap();
+	let params = SessionInitParams::new(&config, "assistant").with_name("core-init-writable".to_string());
+	let again = ChatSession::initialize(params)
+		.await
+		.expect("resume again without the flag");
+	assert!(
+		again.session.info.readonly,
+		"the flag stays for the life of the session"
+	);
 }

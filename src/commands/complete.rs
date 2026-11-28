@@ -26,7 +26,7 @@ pub struct CompleteArgs {
 pub fn execute(args: &CompleteArgs, config: &Config) -> Result<()> {
 	match args.subcommand.as_str() {
 		"run" => {
-			// Agent tags from all taps (cached locally, no network)
+			// Agent names from all taps (cached locally, no network)
 			let tags = octomind::agent::taps::list_agent_tags().unwrap_or_default();
 			for tag in &tags {
 				println!("{tag}");

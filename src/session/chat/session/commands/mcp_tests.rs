@@ -19,8 +19,9 @@
 use super::*;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -426,6 +427,8 @@ async fn test_local_tools_surface_as_local_server() {
 	.expect("write local tool");
 	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("make tool executable");
 
+	// A session id with no recorded mode is read-only, which hides the local tools.
+	crate::session::context::set_session_mode(&session_id, Default::default());
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(workdir.clone());
 		// The tool map picks up `.agents/tools/*` at init time from the

@@ -138,7 +138,7 @@ the skill is skipped entirely.
 | `name` | yes | Use a lowercase hyphenated name by convention. Used as the skill identifier. Must equal the directory name to be activatable by name (`use`/`forget`/auto-activation look up `skills/<name>/` and verify the frontmatter `name` matches). The `/skill` and `skill` list views use the frontmatter `name` regardless of directory. |
 | `description` | yes | What the skill does and when to use it. |
 | `capabilities` | no | Capabilities to auto-load when skill activates. Space-delimited or `["git", "memory"]`. |
-| `domains` | no | Agent categories for auto-activation scoping. Without this, skill is manual-only. |
+| `domains` | no | Agent names for auto-activation scoping. Without this, skill is manual-only. |
 | `allowed-tools` | no | Space-delimited expected tool names, not permission grants. The MCP `skill` list/use results warn about missing tools; the slash-command list does not show that compatibility warning. |
 | `license` | no | License name (e.g., `Apache-2.0`). |
 | `compatibility` | no | Free-text environment requirements (shown by the MCP skill list). |
@@ -217,8 +217,8 @@ The `domains` field limits which agents evaluate this skill's rules:
 domains: developer devops
 ```
 
-- Matching uses the role base before `:`: `developer:general` matches `domains: developer`. `domains: "*"` matches any
-  domain
+- Matching uses the agent name: the `developer` agent matches `domains: developer`. `domains: "*"` matches any
+  agent
 - Reduces the activation pool to relevant skills only
 - Skills without `domains` are manual-only (backward compatible)
 
@@ -367,7 +367,7 @@ There is no shipped lint tool. When authoring a skill, verify by hand:
 ## Common questions
 
 **Why did my rule not activate?** Check that the skill is in a supported automatic location, its name matches the
-directory, and its domains contain the role base or `*`. Restart after adding a skill, and send a request with at least
+directory, and its `domains` contain the agent name or `*`. Restart after adding a skill, and send a request with at least
 eight non-whitespace characters. Use `/skill project-review` to test manual loading independently.
 
 **Why did validation not run?** It is disabled by default and the runner searches taps only. Check the executable bit on

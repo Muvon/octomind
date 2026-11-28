@@ -376,7 +376,7 @@ async fn acp_session_new_eof_after_initialize_fails_the_run() {
 #[cfg(unix)]
 #[tokio::test]
 async fn acp_session_new_error_surfaces_the_agent_explanation() {
-	// A specialist that cannot start answers initialize, then refuses
+	// An agent that cannot start answers initialize, then refuses
 	// session/new with its reason in `data` (see `octomind acp` startup).
 	let err = run_script(concat!(
 		"echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n",
@@ -517,6 +517,7 @@ async fn record_tap_live_ignores_messages_without_tool_or_usage_updates() {
 		crate::session::tap_runs::init_for_session();
 		let (cancel_tx, _cancel_rx) = watch::channel(false);
 		crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
+			mode: Default::default(),
 			id: "probe-run".to_string(),
 			role: "probe:agent".to_string(),
 			workdir: ".".to_string(),

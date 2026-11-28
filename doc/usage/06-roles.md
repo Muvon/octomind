@@ -12,33 +12,32 @@ Every session runs with a role. The role determines:
 - **Tool permissions** — which specific tools can be used
 - **Model profile** — optional `[roles.model]` overrides inherited from `[model]`
 
-> **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its bare name (e.g.
-> `assistant`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by a
-> `category:variant` **tag** (e.g. `developer:general`). Any tag containing `:` is resolved through the registry,
-> fetching the manifest and merging it on top of your config. See [Tap System](../integration/04-tap-system.md) for
+> **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its name (e.g.
+> `helper`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by its name
+> (e.g. `developer`). A name with no matching role in your config is resolved through the registry,
+> fetching the manifest and merging it on top of your config. A role in your config with the same name as a tap agent takes priority over the tap agent. A tag written with `:` is an error that shows the flat form. See [Tap System](../integration/04-tap-system.md) for
 > details.
 
 ## Shipped Config Roles vs. Tap Agents
 
-It helps to know what actually exists out of the box. The default config ships four plain roles, and the default tap
-(`muvon/tap`, which resolves to the GitHub repo `github.com/muvon/octomind-tap`) provides tap agents addressed by tag:
+It helps to know what actually exists out of the box. The default config ships three plain roles, and the default tap
+(`muvon/tap`, which resolves to the GitHub repo `github.com/muvon/octomind-tap`) provides tap agents addressed by name:
 
 | Kind | Identifier | What it is |
 |------|------------|------------|
-| Config role | `assistant` | References `core`, `orchestration`, `runtime`, `filesystem`, and `agent`; availability depends on registration |
 | Config role | `task_refiner` | Query refinement with no explicit server references |
 | Config role | `task_researcher` | Research helper explicitly granting `view` when `filesystem` resolves |
 | Config role | `reduce` | Summarization/reduction with no explicit server references |
-| Tap agent | `assistant:chief` | Default tag; prompt and tools come from its resolved manifest |
-| Tap agent | `developer:general` | Example development tag; prompt and tools come from its resolved manifest |
+| Tap agent | `assistant` | The config `default`; prompt and tools come from its resolved manifest |
+| Tap agent | `developer` | Example development agent; prompt and tools come from its resolved manifest |
 
 ```bash
-octomind run                       # Tap agent (default tag in shipped config)
-octomind run developer             # Development domain's orchestrator, developer:chief
-octomind run assistant             # Plain config role
+octomind run                       # The config default, the tap agent assistant
+octomind run developer             # Tap agent developer
+octomind run task_refiner          # Plain config role
 ```
 
-Tap variants are not wildcard selectors: pass an exact tag or a domain name. After startup, inspect the tools actually exposed:
+Tap agents are not wildcard selectors: pass an exact agent name. After startup, inspect the tools actually exposed:
 
 ```text
 /role
@@ -182,7 +181,7 @@ tool surface.
 ## Auto-Bind Servers
 
 MCP servers can auto-attach to specific roles. For example, save this as `mcp-core.toml` in the config directory to
-replace the existing `core` server definition and bind it to the exact tap tag:
+replace the existing `core` server definition and bind it to the exact agent name:
 
 ```toml
 [[mcp.servers]]
@@ -190,12 +189,10 @@ name = "core"
 type = "builtin"
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
-`auto_bind` matches the role tag by **exact** string (`"developer"` ≠ `"developer:general"`). A session started with
-`octomind run developer` runs as `developer:chief`: bind `"developer:chief"` to reach the domain's lead agent, or keep
-`"developer:general"` and start that agent with `octomind run developer:general`.
+`auto_bind` matches the role name by **exact** string.
 
 The bound server is automatically added to the role's `server_refs` even if not explicitly listed. There is a second,
 easy-to-miss half:
@@ -209,7 +206,7 @@ If an explicit reference was excluded by its role filter, auto-bind can add that
 filter still applies to the auto-bound definition. Inspect the result:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 ```text
@@ -280,9 +277,8 @@ octomind run docs
 ```
 
 The `docs` example requires an OpenAI credential. There is no plain `developer` role in the shipped config; the example
-above creates it, and a local role wins over a tap domain of the same name. Without that role, `octomind run developer`
-starts the tap agent `developer:chief`. When a local role hides a tap domain that has a `chief`, the interactive session
-banner says so and names the tag to run instead.
+above creates it, and a local role wins over a tap agent of the same name. Without that role, `octomind run developer`
+starts the tap agent `developer`.
 
 ### Switching Roles Mid-Session
 
@@ -291,7 +287,6 @@ These bare names refer explicitly to local `[[roles]]` entries from the examples
 ```text
 /role
 /role analyst
-/role assistant
 ```
 
 A successful `/role` switch rebuilds the system prompt, reinitializes MCP, applies the new role's resolved model
@@ -305,15 +300,12 @@ Two distinct cases — don't conflate them:
 1. **Manifest vs. config name collision.** When a tap manifest contains a `[[roles]]` entry whose `name` duplicates a
   role already defined in your base config, the **base (config) role wins** and the manifest's same-named role is
   skipped (manifest merge dedups by name, base-wins).
-2. **A `category:variant` tag always triggers tap resolution.** The resolver injects the full tag as the manifest's
-  first role name, then requires a newly added role. Defining a local role with that exact tag can prevent normal
-  resolution when the merge skips it. Use a unique plain name for a local customization; a local `developer`
-  does not collide with `developer:general`.
+2. **A local role with the same name as a tap agent takes priority.** `octomind run developer` then starts your local
+  `developer` role, not the tap agent. Use a name that no tap agent has when you want both.
 
 > **Unknown plain role names are rejected.** User-supplied bare names are validated before session setup or `/role`
-> switching, unless the name is a tap domain such as `developer`, which starts that domain's `chief` agent (a local role
-> with the same name wins). A `category:variant` tag fails if its manifest cannot be resolved. Spell local role names exactly or
-> prefer a verified tap tag.
+> switching, unless the name is a tap agent such as `developer` (a local role
+> with the same name wins). A tag written with `:` fails with an error that shows the flat form. Spell local role names exactly.
 
 ## Troubleshooting
 

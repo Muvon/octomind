@@ -79,10 +79,10 @@ async fn test_role_and_domain() {
 	let sid = unique("role");
 	assert!(get_session_role(&sid).is_none());
 
-	set_session_role(&sid, "doctor:blood");
-	assert_eq!(get_session_role(&sid).as_deref(), Some("doctor:blood"));
+	set_session_role(&sid, "doctor");
+	assert_eq!(get_session_role(&sid).as_deref(), Some("doctor"));
 
-	// Domain is the tag prefix, resolved through the task-local session id
+	// Domain is the role name, resolved through the task-local session id
 	let domain = with_session_id(sid.clone(), async { current_session_domain() }).await;
 	assert_eq!(domain.as_deref(), Some("doctor"));
 
@@ -431,10 +431,10 @@ async fn init_session_services_runs_the_full_init_sequence_under_scope() {
 	with_session_id(sid.clone(), async {
 		let expected = crate::mcp::get_thread_original_working_directory();
 		assert!(get_session_workdir_anchor(&sid).is_none());
-		init_session_services("developer:general");
+		init_session_services("developer", Default::default());
 		assert_eq!(get_session_workdir_anchor(&sid), Some(expected.clone()));
-		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
-		assert_eq!((role.as_str(), spec.as_str()), ("developer", "general"));
+		let (role, project, session_id, workdir) = crate::mcp::process::get_session_context();
+		assert_eq!(role, "developer");
 		assert_eq!(project, crate::mcp::process::derive_project_id_from_path(&expected));
 		assert_eq!(session_id, sid);
 		assert_eq!(workdir, expected.to_string_lossy());
@@ -456,13 +456,51 @@ async fn init_session_services_preserves_explicit_workdir_anchor() {
 	with_session_id(sid.clone(), async {
 		set_session_workdir(&sid, root.path().to_path_buf());
 		set_current_workdir(&sid, current.clone());
-		init_session_services("cloud:octo");
-		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
-		assert_eq!((role.as_str(), spec.as_str()), ("cloud", "octo"));
+		init_session_services("cloud", Default::default());
+		let (role, project, session_id, workdir) = crate::mcp::process::get_session_context();
+		assert_eq!(role, "cloud");
 		assert_eq!(session_id, sid);
 		assert_eq!(project, crate::mcp::process::derive_project_id_from_path(root.path()));
 		assert_eq!(workdir, root.path().to_string_lossy());
 		assert_eq!(get_current_workdir(&sid), Some(current));
+	})
+	.await;
+	cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn init_session_services_stores_the_mode_and_cleanup_clears_it() {
+	let sid = unique("mode");
+	let readonly_copy = SessionMode {
+		readonly: true,
+		copy: true,
+	};
+	with_session_id(sid.clone(), async {
+		// A session id the services have not reached fails closed.
+		assert!(current_session_mode().readonly);
+		init_session_services("developer", readonly_copy);
+		assert_eq!(current_session_mode(), readonly_copy);
+		// A role switch re-runs the init with the same mode.
+		init_session_services("assistant", readonly_copy);
+		assert_eq!(current_session_mode(), readonly_copy);
+	})
+	.await;
+	cleanup_session(&sid);
+	// A job of the ended session that still runs under its id may not write.
+	let after = with_session_id(sid.clone(), async { current_session_mode() }).await;
+	assert!(after.readonly);
+	// No session at all: nothing to restrict.
+	assert_eq!(current_session_mode(), SessionMode::default());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_session_initialised_writable_stays_writable() {
+	let sid = unique("mode-writable");
+	with_session_id(sid.clone(), async {
+		init_session_services("developer", SessionMode::default());
+		assert_eq!(current_session_mode(), SessionMode::default());
 	})
 	.await;
 	cleanup_session(&sid);

@@ -398,6 +398,9 @@ impl Config {
 		// STRICT validation - fail if configuration is invalid
 		config.validate()?;
 
+		// The tap lookups take no config, so the built-in tap is handed over where the config is read.
+		crate::agent::taps::set_built_in_tap(&config.registry);
+
 		Ok(config)
 	}
 

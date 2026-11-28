@@ -54,28 +54,56 @@ fn test_expand_path() {
 	assert_eq!(expand_path("./rel").expect("relative"), cwd.join("rel"));
 }
 
-/// Write `.git/REFRESH_STAMP` as a refresh started by `version` at `at`.
-fn write_refresh_stamp(git: &Path, version: &str, at: SystemTime) -> fs::File {
+/// Write `.git/REFRESH_STAMP` holding `content` as a refresh started at `at`.
+fn write_refresh_stamp(git: &Path, content: &str, at: SystemTime) -> fs::File {
 	let mut stamp = fs::File::create(git.join(REFRESH_STAMP)).expect("create stamp");
-	stamp.write_all(version.as_bytes()).expect("write stamp");
+	stamp.write_all(content.as_bytes()).expect("write stamp");
 	stamp.set_modified(at).expect("date stamp");
 	stamp
 }
 
 #[test]
+fn a_failed_refresh_gives_the_stamp_back_so_the_next_start_retries() {
+	let tap = tempfile::tempdir().expect("tempdir");
+	let git = tap.path().join(".git");
+	fs::create_dir_all(&git).expect("git dir");
+	let stamp = refresh_stamp(Some("no-such-ref"));
+	write_refresh_stamp(&git, &stamp, SystemTime::now());
+	assert!(
+		!refresh_due(tap.path(), &stamp),
+		"the claim holds the refresh off while it runs"
+	);
+
+	// An empty `.git` is not a repository, so the sync fails.
+	sync_or_release_stamp(tap.path(), "acme/tap", Some("no-such-ref"));
+
+	assert!(!git.join(REFRESH_STAMP).exists(), "a failed sync releases the stamp");
+	assert!(refresh_due(tap.path(), &stamp), "the next start refreshes again");
+}
+
+#[test]
 fn tap_refresh_is_due_only_when_the_last_fetch_is_older_than_the_interval() {
 	let tap = tempfile::tempdir().expect("tempdir");
-	assert!(refresh_due(tap.path()), "a clone that never fetched refreshes at once");
+	assert!(
+		refresh_due(tap.path(), &refresh_stamp(None)),
+		"a clone that never fetched refreshes at once"
+	);
 
 	let git = tap.path().join(".git");
 	fs::create_dir_all(&git).expect("create .git");
 	let stale = SystemTime::now() - TAP_REFRESH_INTERVAL - Duration::from_secs(1);
-	write_refresh_stamp(&git, env!("CARGO_PKG_VERSION"), stale);
+	write_refresh_stamp(&git, &refresh_stamp(None), stale);
 	let fetch_head = fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
-	assert!(!refresh_due(tap.path()), "a fresh fetch skips the refresh");
+	assert!(
+		!refresh_due(tap.path(), &refresh_stamp(None)),
+		"a fresh fetch skips the refresh"
+	);
 
 	fetch_head.set_modified(stale).expect("age FETCH_HEAD");
-	assert!(refresh_due(tap.path()), "an old fetch refreshes again");
+	assert!(
+		refresh_due(tap.path(), &refresh_stamp(None)),
+		"an old fetch refreshes again"
+	);
 }
 
 #[test]
@@ -87,15 +115,24 @@ fn a_started_refresh_counts_as_fresh_until_the_interval_passes() {
 
 	let fetch_head = fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
 	fetch_head.set_modified(stale).expect("age FETCH_HEAD");
-	let stamp = write_refresh_stamp(&git, env!("CARGO_PKG_VERSION"), stale);
-	assert!(refresh_due(tap.path()), "an old stamp and an old fetch are due");
+	let stamp = write_refresh_stamp(&git, &refresh_stamp(None), stale);
+	assert!(
+		refresh_due(tap.path(), &refresh_stamp(None)),
+		"an old stamp and an old fetch are due"
+	);
 
 	stamp.set_modified(SystemTime::now()).expect("refresh stamp");
-	assert!(!refresh_due(tap.path()), "a fresh stamp holds off another process");
+	assert!(
+		!refresh_due(tap.path(), &refresh_stamp(None)),
+		"a fresh stamp holds off another process"
+	);
 
 	stamp.set_modified(stale).expect("age stamp");
 	fetch_head.set_modified(SystemTime::now()).expect("refresh FETCH_HEAD");
-	assert!(!refresh_due(tap.path()), "the newer of the two decides");
+	assert!(
+		!refresh_due(tap.path(), &refresh_stamp(None)),
+		"the newer of the two decides"
+	);
 }
 
 #[test]
@@ -107,8 +144,39 @@ fn a_clone_refreshed_by_another_version_is_due_at_once() {
 	write_refresh_stamp(&git, "0.0.0-previous", SystemTime::now());
 
 	assert!(
-		refresh_due(tap.path()),
+		refresh_due(tap.path(), &refresh_stamp(None)),
 		"the first run after an upgrade refreshes before the interval passes"
+	);
+}
+
+#[test]
+fn a_changed_ref_makes_the_built_in_tap_refresh_due_at_once() {
+	let tap = tempfile::tempdir().expect("tempdir");
+	let git = tap.path().join(".git");
+	fs::create_dir_all(&git).expect("create .git");
+	fs::File::create(git.join("FETCH_HEAD")).expect("create FETCH_HEAD");
+	write_refresh_stamp(&git, &refresh_stamp(Some("main")), SystemTime::now());
+
+	assert!(
+		!refresh_due(tap.path(), &refresh_stamp(Some("main"))),
+		"the same ref inside the interval holds off a refresh"
+	);
+	assert!(
+		refresh_due(tap.path(), &refresh_stamp(Some("flat-agents"))),
+		"another ref refreshes before the interval passes"
+	);
+	assert!(
+		refresh_due(tap.path(), &refresh_stamp(None)),
+		"a tap that followed the ref and now follows HEAD refreshes too"
+	);
+}
+
+#[test]
+fn the_refresh_stamp_carries_the_ref_only_for_the_built_in_tap() {
+	assert_eq!(refresh_stamp(None), env!("CARGO_PKG_VERSION"));
+	assert_eq!(
+		refresh_stamp(Some("feature/x")),
+		format!("{} feature/x", env!("CARGO_PKG_VERSION"))
 	);
 }
 

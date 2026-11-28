@@ -70,6 +70,7 @@ fn clone_copies_every_field() {
 		daemon: true,
 		hooks: vec!["hook_a".to_string()],
 		schema: Some(serde_json::json!({"type": "object"})),
+		readonly: true,
 	};
 	let cloned = args.clone();
 	assert_eq!(cloned.name, args.name);
@@ -84,6 +85,7 @@ fn clone_copies_every_field() {
 	assert_eq!(cloned.daemon, args.daemon);
 	assert_eq!(cloned.hooks, args.hooks);
 	assert_eq!(cloned.schema, args.schema);
+	assert_eq!(cloned.readonly, args.readonly);
 }
 
 #[test]

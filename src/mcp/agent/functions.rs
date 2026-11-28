@@ -1353,7 +1353,7 @@ where
 			if msg.get("id").and_then(|i| i.as_u64()) == Some(id) {
 				if let Some(err) = msg.get("error") {
 					// `data` carries the agent's own explanation (e.g. which keys a
-					// specialist is missing); `message` is only the JSON-RPC category.
+					// agent is missing); `message` is only the JSON-RPC category.
 					let detail = err
 						.get("data")
 						.and_then(Value::as_str)

@@ -240,7 +240,7 @@ notification support.
 - **Monitor** — bounded output batches from the `monitor` tool
 - **BackgroundAgent** — completed async agent jobs
 - **BackgroundJob** — completed detached shell jobs
-- **TapRun** — completed tap run (specialist agent) jobs
+- **TapRun** — completed tap run jobs
 - **Skill** — skill activations requiring content injection
 - **SkillValidator** — skill validation results
 - **Inject** — external injection via `octomind send`

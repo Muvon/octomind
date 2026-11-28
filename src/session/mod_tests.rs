@@ -821,6 +821,7 @@ fn new_session_sets_identity_and_zeroes_counters() {
 
 fn agent_run(id: &str, status: tap_runs::TapJobStatus, cost: Option<f64>) -> tap_runs::TapJobInfo {
 	tap_runs::TapJobInfo {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp".to_string(),

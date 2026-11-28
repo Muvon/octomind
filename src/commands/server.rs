@@ -16,7 +16,7 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct ServerArgs {
-	/// Agent tag (e.g. `developer:general`), bare domain (e.g. `developer`, runs its `chief`) or role name (e.g. `assistant`).
+	/// Agent tag (e.g. `developer` or `developer:rust`): a tap agent, or a role defined in your config, which wins over a tap agent of the same name.
 	/// Omit to use the default role from config.
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,

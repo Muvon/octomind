@@ -20,7 +20,8 @@ octomind acp --name editor-session
 
 | Flag | Description |
 |------|-------------|
-| `TAG` | Agent tag or role name. Omit for `default` (shipped value `assistant:chief`). |
+| `TAG` | Agent name or role name. Omit for `default` (shipped value `assistant`). |
+| `--readonly` | Offer and run only tools whose MCP `readOnlyHint` annotation is true; a tool with no hint counts as mutable. A read-only session cannot delegate. The mode is fixed for the session and restored on resume. |
 | `--name`, `-n` | Preferred session name for the next `new_session` |
 | `--resume`, `-r` | Resume a specific session by name on `new_session` |
 | `--resume-recent` | Resume the most recent session for the CWD on `new_session` |
@@ -308,7 +309,7 @@ For an `agent_context_gatherer` tool call with these arguments, Octomind acts as
 Initialization and session creation each have a 30-second handshake timeout. Custom ACP binaries must reply to both
 requests before they can receive the task.
 
-For tap specialists, `tap(action="send", session="RUN_ID", prompt="...")` queues another ordinary `session/prompt`
+For tap agent runs, `tap(action="send", session="RUN_ID", prompt="...")` queues another ordinary `session/prompt`
 on the existing child connection. Prompts run sequentially in the same child session. The parent keeps input open
 while a prompt or background work is active, then drains accepted prompts before closing input and returning the
 combined reply. The `send` result acknowledges queueing, not completion.

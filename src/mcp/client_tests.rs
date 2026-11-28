@@ -782,7 +782,7 @@ async fn shared_client_sends_each_sessions_project() {
 	for (id, path) in ids.iter().zip(paths) {
 		with_session_id(id.clone(), async {
 			crate::mcp::set_session_working_directory(path.to_path_buf());
-			crate::session::context::init_session_services("cloud:octo");
+			crate::session::context::init_session_services("cloud", Default::default());
 		})
 		.await;
 	}
@@ -837,7 +837,7 @@ async fn shared_client_sends_each_sessions_project() {
 			super::super::process::derive_project_id_from_path(paths[index])
 		);
 		assert_eq!(session["role"], "cloud");
-		assert_eq!(session["spec"], "octo");
+		assert!(session.get("spec").is_none());
 		assert_eq!(session["git"], false);
 		assert_eq!(session["workdir"], paths[index].to_string_lossy().as_ref());
 		assert_eq!(session["session_id"], ids[index]);

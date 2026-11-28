@@ -596,7 +596,7 @@ async fn test_large_tool_result_truncation_and_dedup() {
 	}
 	let sid = "api-exec-large-tool-result".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(workdir.path().to_path_buf());
 
 		let url = spawn_stub(vec![
@@ -681,7 +681,7 @@ async fn test_loop_stop_ends_the_turn_without_gate_reentry() {
 
 	let sid = "api-exec-loop-stop".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
+		crate::session::context::init_session_services("assistant", Default::default());
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		let url = spawn_stub(vec![
 			tool_call_response("probe", serde_json::json!({})),

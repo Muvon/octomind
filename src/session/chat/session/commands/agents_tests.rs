@@ -72,6 +72,7 @@ fn test_agents_stats_shape_when_present() {
 fn job(id: &str, status: TapJobStatus, live: TapLiveState) -> TapJob {
 	let (cancel_tx, _cancel_rx) = watch::channel(false);
 	TapJob {
+		mode: Default::default(),
 		id: id.to_string(),
 		role: "developer:general".to_string(),
 		workdir: "/tmp/project".to_string(),

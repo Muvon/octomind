@@ -136,7 +136,7 @@ async fn use_forget_and_page_range_roundtrip() {
 	let session_id = format!("skill-cmd-roundtrip-{}", std::process::id());
 	let workdir = skill_workdir("roundtrip");
 	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("developer");
+		crate::session::context::init_session_services("developer", Default::default());
 		crate::mcp::workdir::set_session_working_directory(workdir.clone());
 
 		let mut session = ChatSession::for_tests(Vec::new());
@@ -199,7 +199,7 @@ async fn filtered_list_pages_past_first_page() {
 	let session_id = format!("skill-cmd-pagination-{}", std::process::id());
 	let workdir = paginated_skills_workdir("pagination");
 	crate::session::context::with_session_id(session_id.clone(), async {
-		crate::session::context::init_session_services("developer");
+		crate::session::context::init_session_services("developer", Default::default());
 		crate::mcp::workdir::set_session_working_directory(workdir.clone());
 
 		let mut session = ChatSession::for_tests(Vec::new());

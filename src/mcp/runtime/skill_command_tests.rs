@@ -743,7 +743,7 @@ async fn test_skill_list_empty_reports_no_skills() {
 		assert!(!is_err(&result), "list failed: {}", text_of(&result));
 		assert_eq!(
 			text_of(&result),
-			"No skills found. Add skills to your tap under skills/<name>/SKILL.md"
+			"No skills found. Add skills to your tap under skills/<name>/SKILL.md, or agents/<ns>/skills/<name>/SKILL.md for one agent namespace"
 		);
 	})
 	.await;

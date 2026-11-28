@@ -65,7 +65,7 @@ With or without a plugin, Octomind still runs:
 - a hard stop for runaway tool loops: when `max_identical_rounds` tool rounds in a row (default `10`) repeat calls and
   results already seen since the last new result, the turn ends with a notice naming the repeated call. `0` turns the
   stop off. It is a root key of `config.toml`, and `-c max_identical_rounds=0` sets it for one run;
-- its own rules for which skill and which capability a request activates, which specialist gets a delegated task, and
+- its own rules for which skill and which capability a request activates, which agent gets a delegated task, and
   which tool results a compaction summarizes.
 
 For each of those four rules Octomind also asks its plugins for a judgement. Besydr answers with its decision model

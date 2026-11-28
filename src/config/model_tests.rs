@@ -77,7 +77,7 @@ fn optional_owner_blocks_inherit_the_complete_main_profile() {
 	let mut config: crate::config::Config = value.try_into().expect("optional profiles parse");
 	config.build_role_map();
 	assert_eq!(config.get_compression_model_profile(), config.model_profile);
-	assert_eq!(config.get_model_profile_for_role("assistant"), config.model_profile);
+	assert_eq!(config.get_model_profile_for_role("task_refiner"), config.model_profile);
 }
 
 #[test]
@@ -104,14 +104,18 @@ fn main_model_profile_is_required_and_complete() {
 fn role_can_override_any_subset_of_the_main_profile() {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
-	let role = config.roles.iter_mut().find(|role| role.name == "assistant").unwrap();
+	let role = config
+		.roles
+		.iter_mut()
+		.find(|role| role.name == "task_refiner")
+		.unwrap();
 	role.config.model = ModelProfileOverride {
 		model: Some("openai:gpt-5".into()),
 		reasoning_effort: Some(ReasoningEffortConfig::High),
 		..Default::default()
 	};
 	config.build_role_map();
-	let resolved = config.get_model_profile_for_role("assistant");
+	let resolved = config.get_model_profile_for_role("task_refiner");
 
 	assert_eq!(resolved.model, "openai:gpt-5");
 	assert_eq!(resolved.reasoning_effort, ReasoningEffortConfig::High);
@@ -166,7 +170,7 @@ fn request_transport_accepts_explicit_choices_and_survives_role_merge() {
 		assert_eq!(config.request_transport, expected);
 		assert_eq!(config.get_compression_model_profile().request_transport, expected);
 		assert_eq!(
-			config.get_model_profile_for_role("assistant").request_transport,
+			config.get_model_profile_for_role("task_refiner").request_transport,
 			expected
 		);
 		assert_eq!(

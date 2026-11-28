@@ -37,7 +37,7 @@ octomind server --host 127.0.0.1 --port 8080 --sandbox
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `TAG` | `default` (`assistant:chief`) | Agent tag (e.g. `developer:general`) or role name (e.g. `assistant`) |
+| `TAG` | `default` (`assistant`) | Agent name (e.g. `developer`) or local role name |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port`, `-p` | `8080` | Port. `0` picks a free port; the startup line `WebSocket server started on ws://<addr>` prints the bound address |
 | `--sandbox` | config `sandbox` (`false`) | Restrict all filesystem writes to the current working directory |
@@ -138,7 +138,7 @@ Communication uses JSON messages over WebSocket.
   "request_id": "req-004",
   "session_id": "my-session",
   "cwd": "/home/me/projects/app",
-  "role": "developer:rust",
+  "role": "developer",
   "capabilities": ["elicitation_v1"]
 }
 ```
@@ -436,17 +436,17 @@ it.
 }
 ```
 
-**Delegated specialist runs (`run_events_v1`):**
+**Delegated agent runs (`run_events_v1`):**
 
 After binding the parent with a `session` frame, every connection bound to it receives `run_event` frames for
-`tap(action="run")` specialists. These arrive immediately, both during parent turns and between them, including after
+`tap(action="run")` agents. These arrive immediately, both during parent turns and between them, including after
 `cost` with `pending_work: true`. Disconnected clients do not stop recording; reconnect, bind, and request a replay.
 Tap child thinking, text, and tools no longer arrive as plain parent `thinking`, `assistant`, `tool_use`, or
-`tool_result` frames. The parent's own output and the specialist's eventual inbox handback keep their existing shapes.
+`tool_result` frames. The parent's own output and the child agent's eventual inbox handback keep their existing shapes.
 CLI, JSONL, and ACP tap output are unchanged.
 
 ```json
-{"type":"run_event","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","role":"developer:chief","seq":17,"event":{"kind":"assistant","content":"Checking the implementation…"}}
+{"type":"run_event","session_id":"my-session","run_id":"tap-developer-a3f1c2","role":"developer","seq":17,"event":{"kind":"assistant","content":"Checking the implementation…"}}
 ```
 
 `seq` starts at 1 for each run ID and increments for every emitted event. Resuming the same run ID continues its
@@ -466,18 +466,18 @@ sequence. `event` has one of these shapes:
 Status is `running` at launch and `done`, `failed`, or `cancelled` at termination. `error` is optional. Prompt events
 contain the task sent to the child on the initial and every resumed turn. Tool results include only terminal updates.
 Usage reflects the child's cumulative `octomind.usage` metadata. An update that cannot be mapped to a run event is
-logged and skipped; it does not stop the specialist or prevent subsequent events from streaming.
+logged and skipped; it does not stop the run or prevent subsequent events from streaming.
 
 Request replay without waiting for a parent turn to finish:
 
 ```json
-{"type":"run_log","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","request_id":"log-1"}
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-a3f1c2","request_id":"log-1"}
 ```
 
 A valid request receives the usual `ack`, then:
 
 ```json
-{"type":"run_log","session_id":"my-session","run_id":"tap-developer-chief-a3f1c2","role":"developer:chief","status":"running","source":"live","seq":3,"truncated":false,"events":[{"kind":"status","status":"running"},{"kind":"prompt","content":"Review the implementation"},{"kind":"assistant","content":"Checking…"}],"request_id":"log-1"}
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-a3f1c2","role":"developer","status":"running","source":"live","seq":3,"truncated":false,"events":[{"kind":"status","status":"running"},{"kind":"prompt","content":"Review the implementation"},{"kind":"assistant","content":"Checking…"}],"request_id":"log-1"}
 ```
 
 While the run is running in this parent's registry, `source` is `live`. Consecutive assistant or thinking chunks are
@@ -902,7 +902,7 @@ Separate from content validation, the transport layer enforces:
   turn is running.
 - **Close:** a client `Close` frame is answered with the server's own close frame before the socket ends.
 
-WebSocket and ACP specialist processes using the same OS runtime directory share one embedding model owner. Other
+WebSocket and ACP agent processes using the same OS runtime directory share one embedding model owner. Other
 processes connect to that owner without loading weights. Each process's vector cache holds at most 8192 vectors;
 the service admits 16 concurrent clients, bounds protocol lines to 8 MiB, and splits requests into 256-text batches.
 If an owner exits, a client re-elects on a transport failure and resubmits the read-only inference once.

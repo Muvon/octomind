@@ -108,6 +108,10 @@ pub struct Sequential {
 	/// capabilities.
 	#[serde(default)]
 	pub capabilities: Option<Vec<String>>,
+	/// Start the subprocess with `--readonly`: only tools marked read-only, no shell, no
+	/// delegation. A step that reviews or scouts can then not change anything.
+	#[serde(default)]
+	pub readonly: bool,
 }
 
 impl Sequential {
@@ -206,9 +210,27 @@ fn default_max_iterations() -> u32 {
 
 // ── Step discrimination ──────────────────────────────────────────────────────
 
+/// `readonly` must be a boolean; the plain type error would not say which step holds it.
+fn check_readonly_is_boolean(table: &toml::Table) -> Result<(), String> {
+	match table.get("readonly") {
+		Some(value) if !value.is_bool() => Err(format!(
+			"step '{}': readonly must be true or false, got {}",
+			table.get("name").and_then(toml::Value::as_str).unwrap_or("<unnamed>"),
+			value
+		)),
+		_ => Ok(()),
+	}
+}
+
 impl<'de> Deserialize<'de> for Step {
 	fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 		let mut table = toml::Table::deserialize(d)?;
+		check_readonly_is_boolean(&table).map_err(serde::de::Error::custom)?;
+		for sub_step in table.get("run").and_then(toml::Value::as_array).into_iter().flatten() {
+			if let Some(sub_step) = sub_step.as_table() {
+				check_readonly_is_boolean(sub_step).map_err(serde::de::Error::custom)?;
+			}
+		}
 
 		let parallel = table.remove("parallel").and_then(|v| v.as_bool()).unwrap_or(false);
 		let loop_ = table.remove("loop").and_then(|v| v.as_bool()).unwrap_or(false);

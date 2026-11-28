@@ -53,6 +53,7 @@ fn seq(name: &str) -> Sequential {
 		count: None,
 		skills: None,
 		capabilities: None,
+		readonly: false,
 	}
 }
 
@@ -347,7 +348,8 @@ fn resolve_workdir_makes_relative_paths_absolute() {
 
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }

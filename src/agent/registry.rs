@@ -14,10 +14,10 @@
 
 //! Registry client: fetch and cache agent manifests.
 //!
-//! Tag format: `category:variant` or `category:variant@version`
-//! Example:    `developer:general`, `developer:general@1.2`
+//! Tag format: `name` or `name@version`; a name is lowercase letters, digits and hyphens.
+//! Example:    `developer`, `developer@1.2`
 //!
-//! Manifests are cached at `~/.local/share/octomind/agents/<category>/<variant>.toml`.
+//! Manifests are cached at `~/.local/share/octomind/agents/<tag>.<tap and ref>.toml`, with the `:` of a variant tag written as `_`.
 //! If the cached file is older than `cache_ttl_hours`, it is refreshed in the background
 //! while the cached copy is returned immediately.
 //!
@@ -31,35 +31,84 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::config::registry::RegistryConfig;
 
-/// Parse a tag string into `(category, variant, version)`.
-///
-/// - `developer:general`      → `("developer", "rust", None)`
-/// - `developer:general@1.2`  → `("developer", "rust", Some("1.2"))`
-pub fn parse_tag(tag: &str) -> Result<(String, String, Option<String>)> {
-	let (name_part, version) = if let Some((n, v)) = tag.split_once('@') {
-		(n, Some(v.to_string()))
-	} else {
-		(tag, None)
-	};
+/// The variant that is the base agent of its namespace: `agents/<ns>/default.toml`.
+pub const DEFAULT_VARIANT: &str = "default";
 
-	let (category, variant) = name_part
-		.split_once(':')
-		.context(format!("Invalid agent tag '{tag}': expected 'category:variant'"))?;
-
-	if category.is_empty() || variant.is_empty() {
-		anyhow::bail!("Invalid agent tag '{tag}': category and variant must be non-empty");
-	}
-
-	Ok((category.to_string(), variant.to_string(), version))
+/// Whether `name` is a valid namespace or variant: it starts with a lowercase letter and holds
+/// lowercase letters, digits and hyphens.
+pub fn is_valid_agent_name(name: &str) -> bool {
+	name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+		&& name
+			.chars()
+			.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Local cache path for a manifest.
-fn cache_path(category: &str, variant: &str) -> Result<PathBuf> {
-	let dir = crate::directories::get_octomind_data_dir()?
-		.join("agents")
-		.join(category);
+/// The canonical form of a tag: `<ns>:default` is the base agent `<ns>`.
+pub fn canonical_tag(tag: &str) -> &str {
+	tag.strip_suffix(":default").unwrap_or(tag)
+}
+
+/// The namespace of a tag: `<ns>` for both `<ns>` and `<ns>:<variant>`.
+pub fn namespace_of(tag: &str) -> &str {
+	tag.split_once(':').map_or(tag, |(namespace, _)| namespace)
+}
+
+/// Split a canonical tag into its namespace and the manifest file stem: `<ns>` is
+/// `("<ns>", "default")`, `<ns>:<variant>` is `("<ns>", "<variant>")`.
+pub fn manifest_parts(tag: &str) -> (&str, &str) {
+	tag.split_once(':').unwrap_or((tag, DEFAULT_VARIANT))
+}
+
+/// Parse a tag string into `(canonical tag, version)`. A tag is `<ns>` or `<ns>:<variant>`.
+///
+/// - `developer`          → `("developer", None)`
+/// - `developer:default`  → `("developer", None)`
+/// - `developer:rust@1.2` → `("developer:rust", Some("1.2"))`
+pub fn parse_tag(tag: &str) -> Result<(String, Option<String>)> {
+	let (name, version) = match tag.split_once('@') {
+		Some((name, version)) => (name, Some(version.to_string())),
+		None => (tag, None),
+	};
+
+	let mut parts = name.split(':');
+	let valid = parts.by_ref().take(2).all(is_valid_agent_name) && parts.next().is_none();
+	if !valid {
+		anyhow::bail!(
+			"Invalid agent tag '{tag}': a tag is '<namespace>' or '<namespace>:<variant>', each lowercase letters, digits and hyphens, starting with a letter"
+		);
+	}
+
+	Ok((canonical_tag(name).to_string(), version))
+}
+
+/// What a cached manifest was read from: the tap, and for the built-in tap the ref as well. A
+/// manifest cached from another tap or ref is a different cache entry, so changing
+/// `[registry] tap` or `ref` never serves the old file.
+fn cache_source(tap: &crate::agent::taps::Tap) -> Result<String> {
+	if tap.local_path.is_none() && tap.name == crate::agent::taps::built_in_tap()?.name {
+		return Ok(format!("{}@{}", tap.name, crate::agent::taps::built_in_tap_ref()?));
+	}
+	Ok(tap.name.clone())
+}
+
+/// Local cache path for a manifest of `name` read from `source` (see [`cache_source`]).
+fn cache_path(name: &str, source: &str) -> Result<PathBuf> {
+	let dir = crate::directories::get_octomind_data_dir()?.join("agents");
 	fs::create_dir_all(&dir).context(format!("Failed to create agent cache dir: {}", dir.display()))?;
-	Ok(dir.join(format!("{variant}.toml")))
+	// A name is letters, digits, hyphens and one `:` (not valid in a file name on Windows), so
+	// the `_` it becomes cannot be mistaken for part of the name.
+	let file_part = |text: &str| -> String {
+		text.chars()
+			.map(|c| {
+				if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+					c
+				} else {
+					'_'
+				}
+			})
+			.collect()
+	};
+	Ok(dir.join(format!("{}.{}.toml", file_part(name), file_part(source))))
 }
 /// Write the manifest cache atomically: temp file in the same directory, fsync, then rename over the destination.
 ///
@@ -89,13 +138,12 @@ fn is_stale(path: &PathBuf, ttl_hours: u64) -> bool {
 	age > Duration::from_secs(ttl_hours * 3600)
 }
 
-/// Fetch raw TOML from a tap for the given category/variant.
+/// Fetch raw TOML from a tap for the given agent name.
 ///
 /// For GitHub taps: reads from cloned repo at `~/.local/share/octomind/taps/user/octomind-repo/`
 /// For local taps: reads from the specified local path
-async fn fetch_from_tap(tap: &crate::agent::taps::Tap, category: &str, variant: &str) -> Result<String> {
-	let agents_dir = tap.agents_dir()?;
-	let manifest_path = agents_dir.join(category).join(format!("{variant}.toml"));
+async fn fetch_from_tap(tap: &crate::agent::taps::Tap, name: &str) -> Result<String> {
+	let manifest_path = tap.agent_manifest(name)?;
 	fs::read_to_string(&manifest_path).context(format!(
 		"Failed to read manifest from tap '{}': {}",
 		tap.name,
@@ -112,31 +160,25 @@ async fn fetch_from_tap(tap: &crate::agent::taps::Tap, category: &str, variant: 
 /// Returns `(raw_toml, tap_root)` — the TOML string and the root directory of
 /// the tap that provides it (used to locate dep scripts at `<tap_root>/deps/`).
 pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(String, PathBuf)> {
-	let (category, variant, _version) = parse_tag(tag)?;
-	let cache = cache_path(&category, &variant)?;
-
+	let (name, _version) = parse_tag(tag)?;
 	let taps = crate::agent::taps::load_taps().context("Failed to load taps")?;
 
 	// Find the first tap that provides this manifest — this is always the tap root
 	// used for dep scripts, regardless of whether we serve TOML from cache.
-	let providing_tap = taps
-		.iter()
-		.find(|tap| {
-			tap.agents_dir()
-				.map(|d| d.join(&category).join(format!("{variant}.toml")).exists())
-				.unwrap_or(false)
-		})
-		.cloned();
+	let provides_manifest =
+		|tap: &crate::agent::taps::Tap| tap.agent_manifest(&name).map(|path| path.exists()).unwrap_or(false);
+	let providing_tap = taps.iter().find(|tap| provides_manifest(tap)).cloned();
+	if providing_tap.is_none() {
+		crate::agent::taps::explain_missing_agent(&name)?;
+	}
+	// Without a provider a cached copy is still served, read from the built-in tap's entry.
+	let cache = match &providing_tap {
+		Some(tap) => cache_path(&name, &cache_source(tap)?)?,
+		None => cache_path(&name, &cache_source(&crate::agent::taps::built_in_tap()?)?)?,
+	};
 
 	// Warn if multiple taps provide this manifest (first wins, like Homebrew)
-	let providing_count = taps
-		.iter()
-		.filter(|tap| {
-			tap.agents_dir()
-				.map(|d| d.join(&category).join(format!("{variant}.toml")).exists())
-				.unwrap_or(false)
-		})
-		.count();
+	let providing_count = taps.iter().filter(|tap| provides_manifest(tap)).count();
 	if providing_count > 1 {
 		if let Some(ref tap) = providing_tap {
 			crate::log_debug!("'{}' found in multiple taps — using first match: {}", tag, tap.name);
@@ -148,12 +190,9 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		.as_ref()
 		.and_then(|t| t.local_dir().ok())
 		.unwrap_or_else(|| {
-			crate::agent::taps::Tap {
-				name: crate::agent::taps::DEFAULT_TAP.to_string(),
-				local_path: None,
-			}
-			.local_dir()
-			.unwrap_or_default()
+			crate::agent::taps::built_in_tap()
+				.and_then(|tap| tap.local_dir())
+				.unwrap_or_default()
 		});
 
 	// Return cached copy if fresh
@@ -168,13 +207,12 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		let cached =
 			fs::read_to_string(&cache).context(format!("Failed to read cached manifest: {}", cache.display()))?;
 
-		let cat = category.clone();
-		let var = variant.clone();
+		let name_bg = name.clone();
 		let cache_path_bg = cache.clone();
 		let taps_bg = taps.clone();
 		tokio::spawn(async move {
 			for tap in &taps_bg {
-				if let Ok(content) = fetch_from_tap(tap, &cat, &var).await {
+				if let Ok(content) = fetch_from_tap(tap, &name_bg).await {
 					let _ = write_cache_atomic(&cache_path_bg, &content);
 					return;
 				}
@@ -191,9 +229,11 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	loop {
 		let mut tap_errors: Vec<String> = Vec::new();
 		for tap in &taps {
-			match fetch_from_tap(tap, &category, &variant).await {
+			match fetch_from_tap(tap, &name).await {
 				Ok(content) => {
-					let _ = write_cache_atomic(&cache, &content);
+					let _ = cache_source(tap)
+						.and_then(|source| cache_path(&name, &source))
+						.and_then(|path| write_cache_atomic(&path, &content));
 					let root = tap.local_dir().unwrap_or_default();
 					return Ok((content, root));
 				}
@@ -227,7 +267,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 
 /// Metadata header for a tap agent manifest.
 ///
-/// Every `<tap>/agents/<category>/<variant>.toml` opens with required
+/// Every `<tap>/agents/<ns>/<variant>.toml` opens with required
 /// `# Title:` and `# Description:` header comments. That convention IS the
 /// schema — we don't carry parallel structured fields. `parse_agent_meta`
 /// reads those header lines directly; missing values are a hard error.
@@ -239,10 +279,10 @@ pub struct AgentMeta {
 
 /// One role enumerated from a tap. Naming follows the agent-facing surface:
 /// callers refer to these as "roles" (the unit they `run`); internally the
-/// string is still a `category:variant` tag.
+/// string is still the agent's tag, `<ns>` or `<ns>:<variant>`.
 #[derive(Debug, Clone)]
 pub struct TapAgent {
-	/// Role identifier in `category:variant` form — e.g. `developer:general`.
+	/// Role identifier: the agent's tag — e.g. `developer` or `developer:rust`.
 	pub role: String,
 	pub meta: AgentMeta,
 	/// Tap that provides this manifest (first-wins precedence).
@@ -260,7 +300,7 @@ pub struct AgentHeader {
 	pub title: Option<String>,
 	pub description: Option<String>,
 	/// Entries of `# Uses:` as written, trimmed, empty ones included: a malformed line must
-	/// break only the agent that declares it, so `{{USES}}` expansion rejects them.
+	/// break only the agent that declares it, so the reachable-agents lookup rejects them.
 	pub uses: Vec<String>,
 }
 
@@ -318,7 +358,7 @@ mod meta_tests;
 
 /// Enumerate every agent installed across all configured taps.
 ///
-/// Walks each tap's `agents/` directory, reads `<category>/<variant>.toml`,
+/// Walks each tap's `agents/` directory, reads `<ns>/default.toml` and `<ns>/<variant>.toml`,
 /// extracts the `# Title:` / `# Description:` header comments (required by
 /// tap-level linting), and returns `TapAgent` entries in first-tap-wins
 /// order (later taps with same tag are skipped). Used by the `tap` core
@@ -330,55 +370,21 @@ pub fn list_all_tap_agents() -> Result<Vec<TapAgent>> {
 	let mut out: Vec<TapAgent> = Vec::new();
 
 	for tap in &taps {
-		let agents_dir = match tap.agents_dir() {
-			Ok(d) => d,
-			Err(_) => continue,
-		};
-		if !agents_dir.is_dir() {
-			continue;
-		}
-		let cat_entries = match fs::read_dir(&agents_dir) {
-			Ok(e) => e,
-			Err(_) => continue,
-		};
-		for cat_entry in cat_entries.flatten() {
-			if !cat_entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+		for (role, path) in tap.agent_manifests().unwrap_or_default() {
+			if seen.contains(&role) {
 				continue;
 			}
-			let category = cat_entry.file_name().to_string_lossy().to_string();
-			let var_entries = match fs::read_dir(cat_entry.path()) {
-				Ok(e) => e,
+			let raw = match fs::read_to_string(&path) {
+				Ok(s) => s,
 				Err(_) => continue,
 			};
-			for var_entry in var_entries.flatten() {
-				// A symlinked manifest is an alias (see `taps::walk_agent_manifests`): never listed.
-				if var_entry.file_type().is_ok_and(|file_type| file_type.is_symlink()) {
-					continue;
-				}
-				let path = var_entry.path();
-				if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-					continue;
-				}
-				let variant = match path.file_stem().and_then(|s| s.to_str()) {
-					Some(s) => s.to_string(),
-					None => continue,
-				};
-				let role = format!("{category}:{variant}");
-				if seen.contains(&role) {
-					continue;
-				}
-				let raw = match fs::read_to_string(&path) {
-					Ok(s) => s,
-					Err(_) => continue,
-				};
-				let meta = parse_agent_meta(&raw, &role)?;
-				seen.insert(role.clone());
-				out.push(TapAgent {
-					role,
-					meta,
-					source_tap: tap.name.clone(),
-				});
-			}
+			let meta = parse_agent_meta(&raw, &role)?;
+			seen.insert(role.clone());
+			out.push(TapAgent {
+				role,
+				meta,
+				source_tap: tap.name.clone(),
+			});
 		}
 	}
 
@@ -477,7 +483,7 @@ pub struct ResolvedCapability {
 	/// Optional domain bindings from `<tap>/capabilities/<name>/config.toml`.
 	/// Empty = capability is available in every role (filesystem-style universal
 	/// utility). Non-empty = capability only loads when the active role's
-	/// domain part (`developer:general` → `"developer"`) is in this list.
+	/// name (`developer`) is in this list.
 	/// Hard-bound: applies to auto-activation, `capability list`, `capability
 	/// discover`, manual `capability enable`, and `OCTOMIND_CAPABILITIES`
 	/// env loading. There is no bypass — out-of-domain access is rejected
@@ -499,12 +505,13 @@ pub struct ResolvedCapability {
 
 /// True when the capability is available to the given runtime domain.
 /// Empty `cap_domains` means universal (no restriction). Non-empty restricts
-/// to exact-match domain strings.
+/// to namespaces: a session of an agent matches when the namespace of its tag is listed.
 ///
 /// The single shared filter — used at every consumption site so the rule is
 /// consistent (auto-activation, list, discover, enable, env-load).
 pub fn cap_available_in_domain(cap_domains: &[String], current: &str) -> bool {
-	cap_domains.is_empty() || cap_domains.iter().any(|d| d == current)
+	let namespace = namespace_of(current);
+	cap_domains.is_empty() || cap_domains.iter().any(|d| d == namespace)
 }
 
 /// Every `{{ENV:KEY}}` in a capability's provider wiring — server env,
@@ -755,7 +762,7 @@ fn read_all_capabilities(tap_dirs: &[PathBuf], overrides: &HashMap<String, Strin
 
 /// Prefix that points a capability reference at the built-in baseline tap.
 /// Named for the tap's own identity, not the org that hosts it — the tap is
-/// `octomind`, regardless of which GitHub account `DEFAULT_TAP` lives under.
+/// `octomind`, regardless of which GitHub account the configured built-in tap lives under.
 pub const BASELINE_TAP_PREFIX: &str = "octomind";
 
 /// The bare capability name behind a reference: `octomind/memory-read` and
@@ -826,12 +833,9 @@ fn capability_source(
 	}
 
 	let root = if prefix == BASELINE_TAP_PREFIX {
-		crate::agent::taps::Tap {
-			name: crate::agent::taps::DEFAULT_TAP.to_string(),
-			local_path: None,
-		}
-		.local_dir()
-		.context("Failed to locate the baseline tap")?
+		crate::agent::taps::built_in_tap()?
+			.local_dir()
+			.context("Failed to locate the baseline tap")?
 	} else {
 		let taps = crate::agent::taps::get_taps().context("Failed to load taps for capability resolution")?;
 		taps.iter()

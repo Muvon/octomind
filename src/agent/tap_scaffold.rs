@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `octomind tap init` — bootstrap a new user tap from the default tap's scaffold.
+//! `octomind tap init` — bootstrap a new user tap from the built-in tap's scaffold.
 //!
-//! The canonical template lives in the default tap under `scaffolds/tap/`:
+//! The canonical template lives in the built-in tap under `scaffolds/tap/`:
 //! `scaffold.toml` is the render contract and everything below its `root/`
 //! directory is copied into the destination after `__TOKEN__` substitution in
 //! both file paths and file contents. Rendering fails if any token remains
 //! unresolved. After rendering, the scaffold's own validation command runs,
 //! the directory is git-initialized, and the tap is registered as a local tap
-//! so `octomind run <domain>` works immediately.
+//! so `octomind run <agent>` works immediately.
 
 use anyhow::{bail, Context, Result};
 use regex::Regex;
@@ -29,7 +29,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::taps::{self, Tap, DEFAULT_TAP, ORCHESTRATOR_SPEC};
+use super::registry::is_valid_agent_name;
+use super::taps;
 
 const SCAFFOLD_SUBDIR: &str = "scaffolds/tap";
 const SUPPORTED_SCHEMA: u32 = 1;
@@ -60,16 +61,17 @@ pub struct InitOutcome {
 	pub agent_tag: String,
 }
 
-/// Create a new tap repository from the default tap's scaffold.
+/// Create a new tap repository from the built-in tap's scaffold.
 ///
-/// `agent` names the starter agent's domain (`domain` or `domain:chief`;
-/// defaults to the repo name). The spec is always `chief`. `dir` overrides the
+/// `agent` names the starter agent (defaults to the repo name); it is rendered to
+/// `agents/<agent>/default.toml` and its tag is that name. `dir` overrides the
 /// destination (defaults to `./octomind-<repo>` in the current directory).
 pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result<InitOutcome> {
 	let (owner, name) = split_tap_id(tap_id)?;
 
-	if tap_id == DEFAULT_TAP {
-		bail!("'{}' is the built-in default tap — pick your own owner/name", tap_id);
+	let default_tap = taps::built_in_tap()?;
+	if tap_id == default_tap.name {
+		bail!("'{}' is the built-in tap — pick your own owner/name", tap_id);
 	}
 	if taps::list_taps()?.iter().any(|t| t.name == tap_id) {
 		bail!(
@@ -80,15 +82,11 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	}
 
 	taps::ensure_default_tap()?;
-	let default_tap = Tap {
-		name: DEFAULT_TAP.to_string(),
-		local_path: None,
-	};
 	let scaffold_dir = default_tap.local_dir()?.join(SCAFFOLD_SUBDIR);
 	let manifest_path = scaffold_dir.join("scaffold.toml");
 	if !manifest_path.is_file() {
 		bail!(
-			"Default tap has no scaffold at {} — update it with `git -C {} pull`",
+			"Built-in tap has no scaffold at {} — update it with `git -C {} pull`",
 			manifest_path.display(),
 			default_tap.local_dir()?.display()
 		);
@@ -131,7 +129,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	let created_dest = !dest.exists();
 	ensure_empty_dest(&dest)?;
 
-	let agent_tag = format!("{}:{}", tokens["__AGENT_DOMAIN__"], tokens["__AGENT_SPEC__"]);
+	let agent_tag = tokens["__AGENT_NAME__"].clone();
 	let result = populate(&scaffold_root, &dest, &tokens, &manifest, tap_id);
 	if let Err(e) = result {
 		// Only remove what this run created; never touch a pre-existing directory.
@@ -214,34 +212,23 @@ pub(crate) fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
 	}
 }
 
-/// Resolve the starter-agent domain from `--agent`. The starter is always the
-/// domain's orchestrator, so only `<domain>` or `<domain>:chief` is accepted.
-fn parse_agent_domain(arg: &str) -> Result<&str> {
-	let mut parts = arg.split(':');
-	match (parts.next(), parts.next(), parts.next()) {
-		(Some(domain), None, None) if !domain.is_empty() => Ok(domain),
-		(Some(domain), Some(ORCHESTRATOR_SPEC), None) if !domain.is_empty() => Ok(domain),
-		_ => bail!(
-			"The starter agent is always the domain's `{ORCHESTRATOR_SPEC}`; pass `--agent <domain>` or \
-			 `--agent <domain>:{ORCHESTRATOR_SPEC}`, got: {arg}"
-		),
+/// Check the starter agent's name from `--agent`: a namespace, so no `:`.
+fn parse_agent_name(arg: &str) -> Result<&str> {
+	if !is_valid_agent_name(arg) {
+		bail!("The starter agent's name is lowercase letters, digits and hyphens, starting with a letter, got: {arg}");
 	}
+	Ok(arg)
 }
 
 fn build_tokens(owner: &str, name: &str, agent: Option<&str>) -> Result<BTreeMap<String, String>> {
-	let domain = match agent {
-		Some(arg) => parse_agent_domain(arg)?,
-		None => name,
-	};
-	let spec = ORCHESTRATOR_SPEC;
+	let agent_name = parse_agent_name(agent.unwrap_or(name))?;
 
 	let mut tokens = BTreeMap::new();
 	tokens.insert("__TAP_ID__".to_string(), format!("{}/{}", owner, name));
 	tokens.insert("__TAP_OWNER__".to_string(), owner.to_string());
 	tokens.insert("__TAP_NAME__".to_string(), name.to_string());
 	tokens.insert("__TAP_REPOSITORY__".to_string(), format!("octomind-{}", name));
-	tokens.insert("__AGENT_DOMAIN__".to_string(), domain.to_string());
-	tokens.insert("__AGENT_SPEC__".to_string(), spec.to_string());
+	tokens.insert("__AGENT_NAME__".to_string(), agent_name.to_string());
 	tokens.insert("__YEAR__".to_string(), chrono::Utc::now().format("%Y").to_string());
 	Ok(tokens)
 }

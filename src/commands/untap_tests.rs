@@ -91,7 +91,7 @@ fn execute_rejects_the_builtin_default_tap() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let err = execute(&UntapArgs {
-		name: taps::DEFAULT_TAP.to_string(),
+		name: taps::built_in_tap().expect("built-in tap").name,
 	})
 	.expect_err("default tap is protected");
 	assert!(err.to_string().contains("cannot be removed"), "{err}");

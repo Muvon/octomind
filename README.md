@@ -41,7 +41,7 @@ Built for the work that keeps going after you leave:
 
 - **Policy as code, not approval popups.** Deterministic [guardrails](doc/usage/18-guardrails.md) — pre-call guards, post-result hooks, post-turn validators — live in TOML and scripts, so they work in CI, daemons, and scheduled runs.
 - **Measured, not claimed.** All four agents ran stock on the same tasks with the same judge. Per-case table, artifacts, and a reproduction guide are in the [benchmarks](#benchmarks).
-- **Ready-made specialists.** `octomind run developer` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). It starts `developer:chief`, the orchestrator of the `developer` domain (a domain is the part of a tag before the `:`; its orchestrator is the agent named `chief`). `octomind run developer:general` starts one exact agent, the generalist that does the work itself. Publish your own with one repo.
+- **Ready-made agents.** `octomind run developer` pulls a packaged agent (prompt, model, MCP servers, tool permissions) from a [tap](doc/integration/04-tap-system.md). An agent is one file, `agents/<name>.toml`, and its specialties are skills that load when your request matches them. Publish your own with one repo.
 - **Sessions that stay sharp.** Adaptive [compression](doc/usage/08-compression.md) keeps long tasks moving without forgetting the task or your last few messages.
 - **Learns the project as you work.** With the Besydr plugin, corrections and rules you state become lessons, quoted from your own words and scoped to the project and role, and come back in later sessions. [Learning](doc/usage/13-learning.md)
 - **Any model, any budget.** Use Octomind Cloud or your own key (OpenRouter, Anthropic, OpenAI, DeepSeek, Ollama, and more), pick a model per role, and cap spend per request and per session. Over budget, a terminal session asks y/N; a non-interactive run stops with exit code 75.
@@ -93,16 +93,16 @@ Before it writes a config, the first interactive run asks where to get models:
 
 Run `octomind configure` to change this later. Scripts, piped input, and `--format` runs never see the screen; they use the default config.
 
-**3. Run a specialist** in your project:
+**3. Run an agent** in your project:
 
 ```bash
 cd ~/your/project
 octomind run developer
 ```
 
-You're now in a session with the developer domain's lead agent. It reads your code and runs commands itself, and hands code changes to the domain's specialists. The interface is a plain line prompt with markdown rendering — no TUI to learn, so it works over SSH, in `tmux`, and in CI logs. The first time you run a specialist, it may install its tools and ask for credentials.
+You're now in a session with the `developer` agent. It reads your code and runs commands itself. The interface is a plain line prompt with markdown rendering — no TUI to learn, so it works over SSH, in `tmux`, and in CI logs. The first time you run an agent, it may install its tools and ask for credentials.
 
-> `developer:chief` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:chief`, the global assistant. A name without a `:`, such as `octomind run developer`, starts that domain's orchestrator (`developer:chief`), unless your config defines a role with that name; the local role wins.
+> `developer` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's `default`, `assistant`, the global assistant. A role in your config with the same name as a tap agent takes priority over the tap agent.
 
 Try the [recorded bug-fix demo](examples/fix-a-bug): two failing tests, an agent fix, and an independent test rerun.
 
@@ -166,7 +166,7 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 
 | Feature | What you get | Learn more |
 |---|---|---|
-| **Specialists & taps** | Packaged agents with model, prompt, MCP servers, and permissions; installs their tool dependencies on first use | [Tap system](doc/integration/04-tap-system.md) |
+| **Agents & taps** | Packaged agents with model, prompt, MCP servers, and permissions; installs their tool dependencies on first use | [Tap system](doc/integration/04-tap-system.md) |
 | **Roles** | Per-role model, system prompt, and tools | [Roles](doc/usage/06-roles.md) |
 | **Workflows** | Multi-step pipelines, each step with its own model and toolset | [Workflows](doc/usage/09-workflows.md) |
 | **MCP client** | stdio and Streamable HTTP servers, with OAuth; enable/disable servers mid-session | [MCP tools](doc/usage/07-mcp-tools.md) |
@@ -177,16 +177,17 @@ Need machine-readable results? Pass `--schema schema.json` to constrain the fina
 | **Sandbox** | `--sandbox` locks writes to the working directory via Landlock (Linux) or Seatbelt (macOS), inherited by every shell, MCP server, and sub-agent | [Config reference](doc/reference/03-config-reference.md) |
 | **Token efficiency** | Cache-aware cost accounting and adaptive compression | [Token efficiency](doc/usage/16-token-efficiency.md) |
 
-### Specialists
+### Agents
 
 ```bash
-octomind run developer            # developer domain: its lead agent hands larger work to the specialists
-octomind run doctor               # doctor domain: health questions, routed to the right specialist
-octomind run lawyer               # lawyer domain: legal questions, by jurisdiction
-octomind run doctor:blood         # one exact specialist: blood-test interpretation
+octomind run developer            # engineering work
+octomind run doctor               # health questions
+octomind run lawyer               # legal questions; jurisdiction procedures are skills
+OCTOMIND_SKILLS=doctor-blood-tests octomind run doctor   # preload one specialty skill
+octomind run developer --readonly # only tools marked read-only can run
 ```
 
-Running a specialist fetches its manifest from the tap registry, installs any required binaries, resolves credentials, starts the right MCP servers, and then opens the session.
+Running an agent fetches its manifest from the tap registry, installs any required binaries, resolves credentials, starts the right MCP servers, and then opens the session.
 
 Build and register your own:
 
@@ -272,7 +273,7 @@ Full reference: [Configuration reference](doc/reference/03-config-reference.md) 
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
 | `/model anthropic:claude-sonnet-5-5` | Switch model mid-session |
-| `/role developer:general` | Switch to a configured role or tap tag |
+| `/role developer` | Switch to a configured role or tap agent |
 | `/new Review auth` | Start a fresh session (title optional) |
 | `/done` | Force context compression (with the Besydr plugin, also starts lesson extraction) |
 | `/exit` | Exit the session |
@@ -304,7 +305,7 @@ Full index: [doc/README.md](doc/README.md) · Hosted: [octomind.run/docs](https:
 
 ## Contributing
 
-The most impactful contribution isn't code — **it's specialist agents.** A cardiologist publishing `doctor:medications`. A tax attorney publishing `lawyer:us`. A security researcher publishing `security:owasp`. One TOML file, and everyone with that problem gets an agent that knows the domain.
+The most impactful contribution isn't code — **it's agents and skills.** A cardiologist publishing the `doctor-medication-info` skill. A tax attorney publishing `lawyer-us-law`. A security researcher publishing `security-code-review`. One `SKILL.md` file, and everyone with that problem gets an agent that knows the field.
 
 - [How to write a tap agent](https://github.com/muvon/octomind-tap)
 - [Open issues](https://github.com/muvon/octomind/issues)

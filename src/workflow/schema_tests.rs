@@ -380,3 +380,54 @@ fn workflow_step_deprecated_sampling_overrides_parse_and_have_no_effect() {
 	};
 	assert_eq!(step.model.as_deref(), Some("google:gemini-3-pro"));
 }
+
+fn parse_workflow(step_keys: &str) -> Result<WorkflowDef, toml::de::Error> {
+	toml::from_str(&format!(
+		"name = \"wf\"\n\n[[steps]]\nname = \"review\"\nrole = \"developer\"\nprompt = \"p\"\n{step_keys}\n"
+	))
+}
+
+fn first_sequential(def: &WorkflowDef) -> &Sequential {
+	match &def.steps[0] {
+		Step::Sequential(step) => step,
+		other => panic!("expected a sequential step, got {other:?}"),
+	}
+}
+
+#[test]
+fn readonly_defaults_to_false_and_parses_true() {
+	assert!(!first_sequential(&parse_workflow("").unwrap()).readonly);
+	assert!(first_sequential(&parse_workflow("readonly = true").unwrap()).readonly);
+}
+
+#[test]
+fn a_non_boolean_readonly_is_an_error_naming_the_step() {
+	let err = parse_workflow("readonly = \"yes\"").unwrap_err().to_string();
+	assert!(err.contains("step 'review'") && err.contains("readonly"), "{err}");
+}
+
+#[test]
+fn readonly_applies_to_the_sub_steps_of_every_block_kind() {
+	for flag in ["parallel", "loop", "conditional"] {
+		let extra = if flag == "conditional" {
+			"condition = { contains = \"x\" }\n"
+		} else {
+			""
+		};
+		let text = format!(
+			"name = \"wf\"\n\n[[steps]]\nname = \"block\"\n{flag} = true\n{extra}\n  [[steps.run]]\n  name = \"sub\"\n  role = \"developer\"\n  prompt = \"p\"\n  readonly = true\n"
+		);
+		let def: WorkflowDef = toml::from_str(&text).unwrap_or_else(|err| panic!("{flag}: {err}"));
+		let sub = match &def.steps[0] {
+			Step::Parallel(step) => &step.run[0],
+			Step::Loop(step) => &step.run[0],
+			Step::Conditional(step) => &step.run[0],
+			Step::Sequential(_) => unreachable!(),
+		};
+		assert!(sub.readonly, "{flag}");
+
+		let bad = text.replace("readonly = true", "readonly = 1");
+		let err = toml::from_str::<WorkflowDef>(&bad).unwrap_err().to_string();
+		assert!(err.contains("step 'sub'"), "{flag}: {err}");
+	}
+}

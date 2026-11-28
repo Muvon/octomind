@@ -54,9 +54,9 @@ path differences.
 
 `run`, `server`, and `acp` take an optional `TAG`:
 
-- A **role name** (e.g. `assistant`) — matched against `[[roles]]` in your config.
-- A **registry agent tag** in `category:variant` form (e.g. `developer:general`) — resolved through your installed [taps](../integration/04-tap-system.md).
-- A **domain name** with no `:` (e.g. `developer`) — starts the domain's orchestrator, the agent named `chief` (`developer:chief`). A role in your config with the same name wins; an interactive session then shows one banner line naming `<domain>:chief`. A domain that has agents but no `chief` is an error that lists its agents. The same applies to `acp` and the `/role` command. The `role` parameter of the `tap` tool also takes a bare domain, but it reaches only tap agents, so a config role never wins there. Workflows still require full `category:variant` tags.
+- A **role name** — matched against `[[roles]]` in your config. A role with the same name as a tap agent takes priority over the tap agent.
+- A **tap agent name** (e.g. `developer`) — resolved through your installed [taps](../integration/04-tap-system.md); the agent is the file `agents/<name>.toml` of a tap. The same applies to `acp` and the `/role` command. The `role` parameter of the `tap` tool reaches only tap agents, so a config role never wins there.
+- A tag written with `:` is an error that shows the flat form.
 - Omitted — uses the `default` tag from config.
 
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required
@@ -206,12 +206,13 @@ Start an interactive or non-interactive AI session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name (e.g. `assistant`), domain name (e.g. `developer`) or registry agent tag `category:variant` (e.g. `developer:general`). Uses the default tag if omitted. |
+| `TAG` | | Role name or tap agent name (e.g. `developer`). Uses the config `default` (`assistant`) if omitted. |
 | `--name NAME` | `-n` | Create a named session, or resume it if it already exists. |
 | `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
 | `--format FORMAT` | | Output mode: `plain` or `jsonl` only; other values are rejected. Unset by default, resolving to `plain`. |
 | `--model MODEL` | `-m` | Override model (`provider:model` format) |
+| `--readonly` | | Start a read-only session: only tools whose MCP `readOnlyHint` annotation is true are offered and can run. A tool with no hint counts as mutable, and shell runners declare `readOnlyHint: false`, so there is no shell. The session cannot delegate, and `/run` and `/workflow` are refused. The mode lasts for the whole session and is restored when you resume it, with or without the flag; `--readonly` on resume of a writable session makes it read-only from then on. In code mode the tool catalog lists read-only tools only. This restricts the tools the model can call; scripts you configured yourself (skill `validate` scripts, guardrail scripts, hooks) still run. |
 | `--daemon` | | Keep the session alive for injected messages. Pair with `--format jsonl` for headless use; TTY use remains interactive-capable. |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
 | `--hook NAME` | | Activate webhook hook(s) by name (defined in `[[hooks]]` config). Repeatable. See [Daemon & Hooks](../integration/03-daemon-and-hooks.md). |
@@ -241,8 +242,11 @@ resuming. Most useful with `--format jsonl`. A ready-to-use example ships at
 # Interactive session with the default tap agent
 octomind run
 
-# Registry domain: starts its orchestrator (developer:chief)
+# Tap agent
 octomind run developer
+
+# Read-only session
+octomind run developer --readonly
 
 # Non-interactive: pipe message via stdin
 echo "Explain the auth module" | octomind run --format plain
@@ -270,7 +274,7 @@ Start a WebSocket server for remote AI sessions.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name, domain name or registry agent tag `category:variant` |
+| `TAG` | | Role name or tap agent name |
 | `--host HOST` | | Bind address (default: `127.0.0.1`) |
 | `--port PORT` | `-p` | Port (default: `8080`) |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
@@ -291,7 +295,8 @@ Run as Agent Client Protocol agent over stdio (for editor integration).
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name, domain name or registry agent tag `category:variant` |
+| `TAG` | | Role name or tap agent name |
+| `--readonly` | | Same as `octomind run --readonly`: only tools whose MCP `readOnlyHint` annotation is true are offered and can run, and the session cannot delegate. |
 | `--name NAME` | `-n` | Session name (used when client creates a session) |
 | `--resume SESSION` | `-r` | Resume a specific session by name |
 | `--resume-recent` | | Resume the most recent session |
@@ -338,7 +343,7 @@ registers the directory as a local tap — the starter agent is runnable immedia
 | Argument | Description |
 |----------|-------------|
 | `TAP` | New tap identifier (`user/repo` format). |
-| `--agent DOMAIN` | Starter agent's domain; `DOMAIN:chief` is accepted too. Defaults to the repo name. The starter agent is always the domain's `chief`; any other spec is rejected. |
+| `--agent NAME` | Starter agent's name; written to `agents/<name>.toml`. Defaults to the repo name. |
 | `--dir DIR` | Destination directory. Defaults to `./octomind-<repo>`. |
 
 **Examples:**
@@ -347,10 +352,10 @@ registers the directory as a local tap — the starter agent is runnable immedia
 # Scaffold ./octomind-team, validate, git init, register as local tap
 octomind tap init acme/team --agent team
 
-# Then run the starter agent (team:chief)
+# Then run the starter agent (team)
 octomind run team
 
-# Custom starter domain and destination
+# Custom starter agent and destination
 octomind tap init acme/team --agent legal --dir ~/work/acme-tap
 ```
 

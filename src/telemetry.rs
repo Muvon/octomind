@@ -121,7 +121,7 @@ pub struct Event {
 	/// Session shape: `interactive` | `piped` | `daemon` | `acp` | `server` | `workflow`.
 	#[serde(skip_serializing_if = "String::is_empty")]
 	kind: String,
-	/// Role or tap agent tag, e.g. `developer:general` — a software identifier.
+	/// Role or tap agent tag, e.g. `developer` — a software identifier.
 	#[serde(skip_serializing_if = "String::is_empty")]
 	agent: String,
 	#[serde(skip_serializing_if = "String::is_empty")]

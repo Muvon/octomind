@@ -318,13 +318,8 @@ async fn disabled_plugins_and_other_roles_are_not_connected() {
 		plugins: fakes.clone(),
 		connects: connects.clone(),
 	}));
-	host.start_session(
-		SESSION,
-		"developer:general",
-		dir.path(),
-		&[disabled, other_role, same_domain],
-	)
-	.await;
+	host.start_session(SESSION, ROLE, dir.path(), &[disabled, other_role, same_domain])
+		.await;
 	assert_eq!(connects.load(Ordering::SeqCst), 1);
 	assert!(fakes["off"].sent(METHOD_INITIALIZE).is_empty());
 	assert!(fakes["other"].sent(METHOD_INITIALIZE).is_empty());

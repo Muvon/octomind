@@ -19,8 +19,9 @@ use crate::session::chat::session::ChatSession;
 use crate::session::CompressionKind;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }

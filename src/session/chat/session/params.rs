@@ -43,6 +43,8 @@ pub struct GenericSessionArgs {
 	/// When present, the session's completions are constrained to match it. The
 	/// resolved model must support structured output or session setup fails.
 	pub schema: Option<serde_json::Value>,
+	/// Start a read-only session (`run --readonly`): only tools whose `readOnlyHint` is true.
+	pub readonly: bool,
 }
 
 impl GenericSessionArgs {

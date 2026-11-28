@@ -111,7 +111,7 @@ tools = []
 auto_bind = ["assistant"]
 ```
 
-`auto_bind` matches the full role name exactly: `developer` does not match `developer:general`. See [Configuration
+`auto_bind` matches the full role name exactly. See [Configuration
 Reference](../reference/03-config-reference.md) for static server configuration.
 
 ### Tool Filtering

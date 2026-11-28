@@ -163,12 +163,10 @@ pub fn set_session_context(role: &str, project: &str, workdir: &str) {
 	*CLI_SESSION_CONTEXT.write().unwrap() = (role.to_string(), project.to_string(), workdir.to_string());
 }
 
-/// Get the session context (role domain, spec, project, session_id, workdir).
-/// Splits the full role name on `:` — left part is domain, right part is spec.
-/// Local roles like `"developer"` → domain=`"developer"`, spec=`""`.
-/// Tap roles like `"doctor:blood"` → domain=`"doctor"`, spec=`"blood"`.
-pub fn get_session_context() -> (String, String, String, String, String) {
-	let (full_role, project, workdir) = {
+/// Get the session context (role domain, project, session_id, workdir).
+/// A role has no parts: the domain is the role name itself (`"developer"`, `"doctor"`).
+pub fn get_session_context() -> (String, String, String, String) {
+	let (domain, project, workdir) = {
 		// Check for session-scoped context first (WebSocket mode)
 		if let Some(session_id) = crate::session::context::current_session_id() {
 			if let Some(role) = crate::session::context::get_session_role(&session_id) {
@@ -190,13 +188,7 @@ pub fn get_session_context() -> (String, String, String, String, String) {
 
 	let session_id = crate::session::context::current_session_id().unwrap_or_default();
 
-	// Split role into domain + spec
-	let (domain, spec) = match full_role.split_once(':') {
-		Some((d, s)) => (d.to_string(), s.to_string()),
-		None => (full_role, String::new()),
-	};
-
-	(domain, spec, project, session_id, workdir)
+	(domain, project, session_id, workdir)
 }
 
 /// Derive and set the project id from the current git remote / cwd, then store role.

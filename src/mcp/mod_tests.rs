@@ -31,7 +31,8 @@ use serial_test::serial;
 /// Builtin-only servers keep every test offline: no stdio spawn, no HTTP.
 fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.mcp.servers = servers;
 	config
 }
@@ -69,6 +70,12 @@ fn fn_def(name: &str) -> McpFunction {
 		description: format!("description for {name}"),
 		parameters: json!({"type": "object"}),
 	}
+}
+
+/// Run `body` in a session recorded as writable: a session id with no recorded mode is read-only.
+fn writable_session<F: std::future::Future>(id: String, body: F) -> impl std::future::Future<Output = F::Output> {
+	crate::session::context::set_session_mode(&id, Default::default());
+	crate::session::context::with_session_id(id, body)
 }
 
 fn names_of(fns: &[McpFunction]) -> Vec<String> {
@@ -369,7 +376,7 @@ async fn session_ownership_rejects_tools_from_foreign_servers() {
 
 	// A config that does NOT include the `core` server the tool map routes to.
 	let other = config_with_servers(vec![McpServerConfig::builtin("runtime", 30, vec![])]);
-	crate::session::context::with_session_id(format!("ownership-{}", uuid::Uuid::new_v4()), async {
+	writable_session(format!("ownership-{}", uuid::Uuid::new_v4()), async {
 		let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &other, None)
 			.await
 			.expect("ownership rejection is a soft error");
@@ -379,7 +386,7 @@ async fn session_ownership_rejects_tools_from_foreign_servers() {
 	.await;
 
 	// Same session context, but the config DOES define the server → allowed.
-	crate::session::context::with_session_id(format!("ownership-ok-{}", uuid::Uuid::new_v4()), async {
+	writable_session(format!("ownership-ok-{}", uuid::Uuid::new_v4()), async {
 		let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &config, None)
 			.await
 			.expect("config-defined server must route");
@@ -398,7 +405,7 @@ async fn session_ownership_rejects_foreign_dynamic_agent_tools() {
 	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 	tool_map::register_dynamic_agent_tool("foreign_probe_agent");
 
-	crate::session::context::with_session_id(format!("ownership-agent-{}", uuid::Uuid::new_v4()), async {
+	writable_session(format!("ownership-agent-{}", uuid::Uuid::new_v4()), async {
 		let (result, _) = execute_tool_call(
 			&tool_call("agent_foreign_probe_agent", json!({"task": "x"})),
 			&config, // config defines no such agent
@@ -846,7 +853,8 @@ async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
 
 fn enable_debug_logging() {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.log_level = crate::config::LogLevel::Debug;
 	crate::config::set_thread_config(&config);
 }
@@ -963,7 +971,7 @@ async fn available_functions_skip_disabled_dynamic_servers() {
 	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
 	let config = config_with_servers(vec![server.clone()]);
 
-	crate::session::context::with_session_id(format!("mod-disabled-{}", uuid::Uuid::new_v4()), async {
+	writable_session(format!("mod-disabled-{}", uuid::Uuid::new_v4()), async {
 		crate::session::context::register_dynamic_server_for_session(
 			&crate::session::context::current_session_id().expect("session id"),
 			server,
@@ -1019,7 +1027,7 @@ async fn dynamic_server_tool_execution_succeeds_in_owning_session() {
 	let config = config_with_servers(vec![server.clone()]);
 	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
-	crate::session::context::with_session_id(format!("mod-dynamic-{}", uuid::Uuid::new_v4()), async {
+	writable_session(format!("mod-dynamic-{}", uuid::Uuid::new_v4()), async {
 		let sid = crate::session::context::current_session_id().expect("session id");
 		crate::session::context::register_dynamic_server_for_session(&sid, server);
 		let enabled = crate::session::context::enable_dynamic_server_for_session(&sid, NAME, vec![fn_def("echo")]);
@@ -1169,4 +1177,130 @@ async fn shell_granted_reads_the_enabled_dynamic_servers_tools() {
 	})
 	.await;
 	crate::session::context::clear_dynamic_servers_for_session(&sid);
+}
+
+// ------------------------------------------------------------------
+// Read-only sessions
+// ------------------------------------------------------------------
+
+fn annotated(name: &str, annotations: Option<rmcp::model::ToolAnnotations>) -> (Option<String>, McpFunction) {
+	let mut function = fn_def(name);
+	function.annotations = annotations;
+	(None, function)
+}
+
+#[test]
+fn the_read_only_filter_keeps_only_tools_whose_hint_is_true() {
+	use rmcp::model::ToolAnnotations;
+	let mut functions = vec![
+		annotated("reads", Some(ToolAnnotations::new().read_only(true))),
+		annotated("writes", Some(ToolAnnotations::new().read_only(false))),
+		annotated("unannotated", None),
+		annotated("other_hints_only", Some(ToolAnnotations::new().open_world(false))),
+	];
+	retain_read_only(&mut functions);
+	let kept: Vec<&str> = functions.iter().map(|(_, function)| function.name.as_str()).collect();
+	assert_eq!(kept, ["reads"]);
+}
+
+#[serial]
+#[tokio::test]
+async fn a_read_only_session_is_offered_only_read_only_tools_and_refuses_the_rest() {
+	clear_function_cache();
+	let mut config = config_with_servers(vec![
+		McpServerConfig::builtin("core", 30, vec![]),
+		McpServerConfig::builtin("orchestration", 30, vec![]),
+	]);
+	config.compression.attention.enabled = true;
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
+	let sid = format!("readonly-{}", uuid::Uuid::new_v4());
+	crate::session::context::set_session_mode(&sid, Default::default());
+	crate::session::context::with_session_id(sid.clone(), async {
+		let writable = names_of(&get_available_functions(&config).await);
+		assert!(writable.contains(&"tap".to_string()) && writable.contains(&"recall".to_string()));
+
+		crate::session::context::set_session_mode(
+			&sid,
+			crate::session::context::SessionMode {
+				readonly: true,
+				copy: false,
+			},
+		);
+		assert_eq!(names_of(&get_available_functions(&config).await), ["recall"]);
+		assert_eq!(names_of(&get_model_functions(&config).await), ["recall"]);
+
+		let (result, _) = execute_tool_call(&tool_call("tap", json!({"action": "list"})), &config, None)
+			.await
+			.expect("a refusal is a tool error");
+		assert!(result.is_error());
+		let text = result.extract_content();
+		assert!(text.contains("read-only") && text.contains("'tap'"), "{text}");
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+	clear_function_cache();
+}
+
+#[test]
+fn two_servers_exposing_one_tool_name_are_judged_by_their_own_hint() {
+	use crate::mcp::tool_shape::{register_server_tool_read_only_hint, server_tool_is_read_only};
+	let tool = "collide_probe";
+	register_server_tool_read_only_hint("first-server", tool, Some(false));
+	register_server_tool_read_only_hint("second-server", tool, Some(true));
+
+	assert!(!server_tool_is_read_only("first-server", tool));
+	assert!(server_tool_is_read_only("second-server", tool));
+	assert!(
+		!server_tool_is_read_only("third-server", tool),
+		"no hint registered is not read-only"
+	);
+}
+
+#[serial]
+#[tokio::test]
+async fn a_read_only_session_runs_a_call_only_by_the_hint_of_the_server_that_executes_it() {
+	clear_function_cache();
+	let config = core_server_config();
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
+	let sid = format!("readonly-owner-{}", uuid::Uuid::new_v4());
+	crate::session::context::set_session_mode(
+		&sid,
+		crate::session::context::SessionMode {
+			readonly: true,
+			copy: false,
+		},
+	);
+	crate::session::context::with_session_id(sid.clone(), async {
+		// `recall` is a read-only tool of `core`, but another server's hint under the same
+		// name does not make it so, and an unregistered hint does not either.
+		crate::mcp::tool_shape::register_server_tool_read_only_hint("core", "recall", None);
+		crate::mcp::tool_shape::register_server_tool_read_only_hint("elsewhere", "recall", Some(true));
+		assert!(read_only_refusal(&tool_call("recall", json!({}))).is_some());
+
+		get_available_functions(&config).await;
+		assert!(read_only_refusal(&tool_call("recall", json!({}))).is_none());
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+	clear_function_cache();
+}
+
+#[serial]
+#[tokio::test]
+async fn a_session_with_no_recorded_mode_is_offered_and_runs_only_read_only_tools() {
+	clear_function_cache();
+	let config = config_with_servers(vec![McpServerConfig::builtin("orchestration", 30, vec![])]);
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
+	let unrecorded = format!("unrecorded-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(unrecorded, async {
+		assert!(get_available_functions(&config).await.is_empty());
+		assert!(read_only_refusal(&tool_call("tap", json!({"action": "list"}))).is_some());
+	})
+	.await;
+	writable_session(format!("recorded-{}", uuid::Uuid::new_v4()), async {
+		assert!(names_of(&get_available_functions(&config).await).contains(&"tap".to_string()));
+		assert!(read_only_refusal(&tool_call("tap", json!({"action": "list"}))).is_none());
+	})
+	.await;
+	clear_function_cache();
 }

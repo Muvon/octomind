@@ -27,6 +27,9 @@
 // library's own limit (src/lib.rs).
 #![recursion_limit = "1024"]
 
+#[path = "fixtures/template_with_assistant_role.rs"]
+mod template_with_assistant_role;
+
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -91,7 +94,8 @@ async fn spawn_openai_stub() -> String {
 
 fn sandbox_config() -> octomind::config::Config {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.telemetry = false;

@@ -223,29 +223,45 @@ fn first_match_wins() {
 
 #[test]
 fn role_filter_is_empty_means_all_roles() {
-	assert!(role_matches(&[], "developer:general"));
+	assert!(role_matches(&[], "developer"));
 }
 
 #[test]
-fn role_filter_matches_exact_and_domain_prefix() {
+fn a_filter_naming_a_namespace_matches_its_base_agent_and_all_its_variants() {
 	let filter = vec!["developer".to_string()];
 	assert!(role_matches(&filter, "developer"));
-	assert!(role_matches(&filter, "developer:general"));
-	// A `:` separator is required — a longer name that merely starts with
-	// the filter is a different role.
+	assert!(role_matches(&filter, "developer:rust"));
+	// A name that merely starts with the filter is a different namespace.
 	assert!(!role_matches(&filter, "developer-lite"));
+	assert!(!role_matches(&filter, "developer-lite:rust"));
 	assert!(!role_matches(&filter, "developerx"));
 	assert!(!role_matches(&filter, "assistant"));
-	// Prefix direction matters: the filter must not match a shorter role.
-	assert!(!role_matches(&["developer:general".to_string()], "developer"));
+	assert!(!role_matches(&["developer-lite".to_string()], "developer"));
+}
+
+#[test]
+fn a_filter_with_a_variant_matches_that_one_agent() {
+	let filter = vec!["developer:rust".to_string()];
+	assert!(role_matches(&filter, "developer:rust"));
+	assert!(!role_matches(&filter, "developer"));
+	assert!(!role_matches(&filter, "developer:go"));
+	assert!(!role_matches(&filter, "developer:rust-x"));
+}
+
+#[test]
+fn the_default_variant_is_the_base_agent_in_a_filter_and_as_the_current_role() {
+	assert!(role_matches(&["developer:default".to_string()], "developer"));
+	assert!(role_matches(&["developer".to_string()], "developer:default"));
+	// `developer:default` is the agent `developer`, so as a filter it names the namespace.
+	assert!(role_matches(&["developer:default".to_string()], "developer:rust"));
 }
 
 #[test]
 fn role_filter_matches_any_listed_entry() {
 	let filter = vec!["assistant".to_string(), "doctor".to_string()];
-	assert!(role_matches(&filter, "doctor:blood"));
+	assert!(role_matches(&filter, "doctor"));
 	assert!(role_matches(&filter, "assistant"));
-	assert!(!role_matches(&filter, "developer:general"));
+	assert!(!role_matches(&filter, "developer"));
 }
 
 // ---------------------------------------------------------------------------
@@ -632,4 +648,26 @@ fn a_plugin_rule_is_shadow_by_its_mode_alone() {
 	assert_eq!(message, "stop");
 	assert_eq!(binding.unwrap().id, "live");
 	assert_eq!(evaluation.shadow_ids, vec!["seen".to_string()]);
+}
+
+#[test]
+fn a_role_filter_with_a_colon_is_accepted_and_kept() {
+	let guardrails = Guardrails::parse(
+		"[[pipe]]\nname = \"p\"\ncommand = \"c.sh\"\nroles = [\"developer:general\"]\n\n[[validator]]\nname = \"v\"\nscript = \"v.sh\"\nroles = [\"a\", \"doctor:blood\"]\n",
+	);
+	assert!(guardrails.is_ok(), "{:?}", guardrails.err());
+}
+
+#[test]
+fn loading_a_project_file_with_a_variant_role_filter_keeps_the_rule() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
+	std::fs::write(
+		dir.path().join(FILE_PATH),
+		"[[pipe]]\nname = \"p\"\ncommand = \"c.sh\"\nroles = [\"developer:rust\"]\n",
+	)
+	.unwrap();
+	let loaded = Guardrails::load_from_workdir(dir.path());
+	assert_eq!(loaded.pipes.len(), 1);
+	assert_eq!(loaded.pipes[0].roles, ["developer:rust"]);
 }

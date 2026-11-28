@@ -21,8 +21,9 @@ use super::*;
 use serial_test::serial;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -93,7 +94,7 @@ async fn test_bare_command_shows_current_and_available_roles() {
 #[serial]
 async fn test_invalid_plain_role_is_rejected_up_front() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	// A name that is not a local role may be a tap domain, so the lookup reads the default
+	// A name that is not a local role may be a tap agent, so the lookup reads the default
 	// tap and clones it when it is missing. An empty tap directory keeps the test offline.
 	let _data = TestDataDir::new();
 	let default_tap = crate::directories::get_octomind_data_dir()

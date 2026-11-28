@@ -58,6 +58,12 @@ fn default_tap_dir() -> PathBuf {
 	dir
 }
 
+/// Where the manifest `name` of the built-in tap is cached: the file is keyed by tap and ref.
+fn built_in_cache_file(name: &str) -> PathBuf {
+	let tap = crate::agent::taps::built_in_tap().expect("built-in tap");
+	cache_path(name, &cache_source(&tap).expect("cache source")).expect("cache path")
+}
+
 fn write_file(path: &Path, content: &str) {
 	fs::create_dir_all(path.parent().expect("parent")).expect("create dirs");
 	fs::write(path, content).expect("write file");
@@ -68,28 +74,55 @@ fn write_file(path: &Path, content: &str) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn parse_tag_splits_category_variant_and_optional_version() {
-	let (c, v, ver) = parse_tag("developer:general").expect("valid tag");
-	assert_eq!(c, "developer");
-	assert_eq!(v, "general");
+fn parse_tag_splits_name_and_optional_version() {
+	let (name, ver) = parse_tag("developer").expect("valid tag");
+	assert_eq!(name, "developer");
 	assert_eq!(ver, None);
 
-	let (c, v, ver) = parse_tag("developer:general@1.2").expect("valid versioned tag");
-	assert_eq!(c, "developer");
-	assert_eq!(v, "general");
+	let (name, ver) = parse_tag("rust-dev2@1.2").expect("valid versioned tag");
+	assert_eq!(name, "rust-dev2");
 	assert_eq!(ver.as_deref(), Some("1.2"));
 }
 
 #[test]
-fn parse_tag_rejects_invalid_agent_names() {
-	let err = parse_tag("developer").expect_err("missing colon must fail");
-	assert!(err.to_string().contains("expected 'category:variant'"));
+fn parse_tag_accepts_a_namespace_and_a_variant_and_canonicalizes_the_default() {
+	let (tag, ver) = parse_tag("developer:rust").expect("variant tag");
+	assert_eq!(tag, "developer:rust");
+	assert_eq!(ver, None);
 
-	// Version split happens first — still needs category:variant afterwards.
-	assert!(parse_tag("developer@1.0").is_err());
-	assert!(parse_tag(":general").is_err());
-	assert!(parse_tag("developer:").is_err());
-	assert!(parse_tag("").is_err());
+	let (tag, ver) = parse_tag("developer:rust@1.2").expect("versioned variant tag");
+	assert_eq!(tag, "developer:rust");
+	assert_eq!(ver.as_deref(), Some("1.2"));
+
+	let (tag, _) = parse_tag("developer:default").expect("default variant");
+	assert_eq!(tag, "developer", "<ns>:default is <ns>");
+	assert_eq!(canonical_tag("developer:default"), "developer");
+	assert_eq!(namespace_of("developer:rust"), "developer");
+	assert_eq!(namespace_of("developer"), "developer");
+	assert_eq!(manifest_parts("developer"), ("developer", "default"));
+	assert_eq!(manifest_parts("developer:rust"), ("developer", "rust"));
+}
+
+#[test]
+fn parse_tag_rejects_names_with_other_characters_and_more_than_one_colon() {
+	for bad in [
+		"",
+		"@1.0",
+		"Developer",
+		"my_agent",
+		"a b",
+		"a/b",
+		"a:b:c",
+		"a:",
+		":b",
+		"1dev",
+		"dev:1x",
+		"dev:Rust",
+	] {
+		assert!(parse_tag(bad).is_err(), "should reject {bad:?}");
+	}
+	assert!(is_valid_agent_name("dev2-x"));
+	assert!(!is_valid_agent_name("-dev"));
 }
 
 // ---------------------------------------------------------------------------
@@ -120,14 +153,23 @@ fn is_stale_true_when_older_than_ttl() {
 	assert!(is_stale(&path, 24));
 }
 
+/// The cache entry a manifest of the built-in tap gets under the current `[registry]` values.
+fn built_in_cache_path(name: &str) -> PathBuf {
+	let tap = crate::agent::taps::built_in_tap().expect("built-in tap");
+	cache_path(name, &cache_source(&tap).expect("cache source")).expect("cache path")
+}
+
 #[test]
 #[serial]
 fn cache_path_lives_under_agents_dir_and_creates_it() {
 	let _guard = DataDirGuard::new();
-	let path = cache_path("devtool", "helper").expect("cache path");
+	let path = cache_path("helper", "acme/tap@feature/x").expect("cache path");
 	let data = crate::directories::get_octomind_data_dir().expect("data dir");
-	assert_eq!(path, data.join("agents").join("devtool").join("helper.toml"));
+	assert_eq!(path, data.join("agents").join("helper.acme_tap_feature_x.toml"));
 	assert!(path.parent().expect("parent").is_dir(), "cache dir created");
+
+	let variant = cache_path("helper:rust", "acme/tap").expect("cache path of a variant");
+	assert_eq!(variant, data.join("agents").join("helper_rust.acme_tap.toml"));
 }
 
 /// The cache write must be atomic: a reader that opens the destination mid-write must never see truncated content.
@@ -167,15 +209,15 @@ async fn fetch_manifest_reads_from_tap_and_populates_cache() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	let manifest = "# Title: Helper\n# Description: Helps.\n\n[[roles]]\nname = \"devtool:helper\"\n";
-	write_file(&tap.join("agents").join("devtool").join("helper.toml"), manifest);
+	write_file(&tap.join("agents").join("helper").join("default.toml"), manifest);
 
-	let (toml, root) = fetch_manifest("devtool:helper", &RegistryConfig::default())
+	let (toml, root) = fetch_manifest("helper", &RegistryConfig::default())
 		.await
 		.expect("fetch");
 	assert_eq!(toml, manifest);
 	assert_eq!(root, tap, "tap root points at the providing tap");
 
-	let cache = cache_path("devtool", "helper").expect("cache path");
+	let cache = built_in_cache_path("helper");
 	assert_eq!(fs::read_to_string(&cache).expect("read cache"), manifest);
 }
 
@@ -186,13 +228,37 @@ async fn fetch_manifest_serves_fresh_cache_without_tap_hit() {
 	let _guard = DataDirGuard::new();
 	default_tap_dir(); // exists but provides nothing
 
-	let cache = cache_path("devtool", "helper").expect("cache path");
+	let cache = built_in_cache_path("helper");
 	fs::write(&cache, "CACHED-CONTENT").expect("seed cache");
 
-	let (toml, _) = fetch_manifest("devtool:helper", &RegistryConfig::default())
+	let (toml, _) = fetch_manifest("helper", &RegistryConfig::default())
 		.await
 		.expect("fresh cache serves without tap");
 	assert_eq!(toml, "CACHED-CONTENT");
+}
+
+#[tokio::test]
+#[serial]
+async fn a_manifest_cached_under_another_ref_or_tap_is_not_served() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	let manifest = "# Title: Helper\n# Description: Helps.\n";
+	write_file(&tap.join("agents").join("helper").join("default.toml"), manifest);
+
+	let name = crate::agent::taps::built_in_tap().expect("built-in tap").name;
+	for other_source in [format!("{name}@another-ref"), "another/tap".to_string()] {
+		fs::write(
+			cache_path("helper", &other_source).expect("cache path"),
+			"STALE-OTHER-SOURCE",
+		)
+		.expect("seed");
+	}
+
+	let (toml, _) = fetch_manifest("helper", &RegistryConfig::default())
+		.await
+		.expect("fetch");
+	assert_eq!(toml, manifest, "the cache of another ref or tap must not be used");
 }
 
 #[tokio::test]
@@ -202,7 +268,7 @@ async fn fetch_manifest_errors_when_no_tap_provides_it() {
 	let _guard = DataDirGuard::new();
 	default_tap_dir(); // empty tap set, no cache
 
-	let err = fetch_manifest("devtool:missing", &RegistryConfig::default())
+	let err = fetch_manifest("missing", &RegistryConfig::default())
 		.await
 		.expect_err("must fail");
 	assert!(err.to_string().contains("Failed to fetch agent manifest"));
@@ -210,10 +276,42 @@ async fn fetch_manifest_errors_when_no_tap_provides_it() {
 
 #[tokio::test]
 #[serial]
+async fn fetch_manifest_of_a_flat_manifest_file_names_the_tap_the_file_and_the_new_path() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	write_file(&tap.join("agents").join("old.toml"), "# Title: Old\n# Description: o\n");
+
+	let err = fetch_manifest("old", &RegistryConfig::default())
+		.await
+		.expect_err("the flat manifest is not read");
+	let message = err.to_string();
+	assert!(
+		message.contains(&crate::agent::taps::built_in_tap().unwrap().name),
+		"{message}"
+	);
+	assert!(
+		message.contains(&tap.join("agents").join("old.toml").display().to_string()),
+		"{message}"
+	);
+	assert!(
+		message.contains(
+			&tap.join("agents")
+				.join("old")
+				.join("default.toml")
+				.display()
+				.to_string()
+		),
+		"{message}"
+	);
+}
+
+#[tokio::test]
+#[serial]
 async fn fetch_manifest_rejects_invalid_tag_before_any_io() {
 	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _guard = DataDirGuard::new();
-	let err = fetch_manifest("nope", &RegistryConfig::default())
+	let err = fetch_manifest("developer:general:x", &RegistryConfig::default())
 		.await
 		.expect_err("must fail");
 	assert!(err.to_string().contains("Invalid agent tag"));
@@ -229,20 +327,103 @@ fn list_all_tap_agents_enumerates_sorted_and_skips_non_toml() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	write_file(
-		&tap.join("agents").join("b-cat").join("zeta.toml"),
+		&tap.join("agents").join("zeta").join("default.toml"),
 		"# Title: Zeta\n# Description: z\n",
 	);
 	write_file(
-		&tap.join("agents").join("a-cat").join("alpha.toml"),
+		&tap.join("agents").join("alpha").join("default.toml"),
 		"# Title: Alpha\n# Description: a\n",
 	);
-	write_file(&tap.join("agents").join("a-cat").join("notes.txt"), "not a manifest");
+	write_file(&tap.join("agents").join("notes.txt"), "not a manifest");
+	// A namespace without `default.toml` lists its variants only; a flat `<name>.toml` is no agent.
+	write_file(
+		&tap.join("agents").join("legacy").join("chief.toml"),
+		"# Title: Legacy\n# Description: l\n",
+	);
+	write_file(
+		&tap.join("agents").join("flat.toml"),
+		"# Title: Flat\n# Description: f\n",
+	);
 
 	let agents = list_all_tap_agents().expect("list");
 	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
-	assert_eq!(roles, vec!["a-cat:alpha", "b-cat:zeta"]);
+	assert_eq!(roles, vec!["alpha", "legacy:chief", "zeta"]);
 	assert_eq!(agents[0].meta.title, "Alpha");
-	assert_eq!(agents[0].source_tap, crate::agent::taps::DEFAULT_TAP);
+	assert_eq!(
+		agents[0].source_tap,
+		crate::agent::taps::built_in_tap().expect("built-in tap").name
+	);
+}
+
+#[test]
+#[serial]
+fn list_all_tap_agents_lists_a_namespace_as_its_base_and_its_variants() {
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	let header = |title: &str| format!("# Title: {title}\n# Description: d\n");
+	write_file(&tap.join("agents/dev/default.toml"), &header("Dev"));
+	write_file(&tap.join("agents/dev/rust.toml"), &header("Dev Rust"));
+	write_file(&tap.join("agents/dev/notes.txt"), "not a manifest");
+	// A namespace that has variants and no base.
+	write_file(&tap.join("agents/acme/reviewer.toml"), &header("Reviewer"));
+
+	let agents = list_all_tap_agents().expect("list");
+	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
+	assert_eq!(roles, vec!["acme:reviewer", "dev", "dev:rust"]);
+	assert_eq!(agents[2].meta.title, "Dev Rust");
+}
+
+#[tokio::test]
+#[serial]
+async fn fetch_manifest_reads_a_variant_and_caches_it_apart_from_its_base() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	write_file(
+		&tap.join("agents/dev/default.toml"),
+		"# Title: Base\n# Description: b\n",
+	);
+	write_file(
+		&tap.join("agents/dev/rust.toml"),
+		"# Title: Variant\n# Description: v\n",
+	);
+
+	let (variant, root) = fetch_manifest("dev:rust", &RegistryConfig::default())
+		.await
+		.expect("fetch variant");
+	assert!(variant.contains("Variant"));
+	assert_eq!(root, tap);
+	let (base, _) = fetch_manifest("dev:default", &RegistryConfig::default())
+		.await
+		.expect("fetch base through :default");
+	assert!(base.contains("Base"));
+
+	assert!(built_in_cache_path("dev:rust").is_file());
+	assert!(built_in_cache_path("dev").is_file());
+	assert_ne!(built_in_cache_path("dev:rust"), built_in_cache_path("dev"));
+}
+
+#[tokio::test]
+#[serial]
+async fn fetch_manifest_of_an_unknown_variant_names_the_namespace_and_its_agents() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let tap = default_tap_dir();
+	write_file(
+		&tap.join("agents/dev/default.toml"),
+		"# Title: Base\n# Description: b\n",
+	);
+	write_file(
+		&tap.join("agents/dev/rust.toml"),
+		"# Title: Variant\n# Description: v\n",
+	);
+
+	let err = fetch_manifest("dev:cobol", &RegistryConfig::default())
+		.await
+		.expect_err("no such variant");
+	let message = err.to_string();
+	assert!(message.contains("namespace 'dev'"), "{message}");
+	assert!(message.contains("dev, dev:rust"), "{message}");
 }
 
 #[test]
@@ -250,7 +431,7 @@ fn list_all_tap_agents_enumerates_sorted_and_skips_non_toml() {
 fn list_all_tap_agents_fails_on_manifest_missing_headers() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
-	write_file(&tap.join("agents").join("x").join("bad.toml"), "# no headers\n");
+	write_file(&tap.join("agents").join("bad").join("default.toml"), "# no headers\n");
 	assert!(list_all_tap_agents().is_err());
 }
 
@@ -285,11 +466,21 @@ fn cap_available_in_domain_empty_means_universal() {
 }
 
 #[test]
-fn cap_available_in_domain_requires_exact_match() {
+fn cap_available_in_domain_matches_the_namespace_of_the_agent() {
 	let domains: Vec<String> = vec!["developer".to_string(), "devops".to_string()];
 	assert!(cap_available_in_domain(&domains, "developer"));
+	assert!(
+		cap_available_in_domain(&domains, "developer:rust"),
+		"a variant has its namespace's caps"
+	);
 	assert!(!cap_available_in_domain(&domains, "medical"));
-	assert!(!cap_available_in_domain(&domains, "developer:general"));
+	assert!(!cap_available_in_domain(&domains, "medical:developer"));
+	assert!(!cap_available_in_domain(&domains, "developer-lite:rust"));
+	let variant_only: Vec<String> = vec!["developer:rust".to_string()];
+	assert!(
+		!cap_available_in_domain(&variant_only, "developer:rust"),
+		"domains list namespaces"
+	);
 }
 
 #[test]
@@ -738,10 +929,10 @@ fn install_taps_file(data_dir: &Path, taps: &[(&str, Option<&Path>)]) {
 	std::fs::write(data_dir.join("taps.toml"), content).expect("write taps.toml");
 }
 
-fn write_agent_manifest(tap_root: &Path, category: &str, variant: &str, body: &str) {
-	let dir = tap_root.join("agents").join(category);
-	std::fs::create_dir_all(&dir).expect("create category dir");
-	std::fs::write(dir.join(format!("{variant}.toml")), body).expect("write manifest");
+fn write_agent_manifest(tap_root: &Path, name: &str, body: &str) {
+	let dir = tap_root.join("agents").join(name);
+	std::fs::create_dir_all(&dir).expect("create agent dir");
+	std::fs::write(dir.join("default.toml"), body).expect("write manifest");
 }
 
 fn registry_config() -> crate::config::RegistryConfig {
@@ -774,23 +965,18 @@ fn age_beyond_ttl(path: &Path) {
 async fn fetch_manifest_errors_when_cache_dir_cannot_be_created() {
 	// The data dir exists, but `agents` inside it is a file, so creating the
 	// cache dir underneath fails after the data dir itself resolves fine.
-	let tmp = tempfile::tempdir().expect("tempdir");
-	std::fs::write(tmp.path().join("agents"), "not a directory").expect("write blocker");
-	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
-	std::env::set_var("OCTOMIND_DATA_DIR", tmp.path());
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	std::fs::write(data_dir.join("agents"), "not a directory").expect("write blocker");
+	default_tap_dir();
 
-	let err = fetch_manifest("cat:var", &registry_config())
+	let err = fetch_manifest("var", &registry_config())
 		.await
 		.expect_err("unwritable data dir must fail");
 	assert!(
 		err.to_string().contains("Failed to create agent cache dir"),
 		"got: {err:#}"
 	);
-
-	match previous {
-		Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
-		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
-	}
 }
 
 #[tokio::test]
@@ -801,14 +987,14 @@ async fn fetch_manifest_first_tap_wins_on_duplicate_manifests() {
 	default_tap_dir(); // load_taps() requires the default tap dir to exist
 	let first = user_tap_dir(&data_dir, "probe/first");
 	let second = user_tap_dir(&data_dir, "probe/second");
-	write_agent_manifest(&first, "dup", "var", "# first tap manifest\n");
-	write_agent_manifest(&second, "dup", "var", "# second tap manifest\n");
+	write_agent_manifest(&first, "dup", "# first tap manifest\n");
+	write_agent_manifest(&second, "dup", "# second tap manifest\n");
 	install_taps_file(
 		&data_dir,
 		&[("probe/first", Some(&first)), ("probe/second", Some(&second))],
 	);
 
-	let (raw, tap_root) = fetch_manifest("dup:var", &registry_config())
+	let (raw, tap_root) = fetch_manifest("dup", &registry_config())
 		.await
 		.expect("duplicate manifests resolve");
 	assert_eq!(raw, "# first tap manifest\n", "first tap wins");
@@ -820,14 +1006,12 @@ async fn fetch_manifest_first_tap_wins_on_duplicate_manifests() {
 #[cfg(unix)]
 async fn fetch_manifest_errors_on_unreadable_fresh_cache() {
 	let _guard = DataDirGuard::new();
-	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
-	let cache = data_dir.join("agents").join("locked");
-	std::fs::create_dir_all(&cache).expect("create cache dir");
-	let cache_file = cache.join("var.toml");
+	default_tap_dir();
+	let cache_file = built_in_cache_file("locked");
 	std::fs::write(&cache_file, "cached manifest").expect("write cache");
 	chmod(&cache_file, 0o000);
 
-	let err = fetch_manifest("locked:var", &registry_config())
+	let err = fetch_manifest("locked", &registry_config())
 		.await
 		.expect_err("unreadable cache must fail");
 	assert!(
@@ -842,18 +1026,15 @@ async fn fetch_manifest_errors_on_unreadable_fresh_cache() {
 #[cfg(unix)]
 async fn fetch_manifest_serves_stale_cache_and_refreshes_in_background() {
 	let _guard = DataDirGuard::new();
-	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
 	let default_tap = default_tap_dir();
-	write_agent_manifest(&default_tap, "stale", "var", "# fresh tap manifest\n");
+	write_agent_manifest(&default_tap, "stale", "# fresh tap manifest\n");
 
-	let cache_dir = data_dir.join("agents").join("stale");
-	std::fs::create_dir_all(&cache_dir).expect("create cache dir");
-	let cache_file = cache_dir.join("var.toml");
+	let cache_file = built_in_cache_file("stale");
 	std::fs::write(&cache_file, "# stale cached manifest\n").expect("write stale cache");
 	age_beyond_ttl(&cache_file);
 
 	// The stale cache is served synchronously…
-	let (raw, _) = fetch_manifest("stale:var", &registry_config())
+	let (raw, _) = fetch_manifest("stale", &registry_config())
 		.await
 		.expect("stale cache still resolves");
 	assert_eq!(raw, "# stale cached manifest\n");
@@ -885,40 +1066,29 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 
 	// A user tap providing a duplicate role — first tap wins.
 	let user_tap = user_tap_dir(&data_dir, "probe/dup");
-	write_agent_manifest(
-		&user_tap,
-		"dup",
-		"both",
-		"# Title: Dup\n# Description: From the user tap.\n",
-	);
+	write_agent_manifest(&user_tap, "both", "# Title: Dup\n# Description: From the user tap.\n");
 	// A second user tap whose directory does not exist (agents_dir() errors).
 	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
 
 	// Default tap: one good agent, a duplicate of the user tap's role, a stray
-	// non-directory entry, an unreadable category, and a directory named *.toml.
+	// non-manifest file, an unreadable subdirectory, and a directory named *.toml.
 	write_agent_manifest(
 		&default_tap,
-		"dup",
 		"both",
 		"# Title: Dup\n# Description: From the default tap.\n",
 	);
-	write_agent_manifest(
-		&default_tap,
-		"good",
-		"var",
-		"# Title: Good\n# Description: The good agent.\n",
-	);
-	std::fs::write(default_tap.join("agents").join("stray.md"), "not a category").expect("write stray file");
+	write_agent_manifest(&default_tap, "good", "# Title: Good\n# Description: The good agent.\n");
+	std::fs::write(default_tap.join("agents").join("stray.md"), "not a manifest").expect("write stray file");
 	let locked = default_tap.join("agents").join("locked");
-	std::fs::create_dir_all(&locked).expect("create locked category");
+	std::fs::create_dir_all(&locked).expect("create locked subdirectory");
 	chmod(&locked, 0o000);
-	let toml_dir = default_tap.join("agents").join("good").join("dirnamed.toml");
+	let toml_dir = default_tap.join("agents").join("dirnamed.toml");
 	std::fs::create_dir_all(&toml_dir).expect("create dir named like a manifest");
 
 	let agents = list_all_tap_agents().expect("enumeration succeeds");
 	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
-	assert_eq!(roles, vec!["dup:both", "good:var"], "skipped entries");
-	let dup = agents.iter().find(|a| a.role == "dup:both").expect("dup listed");
+	assert_eq!(roles, vec!["both", "good"], "skipped entries");
+	let dup = agents.iter().find(|a| a.role == "both").expect("dup listed");
 	assert_eq!(dup.source_tap, "probe/dup", "first tap wins over the default tap");
 
 	chmod(&locked, 0o755);

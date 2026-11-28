@@ -21,6 +21,9 @@
 //! Windows.
 #![cfg(unix)]
 
+#[path = "fixtures/template_with_assistant_role.rs"]
+mod template_with_assistant_role;
+
 use std::process::{Command, Stdio};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -83,7 +86,8 @@ async fn spawn_openai_stub() -> String {
 
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	// Learning is on by default and its retrieval/distill models point at

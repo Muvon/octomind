@@ -286,3 +286,17 @@ async fn a_call_with_a_field_other_than_script_is_refused() {
 		);
 	}
 }
+
+#[test]
+fn search_tools_is_registered_as_a_read_only_tool_of_the_core_server_when_it_is_offered() {
+	let mut config = config(true);
+	// A list longer than the threshold collapses, which is when `search_tools` is sent.
+	config.mcp_response_tokens_threshold = 1;
+	let (definitions, _) = split(&config, session_tools());
+
+	assert!(names(&definitions).contains(&SEARCH_TOOL_NAME));
+	assert!(crate::mcp::tool_shape::server_tool_is_read_only(
+		"core",
+		SEARCH_TOOL_NAME
+	));
+}

@@ -24,6 +24,9 @@ pub mod send;
 pub mod server;
 pub mod tap;
 #[cfg(test)]
+#[path = "../../tests/fixtures/template_with_assistant_role.rs"]
+pub(crate) mod template_with_assistant_role;
+#[cfg(test)]
 pub(crate) mod test_support;
 pub mod untap;
 pub mod vars;

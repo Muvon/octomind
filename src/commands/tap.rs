@@ -39,7 +39,7 @@ pub struct TapArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum TapCommand {
-	/// Create a new tap from the default tap's scaffold: render it, validate
+	/// Create a new tap from the built-in tap's scaffold: render it, validate
 	/// it, git-init it, and register it as a local tap ready for `octomind run`.
 	Init(TapInitArgs),
 }
@@ -50,9 +50,9 @@ pub struct TapInitArgs {
 	#[arg(value_name = "TAP")]
 	pub tap: String,
 
-	/// Starter agent's domain: `DOMAIN` or `DOMAIN:chief`. Defaults to the repo
-	/// name. The starter agent is always the domain's `chief`.
-	#[arg(long, value_name = "DOMAIN")]
+	/// Starter agent's name: lowercase letters, digits and hyphens. Defaults to the
+	/// repo name. The agent is written to `agents/<name>/default.toml`.
+	#[arg(long, value_name = "NAME")]
 	pub agent: Option<String>,
 
 	/// Destination directory (defaults to ./octomind-<repo>).
@@ -118,11 +118,8 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 				}
 			}
 			block_section("built-in");
-			block_row(
-				taps::DEFAULT_TAP,
-				&"(always active)".dimmed().to_string(),
-				taps::DEFAULT_TAP.len(),
-			);
+			let built_in = taps::built_in_tap()?.name;
+			block_row(&built_in, &"(always active)".dimmed().to_string(), built_in.len());
 			block_close_ok("tap", Some(&format!("{} user + 1 built-in", user_taps.len())));
 			println!();
 		}

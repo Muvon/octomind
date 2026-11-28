@@ -25,9 +25,31 @@ use std::path::PathBuf;
 
 fn base_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
+}
+
+#[test]
+fn default_template_has_no_local_assistant_role() {
+	// `default = "assistant"` must reach the tap agent, which a local role of that name would hide.
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+	config.build_role_map();
+	assert_eq!(config.default, "assistant");
+	assert!(!config.has_role("assistant"));
+}
+
+#[test]
+fn config_with_zero_local_roles_loads() {
+	let mut value: toml::Value =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
+	value.as_table_mut().unwrap().remove("roles");
+	let mut config: Config = value.try_into().expect("a config without roles parses");
+	config.build_role_map();
+	assert!(config.roles.is_empty());
+	assert!(config.role_map.is_empty());
 }
 
 fn make_role(name: &str, server_refs: Vec<String>, allowed_tools: Vec<String>) -> Role {

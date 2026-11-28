@@ -127,7 +127,7 @@ type = "http"
 url = "http://localhost:3000/mcp"
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general", "assistant:chief"]
+auto_bind = ["developer", "assistant"]
 ```
 
 ### Tool Filtering
@@ -172,10 +172,10 @@ type = "http"
 url = "http://localhost:3000/mcp"
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
-This server will automatically be available for the `developer:general` tap agent on next startup.
+This server will automatically be available for the `developer` tap agent on next startup.
 
 ## Core Server Tools
 
@@ -207,39 +207,42 @@ The ID shown illustrates the format; it must be replaced with a block ID cited i
 
 ### `context` — Search the Conversation Behind a Delegation
 
-Same-workspace `tap run` specialists can search earlier user decisions, assistant discussion, and selected evidence
+Same-workspace `tap run` agents can search earlier user decisions, assistant discussion, and selected evidence
 from their authorized ancestors. Pass `query` and optionally `scope` (`ancestors`, `parent`, or `root`) and `limit`
 (defaults to 5, with a maximum of 12). Results include a source label, ancestor depth, reference, and exact excerpt.
 Check the lexical and semantic coverage flags before treating an empty result as conclusive.
 
 Each ancestor is fixed at its dispatch boundary. Resuming an existing run keeps the same boundaries. Use `tap send` to
-send new instructions to a running specialist. Use `recall` with a compression block ID to retrieve exact archived
+send new instructions to a running agent. Use `recall` with a compression block ID to retrieve exact archived
 material from the current session.
 
 If the parent cancels and removes a turn, ancestor search excludes it, including from existing grants.
 
-### `tap` tool: Run Specialist Roles from Taps
+### `tap` tool: Run Agents from Taps
 
-Delegate work to a specialist role installed via a tap (e.g. `developer:general`). Each role brings its own system
+Delegate work to an agent installed via a tap (e.g. `developer`). Each agent brings its own system
 prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, and stop a
-run. The runtime matches the prompt to a specialist. The caller can also name one with `role`.
+run. The runtime matches the prompt to an agent. The caller can also name one with `role`.
+
+An agent that declares the `orchestration` capability can also start copies of itself: `role` set to its own name, or no `role` when it has no `# Uses:` header. Each copy is a fresh session of the same agent, with no memory of the caller's conversation. Several writable copies can run at once for independent parts, each on its own files. A copy cannot start further copies; its `run` returns an error telling it to do its part itself.
 
 **Parameters:**
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
 | `action` | string, required | `"run"`, `"list"`, `"stop"`, `"send"`, `"capability"`, `"workflow"` |
-| `prompt` | string | Task for `run` (the runtime matches it to a specialist), user message for `send`, or capability intent for `capability`. Required for those actions. |
-| `role` | string | Specialist to start for a new `run` without matching: a full tag (`developer:general`) or a bare domain (its `chief`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. |
-| `session` | string | Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
+| `prompt` | string | Task for `run` (the runtime matches it to an agent), user message for `send`, or capability intent for `capability`. Required for those actions. |
+| `role` | string | Agent to start for a new `run` without matching: an agent name (`developer`), among the agents the caller may reach. Optional. Ignored when resuming with `session`. |
+| `readonly` | boolean | With `run`, `true` starts the child in a read-only session: only tools whose MCP `readOnlyHint` annotation is true are offered and can run, so the child has no shell and cannot delegate. Optional, default `false`. A run keeps the mode it started with: `true` together with `session` on a run that was started writable is an error. |
+| `session` | string | Run id (e.g. `tap-developer-a3f1c2`). Required for `stop` and `send`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
 | `name` | string | Tap workflow name for `workflow`; omit to list installed workflows. |
 | `input` | string | Input text for `workflow` (required with `name`). |
 
 | Action | Description |
 |--------|-------------|
-| `run` | Match `prompt` to a specialist and launch it in the background (or resume a run via `session`, which reuses the original role without matching). With `role`, start that specialist without matching. Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no specialist matches, it starts nothing and returns an error that lists the closest ones. See [Specialist matching](#specialist-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
-| `send` | Queue a user prompt for a running specialist owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
+| `run` | Match `prompt` to an agent and launch it in the background (or resume a run via `session`, which reuses the original role without matching). With `role`, start that agent without matching. Returns `{id, role, title, workdir, message}` immediately and injects the reply later. If no agent matches, it starts nothing and returns an error that lists the closest ones. See [Agent matching](#agent-matching). Resuming a run that is still executing a prior turn is rejected with a busy error; use `send` to queue a follow-up while it runs. |
+| `send` | Queue a user prompt for a running agent owned by this session. Returns immediately; the child processes prompts in order on subsequent turns, keeping its conversation and current work. Requires non-empty `session` and `prompt`. Finished runs must be resumed with `run`; workflows do not accept prompts. A full queue or a run closing its input returns an error. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
 | `capability` | Run the prompt through the same skill/capability auto-activation path used for user messages. |
@@ -247,27 +250,26 @@ run. The runtime matches the prompt to a specialist. The caller can also name on
 
 ```jsonl
 {"action": "run", "prompt": "Review src/main.rs and report concrete bugs."}
-{"action": "run", "prompt": "Audit this auth module", "role": "developer:general"}
+{"action": "run", "prompt": "Audit this auth module", "role": "developer"}
 {"action": "list"}
-{"action": "send", "session": "tap-developer-general-a3f1c2", "prompt": "Also check cancellation before you finish."}
-{"action": "stop", "session": "tap-developer-general-a3f1c2"}
-{"action": "run", "session": "tap-developer-general-a3f1c2", "prompt": "Check the error handling too."}
+{"action": "send", "session": "tap-developer-a3f1c2", "prompt": "Also check cancellation before you finish."}
+{"action": "stop", "session": "tap-developer-a3f1c2"}
+{"action": "run", "session": "tap-developer-a3f1c2", "prompt": "Check the error handling too."}
 ```
 
 Replace the sample session IDs with IDs returned by `run` or `list`.
 
-#### Specialist matching
+#### Agent matching
 
-The candidates are the agents the caller may reach. A tap agent reaches the other agents of its own domain plus what its
-`# Uses:` header declares (a bare domain is that domain's `chief`, a full tag is that agent, `*` is the `chief` of every
-other domain). A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
+The candidates are the agents the caller may reach. The `# Uses:` header of a tap agent declares which agents it reaches: a comma-separated list of agent names, or `*` for every other
+agent. An agent with the header declares the `orchestration` capability; in the community tap only `assistant` carries it.  A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
 
 When nothing matches, `run` starts nothing and returns an error that lists the five best-ranked candidates by name,
 title and description. The caller can send the task again with `role` set to one of those names: that agent starts
-without matching. `role` reaches only the same candidates. Any other name starts nothing and returns the same list. A
-caller that reaches no agent gets `No specialist matches this task. Do it with the tools you have, or report that it is
+without matching. `role` reaches only the same candidates. A `role` outside the caller's reach is refused with an error that lists the names it can pass instead. A
+caller that reaches no agent gets `No agent matches this task. Do it with the tools you have, or report that it is
 outside what you can do.`
 
 **Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs
@@ -278,7 +280,7 @@ normally prompt stdin instead return a structured error. Resolve interactive pla
 environment variables before delegation:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 The other orchestration tools are [`schedule`](#schedule-tool-scheduled-messages-and-tool-calls) and `monitor`. `monitor` runs an
@@ -329,9 +331,9 @@ session resumes; they do not fire while the process is stopped.
 Direct tool calls must be available in the session both when scheduled and when fired. Scheduling does not bypass normal
 permissions or guardrails: they apply at fire time. Tool calls use the working directory captured when scheduling, and
 results and errors arrive in the session inbox. Schedules are session-bound, not system cron. Repeating tool calls skip
-ticks while the same schedule is busy instead of overlapping or queuing executions; a launched `tap` specialist counts
+ticks while the same schedule is busy instead of overlapping or queuing executions; a launched `tap` run counts
 as busy until it finishes. Removing a schedule stops future firings only; use `tap(action="stop", session="<run-id>")`
-to cancel an already launched specialist.
+to cancel an already launched run.
 
 For a repeating timer, supply both `when` and `every`; a time interval alone is rejected. Give repeating messages a stop
 condition. Call `schedule`:
@@ -341,7 +343,7 @@ condition. Call `schedule`:
 {"command": "list"}
 ```
 
-When `tap` is enabled, schedule a specialist run directly with ordinary `tap` arguments nested under
+When `tap` is enabled, schedule an agent run directly with ordinary `tap` arguments nested under
 `tool_call.arguments` — there are no tap-specific schedule fields:
 
 ```json
@@ -743,7 +745,7 @@ need semantic matching. Check missing environment variables if capability activa
 
 **Where are persisted servers?** They are in the data directory's `config/` subdirectory. On macOS/Linux the default is
 `~/.local/share/octomind/config/`; on Windows it is `%LOCALAPPDATA%/octomind/config/`. `OCTOMIND_DATA_DIR` relocates
-that data tree. Exact role tags matter: `developer` does not match `developer:general`.
+that data tree. Exact role names matter for `auto_bind`.
 
 ## Source Reference
 

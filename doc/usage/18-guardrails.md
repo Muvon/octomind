@@ -202,7 +202,7 @@ roles   = ["developer"]                    # optional: role filter
 | `command` | path | yes | script path, relative to workdir (or absolute) |
 | `match` | regex | no | regex on user message text; empty = matches all messages |
 | `when` | enum | no | `"first"` (first message only) or `"any"` (default, every message) |
-| `roles` | list of strings | no | role filter; exact (`developer:general`) or domain prefix (`developer` matches `developer:general`; `developer:*` is not a glob) |
+| `roles` | list of strings | no | role filter; exact role name (for example `developer`); an entry with `:` is rejected when the guardrails load |
 
 ### Script contract
 
@@ -221,7 +221,7 @@ roles   = ["developer"]                    # optional: role filter
 
 | Variable | Description |
 |---|---|
-| `OCTOMIND_ROLE` | current session role (e.g. `developer:general`) |
+| `OCTOMIND_ROLE` | current session role (e.g. `developer`) |
 | `OCTOMIND_WORKDIR` | session working directory path |
 | `OCTOMIND_SCRIPT_DIR` | directory of the original script (`$0` is the session snapshot copy) |
 | `PIPE_NAME` | the `name` field from the `[[pipe]]` entry |
@@ -442,7 +442,7 @@ script = ".agents/validators/remind-tests.sh"
 | `name` | string | yes | unique identifier, used for the cursor and the XML tag |
 | `match` | regex | no | matched against the assistant's final message text |
 | `when` | list of `+/-target` | no | history check vs the slice since last run |
-| `roles` | list of strings | no | role filter; exact (`developer:general`) or domain prefix (`developer` matches `developer:general`; `developer:*` is not a glob) |
+| `roles` | list of strings | no | role filter; exact role name (for example `developer`); an entry with `:` is rejected when the guardrails load |
 | `script` | path | yes | relative to workdir or absolute |
 
 ### Filter short-circuit order (cheapest first)
@@ -520,7 +520,7 @@ if "validation" not in payload["assistant_text"].lower():
 
 ```bash
 chmod +x .agents/validators/validation-statement
-printf '%s' '{"validator":"validation-statement","role":"developer:general","assistant_text":"Changed the docs.","triggered_by":[]}' | .agents/validators/validation-statement
+printf '%s' '{"validator":"validation-statement","role":"developer","assistant_text":"Changed the docs.","triggered_by":[]}' | .agents/validators/validation-statement
 ```
 
 This direct check emits feedback and exits 1; include a validation statement to obtain exit 0. Guardrail validators have
@@ -655,7 +655,7 @@ octomind run developer
 
 **Why does a deny rule not match?** Its target is a resolved capability name, not a tool name. Use the ownership hook
 above; tools without an owner need an unfiltered hook or another enforcement mechanism. `has` checks config server
-membership, and literal `developer` role filters match domain prefixes; `developer:*` is not supported.
+membership, and a `roles` filter matches exact role names.
 
 **Why is script feedback absent?** Hooks/validators inject only non-empty stdout on non-zero exit. A timeout or spawn
 failure does not inject repair feedback. Check executable permissions and the script path. The direct child is killed on

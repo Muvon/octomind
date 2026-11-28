@@ -24,6 +24,7 @@
 //! Validators run only on the final assistant message (end of turn),
 //! passing the assistant content to each skill's `validate` script.
 
+use crate::agent::taps::TapSkillDir;
 use crate::config::guardrails::{MODE_APPLY, MODE_OBSERVE};
 use crate::plugins::judgement;
 use crate::plugins::protocol::{RuleOutcome, SkillDir};
@@ -281,8 +282,10 @@ fn observed_only(binding: &SkillBinding) -> bool {
 
 /// Initialize the skill pool for the given agent domain (e.g., "developer").
 /// Scans all taps for skills with declarative rules whose `domains` field
-/// includes the given domain.
+/// includes the namespace of the given agent tag (e.g. "developer" for `developer:rust`).
 pub fn init_pool(domain: &str) {
+	// Skills are bound to namespaces: a variant session gets the skills of its namespace.
+	let domain = crate::agent::registry::namespace_of(domain);
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,
 		Err(e) => {
@@ -296,22 +299,7 @@ pub fn init_pool(domain: &str) {
 
 	// 1. Tap skills (highest priority)
 	for tap in &taps {
-		let skills_dir = match tap.skills_dir() {
-			Ok(d) if d.exists() => d,
-			_ => continue,
-		};
-
-		let dir_entries = match std::fs::read_dir(&skills_dir) {
-			Ok(e) => e,
-			Err(_) => continue,
-		};
-
-		for entry in dir_entries.flatten() {
-			let skill_dir = entry.path();
-			if !skill_dir.is_dir() {
-				continue;
-			}
-
+		for TapSkillDir { owner, dir: skill_dir } in tap.skill_dirs().unwrap_or_default() {
 			// Must have SKILL.md with metadata
 			let skill_md = skill_dir.join("SKILL.md");
 			let content = match std::fs::read_to_string(&skill_md) {
@@ -319,7 +307,7 @@ pub fn init_pool(domain: &str) {
 				Err(_) => continue,
 			};
 
-			let meta = match super::skill::parse_skill_meta(&content) {
+			let meta = match super::skill::parse_tap_skill_meta(&content, owner.as_deref()) {
 				Some(m) => m,
 				None => continue,
 			};
@@ -909,15 +897,15 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 
 		// Find the skill's validate script across taps
 		for tap in &taps {
-			let skills_dir = match tap.skills_dir() {
-				Ok(d) if d.exists() => d,
-				_ => continue,
-			};
-
-			let skill_dir = skills_dir.join(skill_name);
-			if !skill_dir.is_dir() {
+			let Some(skill) = tap
+				.skill_dirs()
+				.unwrap_or_default()
+				.into_iter()
+				.find(|skill| skill.dir.file_name().and_then(|n| n.to_str()) == Some(skill_name.as_str()))
+			else {
 				continue;
-			}
+			};
+			let skill_dir = skill.dir;
 
 			let validate_script = skill_dir.join("validate");
 			if !validate_script.exists() {

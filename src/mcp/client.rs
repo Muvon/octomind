@@ -181,7 +181,7 @@ pub struct OctoClientHandler {
 
 impl OctoClientHandler {
 	fn new(server: &McpServerConfig) -> Self {
-		let (_, _, _, session_id, _) = super::process::get_session_context();
+		let (_, _, session_id, _) = super::process::get_session_context();
 		Self {
 			server_name: server.name().to_string(),
 			session_id: (!session_id.is_empty()).then_some(session_id),
@@ -546,11 +546,10 @@ const WATCH_RESOURCE_LINKS_EXTENSION: &str = "io.muvon/watch-resource-links";
 /// the initialize handshake (legacy). The octomind session context rides in
 /// the experimental capabilities, same as before.
 fn build_client_info(protocol_version: ProtocolVersion, shell: bool) -> ClientConfig {
-	let (role, spec, project, session_id, workdir) = super::process::get_session_context();
+	let (role, project, session_id, workdir) = super::process::get_session_context();
 	let git = octolib::utils::is_git_repo(std::path::Path::new(&workdir));
 	let mut session = serde_json::json!({
 		"role": role,
-		"spec": spec,
 		"project": project,
 		"session_id": session_id,
 		"workdir": workdir,

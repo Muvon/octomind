@@ -23,10 +23,12 @@ subdirectory. Keep stdout reserved for JSON-RPC; check the process exit status a
 logging initializes.
 
 The positional role/tag is optional. When omitted, the agent uses the default role from your config (the shipped default
-is `assistant:chief`). `TAG` can be:
+is `assistant`). `TAG` can be:
 
-- A **local role name** from your config (e.g. `assistant`), or
-- A **tap agent** addressed as `category:variant` (e.g. `developer:general`).
+- A **local role name** from your config, or
+- A **tap agent** addressed by its name (e.g. `developer`).
+
+A local role with the same name as a tap agent takes priority. A tag written with `:` is an error that shows the flat form.
 
 For a tap role, launch:
 
@@ -34,8 +36,8 @@ For a tap role, launch:
 octomind acp developer
 ```
 
-Omitting the tag uses `assistant:chief` in the shipped config; it does not select the local `assistant` role. Tap
-tags must resolve from installed/fetched manifests. The built-in default tap is `muvon/tap`.
+Omitting the tag uses the config `default`, which is `assistant`. Tap
+agent names must resolve from installed/fetched manifests. The built-in default tap is `muvon/tap`.
 
 Each ACP session also spawns a background inbox monitor. It processes internally queued schedules, monitors, tap runs,
 detached jobs, skills, guardrail feedback, and background-agent results without waiting for a user prompt; these arrive
@@ -46,7 +48,8 @@ in the editor as user-side message chunks. ACP does not start the `octomind send
 
 | Flag | Description |
 |------|-------------|
-| `TAG` | Agent tag (e.g. `developer:general`) or local role name. Omit for the config default. |
+| `TAG` | Agent name (e.g. `developer`) or local role name. Omit for the config default. |
+| `--readonly` | Offer and run only tools whose MCP `readOnlyHint` annotation is true. A tool with no hint counts as mutable, so the session has no shell and cannot delegate. The mode is fixed for the session and restored on resume. This restricts the tools the model can call; scripts you configured yourself (skill `validate` scripts, guardrail scripts, hooks) still run. |
 | `--name`, `-n` | Preferred session name for the next `new_session` request |
 | `--resume`, `-r` | Resume a specific session by name on the next `new_session` |
 | `--resume-recent` | Resume the most recent session for the current working directory |
@@ -99,8 +102,8 @@ require("codecompanion").setup({
 })
 ```
 
-To select a tap agent instead of the explicit local `[[roles]]` entry, replace `assistant` with a tag such as
-`developer:general`; `{ "acp" }` uses the `assistant:chief` tap default.
+To select a different tap agent, replace `assistant` with its name, such as
+`developer`; `{ "acp" }` uses the config default, `assistant`.
 
 ### avante.nvim
 
@@ -134,7 +137,7 @@ Zed has native ACP support and configures external ACP agents under `agent_serve
 }
 ```
 
-Replace `assistant` with a tap tag such as `developer:general`, or drop the second argument to use the configured default.
+Replace `assistant` with another agent name such as `developer`, or drop the second argument to use the configured default.
 See Zed's external-agent configuration docs for the authoritative schema.
 
 ## JetBrains IDEs
@@ -143,7 +146,7 @@ Supported via the AI Assistant plugin. Configure an external ACP agent:
 
 1. Open **Settings > Tools > AI Assistant**
 2. Add external agent
-3. Set command: `octomind acp assistant` (replace `assistant` with a tap tag such as `developer:general`, or omit it for
+3. Set command: `octomind acp assistant` (replace `assistant` with another agent name such as `developer`, or omit it for
    the configured default)
 
 See the JetBrains AI Assistant external-agent documentation for the authoritative schema.

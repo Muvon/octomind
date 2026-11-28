@@ -49,7 +49,7 @@ Interactive CLI roles receive a narrow overlay for `schedule` and `monitor`; pip
 ordinary role merge.
 
 For example, add this role to a sibling `roles.toml` in your config directory. The full role definition is needed when
-replacing a same-name entry; `developer` and `developer:general` are different exact-match names.
+replacing a same-name entry; names match exactly.
 
 ```toml
 [[roles]]

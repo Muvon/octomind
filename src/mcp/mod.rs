@@ -247,6 +247,15 @@ pub struct McpFunction {
 	pub annotations: Option<rmcp::model::ToolAnnotations>,
 }
 
+impl McpFunction {
+	/// The tool's `readOnlyHint`; `None` when it declares none.
+	pub fn read_only_hint(&self) -> Option<bool> {
+		self.annotations
+			.as_ref()
+			.and_then(|annotations| annotations.read_only_hint)
+	}
+}
+
 // Initialize all servers for a specific mode/role ONCE at startup
 pub async fn initialize_servers_for_role(config: &crate::config::Config) -> Result<()> {
 	initialize_servers_for_role_with_callback(config, None).await
@@ -588,7 +597,9 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 
 	let mut functions = Vec::new();
 	if context {
-		functions.push((None, core::context::definition()));
+		let definition = core::context::definition();
+		register_read_only_hints("core", std::slice::from_ref(&definition));
+		functions.push((None, definition));
 	}
 	let session_id = crate::session::context::current_session_id();
 	for server in &config.mcp.servers {
@@ -604,12 +615,9 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 			McpConnectionType::Builtin => None,
 			McpConnectionType::Http | McpConnectionType::Stdin => Some(server.name().to_string()),
 		};
-		functions.extend(
-			server_functions_for(server, config)
-				.await
-				.into_iter()
-				.map(|function| (source.clone(), function)),
-		);
+		let found = server_functions_for(server, config).await;
+		register_read_only_hints(server.name(), &found);
+		functions.extend(found.into_iter().map(|function| (source.clone(), function)));
 	}
 
 	// Include functions from dynamically added servers and agents.
@@ -617,47 +625,76 @@ pub(crate) async fn sourced_functions(config: &crate::config::Config) -> Vec<(Op
 	// servers that are already in the role's static config (see
 	// `handle_enable` / `activate_capability_inline` in `runtime::capability`),
 	// so this extend doesn't double-count tools.
-	functions.extend(
-		crate::mcp::runtime::dynamic::get_all_functions()
-			.into_iter()
-			.map(|function| {
-				(
-					crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&function.name),
-					function,
-				)
-			}),
-	);
-	functions.extend(
-		crate::mcp::runtime::dynamic_agents::get_all_functions()
-			.into_iter()
-			.map(|function| (None, function)),
-	);
+	for function in crate::mcp::runtime::dynamic::get_all_functions() {
+		let server = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&function.name);
+		if let Some(server) = &server {
+			register_read_only_hints(server, std::slice::from_ref(&function));
+		}
+		functions.push((server, function));
+	}
+	let agents = crate::mcp::runtime::dynamic_agents::get_all_functions();
+	register_read_only_hints("agent", &agents);
+	functions.extend(agents.into_iter().map(|function| (None, function)));
 
 	// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
 	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
-	functions.extend(
-		crate::mcp::core::local_tool::get_all_functions()
-			.into_iter()
-			.map(|function| (None, function)),
-	);
+	let local = crate::mcp::core::local_tool::get_all_functions();
+	register_read_only_hints(core::local_tool::SERVER_NAME, &local);
+	functions.extend(local.into_iter().map(|function| (None, function)));
+
+	if crate::session::context::current_session_mode().readonly {
+		retain_read_only(&mut functions);
+	}
 
 	// Code mode is how this session reaches external tools, so `code` comes
-	// with them whatever the role grants.
+	// with them whatever the role grants. Added after the read-only filter: in
+	// a read-only session its catalog then lists read-only tools only, and
+	// every call a script makes passes `read_only_refusal` like a direct call.
 	if config.mcp.code_mode && functions.iter().any(|(server, _)| server.is_some()) {
 		functions.insert(0, (None, code::get_code_function()));
 	}
-	// Builtin, dynamic and local tools declare their annotations in code rather
-	// than over the wire; register them the way an external inventory is.
-	for (_, function) in &functions {
-		crate::mcp::tool_shape::register_tool_read_only_hint(
-			&function.name,
-			function
-				.annotations
-				.as_ref()
-				.and_then(|annotations| annotations.read_only_hint),
-		);
-	}
 	functions
+}
+
+/// Record what `server` says about each tool: by tool name for how a call is classified, and
+/// by server and tool name for read-only sessions (see `tool_shape::server_tool_is_read_only`).
+pub(crate) fn register_read_only_hints(server: &str, functions: &[McpFunction]) {
+	for function in functions {
+		let hint = function.read_only_hint();
+		tool_shape::register_tool_read_only_hint(&function.name, hint);
+		tool_shape::register_server_tool_read_only_hint(server, &function.name, hint);
+	}
+}
+
+/// Keep the tools a read-only session may use: those whose `readOnlyHint` is
+/// true. No annotation means the tool may change state.
+fn retain_read_only(functions: &mut Vec<(Option<String>, McpFunction)>) {
+	functions.retain(|(_, function)| function.read_only_hint() == Some(true));
+}
+
+/// The tool error for a call a read-only session must not run, or `None` when
+/// the call may go on. The decision uses the hint of the server that will run
+/// the call. The builtin `code` tool passes: it is offered only with read-only
+/// tools in its catalog, and each call a script makes comes through here again.
+fn read_only_refusal(call: &McpToolCall) -> Option<McpToolResult> {
+	if !crate::session::context::current_session_mode().readonly {
+		return None;
+	}
+	// An unknown tool fails as unknown further on.
+	let server = tool_map::get_server_for_tool(&call.tool_name)?;
+	let builtin_code = call.tool_name == code::TOOL_NAME && server.connection_type() == McpConnectionType::Builtin;
+	if builtin_code || tool_shape::server_tool_is_read_only(server.name(), &call.tool_name) {
+		return None;
+	}
+	crate::log_debug!("read-only session refused tool '{}'", call.tool_name);
+	Some(McpToolResult::error(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		format!(
+			"This session is read-only: tool '{}' is not available because it is not marked read-only.",
+			call.tool_name
+		),
+	))
 }
 
 // Helper function to filter tools based on patterns
@@ -823,6 +860,10 @@ async fn try_execute_tool_call(
 	// Only execute if MCP has any servers configured
 	if config.mcp.servers.is_empty() && call.tool_name != core::context::TOOL_NAME {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
+	}
+
+	if let Some(refusal) = read_only_refusal(call) {
+		return Ok(refusal);
 	}
 
 	// Create the actual tool execution future (without cancellation handling)

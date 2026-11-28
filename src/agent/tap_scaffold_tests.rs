@@ -27,48 +27,48 @@ fn split_tap_id_rejects_bad_shapes() {
 }
 
 #[test]
-fn parse_agent_domain_accepts_domain_and_chief() {
-	assert_eq!(parse_agent_domain("legal").unwrap(), "legal");
-	assert_eq!(parse_agent_domain("legal:chief").unwrap(), "legal");
+fn parse_agent_name_accepts_a_namespace_name() {
+	assert_eq!(parse_agent_name("legal").unwrap(), "legal");
+	assert_eq!(parse_agent_name("legal-v2").unwrap(), "legal-v2");
 }
 
 #[test]
-fn parse_agent_domain_rejects_other_specs_and_bad_shapes() {
-	let err = parse_agent_domain("team:reviewer").unwrap_err().to_string();
-	assert!(err.contains("always the domain's `chief`"), "{err}");
-	assert!(err.contains("--agent <domain>:chief"), "{err}");
-	for bad in ["", ":chief", "dev:", "a:chief:c"] {
-		assert!(parse_agent_domain(bad).is_err(), "should reject {:?}", bad);
+fn parse_agent_name_rejects_a_colon_because_the_starter_is_a_namespace() {
+	let err = parse_agent_name("legal:chief").unwrap_err().to_string();
+	assert!(err.contains("lowercase letters, digits and hyphens"), "{err}");
+}
+
+#[test]
+fn parse_agent_name_rejects_names_a_tag_cannot_have() {
+	for bad in ["", "Legal", "my_agent", "a b", "agent.v2", "2fast", "-dash"] {
+		assert!(parse_agent_name(bad).is_err(), "should reject {:?}", bad);
 	}
 }
 
 #[test]
-fn build_tokens_defaults_domain_to_repo_name_and_spec_to_chief() {
+fn build_tokens_defaults_the_agent_to_the_repo_name() {
 	let tokens = build_tokens("acme", "team", None).unwrap();
 	assert_eq!(tokens["__TAP_ID__"], "acme/team");
 	assert_eq!(tokens["__TAP_OWNER__"], "acme");
 	assert_eq!(tokens["__TAP_NAME__"], "team");
 	assert_eq!(tokens["__TAP_REPOSITORY__"], "octomind-team");
-	assert_eq!(tokens["__AGENT_DOMAIN__"], "team");
-	assert_eq!(tokens["__AGENT_SPEC__"], "chief");
+	assert_eq!(tokens["__AGENT_NAME__"], "team");
+	assert!(!tokens.contains_key("__AGENT_SPEC__"));
 	assert_eq!(tokens["__YEAR__"].len(), 4);
 }
 
 #[test]
-fn build_tokens_agent_names_domain_only() {
-	for arg in ["legal", "legal:chief"] {
-		let tokens = build_tokens("acme", "team", Some(arg)).unwrap();
-		assert_eq!(tokens["__AGENT_DOMAIN__"], "legal");
-		assert_eq!(tokens["__AGENT_SPEC__"], "chief");
-	}
+fn build_tokens_agent_names_the_starter_namespace() {
+	let tokens = build_tokens("acme", "team", Some("legal")).unwrap();
+	assert_eq!(tokens["__AGENT_NAME__"], "legal");
 	assert!(build_tokens("acme", "team", Some("legal:contracts")).is_err());
 }
 
 #[test]
 fn render_replaces_tokens_and_preserves_runtime_placeholders() {
 	let tokens = build_tokens("acme", "team", None).unwrap();
-	let out = render("run __AGENT_DOMAIN__:__AGENT_SPEC__ in {{CWD}}", &tokens);
-	assert_eq!(out, "run team:chief in {{CWD}}");
+	let out = render("run __AGENT_NAME__ in {{CWD}}", &tokens);
+	assert_eq!(out, "run team in {{CWD}}");
 }
 
 #[test]
@@ -87,6 +87,15 @@ fn ensure_empty_dest_accepts_missing_and_empty() {
 	assert!(missing.is_dir());
 }
 
+#[test]
+fn the_token_list_names_the_agent_by_name() {
+	let tokens = build_tokens("acme", "team", None).unwrap();
+	let mut names: Vec<&str> = tokens.keys().map(String::as_str).collect();
+	names.sort_unstable();
+	assert!(names.contains(&"__AGENT_NAME__"), "{names:?}");
+	assert!(!names.iter().any(|name| name.contains("DOMAIN")), "{names:?}");
+}
+
 fn leftover_regex() -> Regex {
 	Regex::new(TOKEN_PATTERN).unwrap()
 }
@@ -95,10 +104,10 @@ fn leftover_regex() -> Regex {
 fn render_tree_renders_paths_and_contents() {
 	let src = tempfile::tempdir().unwrap();
 	let dest = tempfile::tempdir().unwrap();
-	let agent_dir = src.path().join("agents/__AGENT_DOMAIN__");
+	let agent_dir = src.path().join("agents").join("__AGENT_NAME__");
 	std::fs::create_dir_all(&agent_dir).unwrap();
 	std::fs::write(
-		agent_dir.join("__AGENT_SPEC__.toml"),
+		agent_dir.join("default.toml"),
 		"# __TAP_ID__\nwelcome = \"ready in {{CWD}}\"\n",
 	)
 	.unwrap();
@@ -106,9 +115,40 @@ fn render_tree_renders_paths_and_contents() {
 	let tokens = build_tokens("acme", "team", None).unwrap();
 	render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap();
 
-	let rendered = dest.path().join("agents/team/chief.toml");
+	let rendered = dest.path().join("agents/team/default.toml");
 	let content = std::fs::read_to_string(&rendered).unwrap();
 	assert_eq!(content, "# acme/team\nwelcome = \"ready in {{CWD}}\"\n");
+}
+
+#[test]
+fn render_tree_renders_the_agent_directory_with_its_owned_skills() {
+	let src = tempfile::tempdir().unwrap();
+	let dest = tempfile::tempdir().unwrap();
+	let skill_dir = src.path().join("agents/__AGENT_NAME__/skills/__AGENT_NAME__-notes");
+	std::fs::create_dir_all(&skill_dir).unwrap();
+	std::fs::write(skill_dir.join("SKILL.md"), "name: __AGENT_NAME__-notes\n").unwrap();
+	std::fs::write(src.path().join("agents/__AGENT_NAME__/default.toml"), "# __TAP_ID__\n").unwrap();
+
+	let tokens = build_tokens("acme", "team", Some("legal")).unwrap();
+	render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap();
+
+	assert!(dest.path().join("agents/legal/default.toml").is_file());
+	assert_eq!(
+		std::fs::read_to_string(dest.path().join("agents/legal/skills/legal-notes/SKILL.md")).unwrap(),
+		"name: legal-notes\n"
+	);
+	assert!(!dest.path().join("agents/__AGENT_NAME__").exists());
+}
+
+#[test]
+fn render_tree_fails_on_unresolved_token_in_a_directory_name() {
+	let src = tempfile::tempdir().unwrap();
+	let dest = tempfile::tempdir().unwrap();
+	std::fs::create_dir_all(src.path().join("agents/__UNKNOWN_TOKEN__")).unwrap();
+
+	let tokens = build_tokens("acme", "team", None).unwrap();
+	let err = render_tree(src.path(), dest.path(), &tokens, &leftover_regex()).unwrap_err();
+	assert!(err.to_string().contains("__UNKNOWN_TOKEN__"), "{err}");
 }
 
 #[test]

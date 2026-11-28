@@ -336,6 +336,7 @@ async fn a_reply_wait_with_work_in_flight_is_a_background_wait() {
 		tap_runs::init_for_session();
 		let (cancel_tx, _keep_alive) = watch::channel(false);
 		tap_runs::register_job(TapJob {
+			mode: Default::default(),
 			id: "keepalive-background-run".to_string(),
 			role: "developer:general".to_string(),
 			workdir: "/tmp".to_string(),

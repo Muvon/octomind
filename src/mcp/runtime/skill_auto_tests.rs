@@ -869,6 +869,97 @@ async fn load_env_skills_injection_failure_leaves_history_untouched() {
 	cleanup_session(&sid);
 }
 
+/// Install a skill owned by `owner` (`agents/<owner>/skills/<name>/`). Its frontmatter names
+/// the domain `ignored-domain`, which is never read: the location binds the skill.
+fn install_owned_skill(owner: &str, name: &str, rules: &[&str]) -> PathBuf {
+	let skill_dir = default_tap_dir().join("agents").join(owner).join("skills").join(name);
+	write_file(&skill_dir.join("SKILL.md"), &skill_md(name, "ignored-domain", rules));
+	write_file(
+		&default_tap_dir().join("agents").join(owner).join("default.toml"),
+		"# Title: T\n# Description: D\n",
+	);
+	skill_dir
+}
+
+#[test]
+#[serial]
+fn an_owned_skill_enters_the_pool_only_for_its_owner() {
+	let _guard = DataDirGuard::new();
+	install_owned_skill("writer", "owned-skill", &["content(draft)"]);
+
+	clear_pool();
+	init_pool("writer");
+	assert_eq!(pool_names("__default__"), vec!["owned-skill".to_string()]);
+
+	clear_pool();
+	init_pool("developer");
+	assert!(pool_names("__default__").is_empty(), "another agent does not get it");
+
+	clear_pool();
+	init_pool("ignored-domain");
+	assert!(
+		pool_names("__default__").is_empty(),
+		"the frontmatter `domains:` of an owned skill is not read"
+	);
+	clear_pool();
+}
+
+#[test]
+#[serial]
+fn an_owned_skill_binds_to_the_namespace_so_a_variant_session_gets_it() {
+	let _guard = DataDirGuard::new();
+	install_owned_skill("writer", "owned-skill", &["content(draft)"]);
+	install_tap_skill("shared-ns", "writer", &["content(draft)"]);
+
+	clear_pool();
+	init_pool("writer:fiction");
+	assert_eq!(
+		pool_names("__default__"),
+		vec!["shared-ns".to_string(), "owned-skill".to_string()],
+		"a session of `writer:fiction` gets the skills of the namespace `writer`"
+	);
+
+	clear_pool();
+	init_pool("writer-extra:fiction");
+	assert!(pool_names("__default__").is_empty(), "another namespace does not");
+	clear_pool();
+}
+
+#[test]
+#[serial]
+fn a_shared_skill_is_still_gated_by_its_domains() {
+	let _guard = DataDirGuard::new();
+	install_tap_skill("shared-two", "developer writer", &["content(rust)"]);
+	install_tap_skill("shared-manual", "", &["content(rust)"]);
+
+	clear_pool();
+	init_pool("writer");
+	assert_eq!(pool_names("__default__"), vec!["shared-two".to_string()]);
+
+	clear_pool();
+	init_pool("lawyer");
+	assert!(pool_names("__default__").is_empty());
+	clear_pool();
+}
+
+#[test]
+#[serial]
+fn shared_and_owned_skills_enter_the_pool_in_a_fixed_order() {
+	let _guard = DataDirGuard::new();
+	install_owned_skill("writer", "b-owned", &["content(x)"]);
+	install_owned_skill("writer", "a-owned", &["content(x)"]);
+	install_tap_skill("z-shared", "writer", &["content(x)"]);
+
+	clear_pool();
+	init_pool("writer");
+	assert_eq!(
+		pool_names("__default__"),
+		vec!["z-shared".to_string(), "a-owned".to_string(), "b-owned".to_string()],
+		"shared first, then the agent's skills by name"
+	);
+	clear_pool();
+}
+
 /// Write an executable validate script and return its path.
 fn write_validate_script(skill_dir: &Path, body: &str) {
 	write_file(&skill_dir.join("validate"), body);
@@ -1154,4 +1245,27 @@ async fn a_plugin_skill_match_is_reported_by_mode_and_observed_ones_stay_out() {
 			{"id": "watched", "outcome": "observed"}
 		])
 	);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_validators_runs_the_validate_script_of_an_owned_skill() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	let skill_dir = install_owned_skill("writer", "val-owned", &[]);
+	write_validate_script(&skill_dir, "#!/bin/sh\necho 'val-owned: broken' >&2\nexit 1\n");
+
+	let sid = "__skillauto_val_owned".to_string();
+	with_session_id(sid.clone(), async {
+		add_active_skill(&sid, "val-owned");
+		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
+		assert_eq!(
+			failures,
+			vec![("val-owned".to_string(), "val-owned: broken\n".to_string())]
+		);
+	})
+	.await;
+
+	cleanup_session(&sid);
+	get_retry_tracker().write().expect("retry lock").clear();
 }

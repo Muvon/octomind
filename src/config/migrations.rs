@@ -234,6 +234,11 @@ fn plan() -> MigrationPlan {
 				to: 34,
 				apply: remove_v34_sampling,
 			},
+			VersionMigration {
+				from: 34,
+				to: 35,
+				apply: upgrade_v35,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -367,8 +372,7 @@ fn add_default_plugin(document: &mut toml_edit::DocumentMut, enabled: bool) -> R
 /// Agents renamed when every domain's lead agent became `chief`: `(old tag, new tag)`.
 /// `developer:general` and `assistant:general` kept their names and are not listed.
 ///
-/// A record of the v30 config format change only: at runtime an old tag resolves through the
-/// alias symlink its tap keeps (`agent::taps::resolve_alias_tag`).
+/// A record of the v30 config format change only: v35 then rewrites the retired tags, these included.
 const V30_RENAMED_TAGS: [(&str, &str); 16] = [
 	("assistant:concierge", "assistant:chief"),
 	("developer:cto", "developer:chief"),
@@ -422,6 +426,279 @@ fn rename_v30_chief_tags(document: &mut toml_edit::DocumentMut, _template: &toml
 		}
 	}
 	Ok(())
+}
+
+/// The role names the templates shipped as an example, which would hide the tap agent of the
+/// same name once `default` is `assistant`.
+const EXAMPLE_ASSISTANT_ROLE: &str = "assistant";
+
+/// Every `assistant` role the default template shipped before v35, in the fields it had once
+/// the v34 step removed the sampling keys. Found in the history of the template.
+const SHIPPED_ASSISTANT_ROLES: [&str; 6] = [
+	// The last form, with its tool servers.
+	r#"
+name = "assistant"
+system = "You are helpful and knowledgeable assistant.\nWorking directory: {{CWD}}\n"
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+[mcp]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+"#,
+	// Before the `orchestration` server was added.
+	r#"
+name = "assistant"
+system = "You are helpful and knowledgeable assistant.\nWorking directory: {{CWD}}\n"
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+[mcp]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
+"#,
+	// Before the `runtime` server was added.
+	r#"
+name = "assistant"
+system = "You are helpful and knowledgeable assistant.\nWorking directory: {{CWD}}\n"
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+[mcp]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+"#,
+	// The brief form that carried its own `[roles.model]` block.
+	r#"
+name = "assistant"
+system = "You are helpful and knowledgeable assistant.\nWorking directory: {{CWD}}\n"
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+[model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 32768
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
+[mcp]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+"#,
+	// The oldest forms: one line of system prompt, no tool servers.
+	r#"
+name = "assistant"
+enable_layers = false
+layer_refs = []
+system = "You are a helpful assistant."
+"#,
+	r#"
+name = "assistant"
+enable_layers = false
+max_tokens = 8192
+layer_refs = []
+system = "You are a helpful assistant."
+"#,
+];
+
+/// What the migration tells a user whose `assistant` role differs from the shipped example.
+const EXAMPLE_ASSISTANT_KEPT_NOTICE: &str = "The local role `assistant` takes priority over the tap agent `assistant`; rename or remove it to use the tap agent.";
+
+/// v35: remove the `assistant` role of the old template, but only when it is exactly one of the
+/// shipped forms, compared by parsed fields so whitespace and comments do not matter. A role the
+/// user changed stays, with a notice that it hides the tap agent of the same name.
+fn drop_v35_example_assistant_role(document: &mut toml_edit::DocumentMut) -> Result<()> {
+	let parsed: toml::Value = toml::from_str(&document.to_string()).context("Failed to parse the configuration")?;
+	let Some(roles) = parsed.get("roles").and_then(toml::Value::as_array) else {
+		return Ok(());
+	};
+	let Some(index) = roles
+		.iter()
+		.position(|role| role.get("name").and_then(toml::Value::as_str) == Some(EXAMPLE_ASSISTANT_ROLE))
+	else {
+		return Ok(());
+	};
+
+	// The shipped forms are written with `[mcp]` and `[model]` at the top: a role's own tables.
+	let role = &roles[index];
+	let mut shipped = false;
+	for text in SHIPPED_ASSISTANT_ROLES {
+		let variant: toml::Value = toml::from_str(text).context("A shipped role does not parse")?;
+		shipped |= variant == *role;
+	}
+	if !shipped {
+		eprintln!("{EXAMPLE_ASSISTANT_KEPT_NOTICE}");
+		return Ok(());
+	}
+
+	match document.get_mut("roles") {
+		Some(toml_edit::Item::ArrayOfTables(tables)) => {
+			tables.remove(index);
+			if tables.is_empty() {
+				document.remove("roles");
+			}
+		}
+		Some(toml_edit::Item::Value(toml_edit::Value::Array(array))) => {
+			array.remove(index);
+			if array.is_empty() {
+				document.remove("roles");
+			}
+		}
+		_ => anyhow::bail!("roles: an array is required"),
+	}
+	Ok(())
+}
+
+/// v35: the retired community agent tags name their current agents, the example `assistant`
+/// role is gone, and `[registry]` names the built-in tap and its ref.
+fn upgrade_v35(document: &mut toml_edit::DocumentMut, template: &toml_edit::DocumentMut) -> Result<()> {
+	for notice in rewrite_v35_retired_agent_tags(document)? {
+		eprintln!("{notice}");
+	}
+	drop_v35_example_assistant_role(document)?;
+	let template_registry = required_table(template.as_table(), "registry", "embedded config")?;
+	let registry = ensure_table(document.as_table_mut(), template.as_table(), "registry", "user config")?;
+	for key in ["cache_ttl_hours", "tap", "ref"] {
+		merge_missing(registry, template_registry, key)?;
+	}
+	Ok(())
+}
+
+/// The community agent tags that were retired, one `old tag<TAB>current agent` row each. A tag
+/// of a private tap (`acme:reviewer`) is not in it and is never rewritten.
+const RETIRED_AGENT_TAGS: &str = include_str!("retired_agent_tags.tsv");
+
+/// The agent that replaced the retired tag `tag`; `None` for every other tag.
+fn current_agent_tag(tag: &str) -> Option<&'static str> {
+	RETIRED_AGENT_TAGS
+		.lines()
+		.filter_map(|row| row.split_once('\t'))
+		.find_map(|(retired, current)| (retired == tag).then_some(current))
+}
+
+/// Say that the retired `tag` is now `current`, once per tag.
+fn note_rewrite(notices: &mut Vec<String>, tag: &str, current: &str) {
+	let notice = format!("Agent tag '{tag}' is now '{current}'.");
+	if !notices.contains(&notice) {
+		notices.push(notice);
+	}
+}
+
+/// Rewrite the retired tags of the string list `key` of `owner` to their current agents, keeping
+/// the order and one entry of each agent.
+fn rewrite_tag_list(owner: &mut dyn toml_edit::TableLike, key: &str, notices: &mut Vec<String>) {
+	let Some(list) = owner.get_mut(key).and_then(toml_edit::Item::as_array_mut) else {
+		return;
+	};
+	if !list
+		.iter()
+		.filter_map(toml_edit::Value::as_str)
+		.any(|tag| current_agent_tag(tag).is_some())
+	{
+		return;
+	}
+	let mut rewritten: Vec<String> = Vec::new();
+	for tag in list.iter().filter_map(toml_edit::Value::as_str) {
+		let current = current_agent_tag(tag).inspect(|current| note_rewrite(notices, tag, current));
+		let tag = current.unwrap_or(tag).to_string();
+		if !rewritten.contains(&tag) {
+			rewritten.push(tag);
+		}
+	}
+	list.clear();
+	list.extend(rewritten);
+}
+
+/// Apply `change` to every table of the array `key` in `owner`, whether it is written as
+/// `[[key]]` tables or as an inline array.
+fn for_each_table_of(
+	owner: &mut dyn toml_edit::TableLike,
+	key: &str,
+	mut change: impl FnMut(&mut dyn toml_edit::TableLike),
+) {
+	let Some(entries) = owner.get_mut(key) else {
+		return;
+	};
+	if let Some(tables) = entries.as_array_of_tables_mut() {
+		tables.iter_mut().for_each(|table| change(table));
+	} else if let Some(array) = entries.as_array_mut() {
+		array
+			.iter_mut()
+			.filter_map(toml_edit::Value::as_inline_table_mut)
+			.for_each(|table| change(table));
+	}
+}
+
+fn item_text(item: &toml_edit::Item) -> String {
+	item.as_value()
+		.map_or_else(|| item.to_string(), |value| value.to_string().trim().to_string())
+}
+
+/// v35: rewrite the retired community agent tags to the agents that replaced them, in the same
+/// places as v30: the root `default` and the `[taps]` keys, and in the role filter of a plugin and
+/// `auto_bind` of an MCP server. Any other tag, `:` or not, stays as written. Where a `[taps]` key
+/// of the current agent exists already it keeps its value; where several retired keys name one
+/// agent, the first in file order is kept. One line per rewritten tag says what changed, and one
+/// line per dropped key with a different model names the kept key and the dropped ones.
+fn rewrite_v35_retired_agent_tags(document: &mut toml_edit::DocumentMut) -> Result<Vec<String>> {
+	let mut notices = Vec::new();
+	if let Some(taps) = document
+		.as_table_mut()
+		.get_mut("taps")
+		.map(|item| item.as_table_like_mut().context("taps must be a table"))
+		.transpose()?
+	{
+		let keys: Vec<String> = taps.iter().map(|(key, _)| key.to_string()).collect();
+		let mut dropped: Vec<(&str, Vec<&str>)> = Vec::new();
+		for key in &keys {
+			let Some(current) = current_agent_tag(key) else {
+				continue;
+			};
+			note_rewrite(&mut notices, key, current);
+			let item = taps.remove(key).context("the retired key is in taps")?;
+			match taps.get(current).map(item_text) {
+				None => {
+					taps.insert(current, item);
+				}
+				Some(kept_value) if kept_value != item_text(&item) => {
+					match dropped.iter_mut().find(|(kept, _)| *kept == current) {
+						Some((_, keys)) => keys.push(key.as_str()),
+						None => dropped.push((current, vec![key.as_str()])),
+					}
+				}
+				Some(_) => {}
+			}
+		}
+		for (kept, keys) in dropped {
+			let kept_value = taps.get(kept).map(item_text).unwrap_or_default();
+			notices.push(format!(
+				"[taps]: kept '{kept}' = {kept_value}; dropped {} with a different model.",
+				keys.iter().map(|key| format!("'{key}'")).collect::<Vec<_>>().join(", ")
+			));
+		}
+	}
+	if let Some(default) = document
+		.as_table_mut()
+		.get_mut("default")
+		.and_then(|item| item.as_value_mut())
+	{
+		if let Some((tag, current)) = default
+			.as_str()
+			.and_then(|tag| current_agent_tag(tag).map(|current| (tag.to_string(), current)))
+		{
+			note_rewrite(&mut notices, &tag, current);
+			// Keep the user's trailing comment on the line.
+			let decor = default.decor().clone();
+			*default = toml_edit::Value::from(current);
+			*default.decor_mut() = decor;
+		}
+	}
+	for_each_table_of(document.as_table_mut(), "plugins", |plugin| {
+		rewrite_tag_list(plugin, "roles", &mut notices)
+	});
+	if let Some(mcp) = document
+		.as_table_mut()
+		.get_mut("mcp")
+		.and_then(toml_edit::Item::as_table_like_mut)
+	{
+		for_each_table_of(mcp, "servers", |server| {
+			rewrite_tag_list(server, "auto_bind", &mut notices)
+		});
+	}
+	Ok(notices)
 }
 
 /// Add the `mcp.code_mode` switch (on: external tools go through the `code` tool); an existing value is kept.
@@ -753,7 +1030,45 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 		backup_path.display()
 	);
 
+	if migration.from_version < RETIRED_AGENT_TAGS_VERSION {
+		rewrite_retired_agent_tags_in_sibling_files(config_path)?;
+	}
+
 	Ok(true)
+}
+
+/// The version that rewrites the retired community agent tags (see `RETIRED_AGENT_TAGS`).
+const RETIRED_AGENT_TAGS_VERSION: u32 = 35;
+
+/// The other `*.toml` files beside `config.toml` (`mcp-*.toml` and the rest) are merged into the
+/// configuration, so the agent tags in them need the same rewrite. A file that does not parse
+/// is left alone: loading the configuration reports it.
+fn rewrite_retired_agent_tags_in_sibling_files(config_path: &Path) -> Result<()> {
+	let dir = config_path
+		.parent()
+		.context("The config file has no parent directory")?;
+	for entry in fs::read_dir(dir).with_context(|| format!("Failed to read {}", dir.display()))? {
+		let path = entry?.path();
+		if path == config_path || !path.is_file() || path.extension().is_none_or(|ext| ext != "toml") {
+			continue;
+		}
+		let original = fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+		let Ok(mut document) = original.parse::<toml_edit::DocumentMut>() else {
+			continue;
+		};
+		for notice in rewrite_v35_retired_agent_tags(&mut document)? {
+			eprintln!("{}: {notice}", path.display());
+		}
+		let rewritten = document.to_string();
+		if rewritten != original {
+			fs::write(&path, rewritten).with_context(|| format!("Failed to write {}", path.display()))?;
+			eprintln!(
+				"ℹ️ Retired agent tags in {} were rewritten to their current agents",
+				path.display()
+			);
+		}
+	}
+	Ok(())
 }
 
 /// Write the supervisor's tables where the plugin looks for them on its first run.

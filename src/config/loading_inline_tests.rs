@@ -75,8 +75,8 @@ fn test_role_parsing() {
 	let mut config: Config = toml::from_str(&test_config).expect("Failed to parse test config");
 	config.build_role_map();
 
-	// Verify roles were parsed (template has 4 roles + 3 appended by test = 7 in vec; assistant deduped in map → 6)
-	assert_eq!(config.roles.len(), 7);
+	// Verify roles were parsed (template has 3 roles + 3 appended by test)
+	assert_eq!(config.roles.len(), 6);
 	assert_eq!(config.role_map.len(), 6);
 	assert!(config.role_map.contains_key("tester"));
 

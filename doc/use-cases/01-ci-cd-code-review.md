@@ -31,7 +31,7 @@ Two facts shape everything below, so get them straight up front:
 > schema-constrained output. `--format jsonl` still controls the transport: the model response appears in `assistant`
 > events within the JSONL stream. Strict schema enforcement is requested from the provider.
 
-> **Note on agents:** the commands below use the `developer` domain, which starts the `developer:chief` tap agent. It ships via the built-in default tap
+> **Note on agents:** the commands below use the `developer` tap agent. It ships via the built-in default tap
 > `muvon/tap`, which auto-clones on first use and attempts updates on subsequent resolution. See [Tap
 > System](../integration/04-tap-system.md).
 

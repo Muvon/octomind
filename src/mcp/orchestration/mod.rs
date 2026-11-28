@@ -15,12 +15,12 @@
 //! Orchestration MCP provider — cross-domain delegation and session-flow control.
 //!
 //! Orchestrator-tier session primitives:
-//! - `tap`      — match a task to a registry specialist and run it (cross-domain delegation).
+//! - `tap`      — match a task to a registry agent and run it (cross-domain delegation).
 //! - `schedule` — inject deferred/recurring user messages (session-flow control).
 //! - `monitor`  — run event-stream commands with bounded, rate-limited injection.
 //!
 //! They live under the `orchestration` builtin server, granted only via the
-//! `orchestration` capability. Narrow domain specialists never see them.
+//! `orchestration` capability. Narrow domain agents never see them.
 
 use crate::mcp::McpFunction;
 

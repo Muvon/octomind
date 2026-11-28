@@ -51,6 +51,8 @@ pub struct AcpRunOptions {
 	/// session request with this text, so the client learns the cause instead
 	/// of seeing the pipe close.
 	pub startup_error: Option<String>,
+	/// Read-only and copy flags of every session this agent creates.
+	pub mode: crate::session::context::SessionMode,
 }
 
 /// Run the ACP agent over stdio until the client disconnects.

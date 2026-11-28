@@ -21,11 +21,10 @@ use clap::Parser;
 use octomind::Config;
 use serial_test::serial;
 
-const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
 fn template_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::commands::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -47,7 +46,7 @@ fn server_args_default_host_port_and_parse_overrides() {
 
 	let cli = Cli::try_parse_from([
 		"octomind",
-		"developer:general",
+		"developer",
 		"--host",
 		"0.0.0.0",
 		"-p",
@@ -59,7 +58,7 @@ fn server_args_default_host_port_and_parse_overrides() {
 		"https://panel.example",
 	])
 	.expect("full flag set parses");
-	assert_eq!(cli.args.tag.as_deref(), Some("developer:general"));
+	assert_eq!(cli.args.tag.as_deref(), Some("developer"));
 	assert_eq!(cli.args.host, "0.0.0.0");
 	assert_eq!(cli.args.port, 9000);
 	assert!(cli.args.sandbox);
@@ -71,19 +70,16 @@ fn server_args_default_host_port_and_parse_overrides() {
 
 #[tokio::test]
 #[serial]
-async fn execute_rejects_an_unknown_tap_tag() {
-	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
-	let dir = tempfile::tempdir().expect("sandbox dir");
-	std::env::set_var(DATA_DIR_KEY, dir.path());
-	let default_tap = octomind::agent::taps::Tap {
-		name: octomind::agent::taps::DEFAULT_TAP.to_string(),
-		local_path: None,
-	};
-	std::fs::create_dir_all(default_tap.local_dir().expect("default tap dir")).expect("create empty default tap");
-
+async fn execute_fails_for_a_variant_tag_that_no_tap_has() {
+	let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+	let data = tempfile::tempdir().expect("data dir");
+	// An existing built-in tap directory keeps the lookup offline.
+	std::fs::create_dir_all(data.path().join("taps/muvon/octomind-tap")).expect("tap dir");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let config = template_config();
+	octomind::agent::taps::set_built_in_tap(&config.registry);
 	let args = ServerArgs {
-		tag: Some("no-such-category:missing-variant".to_string()),
+		tag: Some("developer:general".to_string()),
 		host: "127.0.0.1".to_string(),
 		port: 0,
 		sandbox: false,
@@ -91,8 +87,8 @@ async fn execute_rejects_an_unknown_tap_tag() {
 	};
 	let err = execute(&args, &config)
 		.await
-		.expect_err("unknown tap tag fails resolution");
-	assert!(err.to_string().contains("Failed to fetch agent manifest"), "{err}");
+		.expect_err("a variant of no namespace fails resolution");
+	assert!(err.to_string().contains("not in any installed tap"), "{err}");
 }
 
 #[tokio::test]

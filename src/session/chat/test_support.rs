@@ -158,7 +158,8 @@ pub(crate) fn tool_call_response(tool_name: &str, arguments: serde_json::Value) 
 /// Merged config wired for the fake provider: real template + assistant role.
 pub(crate) fn fake_provider_config() -> Config {
 	let mut config: Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config.model = "ollama:fake-model".to_string();
 	// Scripted queues describe exact call sequences. Tests that exercise retry

@@ -70,8 +70,9 @@ octomind workflow myflow.toml --dry-run
 
 ## File format
 
-Save the following complete example as `my-workflow.toml`. Use installed role tags; the examples use
-`developer:general`, or you can substitute a local `[[roles]]` name. Model names shown are explicit overrides, not
+Save the following complete example as `my-workflow.toml`. A step `role` is an agent name; the examples use
+`developer`, or you can substitute a local `[[roles]]` name. A step that needs a specialty lists the skills to preload,
+for example `skills = ["spec-authoring"]`. Model names shown are explicit overrides, not
 shipped defaults; they must be available through your configured provider.
 
 ```toml
@@ -81,7 +82,7 @@ description = "Specify, implement, review, and score a requested change"
 # ── Sequential step (the default) ─────────────────────────────────────
 [[steps]]
 name    = "spec"
-role    = "developer:general"   # any installed role or tap-agent tag
+role    = "developer"   # any installed role or tap agent name
 prompt  = """
 User request:
 {{input}}
@@ -102,12 +103,12 @@ parallel = true
 
   [[steps.run]]
   name   = "security"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "Security review of:\n{{spec}}"
 
   [[steps.run]]
   name   = "performance"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "Performance review of:\n{{spec}}"
 
 # ── Loop block — generator/evaluator refine pattern ───────────────────
@@ -119,13 +120,13 @@ exit_when      = { output = "tester", contains = "NO ISSUES" }
 
   [[steps.run]]
   name    = "developer"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"            # see "Session modes" below
   prompt  = "Implement:\n{{spec}}"
 
   [[steps.run]]
   name    = "tester"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   prompt  = "Verify against spec:\n{{spec}}\n\nCode:\n{{developer}}\nReply NO ISSUES only when verification passes."
 
@@ -139,18 +140,18 @@ on_no_match = ["quick-summary"]
 
   [[steps.run]]
   name   = "deep-dive"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "Deep analysis:\n{{spec}}"
 
   [[steps.run]]
   name   = "quick-summary"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "One-line summary:\n{{spec}}"
 
 # ── Final step ────────────────────────────────────────────────────────
 [[steps]]
 name   = "evaluator"
-role   = "developer:general"
+role   = "developer"
 prompt = """
 Score 1-10:
 {{developer}}
@@ -178,18 +179,18 @@ max_transitions = 12
 
 [[steps]]
 name   = "implement"
-role   = "developer:general"
+role   = "developer"
 prompt = "Implement:\n{{input}}"
 
 [[steps]]
 name    = "review"
-role    = "developer:general"
+role    = "developer"
 session = "continue"
 prompt  = "Review the implementation. Reply PASS when complete."
 
 [[steps]]
 name    = "fix"
-role    = "developer:general"
+role    = "developer"
 session = "continue"
 prompt  = "Apply this review:\n{{review}}"
 
@@ -268,7 +269,7 @@ For example, add this sequential step after `spec` to include both its output an
 ```toml
 [[steps]]
 name = "source-review"
-role = "developer:general"
+role = "developer"
 prompt = "Review in {{CWD}}:\n{{spec}}\n<context>src/main.rs:1:40</context>"
 ```
 
@@ -290,6 +291,7 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 | `workdir` | _(orchestrator cwd)_ | Child working directory; relative paths resolve against the orchestrator cwd. Must exist and be a directory at execution time. |
 | `skills` | _(inherited environment)_ | List of skill names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_SKILLS` (comma-joined) — same env-loading mechanism an interactive session uses. |
 | `capabilities` | _(inherited environment)_ | Exact installed capability names to force-load before the first turn. Forwarded as `OCTOMIND_CAPABILITIES` (comma-joined); no aliases or fuzzy matching are applied. |
+| `readonly` | `false` | Start the step's agent with `--readonly`: only tools whose MCP `readOnlyHint` annotation is true are offered and can run, so it has no shell and cannot delegate. Must be `true` or `false`. |
 
 ### `parallel` mode: true enables concurrency
 
@@ -327,20 +329,20 @@ min_success = 2          # two successes out of five replicas are enough
   # Same task on two different models → two named sub-steps.
   [[steps.run]]
   name   = "opus"
-  role   = "developer:general"
+  role   = "developer"
   model  = "anthropic:claude-opus-4-8"
   prompt = "Solve:\n{{input}}"
 
   [[steps.run]]
   name   = "gpt"
-  role   = "developer:general"
+  role   = "developer"
   model  = "openai:gpt-5"
   prompt = "Solve:\n{{input}}"
 
   # Best-of-3 with one model + prompt → use count instead of copy-pasting.
   [[steps.run]]
   name   = "sampler"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "Solve:\n{{input}}"
   count  = 3
 ```
@@ -374,7 +376,7 @@ name = "dynamic-research"
 
 [[steps]]
 name   = "plan"
-role   = "developer:general"
+role   = "developer"
 prompt = "Break this into independent research tasks, each wrapped in <task>…</task>:\n{{input}}"
 
 [[steps]]
@@ -386,12 +388,12 @@ max_parallel = 4
 min_success  = 1
   [[steps.run]]
   name   = "researcher"
-  role   = "developer:general"
+  role   = "developer"
   prompt = "Research this task thoroughly:\n{{research}}"     # {{research}} = THIS branch's one task
 
 [[steps]]
 name   = "summary"
-role   = "developer:general"
+role   = "developer"
 prompt = "Synthesize all findings:\n\n{{researcher}}"         # {{researcher}} = every branch's output joined
 ```
 
@@ -492,7 +494,7 @@ name   = "gan"
 
 [[steps]]
 name   = "spec"
-role   = "developer:general"
+role   = "developer"
 prompt = "User request:\n{{input}}\n\nWrite an implementation spec."
 
 [[steps]]
@@ -503,19 +505,19 @@ exit_when      = { output = "tester", contains = "NO ISSUES" }
 
   [[steps.run]]
   name    = "developer"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   prompt  = "Implement:\n{{spec}}"
 
   [[steps.run]]
   name    = "tester"
-  role    = "developer:general"
+  role    = "developer"
   session = "continue"
   prompt  = "Verify against spec:\n{{spec}}\n\nImplementation:\n{{developer}}\nReply NO ISSUES only when verification passes."
 
 [[steps]]
 name   = "evaluator"
-role   = "developer:general"
+role   = "developer"
 prompt = """
 Score this 1-10:
 Spec: {{spec}}
@@ -550,25 +552,25 @@ min_success = 2                     # one model may fail; two is enough
 
   [[steps.run]]
   name   = "opus"
-  role   = "developer:general"
+  role   = "developer"
   model  = "anthropic:claude-opus-4-8"
   prompt = "Solve this. Be complete and correct:\n{{input}}"
 
   [[steps.run]]
   name   = "gpt"
-  role   = "developer:general"
+  role   = "developer"
   model  = "openai:gpt-5"
   prompt = "Solve this. Be complete and correct:\n{{input}}"
 
   [[steps.run]]
   name   = "gemini"
-  role   = "developer:general"
+  role   = "developer"
   model  = "google:gemini-3-pro"
   prompt = "Solve this. Be complete and correct:\n{{input}}"
 
 [[steps]]
 name   = "judge"
-role   = "developer:general"
+role   = "developer"
 prompt = """
 Independent solutions to the same task, one per model:
 
@@ -666,8 +668,8 @@ Two session-side entry points share the CLI runner (`src/workflow/spawn.rs`): ea
 - `/workflow` lists installed tap workflows; `/workflow <name> <input…>` runs one and blocks the slash-command path until
   it finishes. Everything after the name is the input, verbatim.
 - The `tap` tool: `tap(action="workflow", name="<name>", input="…")` runs it as a background tap-run and injects the
-  result into the session inbox like a specialist reply; `tap(action="workflow")` with no name lists them;
-  `tap(action="stop", session=<id>)` kills a running one. See [MCP Tools](07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps).
+  result into the session inbox like an agent reply; `tap(action="workflow")` with no name lists them;
+  `tap(action="stop", session=<id>)` kills a running one. See [MCP Tools](07-mcp-tools.md#tap-tool-run-agents-from-taps).
 
 Only tap workflows resolve by name here — local TOML paths are a CLI-only feature.
 

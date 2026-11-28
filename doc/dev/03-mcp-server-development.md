@@ -205,7 +205,7 @@ name = "text_metrics"
 type = "builtin"
 timeout_seconds = 30
 tools = []
-auto_bind = ["developer:general"]
+auto_bind = ["developer"]
 ```
 
 `tools = []` means **all** tools from this server are exposed. A non-empty array filters by exact name or trailing-`*`
@@ -236,7 +236,7 @@ same-name entries replace the whole role.
 
 ```bash
 octomind config --validate
-octomind run developer:general
+octomind run developer
 ```
 
 In that session:
@@ -474,8 +474,7 @@ Tool lists are cached per server (`FUNCTION_CACHE` in `src/mcp/server.rs`) until
 
 | Field | Value |
 |-------|-------|
-| `role` | Role domain (`developer` for `developer:general`) |
-| `spec` | Role spec (`general`), empty for a plain role |
+| `role` | Role name (`developer` for the `developer` agent) |
 | `project` | `octolib::utils::path_to_id(workdir)`: 16 hex chars hashed from the normalized git remote, or from the canonical path without one. A stable key, not for display |
 | `session_id` | Octomind session id; empty outside a session |
 | `workdir` | The session's anchor directory (absolute), not the current `workdir` override |

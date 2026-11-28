@@ -20,7 +20,7 @@ use std::io::{self, IsTerminal, Read};
 
 #[derive(Args, Debug, Default)]
 pub struct RunArgs {
-	/// Agent tag (e.g. `developer:general`), bare domain (e.g. `developer`, runs its `chief`) or role name (e.g. `assistant`).
+	/// Agent tag (e.g. `developer` or `developer:rust`): a tap agent, or a role defined in your config, which wins over a tap agent of the same name.
 	/// Omit to use the default role from config.
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,
@@ -55,6 +55,11 @@ pub struct RunArgs {
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
+
+	/// Start a read-only session: only tools that cannot change state are available
+	/// (those whose MCP `readOnlyHint` is true).
+	#[arg(long)]
+	pub readonly: bool,
 
 	/// Activate a webhook hook by name (defined in [[hooks]] config).
 	/// Can be specified multiple times for multiple hooks.
@@ -131,6 +136,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		daemon: args.daemon,
 		hooks: args.hooks.clone(),
 		schema,
+		readonly: args.readonly,
 		..Default::default()
 	};
 

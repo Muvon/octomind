@@ -196,8 +196,7 @@ Start the custom role:
 octomind run octocode-reviewer
 ```
 
-Alternatively, add `auto_bind = ["developer:general"]` inside the server block to attach it to that exact role tag.
-`"developer"` does not match `"developer:general"`. Auto-bound servers receive a server wildcard when the role's
+Alternatively, add `auto_bind = ["developer"]` inside the server block to attach it to that exact role name. Auto-bound servers receive a server wildcard when the role's
 allowlist is non-empty.
 
 `server_refs` controls which static servers the role can see. An empty
@@ -252,9 +251,9 @@ Use the custom-role example above to grant `octocode:*`. To inspect which schema
 
 ### Agent Not Found
 
-Tap agents are addressed as `category:variant` (for example `developer:general`).
-If a tag is not found, list the taps that are active and confirm the category
-and variant exist:
+Tap agents are addressed by name (for example `developer`).
+If a name is not found, list the taps that are active and confirm the agent file
+`agents/<name>.toml` exists:
 
 ```bash
 octomind tap            # list active taps (no URL = list mode)
@@ -280,7 +279,7 @@ and start a new session to load it. `{{CWD}}` is the runtime working directory.
 If a delegated run reports missing input, run that role interactively once to supply its manifest values:
 
 ```bash
-octomind run developer:general
+octomind run developer
 ```
 
 Use the exact tag from the error if it names a different role.

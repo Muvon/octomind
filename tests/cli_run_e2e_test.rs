@@ -19,6 +19,9 @@
 //! provider round trip, and process exit — with zero network and zero
 //! writes outside the tempdir.
 
+#[path = "fixtures/template_with_assistant_role.rs"]
+mod template_with_assistant_role;
+
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
@@ -91,7 +94,8 @@ async fn spawn_openai_stub_with_response(response_content: String) -> String {
 /// every network/model-heavy subsystem off.
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+		toml::from_str(&template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.telemetry = false;
@@ -157,6 +161,37 @@ async fn test_run_non_interactive_end_to_end() {
 		.map(|entries| entries.count())
 		.unwrap_or(0);
 	assert!(persisted > 0, "no session file written in sandbox");
+}
+
+/// `run --readonly` starts and answers like a writable session; the tool
+/// filter itself is covered by unit tests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_readonly_non_interactive_end_to_end() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args(["run", "--readonly", "--format", "plain"])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn octomind run --readonly");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"please respond with the marker\n")
+		.expect("write prompt");
+
+	let output = child.wait_with_output().expect("octomind exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		output.status.success() && stdout.contains(MARKER),
+		"read-only run failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
 }
 
 /// Bare `octomind` (no subcommand) defaults to `run`. Non-interactively that
@@ -842,7 +877,8 @@ async fn test_run_jsonl_budget_stop_keeps_stdout_json() {
 	let home = tempfile::tempdir().expect("temp home");
 	{
 		let mut config: octomind::config::Config =
-			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
+			toml::from_str(&template_with_assistant_role::template_with_assistant_role())
+				.expect("parse default config template");
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
 		config.telemetry = false;

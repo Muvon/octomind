@@ -398,6 +398,7 @@ fn prepare_finished_replay_run(request: &RunLogMessage, dir: &Path) -> std::path
 	tap_runs::enable_run_events(None).unwrap();
 	let (cancel_tx, _) = tokio::sync::watch::channel(false);
 	tap_runs::register_job(TapJob {
+		mode: Default::default(),
 		id: request.run_id.clone(),
 		role: "developer:cto".into(),
 		workdir: dir.to_string_lossy().into_owned(),
@@ -439,6 +440,7 @@ async fn disk_replay_without_log_preserves_known_terminal_status_and_error() {
 		let (cancel_tx, _) = tokio::sync::watch::channel(false);
 		let status = Arc::new(RwLock::new(TapJobStatus::Running));
 		tap_runs::register_job(TapJob {
+			mode: Default::default(),
 			id: request.run_id.clone(),
 			role: "developer:cto".into(),
 			workdir: dir.path().to_string_lossy().into_owned(),

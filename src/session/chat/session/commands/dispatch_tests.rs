@@ -27,8 +27,9 @@ fn status_is_the_only_activity_slash_command() {
 }
 
 fn test_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(&crate::config::template_with_assistant_role::template_with_assistant_role())
+			.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -700,7 +701,7 @@ async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
 		old.save().unwrap();
 		let mut new = crate::session::Session::new(new_id.clone(), "model".into());
 		with_session_id(new_id.clone(), async {
-			init_session_services("assistant");
+			init_session_services("assistant", Default::default());
 			assert_eq!(current_session_id(), Some(new_id.clone()));
 			record_call(CallKind::Plan, 7, 2, 0, 3, 0.5);
 		})
@@ -731,4 +732,37 @@ async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
 		cleanup_session(&new_id);
 	})
 	.await;
+}
+
+#[tokio::test]
+async fn a_read_only_session_refuses_the_commands_that_start_child_sessions() {
+	let mut config = test_config();
+	let mut readonly = ChatSession::for_tests(Vec::new());
+	readonly.session.info.readonly = true;
+
+	for input in [
+		"/workflow watch-page https://example.com",
+		"/workflow",
+		"/run",
+		"/run build",
+	] {
+		let result = dispatch(&mut readonly, &mut config, input)
+			.await
+			.expect("a refusal is typed output");
+		let CommandResult::HandledWithOutput(output) = result else {
+			panic!("{input} must be answered with typed output");
+		};
+		let CommandOutput::Error { error, .. } = *output else {
+			panic!("{input} must be refused");
+		};
+		assert!(error.contains("read-only session"), "{error}");
+	}
+
+	// The same commands run as usual in a writable session: `/run` lists its commands.
+	let mut writable = ChatSession::for_tests(Vec::new());
+	let result = dispatch(&mut writable, &mut config, "/run").await.expect("/run lists");
+	assert!(matches!(
+		result,
+		CommandResult::HandledWithOutput(ref output) if matches!(**output, CommandOutput::Run { .. })
+	));
 }

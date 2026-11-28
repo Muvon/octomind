@@ -2018,21 +2018,10 @@ pub async fn run_interactive_session_with_input(
 
 			// Wait for the next event: either a schedule timer fires or an inbox message arrives.
 			let inbox_notify = crate::session::inbox::get_inbox_notify();
-			// Safety backstop for a pending background job whose completion signal
-			// never arrives (server crash, or a tool that linked a resource it never
-			// updates): far longer than any real build, but finite, so a lost signal
-			// can never hang the run forever. The window is each job's own, measured
-			// from its registration (`shell_jobs::SAFETY_WINDOW`), and the wake time is
-			// the soonest-expiring job read fresh every pass: a job launched while an
-			// older one was pending keeps its whole window, where one session-wide
-			// deadline dropped it the moment the older job's window ran out. The
-			// deadline is an absolute instant, so rebuilding the sleep each pass does
-			// not push it out.
-			let bg_expiry = crate::session::shell_jobs::earliest_expiry();
 			// The completion push is the fast path, but it is only a notification: the
-			// resource itself is the authority. A caller working to a deadline shorter
-			// than the backstop (a CI step, a benchmark case) would otherwise be killed
-			// mid-wait with nothing to show, so re-read the authority periodically and
+			// resource itself is the authority. A caller working to a deadline of its
+			// own (a CI step, a benchmark case) would otherwise be killed mid-wait
+			// with nothing to show, so re-read the authority periodically and
 			// hand the model what it says. The job is left pending — this unblocks the
 			// turn without stealing the real completion path.
 			tokio::select! {
@@ -2046,26 +2035,6 @@ pub async fn run_interactive_session_with_input(
 				} => {}
 				_ = tokio::time::sleep(reconcile_delay(&checked_jobs)), if has_background_jobs => {
 					reconcile_pending_background_jobs(&mut reported_job_statuses, &mut checked_jobs).await;
-				}
-				_ = async {
-					match bg_expiry {
-						Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-						None => std::future::pending::<()>().await,
-					}
-				} => {
-					// Re-read at wake: the deadline was armed a pass earlier, and only a
-					// job still registered and past its own window is abandoned — with a
-					// terminal result of its own, so the waiter is not left without one.
-					if let Some(session_id) = crate::session::context::current_session_id() {
-						for (label, uri) in crate::session::shell_jobs::expire_overdue_for_session(&session_id) {
-							crate::log_error!(
-								"background job {} ({}) never signalled completion within \
-									 the safety window; abandoning it",
-								label,
-								uri
-							);
-						}
-					}
 				}
 			}
 		}
@@ -2149,24 +2118,24 @@ async fn pop_inbox_message(
 	Ok(Some(msg))
 }
 
-/// Re-read every still-pending background job from its resource — the authority
-/// for live status — and hand the model what it says.
+/// Re-read every still-pending resource job from its resource — the authority
+/// for live status — and hand the model what is new.
 ///
 /// A completion push can be lost (server restart, a resource that is never
 /// updated) and the model is told to end its turn and wait for one, so without
-/// this the turn waits until the safety backstop, which any caller with a
+/// this the turn hears nothing until the job ends, which a caller with a
 /// shorter deadline never reaches. The job stays registered: this reports
 /// status, it does not complete the job, so the real completion path still
-/// delivers the output. A still-pending, non-delivering job is reported once
-/// its status check is due (see [`status_check_due`]), then once per reconcile
-/// window. This bounds silent waiting at the cost of one model turn per report
-/// while a job runs; an unchanged snapshot also tells the model that the job
-/// may be stuck.
-async fn reconcile_pending_background_jobs(
+/// delivers the output. The model hears a first status, then only a changed
+/// one — never the same again for the clock's sake, so a job quietly at work
+/// costs no model turn however long it runs. An MCP task is its poller's: the
+/// poller delivers the outcome and ends the tracking itself, so a task is
+/// never reported from here.
+pub(crate) async fn reconcile_pending_background_jobs(
 	reported_statuses: &mut std::collections::HashMap<String, String>,
 	checked_jobs: &mut std::collections::HashSet<String>,
 ) {
-	const RESOURCE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+	use crate::mcp::client::ResourceObservation;
 
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return;
@@ -2176,51 +2145,44 @@ async fn reconcile_pending_background_jobs(
 	checked_jobs.retain(|uri| pending_jobs.iter().any(|job| job.uri == *uri));
 	for job in pending_jobs {
 		// A delivery already in flight will produce the real completion message.
-		if job.delivering || !status_check_due(&job) {
+		if job.task || job.delivering {
 			continue;
 		}
 		checked_jobs.insert(job.uri.clone());
-		// An MCP task has no resource; its poller keeps the server's latest status
-		// message, which is what a stuck task is judged by.
-		let status = if job.task {
-			match job.status {
-				Some(status) if !status.trim().is_empty() => JobStatusRead::Snapshot(status),
-				_ => JobStatusRead::Unavailable("the task has reported no status yet".to_string()),
+		// One bounded read over a live connection to the job's server, reopened
+		// if it closed since. A failed read is a failed observation, not an
+		// outcome — the job stays pending and the outage budget decides. A job
+		// its server no longer knows, or one nobody could observe for the whole
+		// budget, ends here with one result saying its outcome is unknown.
+		let status = match crate::mcp::client::observe_resource(&session_id, &job.registration, &job.uri).await {
+			ResourceObservation::Gone => continue,
+			ResourceObservation::Lost(loss) => {
+				crate::mcp::client::lose_tracking(&session_id, &job.uri, job.registration, &loss);
+				continue;
 			}
-		} else {
-			match tokio::time::timeout(
-				RESOURCE_READ_TIMEOUT,
-				crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
-			)
-			.await
-			{
-				Ok(Ok(text)) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
-				Ok(Ok(_)) => JobStatusRead::Unavailable("the resource reports no status".to_string()),
-				Ok(Err(error)) => JobStatusRead::Unavailable(format!("reading the resource failed: {error}")),
-				Err(_) => JobStatusRead::Unavailable("reading the resource timed out".to_string()),
-			}
+			ResourceObservation::Seen(text) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
+			ResourceObservation::Seen(_) => JobStatusRead::Unavailable("the resource reports no status".to_string()),
+			ResourceObservation::Unavailable(error) => JobStatusRead::Unavailable(error),
 		};
-		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
-		let content = background_job_status_message(
-			&job.uri,
-			elapsed,
-			&status,
-			reported_statuses.get(&job.uri).map(String::as_str),
-			BACKGROUND_JOB_RECONCILE,
-		);
-		// A failed read says nothing about the job, so the last real snapshot stays the baseline.
-		if let JobStatusRead::Snapshot(snapshot) = status {
-			reported_statuses.insert(job.uri.clone(), snapshot);
+		// Elapsed time alone is not progress: the same status is reported once,
+		// however many windows it persists.
+		if reported_statuses
+			.get(&job.uri)
+			.is_some_and(|previous| previous == status.text())
+		{
+			continue;
 		}
+		reported_statuses.insert(job.uri.clone(), status.text().to_string());
+		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
 				source: crate::session::inbox::InboxSource::BackgroundJobStatus { id: job.uri.clone() },
-				content,
+				content: background_job_status_message(&job.uri, elapsed, &status),
 			},
 		);
 		log_debug!(
-			"background job {} had no completion signal; delivered a status snapshot",
+			"background job {} had no completion signal; delivered its status",
 			job.uri
 		);
 	}
@@ -2243,15 +2205,6 @@ fn reconcile_delay(checked_jobs: &std::collections::HashSet<String>) -> std::tim
 	}
 }
 
-/// Whether a pending job owes the model a status check yet. A resource job does
-/// as soon as the turn leaves it running: its completion push can be lost, and
-/// the turn would then wait out the safety backstop. An MCP task does only after
-/// a full reconcile window: its poller delivers the outcome itself, so an earlier
-/// check only wakes the model to wait again, and the model, told the run cannot
-/// finish while the job is pending, starts the same command a second time.
-fn status_check_due(job: &crate::session::shell_jobs::PendingResource) -> bool {
-	!job.task || job.started_at.elapsed().unwrap_or_default() >= BACKGROUND_JOB_RECONCILE
-}
 /// What a background job's resource returned at a reconcile pass. Only a
 /// snapshot is evidence about the job; an unavailable read is not compared.
 enum JobStatusRead {
@@ -2259,37 +2212,25 @@ enum JobStatusRead {
 	Unavailable(String),
 }
 
-fn background_job_status_message(
-	uri: &str,
-	elapsed_secs: u64,
-	status: &JobStatusRead,
-	previous_snapshot: Option<&str>,
-	reconcile_window: std::time::Duration,
-) -> String {
-	let (text, unchanged) = match status {
-		JobStatusRead::Snapshot(snapshot) => (snapshot.as_str(), previous_snapshot == Some(snapshot.as_str())),
-		JobStatusRead::Unavailable(reason) => (reason.as_str(), false),
-	};
-	// A command that prints only when it finishes is indistinguishable from a
-	// hung one by its status alone, so the model is asked to judge, not told.
-	let unchanged_guidance = if unchanged {
-		format!(
-			"\nThe job's status has not changed since the previous check at least {} seconds ago. \
-			 A command that prints only when it finishes looks the same while it is still working, so \
-			 judge from what it runs and how long that should take: if it is stuck, stop it using the \
-			 method the tool provided when it started; otherwise reply with a short status and no tool call to keep waiting.",
-			reconcile_window.as_secs()
-		)
-	} else {
-		String::new()
-	};
+impl JobStatusRead {
+	/// What the model is told, and what a repeat is compared against: the same
+	/// snapshot, or the same way of being unavailable, is no news.
+	fn text(&self) -> &str {
+		match self {
+			JobStatusRead::Snapshot(snapshot) | JobStatusRead::Unavailable(snapshot) => snapshot,
+		}
+	}
+}
+
+fn background_job_status_message(uri: &str, elapsed_secs: u64, status: &JobStatusRead) -> String {
 	format!(
 		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
 		 using the method the tool provided when it started.\n\
-		 {text}{unchanged_guidance}\n\
-		 </background_job>"
+		 {}\n\
+		 </background_job>",
+		status.text()
 	)
 }
 

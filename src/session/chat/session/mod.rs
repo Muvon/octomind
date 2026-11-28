@@ -35,6 +35,8 @@ pub(crate) use core::generate_session_name;
 pub use core::{ChatSession, SpendingStop, EXIT_SPENDING_STOP};
 pub use error_utils::{format_provider_error, handle_api_error, handle_followup_api_error};
 pub use layer_processor::run_pipe_if_enabled;
+#[cfg(test)]
+pub(crate) use main_loop::reconcile_pending_background_jobs;
 pub use main_loop::{run_interactive_session, run_interactive_session_with_input};
 pub use params::GenericSessionArgs;
 pub use prompt_setup::setup_system_prompt_and_cache;

@@ -22,6 +22,7 @@
 
 use crate::config::{McpConnectionType, McpServerConfig};
 use crate::mcp::{oauth, McpToolCall};
+use crate::session::shell_jobs::{Claim, TrackingLoss, WatchEvent};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
 	CacheScope, CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams, CancelledNotificationParam,
@@ -259,15 +260,9 @@ impl ClientHandler for OctoClientHandler {
 	async fn on_resource_updated(
 		&self,
 		params: rmcp::model::ResourceUpdatedNotificationParam,
-		context: NotificationContext<RoleClient>,
+		_: NotificationContext<RoleClient>,
 	) {
-		deliver_resource_update(
-			&self.server_name,
-			self.session_id.as_deref(),
-			params.uri,
-			context.peer.clone(),
-		)
-		.await;
+		deliver_resource_update(&self.server_name, self.session_id.as_deref(), params.uri);
 	}
 
 	async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
@@ -356,7 +351,7 @@ impl ClientHandler for OctoClientHandler {
 /// so it neither blocks the caller nor re-enters the receive loop. Shared by
 /// both delivery paths: the unsolicited push (legacy servers) and the
 /// `subscriptions/listen` stream (2026-07-28).
-async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, uri: String, peer: Peer<RoleClient>) {
+fn deliver_resource_update(server_name: &str, session_id: Option<&str>, uri: String) {
 	let param = rmcp::model::ResourceUpdatedNotificationParam::new(uri.clone());
 	let value = serde_json::to_value(&param).unwrap_or(serde_json::Value::Null);
 	super::process::emit_notification(server_name, "notifications/resources/updated", &value, session_id, None);
@@ -366,43 +361,61 @@ async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, ur
 	// the unsolicited-push path carries a connect-time snapshot that is empty
 	// whenever the connection was established outside a session task, which
 	// silently dropped every completion it delivered. The registry owns the
-	// mapping, so fall back to it before giving up.
-	let session_id = match session_id
-		.filter(|id| crate::session::shell_jobs::is_watched_for_session(id, &uri))
-		.map(str::to_string)
-		.or_else(|| crate::session::shell_jobs::find_session_for_uri(&uri))
-	{
-		Some(session_id) => session_id,
+	// mapping, so fall back to it before giving up. The claim decides, not the
+	// hint: a signal claims only a job its very server launched under that URI in
+	// that session, so a colliding URI on another server claims nothing.
+	let (session_id, claim) = match session_id
+		.and_then(|id| {
+			crate::session::shell_jobs::claim_delivery_for_session(id, server_name, &uri)
+				.map(|claim| (id.to_string(), claim))
+		})
+		.or_else(|| {
+			let id = crate::session::shell_jobs::find_session_for_server_uri(server_name, &uri)?;
+			crate::session::shell_jobs::claim_delivery_for_session(&id, server_name, &uri).map(|claim| (id, claim))
+		}) {
+		Some(claimed) => claimed,
 		None => {
-			crate::log_debug!("resource {uri} updated but no session watches it; dropping completion");
+			crate::log_debug!(
+				"resource {} update ignored: no session follows it from this server, or delivery is in flight",
+				uri
+			);
 			return;
 		}
 	};
-	let Some(claim) = crate::session::shell_jobs::claim_delivery_for_session(&session_id, &uri) else {
-		crate::log_debug!("resource {uri} update ignored: not watched, or delivery already in flight");
-		return;
-	};
-	tokio::spawn(async move {
-		let body = match peer
-			.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
-			.await
-		{
-			Ok(result) => result
-				.contents
-				.into_iter()
-				.filter_map(|content| match content {
-					rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text),
-					_ => None,
-				})
-				.collect::<Vec<_>>()
-				.join("\n"),
-			Err(error) => {
-				format!("resource {uri} updated, but reading it failed: {error}")
+	// Task-locals do not cross `tokio::spawn`: re-enter the session so a
+	// reconnect while reading carries this session's context to the server.
+	let scope = session_id.clone();
+	tokio::spawn(crate::session::context::with_session_id(scope, async move {
+		// One bounded observation per attempt. A failed or timed-out read says
+		// nothing about the job, so it is never delivered as its outcome: the
+		// update was signalled, the read is retried with backoff over a live
+		// connection to the job's server — reopened if it closed — and the job
+		// stays pending, so a later read still delivers the real completion.
+		// Only the server no longer knowing the job, or a continuous outage for
+		// the whole budget, ends the tracking; a registration replaced meanwhile
+		// ends the wait.
+		let mut failed_reads = 0u32;
+		let body = loop {
+			match observe_resource(&session_id, &claim, &uri).await {
+				ResourceObservation::Seen(text) => break text,
+				ResourceObservation::Gone => {
+					crate::log_debug!("resource {}: no longer watched; dropping the update", uri);
+					return;
+				}
+				ResourceObservation::Lost(loss) => {
+					lose_tracking(&session_id, &uri, claim, &loss);
+					return;
+				}
+				ResourceObservation::Unavailable(why) => {
+					crate::log_debug!("resource {}: update signalled but {}; reading again", uri, why);
+					tokio::time::sleep(probe_backoff(failed_reads)).await;
+					failed_reads += 1;
+				}
 			}
 		};
 		// Only the registration this read claimed gets the result, and it is queued
-		// before the job stops being pending: one timed out and launched again
-		// meanwhile keeps its own outcome.
+		// before the job stops being pending: a job launched again under the same
+		// key meanwhile keeps its own outcome.
 		if !crate::session::shell_jobs::deliver_for_session(
 			&session_id,
 			&uri,
@@ -411,10 +424,117 @@ async fn deliver_resource_update(server_name: &str, session_id: Option<&str>, ur
 			&format!("<background_job resource=\"{uri}\">"),
 		) {
 			crate::log_debug!(
-				"resource {uri}: registration replaced before the read returned; dropping the late delivery"
+				"resource {}: registration replaced before the read returned; dropping the late delivery",
+				uri
 			);
 		}
-	});
+	}));
+}
+
+/// What one observation of a resource job established, registry told.
+pub(crate) enum ResourceObservation {
+	/// Read: the resource's current text — a status, never its exit unless a
+	/// signal said so.
+	Seen(String),
+	/// Could not be read; the outage is one failure longer and tracking goes on.
+	Unavailable(String),
+	/// Its tracking ends without its outcome — its server no longer knows it,
+	/// or nobody could observe it for the whole outage budget: the observer
+	/// delivers that once (`lose_tracking`).
+	Lost(TrackingLoss),
+	/// The registration the observer acts for is gone — completed, replaced or
+	/// lost — nothing left to observe.
+	Gone,
+}
+
+/// Observe a resource job once: a bounded `resources/read` over a live
+/// connection to the server it was launched on, with the outage budget updated
+/// under the observer's claim. Nothing is resubmitted and no tool is called.
+pub(crate) async fn observe_resource(
+	session_id: &str,
+	claim: &crate::session::shell_jobs::Claim,
+	uri: &str,
+) -> ResourceObservation {
+	let read = async {
+		let peer = job_peer(session_id, uri, claim).await?;
+		tokio::time::timeout(
+			RESOURCE_READ_TIMEOUT,
+			peer.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.to_string())),
+		)
+		.await
+		.map_err(|_| anyhow!("reading '{uri}' timed out"))
+	}
+	.await;
+	let failed = |why: String| match crate::session::shell_jobs::observation_failed_for_session(session_id, uri, *claim)
+	{
+		None => ResourceObservation::Gone,
+		Some(true) => ResourceObservation::Lost(TrackingLoss::Unreachable(why)),
+		Some(false) => ResourceObservation::Unavailable(why),
+	};
+	match read {
+		Ok(Ok(result)) => {
+			if crate::session::shell_jobs::observation_recovered_for_session(session_id, uri, *claim) {
+				ResourceObservation::Seen(resource_text(result))
+			} else {
+				ResourceObservation::Gone
+			}
+		}
+		// The server answered and does not know the resource — `-32002`, sent as
+		// `-32602` from protocol 2026-07-28 on: it restarted or dropped the job,
+		// so no later read can observe it.
+		Ok(Err(ServiceError::McpError(error)))
+			if error.code == rmcp::model::ErrorCode::RESOURCE_NOT_FOUND
+				|| error.code == rmcp::model::ErrorCode::INVALID_PARAMS =>
+		{
+			if crate::session::shell_jobs::observer_is_current(session_id, uri, *claim) {
+				ResourceObservation::Lost(TrackingLoss::Forgotten(error.message.to_string()))
+			} else {
+				ResourceObservation::Gone
+			}
+		}
+		Ok(Err(error)) => failed(format!("reading '{uri}' failed: {error}")),
+		Err(error) => failed(error.to_string()),
+	}
+}
+
+/// A live connection to the server a job was launched on, for one bounded
+/// observation of it: a connection that closed since — server restart, transport
+/// drop — is reopened through the path every tool call takes, so the same server
+/// is asked again. A job registered without its server only has the connection
+/// open now.
+async fn job_peer(session_id: &str, uri: &str, claim: &Claim) -> Result<Peer<RoleClient>> {
+	let (name, server) = crate::session::shell_jobs::server_for_session(session_id, uri, *claim)
+		.ok_or_else(|| anyhow!("registration of '{uri}' is gone"))?;
+	match server {
+		Some(server) => Ok(reconnect_job_server(&server).await?.peer().clone()),
+		None => get(&name)
+			.filter(|service| !service.is_closed())
+			.map(|service| service.peer().clone())
+			.ok_or_else(|| anyhow!("MCP connection '{name}' is not active")),
+	}
+}
+
+/// Reconnect a job's server if its connection is gone — the path every tool
+/// call takes — bounded by the server's own request timeout so a wedged server
+/// never pins an observer.
+async fn reconnect_job_server(server: &McpServerConfig) -> Result<Arc<McpService>> {
+	let bound = Duration::from_secs(server.timeout_seconds()).max(Duration::from_secs(1));
+	tokio::time::timeout(bound, get_or_connect(server))
+		.await
+		.map_err(|_| anyhow!("reconnecting to '{}' timed out", server.name()))?
+}
+
+/// End the tracking of the registration `claim` names without its outcome —
+/// `loss` says why: one terminal result saying its outcome is unknown, dropped
+/// when the registration was replaced meanwhile.
+pub(crate) fn lose_tracking(session_id: &str, uri: &str, claim: Claim, loss: &TrackingLoss) {
+	crate::log_error!("background job {}: {}; tracking lost", uri, loss);
+	if !crate::session::shell_jobs::tracking_lost_for_session(session_id, uri, false, claim, loss) {
+		crate::log_debug!(
+			"background job {}: registration replaced before tracking was lost; dropping the result",
+			uri
+		);
+	}
 }
 
 /// SEP-1724 extension telling a server that this client follows the resource
@@ -507,6 +627,23 @@ pub fn get(server_name: &str) -> Option<Arc<McpService>> {
 	CLIENTS.read().unwrap().get(server_name).cloned()
 }
 
+/// One `resources/read` of a job's resource: bounded, so a wedged server never
+/// pins a delivery or a status check.
+pub(crate) const RESOURCE_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Text contents of a resource read, joined; other content kinds are skipped.
+fn resource_text(result: rmcp::model::ReadResourceResult) -> String {
+	result
+		.contents
+		.into_iter()
+		.filter_map(|content| match content {
+			rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text),
+			_ => None,
+		})
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
 /// Read all text contents for one resource from an already-connected MCP
 /// server. URI schemes are intentionally opaque: ownership comes from the
 /// server that returned the `ResourceLink`, not from parsing the URI.
@@ -519,15 +656,7 @@ pub async fn read_resource_text(server_name: &str, uri: &str) -> Result<String> 
 		.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.to_string()))
 		.await
 		.map_err(|error| anyhow!("resources/read failed for '{uri}': {error}"))?;
-	Ok(result
-		.contents
-		.into_iter()
-		.filter_map(|content| match content {
-			rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text),
-			_ => None,
-		})
-		.collect::<Vec<_>>()
-		.join("\n"))
+	Ok(resource_text(result))
 }
 
 /// True when a connection exists and its service loop is still running.
@@ -1209,69 +1338,139 @@ async fn sleep_or_cancel(
 	}
 }
 
-/// Longest wait between `tasks/get` attempts while the server cannot be reached.
-const MAX_TASK_POLL_BACKOFF: Duration = Duration::from_secs(60);
+/// Longest wait between retries of a failed probe — `tasks/get`, a job
+/// resource's `resources/read` — while the server cannot be reached.
+const MAX_PROBE_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Wait before the first retry of a failed probe; each further failure in a
+/// row doubles it, up to `MAX_PROBE_BACKOFF`.
+const FIRST_PROBE_BACKOFF: Duration = Duration::from_secs(1);
+
+fn probe_backoff(failures: u32) -> Duration {
+	FIRST_PROBE_BACKOFF
+		.saturating_mul(2u32.saturating_pow(failures))
+		.min(MAX_PROBE_BACKOFF)
+}
+
+/// The task could not be observed for the whole outage budget
+/// (`shell_jobs::OUTAGE_BUDGET`): its outcome is unknown, and nothing was
+/// cancelled. Carries the last failure.
+#[derive(Debug, thiserror::Error)]
+#[error("lost track of the task: every check on it failed for the whole outage budget ({0})")]
+pub(crate) struct TrackingLost(String);
+
+/// The server answered that it does not know the task: it restarted or dropped
+/// it, so no later poll can observe it.
+#[derive(Debug, thiserror::Error)]
+#[error("the server no longer knows MCP task '{task_id}' (it may have restarted): {message}")]
+pub(crate) struct TaskForgotten {
+	task_id: String,
+	message: String,
+}
+
+/// Why a task poller's stop signal ended. An explicit stop (`monitor` stop,
+/// session teardown) cancels the task on the server; a dropped registry entry —
+/// completion, replacement, tracking lost — only releases the poller, which
+/// ends the polling and leaves the task alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+enum Stop {
+	#[error("the task was stopped")]
+	Requested,
+	#[error("the task's registry entry was dropped: polling ended, the task was left alone")]
+	Released,
+}
+
+async fn wait_stop(stop: &mut Option<tokio::sync::watch::Receiver<bool>>) -> Stop {
+	match stop {
+		None => std::future::pending().await,
+		Some(rx) => loop {
+			if *rx.borrow() {
+				return Stop::Requested;
+			}
+			if rx.changed().await.is_err() {
+				// Closed: a stop sent just before the drop (teardown) still counts.
+				return if *rx.borrow() { Stop::Requested } else { Stop::Released };
+			}
+		},
+	}
+}
+
+/// True for a poller that ended because its registry entry was dropped — not a
+/// cancellation, and the task was left alone.
+fn is_released(error: &anyhow::Error) -> bool {
+	matches!(error.downcast_ref::<Stop>(), Some(Stop::Released))
+}
+
+/// End the poller for a stop signal: an explicit stop cancels the task on the
+/// server once; a released entry ends the polling without touching the task.
+async fn end_for_stop(stop: Stop, service: &McpService, server: &McpServerConfig, task_id: &str) -> anyhow::Error {
+	match stop {
+		Stop::Requested => {
+			let _ = tokio::time::timeout(
+				Duration::from_secs(server.timeout_seconds()),
+				service.peer().cancel_task(CancelTaskParams::new(task_id.to_string())),
+			)
+			.await;
+			anyhow::Error::new(crate::session::cancellation::Cancelled)
+		}
+		Stop::Released => anyhow::Error::new(Stop::Released),
+	}
+}
+
+async fn sleep_or_stop(delay: Duration, stop: &mut Option<tokio::sync::watch::Receiver<bool>>) -> Result<(), Stop> {
+	tokio::select! {
+		_ = tokio::time::sleep(delay) => Ok(()),
+		stop = wait_stop(stop) => Err(stop),
+	}
+}
 
 /// Poll an MCP task to its end. `on_status` sees the task's state on every
 /// `tasks/get`, so a caller can surface its status message while it runs.
 ///
 /// Only the server ends a task: a terminal state, its id no longer known
-/// (`-32602`, e.g. after a restart), or another error it returns. A poll that
-/// times out or loses the transport says nothing about the task, so polling
-/// continues with backoff, reconnecting a closed connection; the caller's
-/// cancellation (`monitor` stop, session teardown) bounds the wait.
+/// (`-32602`, e.g. after a restart: `TaskForgotten`), or another error it
+/// returns. A poll that times out or loses the transport says nothing about the
+/// task: polling continues with capped backoff under the same id, reconnecting
+/// a closed connection, and the caller's stop signal bounds the wait. Every
+/// such miss goes to `on_miss`; it returning false — the outage budget has run
+/// out — ends the tracking (`TrackingLost`).
 async fn drive_task(
 	mut service: Arc<McpService>,
 	server: &McpServerConfig,
 	task: rmcp::model::CreateTaskResult,
-	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+	stop: &mut Option<tokio::sync::watch::Receiver<bool>>,
 	mut on_status: impl FnMut(&rmcp::model::Task),
+	mut on_miss: impl FnMut() -> bool,
 ) -> Result<rmcp::model::CallToolResult> {
 	let task_id = task.task.task_id.clone();
 	let mut poll_interval_ms = task.task.poll_interval_ms.unwrap_or(500).max(50);
 	// Polls in a row that got no answer; the backoff grows with them.
 	let mut failed_polls = 0u32;
 	loop {
-		if cancellation_token.as_ref().is_some_and(|rx| *rx.borrow()) {
-			let _ = tokio::time::timeout(
-				Duration::from_secs(server.timeout_seconds()),
-				service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
-			)
-			.await;
-			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+		if stop.as_ref().is_some_and(|rx| *rx.borrow()) {
+			return Err(end_for_stop(Stop::Requested, &service, server, &task_id).await);
 		}
 		let delay = Duration::from_millis(poll_interval_ms.saturating_mul(1u64 << failed_polls.min(10)))
-			.min(MAX_TASK_POLL_BACKOFF.max(Duration::from_millis(poll_interval_ms)));
-		if let Err(error) = sleep_or_cancel(delay, cancellation_token).await {
-			if crate::session::cancellation::is_cancelled(&error) {
-				let _ = tokio::time::timeout(
-					Duration::from_secs(server.timeout_seconds()),
-					service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
-				)
-				.await;
-			}
-			return Err(error);
+			.min(MAX_PROBE_BACKOFF.max(Duration::from_millis(poll_interval_ms)));
+		if let Err(stop) = sleep_or_stop(delay, stop).await {
+			return Err(end_for_stop(stop, &service, server, &task_id).await);
 		}
 		let polled = tokio::select! {
 			result = tokio::time::timeout(
 				Duration::from_secs(server.timeout_seconds()),
 				service.peer().get_task(GetTaskParams::new(task_id.clone())),
 			) => result,
-			_ = wait_cancelled(cancellation_token) => {
-				let _ = tokio::time::timeout(
-					Duration::from_secs(server.timeout_seconds()),
-					service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
-				).await;
-				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
-			}
+			stop = wait_stop(stop) => return Err(end_for_stop(stop, &service, server, &task_id).await),
 		};
 		let state = match polled {
 			Ok(Ok(state)) => state,
 			Ok(Err(ServiceError::McpError(error))) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {
-				return Err(anyhow!(
-					"the server no longer knows MCP task '{task_id}' (it may have restarted): {}",
-					error.message
-				));
+				// The server answered and does not know the task: it restarted or
+				// dropped it, so no later poll can observe it.
+				return Err(anyhow::Error::new(TaskForgotten {
+					task_id,
+					message: error.message.to_string(),
+				}));
 			}
 			Ok(Err(
 				ServiceError::TransportClosed | ServiceError::TransportSend(_) | ServiceError::Cancelled { .. },
@@ -1280,12 +1479,10 @@ async fn drive_task(
 				// A fresh connection may be a fresh server process; the next poll
 				// learns whether it still knows the task.
 				// Teardown closes both the transport and the task's stop channel.
-				// Cancellation must win that race before reconnect can spawn a server.
+				// A stop request must win that race before reconnect can spawn a server.
 				let reconnected = tokio::select! {
 					biased;
-					_ = wait_cancelled(cancellation_token) => {
-						return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
-					}
+					stop = wait_stop(stop) => return Err(end_for_stop(stop, &service, server, &task_id).await),
 					result = get_or_connect(server) => result,
 				};
 				match reconnected {
@@ -1294,10 +1491,20 @@ async fn drive_task(
 						crate::log_debug!(format!("reconnecting for MCP task '{task_id}' failed: {error}"))
 					}
 				}
+				if !on_miss() {
+					return Err(anyhow::Error::new(TrackingLost(
+						"the connection to its server kept closing".to_string(),
+					)));
+				}
 				continue;
 			}
 			Ok(Err(ServiceError::Timeout { .. })) | Err(_) => {
 				failed_polls += 1;
+				if !on_miss() {
+					return Err(anyhow::Error::new(TrackingLost(
+						"`tasks/get` got no answer in time".to_string(),
+					)));
+				}
 				continue;
 			}
 			Ok(Err(error)) => {
@@ -1310,7 +1517,7 @@ async fn drive_task(
 		match state.task.payload {
 			TaskPayload::Working => {}
 			TaskPayload::InputRequired { input_requests } => {
-				let responses = fulfill_input_requests(server.name(), None, input_requests, cancellation_token).await?;
+				let responses = fulfill_input_requests(server.name(), None, input_requests, stop).await?;
 				tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
 					service
@@ -1343,8 +1550,11 @@ async fn drive_task(
 /// way a detached shell job runs: register it as a pending background job, poll
 /// it on its own tokio task, and deliver its outcome to the session inbox, which
 /// wakes the model. Returns what the model sees for the call now. The registry
-/// entry owns the poller's stop signal: `monitor` stop fires it, and session
-/// teardown drops it — either way `drive_task` cancels the task on the server.
+/// entry owns the poller's stop signal: `monitor` stop and session teardown set
+/// it and the poller cancels the task on the server; dropping the entry — a
+/// replacement under the same key — only ends the polling. The poller delivers
+/// under its registration's claim, so its outcome never lands on a task
+/// launched later under the same key.
 fn background_task(
 	service: Arc<McpService>,
 	server: McpServerConfig,
@@ -1361,7 +1571,7 @@ fn background_task(
 		.clone()
 		.filter(|message| !message.is_empty())
 		.unwrap_or_else(|| format!("MCP task {}", task.task.task_id));
-	let stop = shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
+	let (stop, registration) = shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
 	let notice = format!(
 		"Still running as background task `{key}` ({label}). Its result arrives by itself as your next user \
 		 message. Do not call `monitor` to check on it: listing shows no progress and does not bring the \
@@ -1377,14 +1587,31 @@ fn background_task(
 	tokio::spawn(crate::session::context::with_session_id(
 		scope,
 		crate::agent::inputs::with_non_interactive(async move {
-			let mut cancellation_token = Some(stop);
-			let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
-				if let Some(status) = state.status_message.as_deref() {
-					shell_jobs::set_task_status_for_session(&session_id, &key, status);
-				}
-			})
+			let mut stop = Some(stop);
+			let outcome = drive_task(
+				service,
+				&server,
+				task,
+				&mut stop,
+				|state| {
+					// Any answer is an observation: the outage budget starts over, whatever the task said.
+					shell_jobs::observation_recovered_for_session(&session_id, &key, registration);
+					if let Some(status) = state.status_message.as_deref() {
+						shell_jobs::set_status_for_claim(&session_id, &key, registration, status);
+					}
+				},
+				// Polling goes on while there is a registration to observe. A claim
+				// gone stale — the entry was replaced — ends it like a lost one, and
+				// the lost-tracking result that follows then finds nothing to land on.
+				|| {
+					matches!(
+						shell_jobs::observation_failed_for_session(&session_id, &key, registration),
+						Some(false)
+					)
+				},
+			)
 			.await;
-			let stopped = cancellation_token.as_ref().is_some_and(|stop| *stop.borrow());
+			let stopped = stop.as_ref().is_some_and(|stop| *stop.borrow());
 			let (body, is_error) = match outcome {
 				Ok(result) => (
 					result
@@ -1395,6 +1622,9 @@ fn background_task(
 						.join("\n"),
 					result.is_error == Some(true),
 				),
+				// The entry is gone — completed elsewhere, replaced — so there is
+				// nobody to deliver to and nothing to cancel.
+				Err(error) if is_released(&error) => return,
 				Err(_) if stopped => (
 					"stopped on request; the server was asked to cancel it".to_string(),
 					true,
@@ -1402,20 +1632,43 @@ fn background_task(
 				Err(error) if crate::session::cancellation::is_cancelled(&error) => {
 					("the server cancelled the task".to_string(), true)
 				}
-				Err(error) => (format!("{error:#}"), true),
-			};
-			// `None` once the session was torn down: nobody is left to deliver to.
-			let Some(claim) = shell_jobs::claim_delivery_for_session(&session_id, &key) else {
-				return;
+				Err(error) => {
+					let loss = if let Some(TrackingLost(why)) = error.downcast_ref::<TrackingLost>() {
+						Some(TrackingLoss::Unreachable(why.clone()))
+					} else {
+						error.downcast_ref::<TaskForgotten>().map(|forgotten| {
+							TrackingLoss::Forgotten(format!("MCP task '{}': {}", forgotten.task_id, forgotten.message))
+						})
+					};
+					match loss {
+						// Not the task's outcome: nobody can observe it any more, and the
+						// result says so rather than passing for a failure.
+						Some(loss) => {
+							if !shell_jobs::tracking_lost_for_session(&session_id, &key, true, registration, &loss) {
+								crate::log_debug!(
+									"task {}: registration replaced before tracking was lost; dropping the result",
+									key
+								);
+							}
+							return;
+						}
+						None => (format!("{error:#}"), true),
+					}
+				}
 			};
 			let error = if is_error { shell_jobs::DELIVERY_ERROR_ATTR } else { "" };
-			shell_jobs::deliver_for_session(
+			if !shell_jobs::deliver_for_session(
 				&session_id,
 				&key,
 				&body,
-				claim,
+				registration,
 				&format!("<background_job task=\"{key}\"{error}>"),
-			);
+			) {
+				crate::log_debug!(
+					"task {}: registration replaced before its outcome; dropping the result",
+					key
+				);
+			}
 		}),
 	));
 
@@ -1425,13 +1678,10 @@ fn background_task(
 /// Open a `subscriptions/listen` stream (MCP 2026-07-28) for every resource
 /// link a tool result advertised, so the server delivers the job's completion
 /// on an acknowledged, contract-clean channel instead of an unsolicited push.
-/// Best-effort by design: on any failure — legacy server, no subscribe
-/// capability, transport — the unsolicited-push path in `on_resource_updated`
-/// still covers delivery, so this only upgrades the channel, never gates the
-/// feature.
-async fn watch_resource_links(service: &McpService, server_name: &str, result: &rmcp::model::CallToolResult) {
-	use crate::session::shell_jobs::WatchEvent;
-
+/// Best-effort by design: on any failure — legacy server, transport — the
+/// unsolicited-push path in `on_resource_updated` still covers delivery, so
+/// this only upgrades the channel, never gates the feature.
+async fn watch_resource_links(server: &McpServerConfig, result: &rmcp::model::CallToolResult) {
 	let links = crate::session::shell_jobs::resource_links_in(result);
 	if links.is_empty() {
 		return;
@@ -1442,82 +1692,138 @@ async fn watch_resource_links(service: &McpService, server_name: &str, result: &
 	};
 	let session_id = session_id.to_string();
 	for (uri, _label) in links {
-		let mut filter = SubscriptionFilter::new();
-		filter.resource_subscriptions = Some(vec![uri.clone()]);
-		let mut subscription = match service.peer().listen(filter).await {
-			Ok(subscription) => subscription,
-			Err(error) => {
-				// Expected for legacy servers (method unknown) — the
-				// unsolicited push remains the delivery path.
-				crate::log_debug!(format!("subscriptions/listen for {uri} unavailable: {error}"));
-				continue;
-			}
-		};
-		let accepted = subscription
-			.acknowledged()
-			.resource_subscriptions
-			.as_ref()
-			.is_some_and(|uris| uris.contains(&uri));
-		if !accepted {
-			let _ = subscription.cancel().await;
+		// The watcher acts for the registration there now, and only while it is.
+		let Some(claim) = crate::session::shell_jobs::registration_for_session(&session_id, &uri) else {
 			continue;
-		}
+		};
+		let Some(mut subscription) = listen_for_job(server, &uri).await else {
+			continue;
+		};
 		// The unsolicited push may have won the race with stream establishment
 		// and already delivered the update — nothing left to wait for.
 		if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
 			let _ = subscription.cancel().await;
 			continue;
 		}
-		let peer = service.peer().clone();
-		let mut events = crate::session::shell_jobs::subscribe_events();
-		let server_name = server_name.to_string();
-		// Per-link copies: each spawned watcher owns its session id, and the
-		// loop keeps using the original for the next link.
-		let session_id = session_id.clone();
-		let uri = uri.clone();
-		tokio::spawn(async move {
-			loop {
-				tokio::select! {
-					biased;
-					event = events.recv() => {
-						match event {
-							Ok(WatchEvent::Completed { session_id: s, uri: u })
-								if s == session_id && u == uri =>
-							{
-								break;
-								}
-							Ok(WatchEvent::Cleared { session_id: s }) if s == session_id => {
-								break;
-							}
-							_ => {
-								continue;
-							}
-						}
-					}
-					update = subscription.next() => {
-						match update {
-							Ok(Some(ServerNotification::ResourceUpdatedNotification(update))) => {
-								deliver_resource_update(
-									&server_name,
-									Some(&session_id),
-									update.params.uri,
-									peer.clone(),
-								)
-								.await;
-								break;
-							}
-							// The filter admits only resource updates; anything else
-							// means the stream ended or misbehaved — drop it and let
-							// the watched-set reminder cover the job.
-							Ok(Some(_)) | Ok(None) | Err(_) => {
-								break;
-							}
-						}
-					}
+		let events = crate::session::shell_jobs::subscribe_events();
+		let server = Arc::new(server.clone());
+		let scope = session_id.clone();
+		tokio::spawn(crate::session::context::with_session_id(
+			scope,
+			watch_job(server, claim, uri, session_id.clone(), subscription, events),
+		));
+	}
+}
+
+/// One `subscriptions/listen` stream for a job's resource, over a live
+/// connection to its server. `None` when the server does not offer it (legacy
+/// servers) or did not acknowledge the resource: the unsolicited push remains
+/// the delivery path.
+async fn listen_for_job(server: &McpServerConfig, uri: &str) -> Option<rmcp::service::Subscription> {
+	let mut filter = SubscriptionFilter::new();
+	filter.resource_subscriptions = Some(vec![uri.to_string()]);
+	let opened = async {
+		let service = reconnect_job_server(server).await?;
+		service.peer().listen(filter).await.map_err(|error| anyhow!("{error}"))
+	}
+	.await;
+	let mut subscription = match opened {
+		Ok(subscription) => subscription,
+		Err(error) => {
+			// Expected for legacy servers (method unknown) — the
+			// unsolicited push remains the delivery path.
+			crate::log_debug!(format!("subscriptions/listen for {uri} unavailable: {error}"));
+			return None;
+		}
+	};
+	let accepted = subscription
+		.acknowledged()
+		.resource_subscriptions
+		.as_ref()
+		.is_some_and(|uris| uris.iter().any(|subscribed| subscribed == uri));
+	if !accepted {
+		let _ = subscription.cancel().await;
+		return None;
+	}
+	Some(subscription)
+}
+
+/// Follow one job's `subscriptions/listen` stream until its tracking ends. The
+/// stream lives on one connection: when that connection changes the stream
+/// ends, and the watcher opens a fresh one (`re_arm_job_stream`). A fresh stream
+/// also brings a signal the old one missed: a server that keeps its jobs
+/// re-sends `resources/updated` for one that already exited (octofs does). One
+/// stream at a time per registration, and none once the registration is gone.
+async fn watch_job(
+	server: Arc<McpServerConfig>,
+	claim: Claim,
+	uri: String,
+	session_id: String,
+	mut subscription: rmcp::service::Subscription,
+	mut events: tokio::sync::broadcast::Receiver<WatchEvent>,
+) {
+	loop {
+		tokio::select! {
+			biased;
+			event = events.recv() => {
+				match event {
+					Ok(WatchEvent::Completed { session_id: s, uri: u })
+						if s == session_id && u == uri => break,
+					Ok(WatchEvent::Cleared { session_id: s }) if s == session_id => break,
+					_ => continue,
 				}
 			}
-			let _ = subscription.cancel().await;
-		});
+			update = subscription.next() => {
+				match update {
+					Ok(Some(ServerNotification::ResourceUpdatedNotification(update))) => {
+						deliver_resource_update(server.name(), Some(&session_id), update.params.uri);
+						break;
+					}
+					// The filter admits only resource updates; anything else
+					// means the stream ended or misbehaved — with its
+					// connection, as a rule.
+					_ => {}
+				}
+			}
+		}
+		match re_arm_job_stream(&server, claim, &uri, &session_id).await {
+			Some(fresh) => subscription = fresh,
+			None => break,
+		}
+	}
+	let _ = subscription.cancel().await;
+}
+
+/// A fresh `subscriptions/listen` stream for a job whose stream ended; `None`
+/// once its tracking ends. Each attempt first observes the job once, over a
+/// connection reopened if it closed: a server that no longer knows the job, or
+/// an outage for the whole budget, ends the tracking here. While the job stays
+/// observable a failed attempt is retried with backoff, never given up on — a
+/// missed exit arrives only on a fresh stream.
+async fn re_arm_job_stream(
+	server: &McpServerConfig,
+	claim: Claim,
+	uri: &str,
+	session_id: &str,
+) -> Option<rmcp::service::Subscription> {
+	let mut failed_attempts = 0u32;
+	loop {
+		match observe_resource(session_id, &claim, uri).await {
+			ResourceObservation::Seen(text) => {
+				crate::session::shell_jobs::set_status_for_claim(session_id, uri, claim, &text);
+				if let Some(fresh) = listen_for_job(server, uri).await {
+					return Some(fresh);
+				}
+			}
+			ResourceObservation::Unavailable(_) => {}
+			ResourceObservation::Lost(loss) => {
+				lose_tracking(session_id, uri, claim, &loss);
+				return None;
+			}
+			ResourceObservation::Gone => return None,
+		}
+		tokio::time::sleep(probe_backoff(failed_attempts)).await;
+		failed_attempts += 1;
 	}
 }
 
@@ -1557,11 +1863,23 @@ pub async fn call_tool(
 				// batch's later result-processing closes the race where a fast
 				// job completes before its link is registered and the completion
 				// is dropped.
-				crate::session::shell_jobs::note_watched_from_result(server.name(), &result);
-				// Upgrade delivery to a subscriptions/listen stream where the
-				// server supports it (2026-07-28). Established before the result
-				// is returned so the stream is active before the job can exit.
-				watch_resource_links(&service, server.name(), &result).await;
+				// Only a server that can signal resource updates
+				// (`resources.subscribe`) can ever end a job it links: any other
+				// server's link is a plain reference, and following it would hold
+				// the run for good.
+				let signals_updates = service.peer_info().is_some_and(|info| {
+					info.capabilities
+						.resources
+						.as_ref()
+						.is_some_and(|resources| resources.subscribe == Some(true))
+				});
+				if signals_updates {
+					crate::session::shell_jobs::note_watched_from_server_config(server, &result);
+					// Upgrade delivery to a subscriptions/listen stream where the
+					// server supports it (2026-07-28). Established before the result
+					// is returned so the stream is active before the job can exit.
+					watch_resource_links(server, &result).await;
+				}
 				return Ok(result);
 			}
 			CallToolResponse::Task(task) => {
@@ -1577,7 +1895,7 @@ pub async fn call_tool(
 						session_id.to_string(),
 					));
 				}
-				return drive_task(service, server, task, &mut cancellation_token, |_| {}).await;
+				return drive_task(service, server, task, &mut cancellation_token, |_| {}, || true).await;
 			}
 			CallToolResponse::InputRequired(result) => {
 				let had_requests = result

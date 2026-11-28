@@ -736,7 +736,7 @@ async fn drive_task_cancels_the_server_task_when_the_call_is_cancelled() {
 
 #[serial]
 #[tokio::test]
-async fn drive_task_does_not_reconnect_after_session_teardown() {
+async fn drive_task_does_not_reconnect_once_released() {
 	let name = unique_server("task-teardown");
 	let InMemoryPeer {
 		service,
@@ -760,6 +760,7 @@ async fn drive_task_does_not_reconnect_after_session_teardown() {
 			CreateTaskResult::new(task),
 			&mut Some(stop_rx),
 			|_| {},
+			|| true,
 		)
 		.await
 	});
@@ -775,12 +776,16 @@ async fn drive_task_does_not_reconnect_after_session_teardown() {
 	.await
 	.expect("poller must send tasks/get");
 
-	// Both become ready before the poller resumes on this single-thread runtime.
+	// Dropping the stop sender is what a released entry does (a completion, a
+	// replacement, tracking lost): the poller ends at once, without cancelling
+	// the task, and both it and the transport are gone before the poller
+	// resumes on this single-thread runtime.
 	drop(stop_tx);
 	disconnect(&name);
 	drop(incoming);
 	let error = tokio::time::timeout(WAIT, poller).await.unwrap().unwrap().unwrap_err();
-	assert!(crate::session::cancellation::is_cancelled(&error));
+	assert!(is_released(&error), "a released entry only ends the polling: {error}");
+	assert!(!crate::session::cancellation::is_cancelled(&error));
 	assert_eq!(
 		super::super::process::get_server_restart_info(&name).consecutive_failures,
 		0

@@ -1124,17 +1124,18 @@ async fn read_resource_text_uses_the_owning_server_without_uri_assumptions() {
 async fn watch_resource_links_returns_early_without_links_or_session() {
 	let name = unique_server("watch-early");
 	let peer = serve_in_memory(&name);
-	let service = register(&name, peer.service);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
 
 	// No links → immediate return, nothing is sent to the server.
 	let plain = CallToolResult::success(vec![ContentBlock::text("no links")]);
-	tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &plain))
+	tokio::time::timeout(WAIT, watch_resource_links(&server, &plain))
 		.await
 		.expect("no-links result must return immediately");
 
 	// Links but no session context → immediate return before any listen.
 	let linked = result_with_resource_link("job://early-1");
-	tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+	tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
 		.await
 		.expect("sessionless result must return immediately");
 
@@ -1169,11 +1170,12 @@ async fn watch_resource_links_returns_early_without_links_or_session() {
 async fn watch_resource_links_continues_when_listen_fails() {
 	let name = unique_server("watch-fail");
 	let peer = serve_in_memory(&name);
-	let service = register(&name, peer.service);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
 	let linked = result_with_resource_link("job://fail-1");
 
 	crate::session::context::with_session_id(format!("cov-watch-fail-{}", uuid::Uuid::new_v4()), async {
-		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
 		// Answer the listen request with an unrelated result type → the
 		// client treats the stream as misbehaving and returns Err.
 		let responder = spawn_responder(peer.outgoing, peer.incoming, |request| match request {
@@ -1182,7 +1184,7 @@ async fn watch_resource_links_continues_when_listen_fails() {
 			}
 			_ => None,
 		});
-		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
 			.await
 			.expect("listen failure must not hang the loop");
 		responder.abort();
@@ -1199,11 +1201,12 @@ async fn watch_resource_links_continues_when_listen_fails() {
 async fn watch_resource_links_cancels_unacknowledged_subscription() {
 	let name = unique_server("watch-unack");
 	let peer = serve_in_memory(&name);
-	let service = register(&name, peer.service);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
 	let linked = result_with_resource_link("job://unack-1");
 
 	crate::session::context::with_session_id(format!("cov-watch-unack-{}", uuid::Uuid::new_v4()), async {
-		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
 
 		let mut outgoing = peer.outgoing;
 		let incoming = peer.incoming;
@@ -1226,7 +1229,7 @@ async fn watch_resource_links_cancels_unacknowledged_subscription() {
 			}
 		});
 
-		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
 			.await
 			.expect("unacknowledged subscription must not hang");
 		responder.abort();
@@ -1236,43 +1239,25 @@ async fn watch_resource_links_cancels_unacknowledged_subscription() {
 	disconnect(&name);
 }
 
-/// An acknowledged subscription for a URI nobody watches is cancelled.
+/// No subscription is opened for a URI nobody watches: a watcher acts for a
+/// registration, and there is none.
 #[serial]
 #[tokio::test]
-async fn watch_resource_links_cancels_unwatched_subscription() {
+async fn watch_resource_links_opens_no_subscription_for_an_unwatched_resource() {
 	let name = unique_server("watch-unwatched");
 	let peer = serve_in_memory(&name);
-	let service = register(&name, peer.service);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
 	let linked = result_with_resource_link("job://unwatched-1");
 
 	crate::session::context::with_session_id(format!("cov-watch-unwatched-{}", uuid::Uuid::new_v4()), async {
 		// Deliberately do NOT note the link as watched.
 		let mut outgoing = peer.outgoing;
-		let incoming = peer.incoming;
-		let uri = "job://unwatched-1".to_string();
-		let responder = tokio::spawn(async move {
-			use rmcp::model::GetMeta;
-			while let Some(message) = outgoing.next().await {
-				if let JsonRpcMessage::Request(request) = message {
-					if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
-						let mut filter = SubscriptionFilter::new();
-						filter.resource_subscriptions = Some(vec![uri.clone()]);
-						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
-							SubscriptionsAcknowledgedNotificationParams::new(filter),
-						));
-						ack.get_meta_mut().set_subscription_id(request.id.clone());
-						incoming
-							.unbounded_send(JsonRpcMessage::notification(ack))
-							.expect("fake server channel must stay open");
-					}
-				}
-			}
-		});
-
-		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
 			.await
-			.expect("unwatched subscription must not hang");
-		responder.abort();
+			.expect("an unwatched link must not hang");
+		let heard = tokio::time::timeout(Duration::from_millis(200), async { outgoing.next().await.is_some() }).await;
+		assert!(heard.is_err(), "nothing reaches the server for an unwatched resource");
 	})
 	.await;
 
@@ -1287,12 +1272,13 @@ async fn watch_resource_links_cancels_unwatched_subscription() {
 async fn watch_resource_links_delivers_update_and_completes() {
 	let name = unique_server("watch-full");
 	let peer = serve_in_memory(&name);
-	let service = register(&name, peer.service);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
 	let linked = result_with_resource_link("job://full-1");
 	let uri = "job://full-1".to_string();
 
 	crate::session::context::with_session_id(format!("cov-watch-full-{}", uuid::Uuid::new_v4()), async {
-		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
 		let mut events = crate::session::shell_jobs::subscribe_events();
 
 		let mut outgoing = peer.outgoing;
@@ -1340,7 +1326,7 @@ async fn watch_resource_links_delivers_update_and_completes() {
 		});
 
 		// Establish the watcher.
-		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
 			.await
 			.expect("watch setup must not hang");
 
@@ -1892,8 +1878,8 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 	register(&name, peer.service);
 	let server = stdin_config(&name, "unused", Vec::new(), 5);
 
-	let saw_cancel = StdArc::new(AtomicBool::new(false));
-	let flag = StdArc::clone(&saw_cancel);
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let cancel_count = StdArc::clone(&cancels);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
 		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
 			"task-stop",
@@ -1903,7 +1889,7 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 			TaskPayload::Working,
 		)))),
 		ClientRequest::CancelTaskRequest(_) => {
-			flag.store(true, Ordering::SeqCst);
+			cancel_count.fetch_add(1, Ordering::SeqCst);
 			Some(ServerResult::task_ack(()))
 		}
 		_ => None,
@@ -1948,7 +1934,7 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 			"{}",
 			batch[0].content
 		);
-		assert!(saw_cancel.load(Ordering::SeqCst), "tasks/cancel must be sent");
+		assert_eq!(cancels.load(Ordering::SeqCst), 1, "tasks/cancel is sent once");
 		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
 		crate::session::shell_jobs::clear_for_session(&session_id);
 	})
@@ -2100,6 +2086,1435 @@ async fn task_unknown_after_a_reconnect_is_reported_lost() {
 	);
 }
 
+/// A job is tracked for as long as it keeps answering, however long that is:
+/// one four hours old that only says "working" is never abandoned, restarted or
+/// cancelled, nothing wakes the model for its age or its unchanged status, and
+/// its completion arrives once, when the server says so.
+#[serial]
+#[tokio::test]
+async fn a_background_task_is_tracked_for_as_long_as_it_keeps_answering() {
+	let name = unique_server("task-long-running");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let counter = StdArc::clone(&polls);
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let cancel_count = StdArc::clone(&cancels);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-long",
+		)))),
+		ClientRequest::GetTaskRequest(_) => {
+			let payload = if counter.fetch_add(1, Ordering::SeqCst) < 6 {
+				TaskPayload::Working
+			} else {
+				let result =
+					serde_json::to_value(CallToolResult::success(vec![ContentBlock::text("built after hours")]))
+						.expect("serialize completed result");
+				TaskPayload::Completed {
+					result: result.as_object().expect("object").clone(),
+				}
+			};
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task("task-long"),
+				payload,
+			))))
+		}
+		ClientRequest::CancelTaskRequest(_) => {
+			cancel_count.fetch_add(1, Ordering::SeqCst);
+			Some(ServerResult::task_ack(()))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-long-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("long-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let key = crate::session::shell_jobs::task_key("long-1");
+		// Four hours in and silent: still tracked, nothing delivered, nobody woken.
+		crate::session::shell_jobs::age_for_tests(&session_id, &key);
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		assert!(polls.load(Ordering::SeqCst) >= 2, "the poller is at work");
+		assert!(
+			crate::session::shell_jobs::has_pending_for_session(&session_id),
+			"a silent job four hours old is still tracked"
+		);
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"nothing wakes the model for elapsed time or an unchanged status"
+		);
+
+		let batch = next_inbox_batch().await;
+		assert!(
+			batch[0]
+				.content
+				.starts_with("<background_job task=\"mcp-task:long-1\">\nbuilt after hours"),
+			"{}",
+			batch[0].content
+		);
+		assert_eq!(
+			cancels.load(Ordering::SeqCst),
+			0,
+			"a job is never cancelled for its age"
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		assert_eq!(
+			crate::session::shell_jobs::take_completed_for_session(&session_id).len(),
+			1
+		);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// A dropped connection is not the task's end: the poller reconnects and asks
+/// for the same task id again — one launch, no cancel — and the reconnected
+/// poll delivers the result once.
+#[serial]
+#[tokio::test]
+async fn a_dropped_connection_then_the_same_task_id_completes_once() {
+	let name = unique_server("task-drop-background");
+	let first = serve_in_memory(&name);
+	register(&name, first.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let launches = StdArc::new(AtomicUsize::new(0));
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let polled = StdArc::new(AtomicBool::new(false));
+	let (launch_count, cancel_count, polled_flag) = (
+		StdArc::clone(&launches),
+		StdArc::clone(&cancels),
+		StdArc::clone(&polled),
+	);
+	let first_responder = spawn_responder(first.outgoing, first.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => {
+			launch_count.fetch_add(1, Ordering::SeqCst);
+			Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+				"task-drop",
+			))))
+		}
+		ClientRequest::GetTaskRequest(request) => {
+			assert_eq!(request.params.task_id, "task-drop");
+			polled_flag.store(true, Ordering::SeqCst);
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task("task-drop"),
+				TaskPayload::Working,
+			))))
+		}
+		ClientRequest::CancelTaskRequest(_) => {
+			cancel_count.fetch_add(1, Ordering::SeqCst);
+			Some(ServerResult::task_ack(()))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-drop-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		let call = tokio::spawn(crate::session::context::with_session_id(
+			session_id.clone(),
+			async move { call_tool(&server, &tool_call("drop-1"), None).await },
+		));
+		tokio::time::timeout(WAIT, async {
+			while !polled.load(Ordering::SeqCst) {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the task must be polled on the first connection");
+
+		// The connection drops; a fresh one to the same server still knows the task.
+		let second = serve_in_memory(&name);
+		register(&name, second.service);
+		let second_responder = spawn_responder(second.outgoing, second.incoming, |request| match request {
+			ClientRequest::GetTaskRequest(request) => {
+				assert_eq!(
+					request.params.task_id, "task-drop",
+					"the same task id, never a resubmission"
+				);
+				Some(completed_task("task-drop", "done after the drop"))
+			}
+			request => panic!("unexpected request {request:?}"),
+		});
+		// Dropping the first responder drops the first connection's transport.
+		first_responder.abort();
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert!(
+			batch[0]
+				.content
+				.starts_with("<background_job task=\"mcp-task:drop-1\">\ndone after the drop"),
+			"{}",
+			batch[0].content
+		);
+		assert_eq!(launches.load(Ordering::SeqCst), 1, "one launch");
+		assert_eq!(
+			cancels.load(Ordering::SeqCst),
+			0,
+			"a dropped connection cancels nothing"
+		);
+		tokio::time::timeout(WAIT, call)
+			.await
+			.expect("the call returned at once")
+			.expect("the call task must not panic")
+			.expect("the call must hand back a notice");
+		second_responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A server nobody could reach for the whole outage budget is a failed
+/// observation, not the task's outcome: the poller keeps asking for the same id
+/// — never a second launch, never a cancel — and only an outage lasting the
+/// whole budget ends the tracking, with one result saying the outcome is
+/// unknown. Unanswered polls time out after the server's 1s request timeout.
+#[serial]
+#[tokio::test]
+async fn a_task_nobody_could_observe_for_the_whole_budget_is_reported_lost_once() {
+	let name = unique_server("task-lost-background");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 1);
+
+	let launches = StdArc::new(AtomicUsize::new(0));
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let (launch_count, poll_count, cancel_count) =
+		(StdArc::clone(&launches), StdArc::clone(&polls), StdArc::clone(&cancels));
+	let mut outgoing = peer.outgoing;
+	let incoming = peer.incoming;
+	let responder = tokio::spawn(async move {
+		while let Some(message) = outgoing.next().await {
+			if let JsonRpcMessage::Request(request) = message {
+				let response = match request.request {
+					ClientRequest::CallToolRequest(_) => {
+						launch_count.fetch_add(1, Ordering::SeqCst);
+						JsonRpcMessage::response(
+							ServerResult::CreateTaskResult(CreateTaskResult::new(working_task("task-gone"))),
+							request.id,
+						)
+					}
+					ClientRequest::GetTaskRequest(poll) => {
+						assert_eq!(poll.params.task_id, "task-gone");
+						poll_count.fetch_add(1, Ordering::SeqCst);
+						// Never answered: the poll times out and counts as a miss.
+						continue;
+					}
+					ClientRequest::CancelTaskRequest(_) => {
+						cancel_count.fetch_add(1, Ordering::SeqCst);
+						JsonRpcMessage::response(ServerResult::task_ack(()), request.id)
+					}
+					other => panic!("unexpected request {other:?}"),
+				};
+				incoming
+					.unbounded_send(response)
+					.expect("fake server channel must stay open");
+			}
+		}
+	});
+
+	let session_id = format!("cov-task-lost-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("gone-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let key = crate::session::shell_jobs::task_key("gone-1");
+		// The first miss starts the budget; mark it as run out, as two hours of
+		// misses would.
+		tokio::time::timeout(WAIT, async {
+			while !crate::session::shell_jobs::exhaust_outage_for_tests(&session_id, &key) {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the poller records the failed observation");
+
+		let batch = next_inbox_batch().await;
+		let content = &batch[0].content;
+		assert!(
+			content.starts_with(&format!(
+				"<background_job task=\"{key}\"{}>",
+				crate::session::shell_jobs::DELIVERY_ERROR_ATTR
+			)),
+			"{content}"
+		);
+		assert!(
+			content.contains("lost track")
+				&& content.contains("outcome is unknown")
+				&& content.contains("outage budget")
+				&& content.contains("Nothing was cancelled"),
+			"{content}"
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		assert_eq!(cancels.load(Ordering::SeqCst), 0, "nothing is cancelled");
+		assert_eq!(launches.load(Ordering::SeqCst), 1, "never resubmitted");
+		assert!(polls.load(Ordering::SeqCst) >= 2, "the same id was asked for again");
+		tokio::time::sleep(Duration::from_millis(150)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// A success in between starts the budget over: a task whose polls briefly went
+/// unanswered and then answered again is tracked to its real completion,
+/// however long the outage before it had run.
+#[serial]
+#[tokio::test]
+async fn a_recovered_task_clears_its_outage_and_still_completes() {
+	let name = unique_server("task-blip");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 1);
+
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let poll_count = StdArc::clone(&polls);
+	let mut outgoing = peer.outgoing;
+	let incoming = peer.incoming;
+	let responder = tokio::spawn(async move {
+		while let Some(message) = outgoing.next().await {
+			if let JsonRpcMessage::Request(request) = message {
+				match request.request {
+					ClientRequest::CallToolRequest(_) => incoming
+						.unbounded_send(JsonRpcMessage::response(
+							ServerResult::CreateTaskResult(CreateTaskResult::new(working_task("task-blip"))),
+							request.id,
+						))
+						.expect("fake server channel must stay open"),
+					ClientRequest::GetTaskRequest(poll) => {
+						assert_eq!(poll.params.task_id, "task-blip");
+						let response = match poll_count.fetch_add(1, Ordering::SeqCst) {
+							// Never answered: the poll times out and counts as a miss.
+							0 | 2 => continue,
+							// Held back long enough for the test to mark the first
+							// outage as run out before this success clears it.
+							1 => {
+								tokio::time::sleep(Duration::from_millis(300)).await;
+								JsonRpcMessage::response(
+									ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+										working_task("task-blip"),
+										TaskPayload::Working,
+									))),
+									request.id,
+								)
+							}
+							_ => JsonRpcMessage::response(completed_task("task-blip", "done after a blip"), request.id),
+						};
+						incoming
+							.unbounded_send(response)
+							.expect("fake server channel must stay open");
+					}
+					other => panic!("nothing else is expected, got {other:?}"),
+				}
+			}
+		}
+	});
+
+	let session_id = format!("cov-task-blip-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("blip-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let key = crate::session::shell_jobs::task_key("blip-1");
+		tokio::time::timeout(WAIT, async {
+			while !crate::session::shell_jobs::exhaust_outage_for_tests(&session_id, &key) {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the first miss is recorded");
+
+		// The success clears the outage; the next miss starts a fresh budget that
+		// has not run out, so the task completes for real.
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert!(
+			batch[0]
+				.content
+				.starts_with("<background_job task=\"mcp-task:blip-1\">\ndone after a blip"),
+			"{}",
+			batch[0].content
+		);
+		assert!(polls.load(Ordering::SeqCst) >= 4);
+		assert_eq!(
+			crate::session::shell_jobs::take_completed_for_session(&session_id)[0].body,
+			"done after a blip"
+		);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// A server that answers `tasks/get` with "invalid params" has forgotten the
+/// task. The tracking ends at once — no outage budget to wait out — with one
+/// result saying the outcome is unknown, and nothing is cancelled.
+#[serial]
+#[tokio::test]
+async fn a_background_task_its_server_forgot_is_reported_lost_at_once() {
+	let name = unique_server("task-forgotten");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let cancel_count = StdArc::clone(&cancels);
+	let mut outgoing = peer.outgoing;
+	let incoming = peer.incoming;
+	let responder = tokio::spawn(async move {
+		while let Some(message) = outgoing.next().await {
+			if let JsonRpcMessage::Request(request) = message {
+				let response = match request.request {
+					ClientRequest::CallToolRequest(_) => JsonRpcMessage::response(
+						ServerResult::CreateTaskResult(CreateTaskResult::new(working_task("task-forgotten"))),
+						request.id,
+					),
+					ClientRequest::GetTaskRequest(_) => JsonRpcMessage::error(
+						rmcp::ErrorData::invalid_params("unknown task: task-forgotten", None),
+						Some(request.id),
+					),
+					ClientRequest::CancelTaskRequest(_) => {
+						cancel_count.fetch_add(1, Ordering::SeqCst);
+						JsonRpcMessage::response(ServerResult::task_ack(()), request.id)
+					}
+					other => panic!("unexpected request {other:?}"),
+				};
+				incoming
+					.unbounded_send(response)
+					.expect("fake server channel must stay open");
+			}
+		}
+	});
+
+	let session_id = format!("cov-task-forgotten-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("forgotten-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		let content = &batch[0].content;
+		assert!(content.contains("is_error=\"true\""), "{content}");
+		assert!(
+			content.contains("lost track") && content.contains("no longer knows it"),
+			"{content}"
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		assert_eq!(cancels.load(Ordering::SeqCst), 0, "nothing is cancelled");
+		tokio::time::sleep(Duration::from_millis(150)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// Dropping the registry entry — what a completion, a replacement or a lost
+/// tracking does — only ends the polling: the task is neither cancelled nor
+/// delivered for. Only an explicit stop or teardown cancels it.
+#[serial]
+#[tokio::test]
+async fn dropping_the_observer_ends_the_polling_without_cancelling_the_task() {
+	let name = unique_server("task-observer-drop");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let cancels = StdArc::new(AtomicUsize::new(0));
+	let counter = StdArc::clone(&polls);
+	let cancel_count = StdArc::clone(&cancels);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-orphan",
+		)))),
+		ClientRequest::GetTaskRequest(_) => {
+			counter.fetch_add(1, Ordering::SeqCst);
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task("task-orphan"),
+				TaskPayload::Working,
+			))))
+		}
+		ClientRequest::CancelTaskRequest(_) => {
+			cancel_count.fetch_add(1, Ordering::SeqCst);
+			Some(ServerResult::task_ack(()))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-orphan-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("orphan-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let key = crate::session::shell_jobs::task_key("orphan-1");
+		tokio::time::timeout(WAIT, async {
+			while polls.load(Ordering::SeqCst) == 0 {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the task must be polled");
+		assert!(
+			crate::session::shell_jobs::complete_for_session(&session_id, &key, "gone"),
+			"the entry is dropped the way a completion drops it"
+		);
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		let settled = polls.load(Ordering::SeqCst);
+		tokio::time::sleep(Duration::from_millis(150)).await;
+		assert_eq!(polls.load(Ordering::SeqCst), settled, "the poller ended with its entry");
+		assert_eq!(cancels.load(Ordering::SeqCst), 0, "a dropped entry cancels nothing");
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"and delivers nothing"
+		);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// A signalled update whose read fails is retried, not delivered as the job's
+/// outcome: the job stays pending, and the read that then succeeds delivers
+/// the output once.
+#[serial]
+#[tokio::test]
+async fn a_resource_update_whose_read_fails_is_retried_not_delivered_as_the_outcome() {
+	let name = unique_server("watch-read-retry");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://retry-1");
+	let uri = "job://retry-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-retry-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let reads = StdArc::new(AtomicUsize::new(0));
+		let read_count = StdArc::clone(&reads);
+		let watched_uri = uri.clone();
+		let responder_incoming = incoming.clone();
+		let responder = tokio::spawn(async move {
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(poll) = request.request {
+						assert_eq!(poll.params.uri, watched_uri, "the same resource is re-read");
+						let response = if read_count.fetch_add(1, Ordering::SeqCst) == 0 {
+							JsonRpcMessage::error(rmcp::ErrorData::internal_error("boom", None), Some(request.id))
+						} else {
+							JsonRpcMessage::response(text_result(&watched_uri, "job output body"), request.id)
+						};
+						responder_incoming
+							.unbounded_send(response)
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		push_resource_update(&incoming, &uri);
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		assert_eq!(reads.load(Ordering::SeqCst), 1, "one bounded read, then backoff");
+		assert!(
+			crate::session::shell_jobs::has_pending_for_session(&session_id),
+			"a failed read is not the job's outcome"
+		);
+		assert!(crate::session::inbox::drain_inbox_batch().is_empty());
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert_eq!(
+			batch[0].content,
+			crate::session::shell_jobs::delivery_message(
+				"<background_job resource=\"job://retry-1\">",
+				"job output body"
+			)
+		);
+		assert_eq!(reads.load(Ordering::SeqCst), 2);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A read that keeps failing for the whole outage budget ends the tracking with
+/// one result saying the outcome is unknown — never the read error passed off
+/// as the job's output, and nothing delivered twice.
+#[serial]
+#[tokio::test]
+async fn a_resource_update_nobody_could_read_for_the_whole_budget_is_reported_lost_once() {
+	let name = unique_server("watch-read-lost");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://gone-1");
+	let uri = "job://gone-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-lost-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let reads = StdArc::new(AtomicUsize::new(0));
+		let read_count = StdArc::clone(&reads);
+		let responder_incoming = incoming.clone();
+		let responder = tokio::spawn(async move {
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(_) = request.request {
+						read_count.fetch_add(1, Ordering::SeqCst);
+						responder_incoming
+							.unbounded_send(JsonRpcMessage::error(
+								rmcp::ErrorData::internal_error("boom", None),
+								Some(request.id),
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		push_resource_update(&incoming, &uri);
+		// The first failed read starts the budget; mark it as run out, as two
+		// hours of failed reads would.
+		tokio::time::timeout(WAIT, async {
+			while !crate::session::shell_jobs::exhaust_outage_for_tests(&session_id, &uri) {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the failed read is recorded");
+
+		let batch = next_inbox_batch().await;
+		let content = &batch[0].content;
+		assert!(
+			content.starts_with(&format!(
+				"<background_job resource=\"{uri}\"{}>",
+				crate::session::shell_jobs::DELIVERY_ERROR_ATTR
+			)),
+			"{content}"
+		);
+		assert!(
+			content.contains("lost track") && content.contains("outcome is unknown"),
+			"{content}"
+		);
+		assert_eq!(reads.load(Ordering::SeqCst), 2, "retried on backoff, then lost");
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+		responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A server that answers the read with "resource not found" has forgotten the
+/// job. The tracking ends at once — no outage budget to wait out — with one
+/// result saying the outcome is unknown, and the resource is no longer watched.
+#[serial]
+#[tokio::test]
+async fn a_resource_update_its_server_no_longer_knows_is_reported_lost_at_once() {
+	let name = unique_server("watch-read-forgotten");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://forgotten-1");
+	let uri = "job://forgotten-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-forgotten-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let responder_incoming = incoming.clone();
+		let responder = tokio::spawn(async move {
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(_) = request.request {
+						responder_incoming
+							.unbounded_send(JsonRpcMessage::error(
+								rmcp::ErrorData::resource_not_found("no such job", None),
+								Some(request.id),
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		push_resource_update(&incoming, &uri);
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		let content = &batch[0].content;
+		assert!(
+			content.starts_with(&format!(
+				"<background_job resource=\"{uri}\"{}>",
+				crate::session::shell_jobs::DELIVERY_ERROR_ATTR
+			)),
+			"{content}"
+		);
+		assert!(
+			content.contains("lost track") && content.contains("no longer knows it"),
+			"{content}"
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		assert!(!crate::session::shell_jobs::is_watched_for_session(&session_id, &uri));
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+		responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A connection that closes is not the job's end: the signalled read that
+/// failed on it is retried over a connection reopened to the same server — the
+/// one the job was registered with — and the same resource delivers once.
+/// Nothing else is asked of either connection.
+#[serial]
+#[tokio::test]
+async fn a_resource_update_survives_a_closed_connection_and_delivers_once() {
+	let name = unique_server("watch-reconnect");
+	let first = serve_in_memory(&name);
+	register(&name, first.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://reconnect-1");
+	let uri = "job://reconnect-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-reconnect-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+
+		// The first connection fails the read, then goes away with its transport.
+		let reads_first = StdArc::new(AtomicUsize::new(0));
+		let count = StdArc::clone(&reads_first);
+		let watched_uri = uri.clone();
+		let push = first.incoming.clone();
+		let first_responder = tokio::spawn(async move {
+			let mut outgoing = first.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(poll) = request.request {
+						assert_eq!(poll.params.uri, watched_uri, "the same resource is read");
+						count.fetch_add(1, Ordering::SeqCst);
+						first
+							.incoming
+							.unbounded_send(JsonRpcMessage::error(
+								rmcp::ErrorData::internal_error("connection closing", None),
+								Some(request.id),
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		push_resource_update(&push, &uri);
+		tokio::time::timeout(WAIT, async {
+			while reads_first.load(Ordering::SeqCst) == 0 {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the read is attempted on the open connection");
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"a failed read is not the outcome"
+		);
+
+		// The server is back on a new connection under the same name.
+		let second = serve_in_memory(&name);
+		register(&name, second.service);
+		let reads_second = StdArc::new(AtomicUsize::new(0));
+		let count = StdArc::clone(&reads_second);
+		let second_responder = tokio::spawn(async move {
+			let mut outgoing = second.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					match request.request {
+						ClientRequest::ReadResourceRequest(poll) => {
+							assert_eq!(poll.params.uri, "job://reconnect-1", "the same resource is re-read");
+							count.fetch_add(1, Ordering::SeqCst);
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::response(
+									text_result(&poll.params.uri, "job output after reconnect"),
+									request.id,
+								))
+								.expect("fake server channel must stay open");
+						}
+						other => panic!("no other request reaches the reconnected server: {other:?}"),
+					}
+				}
+			}
+		});
+		// Dropping the first responder drops the first connection's transport.
+		first_responder.abort();
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert_eq!(
+			batch[0].content,
+			crate::session::shell_jobs::delivery_message(
+				"<background_job resource=\"job://reconnect-1\">",
+				"job output after reconnect"
+			)
+		);
+		assert_eq!(
+			reads_second.load(Ordering::SeqCst),
+			1,
+			"one read on the reopened connection"
+		);
+		assert_eq!(reads_first.load(Ordering::SeqCst), 1, "no more on the closed one");
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
+		assert_eq!(
+			crate::session::shell_jobs::take_completed_for_session(&session_id).len(),
+			1
+		);
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+		second_responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A waiter whose registration is replaced while it backs off stops: the job
+/// launched again under the same URI keeps its own tracking and outcome, and
+/// the stale waiter neither reads again nor reconnects nor delivers.
+#[serial]
+#[tokio::test]
+async fn a_resource_waiter_stops_once_its_registration_is_replaced() {
+	let name = unique_server("watch-replaced-waiter");
+	let mut peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://replaced-1");
+	let uri = "job://replaced-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-replaced-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+
+		let reads = StdArc::new(AtomicUsize::new(0));
+		let count = StdArc::clone(&reads);
+		let push = peer.incoming.clone();
+		let responder = tokio::spawn(async move {
+			while let Some(message) = peer.outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(_) = request.request {
+						count.fetch_add(1, Ordering::SeqCst);
+						peer.incoming
+							.unbounded_send(JsonRpcMessage::error(
+								rmcp::ErrorData::internal_error("boom", None),
+								Some(request.id),
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		push_resource_update(&push, &uri);
+		tokio::time::timeout(WAIT, async {
+			while reads.load(Ordering::SeqCst) == 0 {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the first read is attempted");
+
+		// The job is launched again under the same URI while the waiter backs off.
+		crate::session::shell_jobs::register_for_session(&session_id, &name, &uri, "shell: cargo build");
+		// The backoff's one retry finds its registration gone and ends the wait
+		// before it reads or reconnects again.
+		tokio::time::sleep(Duration::from_millis(4000)).await;
+		assert_eq!(
+			reads.load(Ordering::SeqCst),
+			1,
+			"the stale waiter ends without reading again"
+		);
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"nothing is delivered for the replaced registration"
+		);
+		assert!(
+			crate::session::shell_jobs::is_watched_for_session(&session_id, &uri),
+			"the replacement is tracked"
+		);
+		let pending = crate::session::shell_jobs::pending_resources_for_session(&session_id);
+		assert!(!pending[0].delivering, "and not claimed by the stale waiter");
+		assert_eq!(pending[0].label, "shell: cargo build");
+		responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// The watcher's stream lives on one connection. When that connection goes, the
+/// watcher re-arms on the reopened one and reads the resource once more — as a
+/// status, since no signal said the job ended — then the signal on the new
+/// stream delivers exactly once.
+#[serial]
+#[tokio::test]
+async fn a_watcher_re_arms_on_a_reopened_connection_and_delivers_the_signal_once() {
+	let name = unique_server("watch-rearm");
+	let first = serve_in_memory(&name);
+	register(&name, first.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://rearm-1");
+	let uri = "job://rearm-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-rearm-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let mut events = crate::session::shell_jobs::subscribe_events();
+
+		// First connection: the stream is acknowledged, then its transport goes.
+		let listens_first = StdArc::new(AtomicUsize::new(0));
+		let count = StdArc::clone(&listens_first);
+		let first_responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			let mut outgoing = first.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
+						count.fetch_add(1, Ordering::SeqCst);
+						let mut filter = SubscriptionFilter::new();
+						filter.resource_subscriptions = Some(vec!["job://rearm-1".to_string()]);
+						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+							SubscriptionsAcknowledgedNotificationParams::new(filter),
+						));
+						ack.get_meta_mut().set_subscription_id(request.id.clone());
+						first
+							.incoming
+							.unbounded_send(JsonRpcMessage::notification(ack))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		// Establish the watcher.
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
+			.await
+			.expect("watch setup must not hang");
+		assert_eq!(listens_first.load(Ordering::SeqCst), 1);
+
+		// The server is back on a new connection: it acknowledges a new stream
+		// and answers the re-read, then the signal's read.
+		let second = serve_in_memory(&name);
+		register(&name, second.service);
+		let listens_second = StdArc::new(AtomicUsize::new(0));
+		let listen_count = StdArc::clone(&listens_second);
+		let reads_second = StdArc::new(AtomicUsize::new(0));
+		let read_count = StdArc::clone(&reads_second);
+		let listen_id: StdArc<StdMutex<Option<RequestId>>> = StdArc::new(StdMutex::new(None));
+		let seen_id = StdArc::clone(&listen_id);
+		let push_second = second.incoming.clone();
+		let second_responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			let mut outgoing = second.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					match request.request {
+						ClientRequest::SubscriptionsListenRequest(_) => {
+							listen_count.fetch_add(1, Ordering::SeqCst);
+							let mut filter = SubscriptionFilter::new();
+							filter.resource_subscriptions = Some(vec!["job://rearm-1".to_string()]);
+							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+								SubscriptionsAcknowledgedNotificationParams::new(filter),
+							));
+							ack.get_meta_mut().set_subscription_id(request.id.clone());
+							seen_id.lock().expect("listen id lock").replace(request.id.clone());
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::notification(ack))
+								.expect("fake server channel must stay open");
+						}
+						ClientRequest::ReadResourceRequest(poll) => {
+							// The first read is the re-arm's status probe; the
+							// second, the signal's delivery.
+							let text = if read_count.fetch_add(1, Ordering::SeqCst) == 0 {
+								"status: running, half done"
+							} else {
+								"status: exited with code 0"
+							};
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::response(
+									text_result(&poll.params.uri, text),
+									request.id,
+								))
+								.expect("fake server channel must stay open");
+						}
+						other => panic!("no other request reaches the reconnected server: {other:?}"),
+					}
+				}
+			}
+		});
+		// Dropping the first responder drops the first connection's transport.
+		first_responder.abort();
+
+		tokio::time::timeout(WAIT, async {
+			while listens_second.load(Ordering::SeqCst) == 0 || reads_second.load(Ordering::SeqCst) == 0 {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.expect("the watcher re-arms and re-reads");
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		assert_eq!(listens_second.load(Ordering::SeqCst), 1, "one stream at a time");
+		assert_eq!(
+			reads_second.load(Ordering::SeqCst),
+			1,
+			"the re-read is a status, not a delivery"
+		);
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"no signal, nothing delivered"
+		);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+		assert!(crate::session::shell_jobs::is_watched_for_session(&session_id, &uri));
+		assert_eq!(
+			crate::session::shell_jobs::pending_resources_for_session(&session_id)[0]
+				.status
+				.as_deref(),
+			Some("status: running, half done")
+		);
+
+		// The signal on the new stream delivers once.
+		let subscription_id = {
+			let mut waited = 0u32;
+			loop {
+				if let Some(id) = listen_id.lock().expect("listen id lock").clone() {
+					break id;
+				}
+				assert!(waited < 250, "listen request id must arrive");
+				waited += 1;
+				tokio::time::sleep(Duration::from_millis(4)).await;
+			}
+		};
+		use rmcp::model::GetMeta;
+		let mut update = ServerNotification::ResourceUpdatedNotification(Notification::new(
+			ResourceUpdatedNotificationParam::new(uri.clone()),
+		));
+		update.get_meta_mut().set_subscription_id(subscription_id);
+		push_second
+			.unbounded_send(JsonRpcMessage::notification(update))
+			.expect("fake server channel must stay open");
+
+		let event = tokio::time::timeout(WAIT, events.recv())
+			.await
+			.expect("update must be delivered within the wait")
+			.expect("watch event channel must stay open");
+		assert!(
+			matches!(&event, crate::session::shell_jobs::WatchEvent::Completed { uri: u, .. } if *u == uri),
+			"{event:?}"
+		);
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert_eq!(
+			batch[0].content,
+			crate::session::shell_jobs::delivery_message(
+				"<background_job resource=\"job://rearm-1\">",
+				"status: exited with code 0"
+			)
+		);
+		assert_eq!(reads_second.load(Ordering::SeqCst), 2);
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+		second_responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A `subscriptions/listen` that fails on the reopened connection does not end
+/// the watcher: it reads the job, tries again after its first backoff (1s), and
+/// the exit the server replays on the stream that finally opens is delivered
+/// exactly once.
+#[serial]
+#[tokio::test]
+async fn a_watcher_retries_a_failed_listen_when_re_arming_and_delivers_the_replayed_exit_once() {
+	let name = unique_server("watch-rearm-retry");
+	let first = serve_in_memory(&name);
+	register(&name, first.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://rearm-retry-1");
+	let uri = "job://rearm-retry-1".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-rearm-retry-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+
+		// First connection: the stream is acknowledged, then its transport goes.
+		let first_responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			let mut outgoing = first.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
+						let mut filter = SubscriptionFilter::new();
+						filter.resource_subscriptions = Some(vec!["job://rearm-retry-1".to_string()]);
+						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+							SubscriptionsAcknowledgedNotificationParams::new(filter),
+						));
+						ack.get_meta_mut().set_subscription_id(request.id.clone());
+						first
+							.incoming
+							.unbounded_send(JsonRpcMessage::notification(ack))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		tokio::time::timeout(WAIT, watch_resource_links(&server, &linked))
+			.await
+			.expect("watch setup must not hang");
+
+		// The reopened connection refuses the first stream, then opens the next
+		// one and replays the exit on it. Reads always succeed.
+		let second = serve_in_memory(&name);
+		register(&name, second.service);
+		let listens = StdArc::new(AtomicUsize::new(0));
+		let listen_count = StdArc::clone(&listens);
+		let reads = StdArc::new(AtomicUsize::new(0));
+		let read_count = StdArc::clone(&reads);
+		let second_responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			let mut outgoing = second.outgoing;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					match request.request {
+						ClientRequest::SubscriptionsListenRequest(_) => {
+							if listen_count.fetch_add(1, Ordering::SeqCst) == 0 {
+								second
+									.incoming
+									.unbounded_send(JsonRpcMessage::error(
+										rmcp::ErrorData::internal_error("streams unavailable", None),
+										Some(request.id),
+									))
+									.expect("fake server channel must stay open");
+								continue;
+							}
+							let mut filter = SubscriptionFilter::new();
+							filter.resource_subscriptions = Some(vec!["job://rearm-retry-1".to_string()]);
+							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+								SubscriptionsAcknowledgedNotificationParams::new(filter),
+							));
+							ack.get_meta_mut().set_subscription_id(request.id.clone());
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::notification(ack))
+								.expect("fake server channel must stay open");
+							let mut replay = ServerNotification::ResourceUpdatedNotification(Notification::new(
+								ResourceUpdatedNotificationParam::new("job://rearm-retry-1".to_string()),
+							));
+							replay.get_meta_mut().set_subscription_id(request.id.clone());
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::notification(replay))
+								.expect("fake server channel must stay open");
+						}
+						ClientRequest::ReadResourceRequest(poll) => {
+							// The first two reads are the re-arm's status probes
+							// (one per attempt); the third is the signal's delivery.
+							let text = if read_count.fetch_add(1, Ordering::SeqCst) < 2 {
+								"status: running, half done"
+							} else {
+								"status: exited with code 0"
+							};
+							second
+								.incoming
+								.unbounded_send(JsonRpcMessage::response(
+									text_result(&poll.params.uri, text),
+									request.id,
+								))
+								.expect("fake server channel must stay open");
+						}
+						other => panic!("no other request reaches the reconnected server: {other:?}"),
+					}
+				}
+			}
+		});
+		// Dropping the first responder drops the first connection's transport.
+		first_responder.abort();
+
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert_eq!(
+			batch[0].content,
+			crate::session::shell_jobs::delivery_message(
+				"<background_job resource=\"job://rearm-retry-1\">",
+				"status: exited with code 0"
+			)
+		);
+		assert_eq!(listens.load(Ordering::SeqCst), 2, "the failed stream was retried once");
+		assert_eq!(reads.load(Ordering::SeqCst), 3, "two status probes, one delivery");
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		assert!(
+			crate::session::inbox::drain_inbox_batch().is_empty(),
+			"one result, not more"
+		);
+		second_responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// The reconcile pass reports a resource's status once per distinct reading —
+/// the first, then only a changed one, never the same again for the clock's
+/// sake — over the live connection to its server, and nothing else is asked of
+/// the server.
+#[serial]
+#[tokio::test]
+async fn a_resource_status_reaches_the_model_once_per_distinct_reading() {
+	let name = unique_server("watch-status-dedup");
+	let mut peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://status-1");
+
+	crate::session::context::with_session_id(format!("cov-watch-status-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+
+		let reads = StdArc::new(AtomicUsize::new(0));
+		let count = StdArc::clone(&reads);
+		let responder = tokio::spawn(async move {
+			while let Some(message) = peer.outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(poll) = request.request {
+						// Quiet, quiet, then progress.
+						let text = if count.fetch_add(1, Ordering::SeqCst) < 2 {
+							"status: running"
+						} else {
+							"status: running, 50%"
+						};
+						peer.incoming
+							.unbounded_send(JsonRpcMessage::response(
+								text_result(&poll.params.uri, text),
+								request.id,
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+		let mut reported_statuses = HashMap::new();
+		let mut checked_jobs = std::collections::HashSet::new();
+		for _ in 0..3 {
+			crate::session::chat::session::reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs)
+				.await;
+		}
+		assert_eq!(reads.load(Ordering::SeqCst), 3, "one read per window, no other request");
+		let batch = crate::session::inbox::drain_inbox_batch();
+		assert_eq!(batch.len(), 2, "the first reading and the changed one only: {batch:?}");
+		assert!(
+			batch[0].content.ends_with("\nstatus: running\n</background_job>"),
+			"{}",
+			batch[0].content
+		);
+		assert!(
+			batch[1].content.contains("status: running, 50%"),
+			"{}",
+			batch[1].content
+		);
+		assert!(crate::session::shell_jobs::is_watched_for_session(
+			&session_id,
+			"job://status-1"
+		));
+		responder.abort();
+	})
+	.await;
+
+	disconnect(&name);
+}
+
+/// A signal from another server claims nothing, whatever URI it names: the job
+/// one server launched is read from that server alone, and only its own signal
+/// delivers it.
+#[serial]
+#[tokio::test]
+async fn a_signal_from_another_server_claims_nothing_for_the_same_uri() {
+	let owner = unique_server("watch-owner");
+	let owner_peer = serve_in_memory(&owner);
+	register(&owner, owner_peer.service);
+	let other = unique_server("watch-other");
+	let other_peer = serve_in_memory(&other);
+	register(&other, other_peer.service);
+	let server = stdin_config(&owner, "unused", Vec::new(), 5);
+	let linked = result_with_resource_link("job://shared");
+	let uri = "job://shared".to_string();
+
+	crate::session::context::with_session_id(format!("cov-watch-cross-server-{}", uuid::Uuid::new_v4()), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::shell_jobs::note_watched_from_server_config(&server, &linked);
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+
+		let other_reads = StdArc::new(AtomicUsize::new(0));
+		let other_count = StdArc::clone(&other_reads);
+		let mut other_outgoing = other_peer.outgoing;
+		let other_responder = tokio::spawn(async move {
+			while let Some(message) = other_outgoing.next().await {
+				if let JsonRpcMessage::Request(_) = message {
+					other_count.fetch_add(1, Ordering::SeqCst);
+				}
+			}
+		});
+		let owner_reads = StdArc::new(AtomicUsize::new(0));
+		let owner_count = StdArc::clone(&owner_reads);
+		let mut owner_outgoing = owner_peer.outgoing;
+		let owner_reply = owner_peer.incoming.clone();
+		let owner_responder = tokio::spawn(async move {
+			while let Some(message) = owner_outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::ReadResourceRequest(poll) = request.request {
+						owner_count.fetch_add(1, Ordering::SeqCst);
+						owner_reply
+							.unbounded_send(JsonRpcMessage::response(
+								text_result(&poll.params.uri, "done from the owner"),
+								request.id,
+							))
+							.expect("fake server channel must stay open");
+					}
+				}
+			}
+		});
+
+		// The other server signals the same URI: nobody reads anything, the job
+		// stays tracked and unclaimed.
+		let other_push = other_peer.incoming.clone();
+		push_resource_update(&other_push, &uri);
+		tokio::time::sleep(Duration::from_millis(300)).await;
+		assert_eq!(
+			other_reads.load(Ordering::SeqCst),
+			0,
+			"no reconnect to the signalling server"
+		);
+		assert_eq!(
+			owner_reads.load(Ordering::SeqCst),
+			0,
+			"the owner is not read on another server's word"
+		);
+		assert!(crate::session::inbox::drain_inbox_batch().is_empty());
+		assert!(crate::session::shell_jobs::is_watched_for_session(&session_id, &uri));
+		assert!(!crate::session::shell_jobs::pending_resources_for_session(&session_id)[0].delivering);
+
+		// The owner's own signal delivers once.
+		let owner_push = owner_peer.incoming.clone();
+		push_resource_update(&owner_push, &uri);
+		let batch = next_inbox_batch().await;
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert_eq!(
+			batch[0].content,
+			crate::session::shell_jobs::delivery_message(
+				"<background_job resource=\"job://shared\">",
+				"done from the owner"
+			)
+		);
+		assert_eq!(owner_reads.load(Ordering::SeqCst), 1);
+		assert_eq!(other_reads.load(Ordering::SeqCst), 0);
+		other_responder.abort();
+		owner_responder.abort();
+	})
+	.await;
+
+	disconnect(&owner);
+	disconnect(&other);
+}
+
+/// The server signals a resource update unsolicited — the legacy push path.
+fn push_resource_update(incoming: &mpsc::UnboundedSender<RxJsonRpcMessage<RoleClient>>, uri: &str) {
+	incoming
+		.unbounded_send(JsonRpcMessage::notification(
+			ServerNotification::ResourceUpdatedNotification(Notification::new(ResourceUpdatedNotificationParam::new(
+				uri.to_string(),
+			))),
+		))
+		.expect("fake server channel must stay open");
+}
+
+fn text_result(uri: &str, text: &str) -> ServerResult {
+	ServerResult::ReadResourceResult(ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+		uri: uri.to_string(),
+		mime_type: Some("text/plain".to_string()),
+		text: text.to_string(),
+		meta: None,
+	}]))
+}
+
 #[tokio::test]
 async fn remote_skill_loads_verified_files_only_after_approval() {
 	use crate::mcp::elicitation::{self, Answerer};
@@ -2235,4 +3650,90 @@ async fn remote_skill_loads_verified_files_only_after_approval() {
 	context::cleanup_session(&id);
 	disconnect(&name);
 	responder.abort();
+}
+
+/// Runs a `tools/call` that returns a resource link, inside a session, against
+/// an in-memory server whose peer info does or does not advertise
+/// `resources.subscribe`; reports whether the link is watched afterwards.
+async fn link_is_watched_after_call_tool(tag: &str, advertises_subscribe: bool) -> bool {
+	use rmcp::model::{GetMeta, ServerCapabilities, ServerPeerInfo};
+
+	let name = unique_server(tag);
+	let uri = format!("job://{tag}");
+	let config = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
+	let peer_info = advertises_subscribe.then(|| {
+		ServerPeerInfo::new(
+			ProtocolVersion::V_2026_07_28,
+			ServerCapabilities::builder()
+				.enable_resources()
+				.enable_resources_subscribe()
+				.build(),
+		)
+	});
+	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
+	let (out_tx, mut out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
+	let service = rmcp::service::serve_directly(OctoClientHandler::new(&config), (out_tx, in_rx), peer_info);
+	register(&name, service);
+
+	let linked_uri = uri.clone();
+	let responder = tokio::spawn(async move {
+		while let Some(message) = out_rx.next().await {
+			if let JsonRpcMessage::Request(request) = message {
+				match request.request {
+					ClientRequest::CallToolRequest(_) => in_tx
+						.unbounded_send(JsonRpcMessage::response(
+							ServerResult::CallToolResult(result_with_resource_link(&linked_uri)),
+							request.id,
+						))
+						.expect("fake server channel must stay open"),
+					ClientRequest::SubscriptionsListenRequest(_) => {
+						let mut filter = SubscriptionFilter::new();
+						filter.resource_subscriptions = Some(vec![linked_uri.clone()]);
+						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+							SubscriptionsAcknowledgedNotificationParams::new(filter),
+						));
+						ack.get_meta_mut().set_subscription_id(request.id.clone());
+						in_tx
+							.unbounded_send(JsonRpcMessage::notification(ack))
+							.expect("fake server channel must stay open");
+					}
+					_ => {}
+				}
+			}
+		}
+	});
+
+	let session_id = format!("cov-link-gate-{}", uuid::Uuid::new_v4());
+	let watched = crate::session::context::with_session_id(session_id.clone(), async {
+		tokio::time::timeout(WAIT, call_tool(&config, &tool_call("link-1"), None))
+			.await
+			.expect("the call must not hang")
+			.expect("the call must return the result");
+		let watched = crate::session::shell_jobs::is_watched_for_session(&session_id, &uri);
+		// Teardown ends the watcher, which would otherwise retry the dead server
+		// for the whole outage budget once the responder is gone.
+		crate::session::shell_jobs::clear_for_session(&session_id);
+		watched
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+	watched
+}
+
+/// A server that does not advertise `resources.subscribe` can never signal the
+/// end of a job, so the link it returns is a plain reference: not tracked.
+#[serial]
+#[tokio::test]
+async fn a_resource_link_from_a_server_that_cannot_signal_updates_is_not_watched() {
+	assert!(!link_is_watched_after_call_tool("link-gate-plain", false).await);
+}
+
+/// A server that advertises `resources.subscribe` can signal the end of a job,
+/// so the link it returns is tracked.
+#[serial]
+#[tokio::test]
+async fn a_resource_link_from_a_server_that_signals_updates_is_watched() {
+	assert!(link_is_watched_after_call_tool("link-gate-subscribe", true).await);
 }

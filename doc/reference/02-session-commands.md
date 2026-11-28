@@ -228,9 +228,11 @@ removed.
 
 `agents` merges tap specialists with asynchronous `agent_*` calls. Tap runs carry live or persisted usage accounting;
 async `agent_*` cost is explicitly shown as not tracked rather than guessed. `jobs` is generic across MCP servers: a
-tool must return a standard `ResourceLink`; Octomind retains the originating server and treats the URI as opaque. The
-full jobs view performs one bounded `resources/read` call per active resource. Completion remains event-driven via
-`resources/updated` and is injected automatically.
+tool must return a standard `ResourceLink` from a server that advertises the standard `resources.subscribe`
+capability, because only such a server can signal that a job ended. Links from other servers are plain references and
+are not tracked. Octomind retains the originating server and treats the URI as opaque. The full jobs view performs one
+bounded `resources/read` call per active resource. Completion remains event-driven via `resources/updated` and is
+injected automatically.
 
 All status state is process-local and session-scoped. A resumed process cannot reattach to work owned by the prior
 process.

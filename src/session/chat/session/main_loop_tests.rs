@@ -124,13 +124,7 @@ fn snapshot(text: &str) -> JobStatusRead {
 #[test]
 fn background_job_first_status_check_uses_normal_message() {
 	assert_eq!(
-		background_job_status_message(
-			"custommcp://tasks/9",
-			600,
-			&snapshot("still working"),
-			None,
-			BACKGROUND_JOB_RECONCILE,
-		),
+		background_job_status_message("custommcp://tasks/9", 600, &snapshot("still working")),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"600\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
@@ -141,38 +135,9 @@ fn background_job_first_status_check_uses_normal_message() {
 }
 
 #[test]
-fn background_job_unchanged_status_asks_the_model_to_judge_whether_it_is_stuck() {
-	assert_eq!(
-		background_job_status_message(
-			"custommcp://tasks/9",
-			1200,
-			&snapshot("still working"),
-			Some("still working"),
-			BACKGROUND_JOB_RECONCILE,
-		),
-		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
-		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
-		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
-		 using the method the tool provided when it started.\n\
-		 still working\n\
-		 The job's status has not changed since the previous check at least 600 seconds ago. \
-		 A command that prints only when it finishes looks the same while it is still working, so \
-		 judge from what it runs and how long that should take: if it is stuck, stop it using the \
-		 method the tool provided when it started; otherwise reply with a short status and no tool call to keep waiting.\n\
-		 </background_job>"
-	);
-}
-
-#[test]
 fn background_job_changed_status_uses_normal_message() {
 	assert_eq!(
-		background_job_status_message(
-			"custommcp://tasks/9",
-			1200,
-			&snapshot("phase two"),
-			Some("phase one"),
-			BACKGROUND_JOB_RECONCILE,
-		),
+		background_job_status_message("custommcp://tasks/9", 1200, &snapshot("phase two")),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
@@ -183,18 +148,19 @@ fn background_job_changed_status_uses_normal_message() {
 }
 
 #[test]
-fn background_job_unavailable_status_is_never_called_unchanged() {
-	// The same failure text twice says nothing about the job itself.
-	let timed_out = "reading the resource timed out";
+fn background_job_unavailable_status_is_reported_as_is() {
+	let unavailable = "MCP connection 'custommcp' is not active";
 	let message = background_job_status_message(
 		"custommcp://tasks/9",
 		1200,
-		&JobStatusRead::Unavailable(timed_out.to_string()),
-		Some(timed_out),
-		BACKGROUND_JOB_RECONCILE,
+		&JobStatusRead::Unavailable(unavailable.to_string()),
 	);
-	assert!(message.contains(timed_out));
-	assert!(!message.contains("has not changed"));
+	assert!(message.contains(unavailable), "{message}");
+	assert_eq!(
+		JobStatusRead::Unavailable(unavailable.to_string()).text(),
+		unavailable,
+		"compared by its text, like a snapshot"
+	);
 }
 
 #[tokio::test]
@@ -237,78 +203,96 @@ async fn background_job_left_running_at_turn_end_is_checked_at_once() {
 }
 
 /// An MCP task's poller delivers its outcome itself, so the turn that leaves a
-/// task running neither hurries a status check nor gets one: a check that early
-/// only wakes the model to wait, and it re-launched the same command.
+/// task running neither hurries a status check nor gets one, whatever the task's
+/// age: four hours old and only saying "working", it costs no model turn at any
+/// window and stays tracked.
 #[tokio::test]
-async fn background_task_left_running_at_turn_end_is_not_checked_at_once() {
+async fn background_task_left_running_at_turn_end_is_never_reported_however_long_it_runs() {
 	let session_id = "main-loop-background-task";
 	let key = crate::session::shell_jobs::task_key("toolu_task");
 	let status = "shell: cargo test · PID 42 (stop: kill -- -42) · running 30s · test a ... ok";
 	crate::session::shell_jobs::clear_for_session(session_id);
-	let _stop = crate::session::shell_jobs::register_task_for_session(session_id, "custommcp", &key, "background task");
-	crate::session::shell_jobs::set_task_status_for_session(session_id, &key, status);
+	let (_stop, claim) =
+		crate::session::shell_jobs::register_task_for_session(session_id, "custommcp", &key, "background task");
+	crate::session::shell_jobs::set_status_for_claim(session_id, &key, claim, status);
+	crate::session::shell_jobs::age_for_tests(session_id, &key);
 
 	crate::session::context::with_session_id(session_id.to_string(), async {
 		crate::session::inbox::init_inbox_for_session();
 		let mut reported_statuses = std::collections::HashMap::new();
 		let mut checked_jobs = std::collections::HashSet::new();
 		assert_eq!(reconcile_delay(&checked_jobs), BACKGROUND_JOB_RECONCILE);
-		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+		// Three reconcile windows pass with the task silent and working.
+		for _ in 0..3 {
+			reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+			assert!(
+				crate::session::inbox::drain_inbox_batch().is_empty(),
+				"a silent task wakes nobody"
+			);
+		}
 		assert!(checked_jobs.is_empty());
 		assert!(reported_statuses.is_empty());
-		assert!(crate::session::inbox::drain_inbox_batch().is_empty());
 	})
 	.await;
 	assert!(crate::session::shell_jobs::has_pending_for_session(session_id));
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
-/// The window belongs to each job, not to the session's wait as a whole: a job
-/// launched while an older one's window had run out keeps its whole window and
-/// its completion is still delivered, while the older one gets the backstop's
-/// terminal result. One session-wide deadline dropped every job the moment the
-/// oldest one's window ran out, so the new job's result never reached the model
-/// and the run exited without it.
+/// Losing track belongs to the job nobody could observe, not to the session's
+/// wait as a whole: a job whose outage budget has run out gets one terminal
+/// result through the real reconcile path — saying its outcome is unknown,
+/// never a completion — while a job launched in the same session keeps being
+/// tracked and its completion is still delivered. One session-wide deadline
+/// used to drop every job the moment the oldest one's window ran out, so the
+/// new job's result never reached the model and the run exited without it.
 #[serial_test::serial]
 #[tokio::test]
-async fn background_job_launched_after_an_older_one_expired_is_still_delivered() {
+async fn a_job_nobody_could_observe_is_reported_lost_while_a_younger_one_still_delivers() {
 	let _guard = ENV_LOCK.lock().await;
 	let _data = DataDirGuard::new();
-	let session_id = "main-loop-chained-background-jobs";
-	let aged = "test-mcp://jobs/backstop-aged";
-	let young = "test-mcp://jobs/backstop-young";
+	let session_id = "main-loop-lost-background-jobs";
+	let lost = "test-mcp://jobs/lost";
+	let young = "test-mcp://jobs/young";
 	// One answer per turn: the launch turn, the status check its end triggers
-	// for each pending job, the timeout turn and the completion turn. Extra turns
-	// fall back to the stub's exhausted answer, which ends them the same way.
+	// for the younger job, the lost-tracking turn and the completion turn.
+	// Extra turns fall back to the stub's exhausted answer, which ends them the
+	// same way.
 	let url = spawn_stub(vec![crate::session::chat::test_support::final_response("waiting"); 5]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let config = fake_provider_config();
 	let mut args = session_args();
 	args.name = Some(session_id.to_string());
 
-	// Two overlapping waiters, as a chained build leaves behind: the older one
-	// is already past its window, the younger one has just been launched.
+	// Two overlapping waiters, as a chained build leaves behind. Neither has a
+	// server to read, so every status check on them fails: the older one's
+	// outage has already run the whole budget, the younger one's has not begun.
 	crate::session::shell_jobs::clear_for_session(session_id);
-	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", aged, "shell: cargo build");
+	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", lost, "shell: cargo build");
 	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", young, "shell: bin/train");
-	crate::session::shell_jobs::age_for_tests(session_id, aged);
+	let lost_claim = crate::session::shell_jobs::registration_for_session(session_id, lost).expect("registered");
+	assert_eq!(
+		crate::session::shell_jobs::observation_failed_for_session(session_id, lost, lost_claim),
+		Some(false)
+	);
+	assert!(crate::session::shell_jobs::exhaust_outage_for_tests(session_id, lost));
 
 	let driver = async {
-		// The backstop abandons the aged job...
+		// The reconcile pass reports the unobservable job lost...
 		tokio::time::timeout(std::time::Duration::from_secs(30), async {
-			while crate::session::shell_jobs::is_watched_for_session(session_id, aged) {
+			while crate::session::shell_jobs::is_watched_for_session(session_id, lost) {
 				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 			}
 		})
 		.await
-		.expect("the aged job is abandoned");
+		.expect("the unobservable job is reported lost");
 
-		// ...and the younger one must have survived it. Its completion is delivered
-		// the way the resource update delivers it — the shared finalization, which
-		// queues the result before the job stops being pending — and it is the run's
-		// last result: the run must answer it, not end with it still queued.
-		let claim = crate::session::shell_jobs::claim_delivery_for_session(session_id, young)
-			.expect("the younger job must still be watched once the older one expired");
+		// ...and the younger one must have survived it: one failed check only
+		// starts its budget. Its completion is delivered the way the resource
+		// update delivers it — the shared finalization, which queues the result
+		// before the job stops being pending — and it is the run's last result:
+		// the run must answer it, not end with it still queued.
+		let claim = crate::session::shell_jobs::claim_delivery_for_session(session_id, "test-mcp", young)
+			.expect("the younger job must still be watched once the older one lost tracking");
 		assert!(crate::session::shell_jobs::deliver_for_session(
 			session_id,
 			young,
@@ -331,7 +315,8 @@ async fn background_job_launched_after_an_older_one_expired_is_still_delivered()
 
 	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
-	// The completion's open tag, exactly: a status snapshot carries a state attribute.
+	// The younger job's completion, its open tag exactly: a status snapshot
+	// carries a state attribute.
 	assert!(
 		contents
 			.iter()
@@ -348,43 +333,68 @@ async fn background_job_launched_after_an_older_one_expired_is_still_delivered()
 		1,
 		"the younger job's completion is delivered once: {contents:?}"
 	);
-	// The older job got the backstop's terminal result instead: an error delivery
-	// under its own URI saying octomind stopped tracking — never its completion.
+	// The unobservable job got one terminal result instead: an error delivery
+	// under its own URI saying octomind lost track and its outcome is unknown —
+	// never a completion.
 	assert!(
 		contents.iter().any(|c| c.contains(&format!(
-			"<background_job resource=\"{aged}\"{}>",
+			"<background_job resource=\"{lost}\"{}>",
 			crate::session::shell_jobs::DELIVERY_ERROR_ATTR
-		)) && c.contains("stopped tracking")),
-		"the aged job's timeout must reach the model: {contents:?}"
+		)) && c.contains("outcome is unknown")),
+		"the lost job's result must reach the model: {contents:?}"
 	);
 	assert!(
 		!contents
 			.iter()
-			.any(|c| c.contains(&format!("<background_job resource=\"{aged}\">"))),
-		"the aged job has no completion to deliver: {contents:?}"
+			.any(|c| c.contains(&format!("<background_job resource=\"{lost}\">"))),
+		"the lost job has no completion to deliver: {contents:?}"
 	);
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
-/// A resource job is due at once (its completion push can be lost); a task
-/// only once it has run a full reconcile window, when its latest status can
-/// show it stuck.
-#[test]
-fn status_check_due_waits_a_window_for_tasks_only() {
-	let job = |task: bool, age: std::time::Duration| crate::session::shell_jobs::PendingResource {
-		server_name: "custommcp".to_string(),
-		uri: "custommcp://tasks/1".to_string(),
-		label: "background task".to_string(),
-		delivering: false,
-		started_at: std::time::SystemTime::now() - age,
-		task,
-		status: None,
-	};
-	let fresh = std::time::Duration::from_secs(1);
-	let window = BACKGROUND_JOB_RECONCILE;
-	assert!(status_check_due(&job(false, fresh)));
-	assert!(!status_check_due(&job(true, fresh)));
-	assert!(status_check_due(&job(true, window)));
+/// A resource's status is news once: the first check reports it, and the same
+/// reading again — or the same way of being unreadable — reports nothing for as
+/// long as it persists, so a quiet job costs no model turn per window. Losing
+/// track still ends it with one result.
+#[tokio::test]
+async fn a_resource_status_is_reported_once_per_distinct_reading() {
+	let session_id = "main-loop-repeated-resource-status";
+	let uri = "test-mcp://jobs/quiet";
+	crate::session::shell_jobs::clear_for_session(session_id);
+	crate::session::shell_jobs::register_for_session(session_id, "test-mcp", uri, "shell: cargo build");
+
+	crate::session::context::with_session_id(session_id.to_string(), async {
+		crate::session::inbox::init_inbox_for_session();
+		let mut reported_statuses = std::collections::HashMap::new();
+		let mut checked_jobs = std::collections::HashSet::new();
+		// No server to read: the job is observable by nobody, and the way it is
+		// unavailable does not change between windows.
+		for window in 0..3 {
+			reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+			let batch = crate::session::inbox::drain_inbox_batch();
+			assert_eq!(batch.len(), usize::from(window == 0), "window {window}: {batch:?}");
+			if let Some(message) = batch.first() {
+				assert!(message.content.contains("is not active"), "{}", message.content);
+			}
+		}
+		assert!(
+			crate::session::shell_jobs::is_watched_for_session(session_id, uri),
+			"still tracked"
+		);
+
+		assert!(crate::session::shell_jobs::exhaust_outage_for_tests(session_id, uri));
+		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+		let batch = crate::session::inbox::drain_inbox_batch();
+		assert_eq!(batch.len(), 1, "{batch:?}");
+		assert!(batch[0].content.contains("lost track"), "{}", batch[0].content);
+		assert!(!crate::session::shell_jobs::is_watched_for_session(session_id, uri));
+		// Each pass forgets the statuses of jobs no longer pending before it reports.
+		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+		assert!(reported_statuses.is_empty(), "a finished job's status is forgotten");
+		assert!(checked_jobs.is_empty(), "and is not checked again");
+	})
+	.await;
+	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
 #[test]
@@ -1132,8 +1142,8 @@ async fn runtime_guard_drop_cancels_only_its_session_tasks() {
 			.unwrap()
 	})
 	.await;
-	let stop = crate::session::shell_jobs::register_task_for_session(&session_id, "server", "task", "build");
-	let other_stop = crate::session::shell_jobs::register_task_for_session(&other_id, "server", "task", "test");
+	let (stop, _) = crate::session::shell_jobs::register_task_for_session(&session_id, "server", "task", "build");
+	let (other_stop, _) = crate::session::shell_jobs::register_task_for_session(&other_id, "server", "task", "test");
 
 	// Drop outside the task-local scope: the guard must retain its owner's ID.
 	drop(guards);

@@ -1773,16 +1773,11 @@ async fn watch_job(
 				}
 			}
 			update = subscription.next() => {
-				match update {
-					Ok(Some(ServerNotification::ResourceUpdatedNotification(update))) => {
-						deliver_resource_update(server.name(), Some(&session_id), update.params.uri);
-						break;
-					}
-					// The filter admits only resource updates; anything else
-					// means the stream ended or misbehaved — with its
-					// connection, as a rule.
-					_ => {}
+				if let Ok(Some(ServerNotification::ResourceUpdatedNotification(update))) = update {
+					deliver_resource_update(server.name(), Some(&session_id), update.params.uri);
+					break;
 				}
+				// The filter admits only resource updates; re-arm if the stream ends or misbehaves.
 			}
 		}
 		match re_arm_job_stream(&server, claim, &uri, &session_id).await {

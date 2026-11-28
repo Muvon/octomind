@@ -3206,7 +3206,6 @@ async fn a_watcher_retries_a_failed_listen_when_re_arming_and_delivers_the_repla
 	register(&name, first.service);
 	let server = stdin_config(&name, "unused", Vec::new(), 5);
 	let linked = result_with_resource_link("job://rearm-retry-1");
-	let uri = "job://rearm-retry-1".to_string();
 
 	crate::session::context::with_session_id(format!("cov-watch-rearm-retry-{}", uuid::Uuid::new_v4()), async {
 		crate::session::inbox::init_inbox_for_session();

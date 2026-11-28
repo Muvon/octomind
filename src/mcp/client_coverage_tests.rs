@@ -3656,19 +3656,19 @@ async fn remote_skill_loads_verified_files_only_after_approval() {
 /// an in-memory server whose peer info does or does not advertise
 /// `resources.subscribe`; reports whether the link is watched afterwards.
 async fn link_is_watched_after_call_tool(tag: &str, advertises_subscribe: bool) -> bool {
-	use rmcp::model::{GetMeta, ServerCapabilities, ServerPeerInfo};
+	use rmcp::model::{GetMeta, ResourcesCapability, ServerCapabilities, ServerPeerInfo};
 
 	let name = unique_server(tag);
 	let uri = format!("job://{tag}");
 	let config = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
+	// Built field by field: rmcp generates `ServerCapabilities::builder` only with its
+	// `server` or `macros` feature, and octomind enables neither.
 	let peer_info = advertises_subscribe.then(|| {
-		ServerPeerInfo::new(
-			ProtocolVersion::V_2026_07_28,
-			ServerCapabilities::builder()
-				.enable_resources()
-				.enable_resources_subscribe()
-				.build(),
-		)
+		let mut resources = ResourcesCapability::default();
+		resources.subscribe = Some(true);
+		let mut capabilities = ServerCapabilities::default();
+		capabilities.resources = Some(resources);
+		ServerPeerInfo::new(ProtocolVersion::V_2026_07_28, capabilities)
 	});
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, mut out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();

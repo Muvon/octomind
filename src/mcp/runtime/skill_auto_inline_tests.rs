@@ -498,6 +498,11 @@ async fn validators_report_failure_then_cap_after_max_retries() {
 		.join("octomind-tap");
 	let skill_dir = tap.join("skills").join("skillauto-failing");
 	std::fs::create_dir_all(&skill_dir).expect("skill dir");
+	std::fs::write(
+		skill_dir.join("SKILL.md"),
+		"---\nname: skillauto-failing\ndescription: Test skill\n---\n\n# body\n",
+	)
+	.expect("skill file");
 	write_script(&skill_dir, "#!/bin/sh\necho SKILLAUTO-BROKEN >&2\nexit 1\n");
 
 	// The template disables auto_validation — flip it on for this session.

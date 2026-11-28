@@ -407,7 +407,7 @@ supported older primary config:
 | `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
 | `27` | Adds the optional advise section |
 | `32` | Removes `[supervisor]` and `[decision]`, moves `max_identical_rounds` to the root, adds the Besydr plugin entry; see below |
-| `35` | Reduces agent names in `default`, `[taps]` keys, plugin `roles` and MCP `auto_bind` to the flat form, removes a local `assistant` role that equals the one the old template shipped, and adds `registry.tap` and `registry.ref` from the template |
+| `35` | Rewrites the retired community-tap tags to the current agents (for example `content:editor` to `writer`) in `default`, `[taps]` keys, plugin `roles` and MCP `auto_bind`, in `config.toml` and in the other `.toml` files beside it; every other tag, including a variant of a private tap such as `acme:reviewer`, stays as written. It prints one line per rewritten tag. It also removes a local `assistant` role that equals the one the old template shipped (a changed one stays, with a notice that it hides the tap agent), and adds `registry.tap` and `registry.ref` from the template |
 
 Version `22` preserves the legacy model, recall, skills, capabilities, and compression values and comments.
 The old authorizer, condense, distill, plan, gate, and evolution switches become one `supervisor` flag: any true

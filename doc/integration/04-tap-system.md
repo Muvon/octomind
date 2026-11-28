@@ -49,8 +49,9 @@ In one command it:
 3. Initializes a Git repository.
 4. Registers the directory as a local tap.
 
-`--agent` names the starter agent and defaults to the repo name. The starter is written to `agents/<name>.toml`, and its
-tag is `<name>`. Start it with that name:
+`--agent` names the starter agent and defaults to the repo name. The name is lowercase letters, digits and hyphens,
+starting with a letter, so it has no `:`. The starter is written to `agents/<name>/default.toml`, and its tag is `<name>`.
+Start it with that name:
 
 ```bash
 octomind run my-agents
@@ -99,13 +100,18 @@ A tap is a Git repository (or local directory) containing:
 
 ```text
 agents/
-  name.toml              # Agent manifest (tag = name)
+  namespace/
+    default.toml         # Base agent (tag = namespace)
+    variant.toml         # Variant (tag = namespace:variant)
+    skills/
+      skill-name/
+        SKILL.md         # Owned skill, applies to the whole namespace
 deps/
   org/
     tool.sh              # Dependency install script (idempotent)
 skills/
   skill-name/
-    SKILL.md             # Skill instructions
+    SKILL.md             # Shared skill instructions
     scripts/             # Executable scripts
     references/          # Documentation files
     assets/              # Static files
@@ -120,19 +126,33 @@ plugins/
   plugin-name/           # Agent Plugin package discovered from the tap
 ```
 
+Each directory under `agents/` is a **namespace**. Its `default.toml` is the **base agent** of the namespace, with the
+tag `<namespace>`. Every other `<variant>.toml` is a **variant**, with the tag `<namespace>:<variant>`. The tag
+`<namespace>:default` is the base agent, and its canonical form is `<namespace>`. A namespace may hold variants and no
+`default.toml`. A skill under `agents/<namespace>/skills/` is an **owned skill** of that namespace; a skill under the
+top-level `skills/` is a **shared skill**. See [Skills](#skills).
+
 > Two distinct files are involved when you work with taps: the **on-disk tap repo** (the tree above — `agents/`,
 > `deps/`, `skills/`, `capabilities/`, `workflows/`, and `plugins/`) and **your `config.toml`** (where `[taps]`,
 > `[capabilities]`, and `[registry]` live). Each TOML snippet below notes which file it belongs to.
 
 ## Agent Manifests
 
-Agent manifests are TOML files at `agents/<name>.toml`, directly under `agents/`: no subdirectories and no symbolic
-links. The name is lowercase letters, digits and hyphens. For discovery, `# Title:` and `# Description:`
+Agent manifests are TOML files at `agents/<namespace>/default.toml` (the base agent) and
+`agents/<namespace>/<variant>.toml` (a variant). A namespace and a variant are each lowercase letters, digits and
+hyphens, starting with a letter. A symbolic link under `agents/<namespace>/` is not listed as an agent, but one that points to a manifest of the same
+directory by its plain file name (`chief.toml -> default.toml`) is an **alias**: a tap keeps an old agent name working
+this way. `<namespace>:chief` then starts the agent behind the link, a session saved under the old name resumes as that
+agent, and the log at info level says `` `<tag>` is an alias of `<target>`; using `<target>` ``. Tag completion and agent
+listings leave the alias out. A link that points outside its directory is not an alias, and a real manifest of the same
+name is an agent of its own and is never redirected. A file `agents/<name>.toml` directly under `agents/`
+is an error that names the path the file must have, `agents/<name>/default.toml`. A variant is a complete manifest of
+its own; it inherits nothing from the base agent. For discovery, `# Title:` and `# Description:`
 header comments are required and feed the `tap` tool's agent matching (they are the embedding corpus). They are
 **not** used by `octomind run` shell autocomplete, which derives the tag purely from the file name:
 
 ```toml
-# agents/developer.toml
+# agents/developer/default.toml
 # Agent: developer
 # Title: Developer
 # Description: Review source code and explain implementation choices.
@@ -151,16 +171,40 @@ The role's `name` is **always force-injected from the tag** — the agent name i
 entry's `name`, overwriting any value you declare there. Declare `name` for readability, while treating the filename tag
 as authoritative. Manifests can include any config sections: roles, commands, MCP servers, etc.
 
-`octomind run <name>` starts that agent, so `octomind run developer` starts `agents/developer.toml`. A tag written with `:` is an error that shows the flat form. A specialty of an agent is a skill bound to it with `domains: <agent name>`; see [Skills](#skills).
+`octomind run <tag>` starts that agent. `octomind run developer` starts `agents/developer/default.toml`, and `octomind run acme:reviewer` starts `agents/acme/reviewer.toml` of a private tap. An unknown variant is an error that lists the agents the namespace has. A specialty of an agent is a skill, and a variant is the exception; see [Skill or Variant](#skill-or-variant).
 
 If the role needs tools to manage its configuration (`mcp` / `agent` / `skill` / `capability`), include `"runtime"` in
 `server_refs`. Include `"orchestration"` for `tap`, `schedule`, or `monitor`. Planning is done by a plugin, not a tool, and
 `core` is only needed for conditional `recall` when compression attention or governance is enabled.
 
+## Skill or Variant
+
+An agent covers a whole field of work and does the work itself. A specialty inside the field (a procedure, a format, a
+jurisdiction, a platform) is a skill of the agent's namespace. This is the default, and it is how the community tap
+`muvon/tap` is built: 34 base agents, about 330 skills, no variants.
+
+A variant (`<namespace>:<variant>`) is the exception. It is for a private tap, and only when a skill cannot do the job.
+Choose by asking, in this order:
+
+1. Does the agent need extra instructions for a procedure, a format, a jurisdiction or a platform? Write a skill.
+2. Does it need extra tools on top of the base agent? Write a skill that brings them with `capabilities:` in its
+   frontmatter.
+3. Does it need its own system prompt and identity, its own set of capabilities (fewer or different tools), its own
+   model, or its own safety rules? Write a variant.
+
+A variant is a complete manifest of its own, so each thing it repeats from the base agent has to be kept in step by hand.
+
 ## Skills
 
-Skills are reusable instruction packs. Each specialty procedure of an agent is a skill bound to that agent with
-`domains: <agent name>`. A skill loads when the user's message matches its `rules:` in SKILL.md frontmatter, when a
+Skills are reusable instruction packs. Each specialty procedure of an agent is a skill, in one of two places:
+
+- An owned skill, at `agents/<namespace>/skills/<skill>/SKILL.md`, belongs to that namespace and applies to its base
+  agent and every variant. It needs no `domains:` line, and a `domains:` line in it is ignored.
+- A shared skill, at `skills/<skill>/SKILL.md`, is bound to namespaces by its `domains:` line, for example
+  `domains: developer devops`. Without `domains:` it is manual-only.
+
+A skill is addressed by its bare name in both places. When a shared and an owned skill of one tap have the same name,
+the shared skill is used. A skill loads when the user's message matches its `rules:` in SKILL.md frontmatter, when a
 workflow step lists it in `skills = [...]`, when `OCTOMIND_SKILLS=a,b octomind run <name>` preloads it, or when
 `/skill use <name>` loads it by hand. See [Skills](../usage/15-skills.md) for full documentation.
 
@@ -227,19 +271,27 @@ the braces (`{{{{INPUT:KEY}}}}`).
 - **`{{CWD}}`** — the runtime current working directory (resolved by the prompt-placeholder layer, e.g. inside a role
   `system` prompt).
 
-When an agent calls `tap(action="run", prompt=…)`, the runtime picks the target agent from the agents that caller may reach. The `# Uses:` header in the manifest sets that set: a comma-separated list of agent names, or `*` for every other agent. An agent with the header declares the `orchestration` capability. A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
+When an agent calls `tap(action="run", prompt=…)`, the runtime picks the target agent from the agents that caller may reach:
+
+- A base agent with the `orchestration` capability reaches the variants of its own namespace, with no header.
+- The `# Uses:` header of a base agent adds agents: a comma-separated list whose entries are `<namespace>`,
+  `<namespace>:<variant>`, or `*` for every other agent, variants included. An agent with the header declares the
+  `orchestration` capability. An empty entry, the agent's own name, or an agent that does not exist is an error when
+  the agent loads.
+- A variant has no `# Uses:` header (the runtime does not read one) and reaches only copies of itself.
+- A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 
 ```toml
-# agents/assistant.toml
+# agents/assistant/default.toml
 # Uses: *
 ```
 
-In the community tap only `assistant` carries the header. An agent without the header can still start copies of itself with `tap` (see [From within a session](#from-within-a-session--the-tap-orchestration-tool)).
+In the community tap only `assistant` carries the header. An agent that reaches no other agent can still start copies of itself with `tap` (see [From within a session](#from-within-a-session--the-tap-orchestration-tool)).
 
 For example, use a stored project label and an environment-supplied service URL in a manifest:
 
 ```toml
-# agents/service.toml
+# agents/service/default.toml
 # Title: Service Reviewer
 # Description: Review the service identified by your configured project label and URL.
 [[roles]]
@@ -304,7 +356,7 @@ capabilities/
 | Key | Requirement | Behavior |
 |-----|-------------|----------|
 | `triggers` | Non-empty array | Phrases used for semantic auto-activation; runtime loading rejects missing/empty triggers. |
-| `domains` | Optional array; empty means universal | Runtime activation requires an exact match with the role domain, such as `developer` for the `developer` agent. |
+| `domains` | Optional array of namespaces; empty means universal | Runtime activation requires the namespace of the running agent to be listed, such as `developer` for `developer` and `developer:acme`. |
 
 The domain gate applies to runtime auto-activation, `capability list`/`discover`/`enable`, and
 `OCTOMIND_CAPABILITIES`. Static `capabilities = [...]` expansion in an agent manifest reads provider wiring directly
@@ -356,11 +408,11 @@ resolves to whichever tap is listed first. A pinned capability's `[deps]` script
 referencing agent's. Provider overrides (below) and the active-capability registry are keyed by the bare name, so
 `myorg/git-tools` and `git-tools` are the same capability once loaded.
 
-For example, replace the earlier `agents/developer.toml` in your local tap with this manifest. Put capability
+For example, replace the earlier `agents/developer/default.toml` in your local tap with this manifest. Put capability
 references at the top level, before any table header:
 
 ```toml
-# agents/developer.toml
+# agents/developer/default.toml
 # Title: Developer
 # Description: Review source code after checking that Git is installed.
 capabilities = ["myorg/git-tools"]
@@ -417,6 +469,10 @@ Set a preferred model for specific tap agents in your config:
 "my-agents" = "octohub:auto"
 ```
 
+A key is a tag or a namespace. `"acme:reviewer"` applies to that variant; `"acme"` applies to the base agent and to
+every variant that has no key of its own, and an exact tag wins over its namespace. A key written under an alias of the agent applies after the exact tag and
+before the namespace.
+
 This replaces only the main model name for `octomind run my-agents`; other parameters inherit `[model]` unless
 the role overrides them. Explicit runtime fields win, then the manifest role profile, then the tap name mapping, then
 `[model]`.
@@ -437,9 +493,9 @@ This uses the starter agent created above. Discover tags installed on your machi
 octomind complete run
 ```
 
-`octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below reaches only tap agents, so a config role never wins there. A tag written with `:` is an error that shows the flat form.
+`octomind run` with no argument starts the config `default`, which is `assistant`. If your config defines a role with the same name as a tap agent, that role takes priority over the tap agent. The same applies to `octomind acp` and the `/role` command. The `role` parameter of the `tap` tool below reaches only tap agents, so a config role never wins there. A tag with `:` that no tap has is an error: it lists the agents the namespace has, or says that the tag is in no installed tap.
 
-To start an agent in a read-only session, add `--readonly`; see [Read-Only Sessions](../usage/05-sessions.md#read-only-sessions).
+To start an agent in a read-only session (user-configured scripts such as guardrail hooks still run; `/run` and `/workflow` are refused), add `--readonly`; see [Read-Only Sessions](../usage/05-sessions.md#read-only-sessions).
 
 When a name resolves to a tap agent, Octomind runs the full resolution pipeline:
 
@@ -467,7 +523,7 @@ before automating ACP/tap subprocesses; do not expect their stdin to be availabl
 ### From within a session — the `tap` orchestration tool
 
 Inside a running session, the model can hand a task to another agent using the `tap` tool from the `orchestration` builtin server.
-The runtime matches the prompt to an agent. The model can also name one with `role`, an agent name. An agent can start copies of itself this way (`role` set to its own name, or no `role` when it has no `# Uses:` header), and `readonly: true` starts a read-only copy.
+The runtime matches the prompt to an agent. The model can also name one with `role`, an agent name. An agent can start copies of itself this way (`role` set to its own name, or no `role` when it reaches no other agent), and `readonly: true` starts a read-only copy.
 These are JSON argument objects for separate MCP calls:
 
 ```json
@@ -503,8 +559,8 @@ Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `t
 `my-agents`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
 `run` ranks the agents the caller may reach by cosine similarity between the prompt and each agent's title and
-description. The best one gets the task when it clears a score threshold and a margin over the second best. If nothing matches, `run` starts nothing and returns an
-error that lists the closest agents; the same call with `role` set to one of those names starts that agent without
+description. The best one gets the task when it clears a score threshold and a margin over the second best. If a judgement plugin answers for the pick, its choice among the top candidates replaces that decision; with no answer the score decision stands. If nothing matches, `run` starts nothing and returns an
+error that begins `No agent was matched to this task.` and lists the closest agents; the same call with `role` set to one of those names starts that agent without
 matching. Matching needs the local embedding
 model. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
@@ -571,10 +627,10 @@ first try.
 Fetched agent manifests are cached separately from the tap repos, at:
 
 ```text
-agents/<name>.<source>.toml
+agents/<tag>.<source>.toml
 ```
 
-`<source>` is the tap the manifest came from; for the built-in tap it also holds the `[registry] ref`, with characters other than letters, digits, `-` and `.` written as `_`. A manifest cached from another tap or ref is a different file, so changing `[registry] tap` or `ref` never serves an old one.
+The `:` of a variant tag is written as `_`, so `acme:reviewer` is cached as `agents/acme_reviewer.<source>.toml`. `<source>` is the tap the manifest came from; for the built-in tap it also holds the `[registry] ref`, with characters other than letters, digits, `-` and `.` written as `_`. A manifest cached from another tap or ref is a different file, so changing `[registry] tap` or `ref` never serves an old one.
 
 Cache lifetime is controlled by `[registry] cache_ttl_hours` in your config (default `24`):
 

@@ -55,8 +55,8 @@ path differences.
 `run`, `server`, and `acp` take an optional `TAG`:
 
 - A **role name** — matched against `[[roles]]` in your config. A role with the same name as a tap agent takes priority over the tap agent.
-- A **tap agent name** (e.g. `developer`) — resolved through your installed [taps](../integration/04-tap-system.md); the agent is the file `agents/<name>.toml` of a tap. The same applies to `acp` and the `/role` command. The `role` parameter of the `tap` tool reaches only tap agents, so a config role never wins there.
-- A tag written with `:` is an error that shows the flat form.
+- A **tap agent name** (e.g. `developer`) — resolved through your installed [taps](../integration/04-tap-system.md); the base agent of a namespace `<name>` is the file `agents/<name>/default.toml` of a tap. The same applies to `acp` and the `/role` command. The `role` parameter of the `tap` tool reaches only tap agents, so a config role never wins there.
+- A **variant** `<namespace>:<variant>` (e.g. `acme:reviewer`) — the file `agents/<namespace>/<variant>.toml` of a private tap. `<namespace>:default` is the base agent `<namespace>`. A variant that no tap has is an error that lists the agents of its namespace. A variant is the exception; a specialty is a skill ([Skill or Variant](../integration/04-tap-system.md#skill-or-variant)).
 - Omitted — uses the `default` tag from config.
 
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required
@@ -206,7 +206,7 @@ Start an interactive or non-interactive AI session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name or tap agent name (e.g. `developer`). Uses the config `default` (`assistant`) if omitted. |
+| `TAG` | | Role name or tap agent tag (e.g. `developer`, or `acme:reviewer` for a variant in a private tap). Uses the config `default` (`assistant`) if omitted. |
 | `--name NAME` | `-n` | Create a named session, or resume it if it already exists. |
 | `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
@@ -343,7 +343,7 @@ registers the directory as a local tap — the starter agent is runnable immedia
 | Argument | Description |
 |----------|-------------|
 | `TAP` | New tap identifier (`user/repo` format). |
-| `--agent NAME` | Starter agent's name; written to `agents/<name>.toml`. Defaults to the repo name. |
+| `--agent NAME` | Starter agent's name: lowercase letters, digits and hyphens, no `:`. Written to `agents/<name>/default.toml`. Defaults to the repo name. |
 | `--dir DIR` | Destination directory. Defaults to `./octomind-<repo>`. |
 
 **Examples:**

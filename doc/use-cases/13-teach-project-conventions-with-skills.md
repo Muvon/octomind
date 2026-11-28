@@ -258,7 +258,7 @@ python3 -c 'import json; r=json.load(open("skill-validation.json")); print(r["ex
 - Preload the registered skill with `OCTOMIND_SKILLS=customer-domain octomind run conventions`. This skips activation
   rules and uses exact comma-separated skill names.
 - Replace the content check with `content(review)` to activate on review requests, or add a second rule line for
-  another trigger. Keep `domains` aligned with the agent name.
+  another trigger. Keep `domains` aligned with the agent's namespace (the tag before any `:`).
 
 ## Troubleshooting
 

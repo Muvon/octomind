@@ -25,11 +25,12 @@ octomind run -m anthropic:claude-sonnet-4-6
 
 With no argument, `octomind run` uses the configured `default`, which is `assistant`. A name refers to a role in your
 config, or else to a tap agent of that name: `developer` starts the `developer` agent. A role in your config with the
-same name as a tap agent takes priority. A tag written with `:` is an error that shows the flat form.
+same name as a tap agent takes priority. A tag is `<namespace>`, the base agent of a namespace (`developer`), or
+`<namespace>:<variant>`, a variant from a private tap (`acme:reviewer`); `<namespace>:default` is the base agent.
 
 ## Read-Only Sessions
 
-`octomind run <name> --readonly` (and `octomind acp <name> --readonly`) starts a session in which only tools whose MCP `readOnlyHint` annotation is true are offered and can run. A tool with no hint counts as mutable, and shell runners declare `readOnlyHint: false`, so the session has no shell. It cannot delegate, and `/run` and `/workflow` are refused. In code mode only read-only tools are in the catalog.
+`octomind run <name> --readonly` (and `octomind acp <name> --readonly`) starts a session in which only tools whose MCP `readOnlyHint` annotation is true are offered and can run. A tool with no hint counts as mutable, and shell runners declare `readOnlyHint: false`, so the session has no shell. It cannot delegate, and `/run` and `/workflow` are refused. Scripts you configured still run: guardrail hooks, validators and pipes, and plugins. The mode limits the tools the model can call, not those scripts. In code mode only read-only tools are in the catalog.
 
 The mode is fixed for the life of the session and is restored when you resume it, with or without the flag. Passing `--readonly` when you resume a writable session makes it read-only from then on.
 

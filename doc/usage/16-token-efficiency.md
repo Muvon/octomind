@@ -44,8 +44,8 @@ Capability eviction does not shrink prior conversation text.
 Each capability is two kinds of file:
 
 - **`config.toml`** — capability-level metadata, shared across every provider. Holds the **required** `triggers = [...]`
-  array (the phrases that drive auto-activation and `discover`) and an **optional** `domains = [...]` array (which roles
-  may load it). If `config.toml` is missing or has no non-empty string `triggers` array, the capability fails to
+  array (the phrases that drive auto-activation and `discover`) and an **optional** `domains = [...]` array (the namespaces
+  that may load it; a namespace is the agent tag without its `:<variant>`). If `config.toml` is missing or has no non-empty string `triggers` array, the capability fails to
   resolve.
 - **`<provider>.toml`** — provider-specific MCP wiring: `[[mcp.servers]]`, `server_refs`, `allowed_tools`, and `[deps]`.
   The provider name comes from the `[capabilities]` config map (`<name> = "<provider>"`) and defaults to the literal
@@ -133,7 +133,7 @@ Pass one arguments object per call to the `capability` MCP tool. The enable/disa
 capabilities use a separate server-loading/refcount path; they are not governed by this four-capability LRU.
 
 **Domains.** Listing, discovery, and new named activation are scoped to the current session's *domain* — the name
-of the active role (for example `developer`). A capability with a non-empty `domains` list is only
+of the active role's tag without its `:<variant>` (for example `developer` for `developer:acme`). A capability with a non-empty `domains` list is only
 visible to roles in those domains; an empty list means universal. `list` and `discover` silently omit out-of-domain
 caps, and `enable` **hard-fails** for one (returning an error that names the role you'd need to run). See [Domain
 Gating](#domain-gating) below.
@@ -248,8 +248,8 @@ query", "look at the postgres schema") puts the cap centroid where users actuall
 
 ## Domain Gating
 
-A capability can declare optional `domains = [...]` in its `config.toml`. The **session domain** is the name of
-the active role: the `developer` agent runs in the `developer` domain. The gate rule is simple:
+A capability can declare optional `domains = [...]` in its `config.toml`. The **session domain** is the namespace of
+the active role's tag: the `developer` agent and its variants run in the `developer` domain. The gate rule is simple:
 
 - **Empty `domains`** → universal. Available in every role (typical for filesystem-style utilities).
 - **Non-empty `domains`** → the capability is available only when the session domain is in the list.

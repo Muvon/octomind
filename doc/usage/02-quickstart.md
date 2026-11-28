@@ -84,7 +84,7 @@ See [Sessions](05-sessions.md) for model switching and image attachment examples
 The optional positional argument to `octomind run` is a tag:
 
 - A name such as `developer` starts the tap agent of that name from the configured taps, unless a local `[[roles]]` entry has the same name; the local role takes priority.
-- A tag written with `:` is an error that shows the flat form.
+- A tag `<namespace>:<variant>` starts a variant from a private tap, for example `acme:reviewer`. Taps group agents into namespaces: `developer` is the base agent of the namespace `developer`, and `acme:default` is the base agent `acme`. A variant that does not exist is an error that lists the variants of the namespace. A specialty is a skill, and a variant is the exception: [Skill or Variant](../integration/04-tap-system.md#skill-or-variant).
 
 ```bash
 # Configured default tag

@@ -26,9 +26,9 @@ The positional role/tag is optional. When omitted, the agent uses the default ro
 is `assistant`). `TAG` can be:
 
 - A **local role name** from your config, or
-- A **tap agent** addressed by its name (e.g. `developer`).
+- A **tap agent** addressed by its tag: `<namespace>` for the base agent of a namespace (e.g. `developer`), or `<namespace>:<variant>` for a variant from a private tap (e.g. `acme:reviewer`).
 
-A local role with the same name as a tap agent takes priority. A tag written with `:` is an error that shows the flat form.
+A local role with the same name as a tap agent takes priority. `<namespace>:default` is the base agent `<namespace>`.
 
 For a tap role, launch:
 

@@ -198,11 +198,11 @@ Explain this Python function: def total(items): return sum(items[:-1])
 ### 7. Apply a name-only mapping to a tap agent
 
 Create your own local tap directory and save the manifest below at
-`octomind-private-lab/octomind-private-notes/agents/private-notes-review.toml`. This agent is supplied by the file you
+`octomind-private-lab/octomind-private-notes/agents/private-notes-review/default.toml`. This agent is supplied by the file you
 create; it is not assumed to exist in the built-in tap.
 
 ```bash
-mkdir -p octomind-private-notes/agents
+mkdir -p octomind-private-notes/agents/private-notes-review
 ```
 
 The role omits `[roles.model]`, allowing the `[taps]` mapping in `privacy.toml` to select its main model. The environment

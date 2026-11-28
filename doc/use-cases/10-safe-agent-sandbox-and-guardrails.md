@@ -49,7 +49,7 @@ stays in the normal data directory. The first validation generates the complete 
 ```bash
 mkdir "$HOME/octomind-safety-demo"
 cd "$HOME/octomind-safety-demo"
-mkdir -p .agents/tools .agents/hooks .agents/validators scripts disposable safety-tap/agents
+mkdir -p .agents/tools .agents/hooks .agents/validators scripts disposable safety-tap/agents/safety-check
 export OCTOMIND_CONFIG_PATH="$PWD/.octomind-config/config.toml"
 octomind config --validate
 printf '42\n' > answer.txt
@@ -59,7 +59,7 @@ printf 'keep this\n' > disposable/keep.txt
 ### 2. Give a local agent the verified capabilities
 
 You create `tutorial/safety` here; it is a local tap, not a published package. Save this entire manifest as
-`safety-tap/agents/safety-check.toml`. The resolver uses `safety-check` as the runtime role name.
+`safety-tap/agents/safety-check/default.toml`. The resolver uses `safety-check` as the runtime role name.
 
 ```toml
 capabilities = ["octomind/shell", "octomind/filesystem-read"]

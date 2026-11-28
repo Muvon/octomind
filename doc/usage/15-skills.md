@@ -45,13 +45,20 @@ skill’s instruction body is injected into the session context, giving the AI d
 
 Octomind discovers skills in this order, with **first-wins** deduplication by frontmatter `name`:
 
-1. **Taps** (highest priority) — `<tap>/skills/<name>/SKILL.md`
+1. **Taps** (highest priority) — `<tap>/skills/<name>/SKILL.md` (a **shared skill**) and
+   `<tap>/agents/<namespace>/skills/<name>/SKILL.md` (an **owned skill**)
 2. **Project universal dir** — `<workdir>/.agents/skills/<name>/SKILL.md`
 3. **Global universal dir** — `~/.agents/skills/<name>/SKILL.md`
 4. **Agent plugins** — skills below discovered plugin roots (`plugins/<plugin>/skills/<name>/SKILL.md`)
 5. **Generated evolution skills** — eligible machine-local trial/active artifacts, always lowest authority
 
 The first time Octomind starts, it moves skills from `~/.config/agents/skills/` to `~/.agents/skills/`, leaving any skill whose name already exists there in the old folder and logging the conflict.
+
+A specialty of an agent is a skill, not a new agent; a variant is the exception (see [Skill or Variant](../integration/04-tap-system.md#skill-or-variant)).
+A namespace is a directory `agents/<namespace>/` of a tap. Its base agent has the tag `<namespace>` and its variants
+have `<namespace>:<variant>`; see [Tap System](../integration/04-tap-system.md#tap-layout). An owned skill belongs to its
+namespace and applies to the base agent and every variant. A shared skill is bound to namespaces by `domains:`. Both are
+addressed by the bare skill name; in one tap a shared skill wins over an owned skill of the same name.
 
 A skill pack in either universal directory works without a tap. Plugin skills support listing and manual/env loading,
 but the automatic activation pool currently scans taps, universal directories, and generated bindings only.
@@ -79,8 +86,8 @@ OCTOMIND_SKILLS=project-review octomind run developer
 
 **2. Auto-activation** — skills with declarative `rules:` in frontmatter activate based on project context (e.g.,
 `Cargo.toml` detected, user mentions "rust"). Auto-activation requires **both** a non-empty `rules:` list **and** a
-`domains:` entry matching the current agent's role — `rules:` alone is not enough (skills without a matching domain are
-never placed in the activation pool). Automatic user-input activation skips already-active skills; the runtime
+`domains:` entry naming the namespace of the current agent (an owned skill needs no entry, its location binds it) —
+`rules:` alone is not enough (skills without a matching domain are never placed in the activation pool). Automatic user-input activation skips already-active skills; the runtime
 capability intent path can also evaluate skill rules.
 
 **3. Manual** — via the `/skill` command or the `skill` MCP tool:
@@ -138,7 +145,7 @@ the skill is skipped entirely.
 | `name` | yes | Use a lowercase hyphenated name by convention. Used as the skill identifier. Must equal the directory name to be activatable by name (`use`/`forget`/auto-activation look up `skills/<name>/` and verify the frontmatter `name` matches). The `/skill` and `skill` list views use the frontmatter `name` regardless of directory. |
 | `description` | yes | What the skill does and when to use it. |
 | `capabilities` | no | Capabilities to auto-load when skill activates. Space-delimited or `["git", "memory"]`. |
-| `domains` | no | Agent names for auto-activation scoping. Without this, skill is manual-only. |
+| `domains` | no | Namespaces for auto-activation scoping: the agent tag without its `:<variant>`. Without this, a shared skill is manual-only. An owned skill ignores this line. |
 | `allowed-tools` | no | Space-delimited expected tool names, not permission grants. The MCP `skill` list/use results warn about missing tools; the slash-command list does not show that compatibility warning. |
 | `license` | no | License name (e.g., `Apache-2.0`). |
 | `compatibility` | no | Free-text environment requirements (shown by the MCP skill list). |
@@ -217,8 +224,9 @@ The `domains` field limits which agents evaluate this skill's rules:
 domains: developer devops
 ```
 
-- Matching uses the agent name: the `developer` agent matches `domains: developer`. `domains: "*"` matches any
-  agent
+- Matching uses the namespace of the agent's tag: `developer` and `developer:acme` both match `domains: developer`.
+  `domains: "*"` matches any agent
+- An owned skill takes its domain from its location, so a `domains:` line in it is not read
 - Reduces the activation pool to relevant skills only
 - Skills without `domains` are manual-only (backward compatible)
 
@@ -242,7 +250,7 @@ octomind run developer
 
 ## Validate Script
 
-An optional executable script at `<tap>/skills/<name>/validate` checks the assistant response. Automatic validation
+An optional executable script named `validate` in the skill's own directory (`<tap>/skills/<name>/validate`, or the same place of an owned skill) checks the assistant response. Automatic validation
 currently searches tap directories only: a validator in a universal directory or plugin is not run by this path. Enable
 `[skills].auto_validation` to use it.
 
@@ -367,7 +375,7 @@ There is no shipped lint tool. When authoring a skill, verify by hand:
 ## Common questions
 
 **Why did my rule not activate?** Check that the skill is in a supported automatic location, its name matches the
-directory, and its `domains` contain the agent name or `*`. Restart after adding a skill, and send a request with at least
+directory, and its `domains` contain the namespace of the agent's tag or `*` (an owned skill lives under the namespace's `agents/<namespace>/skills/`). Restart after adding a skill, and send a request with at least
 eight non-whitespace characters. Use `/skill project-review` to test manual loading independently.
 
 **Why did validation not run?** It is disabled by default and the runner searches taps only. Check the executable bit on

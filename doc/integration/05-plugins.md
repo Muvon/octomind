@@ -101,7 +101,7 @@ args = []
 | `url` | string | none | Endpoint. Required for `http`; must start with `http://` or `https://`. |
 | `headers` | table | `{}` | Extra request headers for `http`. Values may contain `{{ENV:KEY}}`. |
 | `enabled` | bool | `true` | `false` keeps the entry in the file and does not start it. |
-| `roles` | list of strings | `[]` | Roles the plugin applies to. Empty means all roles. |
+| `roles` | list of strings | `[]` | Roles the plugin applies to. Empty means all roles. An entry matches the running agent's tag exactly, or names its namespace, so `developer` also covers `developer:acme`. |
 | `timeout_seconds` | integer | none | Seconds, 1 to 3600. It is the time `initialize` gets and the most any other event gets. See [Time limits](#time-limits). |
 | `install_manifest` | string | none | `https://` URL of a signed release. See [First-use download](#first-use-download). |
 | `install_key` | string | none | Base64 of the 32-byte Ed25519 public key the release must be signed with. Required with `install_manifest`, and only valid together with it. |

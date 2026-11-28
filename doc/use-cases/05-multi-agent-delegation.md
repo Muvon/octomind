@@ -236,7 +236,7 @@ After it finishes, use `run` to resume it:
 {"action": "stop", "session": "RUN_ID"}
 ```
 
-An agent that declares the `orchestration` capability can start copies of itself: set `role` to its own name, or omit `role` when it has no `# Uses:` header. Add `"readonly": true` to start a read-only copy that scouts or reviews without changing files. Several writable copies can run at once on disjoint files. A copy cannot start further copies.
+An agent that declares the `orchestration` capability can start copies of itself: set `role` to its own name, or omit `role` when it reaches no other agent. Add `"readonly": true` to start a read-only copy that scouts or reviews without changing files. Several writable copies can run at once on disjoint files. A copy cannot start further copies.
 
 `list` lists runs in the current session, not the installed role catalog. Omitting `session` on a follow-up starts a
 fresh agent. Resuming a still-running tap returns a busy error.

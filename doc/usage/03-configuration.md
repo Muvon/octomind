@@ -135,7 +135,7 @@ moving away from OctoHub. See [AI Providers](04-providers.md#bring-your-own-keys
 
 ## Roles and Tags
 
-A name selects a local `[[roles]]` entry, or else a tap agent of that name; a tag containing `:` is an error that shows the flat form. See [Roles](06-roles.md)
+A name selects a local `[[roles]]` entry, or else a tap agent of that name. A tap agent tag is `<namespace>` for the base agent of a namespace (`developer`) or `<namespace>:<variant>` for a variant from a private tap (`acme:reviewer`); `<namespace>:default` is the base agent. See [Roles](06-roles.md)
 for complete examples, profile inheritance, and tool permissions.
 
 ## MCP Servers

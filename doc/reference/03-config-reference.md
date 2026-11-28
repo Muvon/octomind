@@ -74,7 +74,7 @@ octomind config --validate
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `commit_attribution` | string | `"Co-Authored-By: Octomind <345424151+octomindat3am@users.noreply.github.com>"` | Git trailer the agent appends to commits it writes, unless the user says otherwise about attribution. `""` = no trailer and no system-prompt instruction. |
 
-> **About the `default` value:** `"assistant"` is a **tap agent** shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. It is the global assistant. A name resolves against your local `[[roles]]` first, so a local role with the same name as a tap agent takes priority; otherwise it starts the tap agent of that name. A `:` in `default`, a `[taps]` key, a plugin `roles` entry or an MCP server `auto_bind` entry is rejected when the config loads, with the flat name in the message. A `:` in a guardrail `roles` filter is rejected the same way.
+> **About the `default` value:** `"assistant"` is a **tap agent** shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. It is the global assistant. A name resolves against your local `[[roles]]` first, so a local role with the same name as a tap agent takes priority; otherwise it starts the tap agent of that name. The value is a tag: `<namespace>` for the base agent of a namespace, or `<namespace>:<variant>` for a variant from a private tap; `<namespace>:default` is the base agent.
 
 ```toml
 version = 35
@@ -158,7 +158,7 @@ written as `[[plugins]]` tables, for example in a split-config file.
 | `url` | string | absent | Endpoint, starting with `http://` or `https://`. Required for `http`. |
 | `headers` | string map | `{}` | Extra request headers for `http`. Values support `{{ENV:KEY}}`. |
 | `enabled` | bool | `true` | Set `false` to keep the entry but not start the plugin. |
-| `roles` | string array | `[]` | Roles the plugin applies to; empty means all roles. An entry matches an exact role name. |
+| `roles` | string array | `[]` | Roles the plugin applies to; empty means all roles. An entry matches the running agent's tag exactly, or names its namespace, so `developer` also covers `developer:acme`. |
 | `timeout_seconds` | u64 | absent | Upper limit in seconds for how long octomind waits for one event's answer without hearing from the plugin, `1` to `3600`. A plugin declares that time per event (30 seconds for an event it declares none, and for the handshake); with this set, the smaller value applies. |
 | `install_manifest` | string | absent | `https://` URL of a signed release manifest. When `command` is not installed, octomind downloads the program for this machine from it. Only for `stdio` and `socket`; needs `command` and `install_key`. |
 | `install_key` | string | absent | Ed25519 public key (base64 of 32 bytes) the manifest must be signed with. Needs `install_manifest`; each is invalid without the other. |
@@ -218,8 +218,9 @@ directory.
 
 ## `[taps]`
 
-String-to-string map, default `{}`, of tap agent name to model name. It changes only `name`; all other parameters come
-from the main profile before any independent role override.
+String-to-string map, default `{}`, of tap agent tag to model name. A key is a tag (`"acme:reviewer"`) or a namespace
+(`"acme"`, the base agent and every variant without a key of its own); an exact tag wins over its namespace. It changes
+only `name`; all other parameters come from the main profile before any independent role override.
 
 ```toml
 [taps]
@@ -660,7 +661,7 @@ Controls caching of agent manifests fetched from taps. Registry sources themselv
 | `tap` | string | none; required, the template sets `"muvon/tap"` | The built-in tap, in `user/repo` form. It is always loaded, after the taps you add with `octomind tap`, and cannot be added or removed with that command. |
 | `ref` | string | none; required, set by the config template | Branch, tag or commit of the built-in tap to serve. Taps you add yourself follow their default branch. Octomind has no built-in fallback for either key; the config upgrade writes them. |
 
-Fetched manifests are cached at `<data>/agents/<name>.<source>.toml`, where `<source>` is the tap, and for the built-in tap the `ref` as well. Within the TTL the cached manifest is served
+Fetched manifests are cached at `<data>/agents/<tag>.<source>.toml`, with the `:` of a variant tag written as `_`, where `<source>` is the tap, and for the built-in tap the `ref` as well. Within the TTL the cached manifest is served
 immediately; once stale, the cached copy is still served (stale-serve) while a background refresh fetches the latest
 version. See [Tap System](../integration/04-tap-system.md) for the registry behavior.
 
@@ -684,8 +685,8 @@ table is an optional array, defaulting to empty. The complete operating guide an
 | `[[hook]]` | `script` | `match` (target string; absent), `result` (regex string; absent), `on` (`success`/`error`/`any`; `any`) | Process tool results. |
 | `[[validator]]` | `name`, `script` | `match` (final-message regex string; absent), `when` (string array; `[]`), `roles` (string array; `[]`) | Validate assistant turns. |
 
-`when` conditions on guards/validators use `+target` (used) or `-target` (not used). Role filters here accept an exact
-agent name. Main-config MCP `auto_bind` remains exact-match only. Project `[[hook]]` is distinct from the
+`when` conditions on guards/validators use `+target` (used) or `-target` (not used). A role filter here matches the running agent's tag exactly,
+or names its namespace (`developer` covers `developer:acme`). Main-config MCP `auto_bind` remains exact-match only. Project `[[hook]]` is distinct from the
 main-config HTTP listener `[[hooks]]`.
 
 ```toml

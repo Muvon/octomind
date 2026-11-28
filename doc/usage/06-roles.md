@@ -15,7 +15,7 @@ Every session runs with a role. The role determines:
 > **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its name (e.g.
 > `helper`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by its name
 > (e.g. `developer`). A name with no matching role in your config is resolved through the registry,
-> fetching the manifest and merging it on top of your config. A role in your config with the same name as a tap agent takes priority over the tap agent. A tag written with `:` is an error that shows the flat form. See [Tap System](../integration/04-tap-system.md) for
+> fetching the manifest and merging it on top of your config. A role in your config with the same name as a tap agent takes priority over the tap agent. A tap agent tag is `<namespace>` (the base agent of a namespace, such as `developer`) or `<namespace>:<variant>` (a variant from a private tap, such as `acme:reviewer`; a specialty is a skill, see [Skill or Variant](../integration/04-tap-system.md#skill-or-variant)). See [Tap System](../integration/04-tap-system.md) for
 > details.
 
 ## Shipped Config Roles vs. Tap Agents
@@ -305,7 +305,7 @@ Two distinct cases — don't conflate them:
 
 > **Unknown plain role names are rejected.** User-supplied bare names are validated before session setup or `/role`
 > switching, unless the name is a tap agent such as `developer` (a local role
-> with the same name wins). A tag written with `:` fails with an error that shows the flat form. Spell local role names exactly.
+> with the same name wins). A tag with `:` that no tap has fails with an error that lists the variants its namespace has, or says that no installed tap has it. Spell local role names exactly.
 
 ## Troubleshooting
 

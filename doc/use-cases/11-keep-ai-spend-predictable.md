@@ -42,7 +42,7 @@ under the demo project; it does not move your saved login. Configuration files i
 ```bash
 mkdir "$HOME/octomind-spend-demo"
 cd "$HOME/octomind-spend-demo"
-mkdir -p .agents/tools spend-tap/agents
+mkdir -p .agents/tools spend-tap/agents/spend-brief
 export OCTOMIND_CONFIG_PATH="$PWD/.octomind-config/config.toml"
 octomind config --validate
 octomind config --show
@@ -98,7 +98,7 @@ allowed_tools = ["core:*"]
 
 ### 3. Add a tap agent with an independent model mapping
 
-Save `spend-tap/agents/spend-brief.toml`. This is a local tap you author, so no unpublished remote agent is assumed.
+Save `spend-tap/agents/spend-brief/default.toml`. This is a local tap you author, so no unpublished remote agent is assumed.
 Its manifest omits a role model profile: the `[taps]` mapping above selects its model name, and it inherits the main
 profile's other parameters. The plain `budget` role instead has its own 512-output-token profile.
 

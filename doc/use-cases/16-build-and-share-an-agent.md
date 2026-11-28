@@ -50,7 +50,7 @@ tap's short repository name; `release-reviewer` is the agent you create in steps
 are resources you are creating, not a pre-existing public tap.
 
 The command creates `./octomind-release-kit`, validates the rendered scaffold, initializes its Git repository, and
-registers it locally. It generates a starter agent at `agents/release-reviewer.toml`. Look for
+registers it locally. It generates a starter agent at `agents/release-reviewer/default.toml`. Look for
 that directory and agent name in its output.
 
 ```bash
@@ -62,22 +62,22 @@ octomind tap init "$TAP_OWNER/release-kit" --agent release-reviewer
 
 ### 2. Locate where the agent goes
 
-The starter agent is `agents/release-reviewer.toml` inside the tap. The agent's tag is its file name, `release-reviewer`. The tap may also contain `skills/`, `capabilities/`, `deps/`,
+The starter agent is `agents/release-reviewer/default.toml` inside the tap. The directory `release-reviewer` is the agent's namespace, and the file `default.toml` is its base agent, so the tag is `release-reviewer`. The tap may also contain `skills/`, `capabilities/`, `deps/`,
 `workflows/`, and `plugins/`; those are separate extension surfaces. This agent needs only its manifest because you
 will supply the release note in the conversation.
 
 Inspect the generated starter before replacing it:
 
 ```bash
-cat octomind-release-kit/agents/release-reviewer.toml
+cat octomind-release-kit/agents/release-reviewer/default.toml
 ```
 
 ### 3. Save the release-review method
 
-Replace `octomind-release-kit/agents/release-reviewer.toml` with this complete manifest. Save it before running the
+Replace `octomind-release-kit/agents/release-reviewer/default.toml` with this complete manifest. Save it before running the
 agent for the first time so the initial cached copy contains your instructions.
 
-The title and description headers describe the agent for discovery. The filename supplies the runtime tag, which
+The title and description headers describe the agent for discovery. The namespace directory supplies the runtime tag, which
 Octomind injects into the first role's `name`. Keep the explicit name consistent with the path.
 
 `TEAM_PRODUCT` is a non-secret input. Substitution puts its value directly into the prompt; do not use this field for
@@ -154,7 +154,7 @@ printf '%s\n' \
 ### 7. Publish the manifest and install it on another machine
 
 In GitHub, create a repository named exactly `octomind-release-kit` under the account entered in step 1. Add your
-`agents/release-reviewer.toml` at that same relative path using GitHub's
+`agents/release-reviewer/default.toml` at that same relative path using GitHub's
 [file upload instructions](https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository).
 Save the repository change. The one manifest is sufficient for this agent; it does not reference scaffold files.
 
@@ -194,14 +194,36 @@ printf '%s\n' 'Review: Harbor Reports changes a CSV column name. No rollout or r
 Look for the four review headings, the missing details, and `Needs details`. Confirm product substitution separately
 through the interactive welcome message. Compare the same input on the second machine to check the shared behavior.
 
+## Skill or variant
+
+An agent covers a whole field of work and does the work itself. A specialty inside the field (a procedure, a format, a
+jurisdiction, a platform) is a skill of the agent's namespace. This is the default, and it is how the community tap is
+built: 34 base agents, about 330 skills, no variants.
+
+A variant (`<namespace>:<variant>`) is the exception. It is for a private tap, and only when a skill cannot do the job.
+Choose by asking, in this order:
+
+1. Does the agent need extra instructions for a procedure, a format, a jurisdiction or a platform? Write a skill.
+2. Does it need extra tools on top of the base agent? Write a skill that brings them with `capabilities:` in its
+   frontmatter.
+3. Does it need its own system prompt and identity, its own set of capabilities (fewer or different tools), its own
+   model, or its own safety rules? Write a variant.
+
+See [Tap System](../integration/04-tap-system.md#skill-or-variant) for the layout of both.
+
 ## Variations
 
 - **Share locally.** Give a teammate the tap directory. They can register it with
   `octomind tap "$TAP_OWNER/release-kit" ./octomind-release-kit` without publishing it.
 - **Use another model.** Add `-m octohub:auto` to the run command, or configure a name-only `[taps]` model mapping as
   described in the tap guide. A manifest with an explicit role model takes precedence over that mapping.
-- **Another agent.** Copy the method into a new `agents/<name>.toml`, change the explicit role name
+- **Another field of work.** Copy the method into a new `agents/<name>/default.toml`, change the explicit role name
   to match, and supply a checklist appropriate to your team's domain.
+- **A specialty.** Add an owned skill at `agents/release-reviewer/skills/<skill>/SKILL.md`; it applies to the base
+  agent and every variant of the namespace.
+- **A variant.** Only when a skill cannot do the job (see above): add `agents/release-reviewer/strict.toml`, a
+  complete manifest of its own. Start it with `octomind run release-reviewer:strict`; `octomind run release-reviewer`
+  still starts the base agent.
 
 ## Troubleshooting
 
@@ -209,7 +231,7 @@ through the interactive welcome message. Compare the same input on the second ma
 existing tap directory. Initialization refuses nonempty directories and already-registered tap IDs.
 
 **The old prompt still runs after an edit.** The tag has a separate manifest cache, even for local symlinks. Remove only
-`${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/agents/release-reviewer.toml`, then start a new session. Setting
+`${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/agents/release-reviewer.*.toml`, then start a new session. Setting
 `cache_ttl_hours = 0` alone still permits a stale cached response while refresh happens in the background.
 
 **The product input is wrong or the run prompts for it.** Export `TEAM_PRODUCT` in the launching shell. Check for a
@@ -217,7 +239,7 @@ later assignment in the user-scope or project `.env`, which can override exporte
 environment variable is accepted as empty input; it does not trigger a prompt.
 
 **GitHub installation cannot find the agent.** Check the `octomind-` repository prefix and the exact
-`agents/release-reviewer.toml` path. Other taps can shadow the same agent name, and the manifest cache can preserve an
+`agents/release-reviewer/default.toml` path. Other taps can shadow the same agent name, and the manifest cache can preserve an
 earlier resolution. Inspect `octomind tap` and the tag's cached manifest before changing the prompt again.
 
 ## See also

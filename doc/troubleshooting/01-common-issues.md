@@ -251,9 +251,11 @@ Use the custom-role example above to grant `octocode:*`. To inspect which schema
 
 ### Agent Not Found
 
-Tap agents are addressed by name (for example `developer`).
-If a name is not found, list the taps that are active and confirm the agent file
-`agents/<name>.toml` exists:
+Tap agents are addressed by tag: `developer`, the base agent of the namespace `developer`, or `acme:reviewer`, a
+variant of the namespace `acme`. If a tag is not found, list the taps that are active and confirm the agent file
+`agents/<name>/default.toml` (for a variant, `agents/<namespace>/<variant>.toml`) exists. A file `agents/<name>.toml`
+directly under `agents/` is not an agent; the error names the path it must have. An unknown variant lists the agents
+its namespace has.
 
 ```bash
 octomind tap            # list active taps (no URL = list mode)

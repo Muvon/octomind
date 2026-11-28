@@ -224,7 +224,7 @@ Delegate work to an agent installed via a tap (e.g. `developer`). Each agent bri
 prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, and stop a
 run. The runtime matches the prompt to an agent. The caller can also name one with `role`.
 
-An agent that declares the `orchestration` capability can also start copies of itself: `role` set to its own name, or no `role` when it has no `# Uses:` header. Each copy is a fresh session of the same agent, with no memory of the caller's conversation. Several writable copies can run at once for independent parts, each on its own files. A copy cannot start further copies; its `run` returns an error telling it to do its part itself.
+An agent that declares the `orchestration` capability can also start copies of itself: `role` set to its own name, or no `role` when it reaches no other agent. Each copy is a fresh session of the same agent, with no memory of the caller's conversation. Several writable copies can run at once for independent parts, each on its own files. A copy cannot start further copies; its `run` returns an error telling it to do its part itself.
 
 **Parameters:**
 
@@ -261,8 +261,8 @@ Replace the sample session IDs with IDs returned by `run` or `list`.
 
 #### Agent matching
 
-The candidates are the agents the caller may reach. The `# Uses:` header of a tap agent declares which agents it reaches: a comma-separated list of agent names, or `*` for every other
-agent. An agent with the header declares the `orchestration` capability; in the community tap only `assistant` carries it.  A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
+The candidates are the agents the caller may reach. A base agent with the `orchestration` capability reaches the variants of its own namespace. Its `# Uses:` header adds agents: a comma-separated list of `<namespace>`, `<namespace>:<variant>` or `*` for every other
+agent, variants included. The header is read only on a base agent; a variant reaches only copies of itself. An agent with the header declares the `orchestration` capability; in the community tap only `assistant` carries it.  A caller that is not a tap agent, such as a role from your local config, reaches every installed agent.
 Candidates are ranked by cosine similarity between the prompt and each agent's title and description, which needs the
 local embedding model. The best one gets the task when it clears a score threshold and a margin over the second best.
 

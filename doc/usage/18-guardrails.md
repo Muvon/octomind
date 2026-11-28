@@ -202,7 +202,7 @@ roles   = ["developer"]                    # optional: role filter
 | `command` | path | yes | script path, relative to workdir (or absolute) |
 | `match` | regex | no | regex on user message text; empty = matches all messages |
 | `when` | enum | no | `"first"` (first message only) or `"any"` (default, every message) |
-| `roles` | list of strings | no | role filter; exact role name (for example `developer`); an entry with `:` is rejected when the guardrails load |
+| `roles` | list of strings | no | role filter; an entry matches the running agent's tag exactly, or names its namespace (the part before `:`). `developer` matches `developer` and `developer:acme`; `developer:acme` matches only that variant; `developer:default` is `developer` |
 
 ### Script contract
 
@@ -442,12 +442,12 @@ script = ".agents/validators/remind-tests.sh"
 | `name` | string | yes | unique identifier, used for the cursor and the XML tag |
 | `match` | regex | no | matched against the assistant's final message text |
 | `when` | list of `+/-target` | no | history check vs the slice since last run |
-| `roles` | list of strings | no | role filter; exact role name (for example `developer`); an entry with `:` is rejected when the guardrails load |
+| `roles` | list of strings | no | role filter; an entry matches the running agent's tag exactly, or names its namespace (the part before `:`). `developer` matches `developer` and `developer:acme`; `developer:acme` matches only that variant; `developer:default` is `developer` |
 | `script` | path | yes | relative to workdir or absolute |
 
 ### Filter short-circuit order (cheapest first)
 
-1. **role filter** — skip the validator entirely if the current session role isn't in the list.
+1. **role filter** — skip the validator entirely if no entry of the list matches the current session role.
 2. **`when` filter** — slice the call log from this validator's cursor, run `+used / -unused` checks.
 3. **`match` regex** — run the regex over the assistant's final message text.
 
@@ -655,7 +655,7 @@ octomind run developer
 
 **Why does a deny rule not match?** Its target is a resolved capability name, not a tool name. Use the ownership hook
 above; tools without an owner need an unfiltered hook or another enforcement mechanism. `has` checks config server
-membership, and a `roles` filter matches exact role names.
+membership, and a `roles` filter matches the agent's tag or its namespace.
 
 **Why is script feedback absent?** Hooks/validators inject only non-empty stdout on non-zero exit. A timeout or spawn
 failure does not inject repair feedback. Check executable permissions and the script path. The direct child is killed on

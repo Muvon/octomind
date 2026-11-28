@@ -90,7 +90,7 @@ terminal(command="echo 'Continue with the remaining tests' | octomind run develo
 
 | Flag | Use |
 |------|-----|
-| `run <name>` | Start an agent: `developer` for coding; other agent names come from Octomind's tap registry |
+| `run <name>` | Start an agent: `developer` for coding; other agent names come from Octomind's tap registry; a private tap can add variants, written `<name>:<variant>` |
 | `--format plain` / `--format jsonl` | Non-interactive output for piped input |
 | `--name <name>` / `-n` | Create or resume a named session |
 | `--resume-recent` | Resume the latest session in this directory |
